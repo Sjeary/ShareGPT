@@ -1,0 +1,16 @@
+{
+  "name": "chatportal-x1-v4-collab-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Authentication, presence, chat and GPT usage service for ChatPortal X1 V4",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "add-user": "node add_user.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
+

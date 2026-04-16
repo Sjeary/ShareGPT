@@ -1,0 +1,34 @@
+{
+  "sender": {
+    "proxy_server": "your-server.example.com",
+    "proxy_port": "50000",
+    "proxy_uuid": "YOUR-UUID",
+    "socks_listen_port": "1080",
+    "fallback_mode": "system_proxy",
+    "fallback_local_port": "7890"
+  },
+  "receiver": {
+    "frps_server": "your-server.example.com",
+    "frps_port": "7000",
+    "frps_token": "YOUR-TOKEN",
+    "remote_port": "50000",
+    "vmess_listen_port": "3001",
+    "vmess_uuid": "YOUR-UUID",
+    "forward_proxy_port": "7890",
+    "tls_enable": true,
+    "use_compression": true,
+    "use_encryption": true
+  },
+  "collab": {
+    "server_url": "http://your-server.example.com:8088",
+    "last_username": "your-account"
+  },
+  "gpt": {
+    "proxy_host": "127.0.0.1",
+    "proxy_port": "1080"
+  },
+  "gemini": {
+    "proxy_host": "127.0.0.1",
+    "proxy_port": "1080"
+  }
+}
