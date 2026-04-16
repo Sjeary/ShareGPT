@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChatPortal X1 V4</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar glass" id="appTitlebar">
+        <div class="brand-block">
+          <h1 id="topViewTitle">连接设置</h1>
+          <p id="subTitle">填写连接信息后，可开启发送端，让需要的网站通过这台设备访问。</p>
+        </div>
+
+        <div class="status-ribbon no-drag">
+          <div class="status-pill sender-status">
+            <span class="status-dot" id="senderDot"></span>
+            <div class="status-copy">
+              <span>发送服务</span>
+              <strong id="senderState">发送服务：未开启</strong>
+            </div>
+          </div>
+
+          <div class="status-pill receiver-status">
+            <span class="status-dot" id="receiverDot"></span>
+            <div class="status-copy">
+              <span>接收服务</span>
+              <strong id="receiverState">接收服务：未开启</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="top-collab-user no-drag" id="topCollabIdentity" title="点击查看更多操作">
+          <span class="top-collab-avatar" id="topCollabAvatar">?</span>
+          <div class="top-collab-meta">
+            <strong id="topCollabName">未登录</strong>
+            <span id="topCollabSub">登录后可查看账号信息</span>
+          </div>
+        </div>
+
+        <div class="window-controls no-drag">
+          <button class="win-btn win-btn-min" id="btnWinMin" title="最小化" aria-label="最小化"></button>
+          <button class="win-btn win-btn-max" id="btnWinMax" title="最大化" aria-label="最大化"></button>
+          <button class="win-btn win-btn-close danger" id="btnWinClose" title="关闭" aria-label="关闭"></button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <div class="workspace-shell">
+          <div class="content-stack">
+            <section class="panel glass view-panel service-panel" id="senderPanel" data-view-panel="sender">
+              <div class="panel-header">
+                <p>填写连接信息后，可开启发送端，让需要的网站通过这台设备访问。</p>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  <span>服务器地址</span>
+                  <input id="s_proxy_server" placeholder="例如 203.0.113.10 或 demo.example.com" />
+                </label>
+
+                <label>
+                  <span>连接端口</span>
+                  <input id="s_proxy_port" placeholder="例如 443" />
+                </label>
+
+                <label>
+                  <span>连接身份码</span>
+                  <input id="s_proxy_uuid" placeholder="请输入连接身份码" />
+                </label>
+
+                <label>
+                  <span>本地代理端口</span>
+                  <input id="s_socks_listen_port" placeholder="例如 1080" />
+                </label>
+
+                <label>
+                  <span>其他网站访问方式</span>
+                  <select id="s_fallback_mode">
+                    <option value="system_proxy">通过本机代理访问</option>
+                    <option value="direct">直接访问</option>
+                  </select>
+                </label>
+
+                <label id="fallbackPortWrap">
+                  <span>本机已有代理端口</span>
+                  <input id="s_fallback_local_port" placeholder="例如 7890" />
+                </label>
+              </div>
+
+              <label class="full-width locked-field" id="targetDomainsWrap">
+                <span>固定走连接的网站</span>
+                <textarea id="s_target_domains" rows="4" readonly></textarea>
+              </label>
+
+              <div class="panel-footer">
+                <p class="auth-hint" id="senderAuthHint">请先登录账号，登录后才能开启发送服务。</p>
+
+                <div class="actions">
+                    <button id="btnImportSender" class="outline">导入本地配置</button>
+                    <button class="primary" id="btnStartSender">开启发送服务</button>
+                    <button id="btnStopSender">停止发送服务</button>
+                </div>
+
+                <p class="panel-feedback" id="s_feedback" hidden></p>
+              </div>
+            </section>
+
+            <section class="panel glass view-panel service-panel" id="receiverPanel" data-view-panel="receiver">
+              <div class="panel-header">
+                <p>填写接收端信息后，可在当前设备开启接收服务，让另一台设备的连接通过这里完成接收和转发。</p>
+              </div>
+
+              <div class="service-summary-grid receiver-overview">
+                <article class="summary-card">
+                  <span class="summary-label">当前状态</span>
+                  <strong id="receiverOverviewState">未开启</strong>
+                </article>
+
+                <article class="summary-card">
+                  <span class="summary-label">外部访问端口</span>
+                  <strong id="receiverOverviewRemote">未填写</strong>
+                </article>
+
+                <article class="summary-card">
+                  <span class="summary-label">转发到本机</span>
+                  <strong id="receiverOverviewForward">未填写</strong>
+                </article>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  <span>服务端地址</span>
+                  <input id="r_frps_server" placeholder="例如 server.example.com" />
+                </label>
+
+                <label>
+                  <span>服务端端口</span>
+                  <input id="r_frps_port" placeholder="例如 7000" />
+                </label>
+
+                <label>
+                  <span>连接口令</span>
+                  <input id="r_frps_token" placeholder="请输入连接口令" />
+                </label>
+
+                <label>
+                  <span>外部访问端口</span>
+                  <input id="r_remote_port" placeholder="例如 6001" />
+                </label>
+
+                <label>
+                  <span>本地接收端口</span>
+                  <input id="r_vmess_listen_port" placeholder="例如 10086" />
+                </label>
+
+                <label>
+                  <span>接收身份码</span>
+                  <input id="r_vmess_uuid" placeholder="请输入接收身份码" />
+                </label>
+
+                <label class="wide-field">
+                  <span>转发到本机端口</span>
+                  <input id="r_forward_proxy_port" placeholder="例如 7890" />
+                </label>
+              </div>
+
+              <div class="checks">
+                <label class="toggle-chip"><input type="checkbox" id="r_tls_enable" /> 使用安全连接</label>
+                <label class="toggle-chip"><input type="checkbox" id="r_use_compression" /> 传输时压缩数据</label>
+                <label class="toggle-chip"><input type="checkbox" id="r_use_encryption" /> 传输时加密数据</label>
+              </div>
+
+              <div class="panel-footer">
+                <div class="actions">
+                  <button class="primary" id="btnStartReceiver">开启接收服务</button>
+                  <button id="btnStopReceiver">停止接收服务</button>
+                  <button id="btnSaveReceiver">保存接收端设置</button>
+                </div>
+
+                <p class="panel-feedback" id="r_feedback" hidden></p>
+              </div>
+            </section>
+
+            <section class="panel glass view-panel log-panel" id="logPanel" data-view-panel="logs">
+              <div class="panel-header">
+                <p>这里会显示运行状态，方便查看启动、停止和异常信息。</p>
+                <button id="btnClearLog">清空日志</button>
+              </div>
+
+              <div class="log-dashboard">
+                <section class="ops-log-card">
+                  <h3>程序记录</h3>
+                  <pre id="logBox"></pre>
+                </section>
+
+                <section class="receiver-log-card receiver-only">
+                  <h3>接收记录（连接核心）</h3>
+                  <pre id="receiverSingboxLog"></pre>
+                </section>
+
+                <section class="receiver-log-card receiver-only">
+                  <h3>接收记录（端口映射）</h3>
+                  <pre id="receiverFrpcLog"></pre>
+                </section>
+              </div>
+            </section>
+
+            <section class="panel glass view-panel account-panel" id="accountPanel" data-view-panel="account">
+              <div class="panel-header">
+                <p>在这里登录账号、查看状态，并管理账号资料。</p>
+              </div>
+
+              <section class="collab-auth-intro">
+                <h3>请先登录账号</h3>
+                <p>登录后即可使用连接设置、消息、ChatGPT 网页和 Gemini 网页。</p>
+              </section>
+
+              <div class="collab-summary">
+                <article class="summary-card">
+                  <span class="summary-label">当前状态</span>
+                  <strong id="c_conn_state">未登录</strong>
+                </article>
+
+                <article class="summary-card">
+                  <span class="summary-label">当前房间</span>
+                  <strong id="c_room_scope">-</strong>
+                </article>
+
+                <article class="summary-card">
+                  <span class="summary-label">本机信息</span>
+                  <strong id="c_local_info">-</strong>
+                </article>
+              </div>
+
+              <div class="collab-login-block">
+                <div class="collab-form-row">
+                  <label>
+                    <span>服务地址</span>
+                    <input id="c_server_url" placeholder="http://example.com:8088" />
+                  </label>
+                </div>
+
+                <div class="collab-form-row two">
+                  <label>
+                    <span>账号</span>
+                    <input id="c_username" placeholder="请输入协作账号" />
+                  </label>
+
+                  <label>
+                    <span>密码</span>
+                    <input id="c_password" type="password" placeholder="请输入协作密码" />
+                  </label>
+                </div>
+
+                <label class="option-row remember-option" for="c_remember_password">
+                  <input id="c_remember_password" type="checkbox" />
+                  <div class="option-copy">
+                    <strong>记住密码</strong>
+                    <span>下次打开时自动填入账号和密码</span>
+                  </div>
+                </label>
+
+                <div class="actions collab-actions">
+                    <button id="btnCollabImport" class="outline">导入配置文件</button>
+                    <button class="primary" id="btnCollabLogin">登录</button>
+                </div>
+
+                <p class="collab-feedback" id="c_feedback" hidden></p>
+              </div>
+
+              <div class="account-layout">
+                <aside class="account-side">
+                  <article class="account-card">
+                    <div class="account-card-head">
+                      <span class="account-avatar" id="c_account_avatar">?</span>
+                      <div class="account-meta">
+                        <strong id="c_account_name">未登录</strong>
+                        <span id="c_account_meta">登录后可查看账号信息</span>
+                      </div>
+                    </div>
+
+                    <p class="account-note" id="c_account_note">可设置昵称、头像和简介，便于联系人识别。</p>
+
+                    <div class="actions account-actions">
+                      <button id="btnAccountProfile">编辑个人资料</button>
+                      <button id="btnAccountLogout">退出登录</button>
+                    </div>
+                  </article>
+
+                  <article class="account-tip-card">
+                    <h3>账号说明</h3>
+                    <div class="account-tip-list">
+                      <div class="tip-item">登录后，右上角会显示账号和在线状态。</div>
+                      <div class="tip-item">个人资料保存后，会同步显示在联系人列表和聊天消息中。</div>
+                      <div class="tip-item">房间消息和私聊都在“联系人与聊天”页面查看。</div>
+                    </div>
+                  </article>
+                </aside>
+              </div>
+            </section>
+
+            <section class="panel glass view-panel chat-panel" id="chatPanel" data-view-panel="chat">
+              <div class="panel-header">
+                <p>左侧选择房间或联系人，右侧查看消息并继续聊天。</p>
+              </div>
+
+              <div class="chat-layout">
+                <aside class="chat-sidebar">
+                  <button class="chat-room-card active" id="c_room_channel" type="button">
+                    <span class="chat-room-icon">#</span>
+                    <div class="chat-room-meta">
+                      <strong>当前房间</strong>
+                      <span id="c_room_channel_scope">房间：-</span>
+                    </div>
+                    <span class="unread-badge room-unread-badge" id="c_room_unread" hidden>0</span>
+                  </button>
+
+                  <button class="chat-settings-trigger" id="btnOpenMessageSettings" type="button">消息设置</button>
+
+                  <div class="chat-list-head">
+                    <span>联系人</span>
+                    <small id="c_online_count">0 人</small>
+                  </div>
+
+                  <ul id="c_online_list"></ul>
+                </aside>
+
+                <section class="chat-stage">
+                  <div class="chat-stage-head">
+                    <div class="chat-stage-copy">
+                      <h3 id="c_chat_title">当前房间</h3>
+                      <p id="c_chat_subtitle">发送给当前房间内的所有在线联系人</p>
+                    </div>
+                    <span class="chat-connection-chip" id="c_chat_status_badge">未连接</span>
+                  </div>
+
+                  <div id="c_chat_box"></div>
+
+                  <div class="chat-compose">
+                    <div class="chat-hidden-controls">
+                      <select id="c_chat_scope">
+                        <option value="subnet">发送到当前房间</option>
+                        <option value="private">发送给单个联系人</option>
+                      </select>
+
+                      <select id="c_chat_target" disabled>
+                        <option value="">请选择联系人</option>
+                      </select>
+                    </div>
+
+                    <p class="panel-feedback" id="chat_feedback" hidden></p>
+
+                    <div class="chat-input-row">
+                      <input id="c_chat_input" placeholder="输入消息，按 Enter 发送" />
+                      <button id="btnChatSend">发送</button>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </section>
+
+            <section class="panel glass view-panel settings-panel" id="messageSettingsPanel" data-view-panel="message-settings">
+              <div class="panel-header">
+                <p>在这里设置消息提醒方式。</p>
+                <button id="btnBackToChat">返回聊天</button>
+              </div>
+
+              <div class="settings-layout">
+                <article class="settings-card">
+                  <div class="settings-card-head">
+                    <strong>消息提醒</strong>
+                    <span>控制右上角弹出的消息提示</span>
+                  </div>
+
+                  <label class="option-row settings-option" for="c_notify_message_popup">
+                    <input id="c_notify_message_popup" type="checkbox" />
+                    <div class="option-copy">
+                      <strong>收到消息时提醒</strong>
+                      <span>未查看当前会话时，在右上角显示消息提示。</span>
+                    </div>
+                  </label>
+
+                  <label class="option-row settings-option" for="c_notify_user_online">
+                    <input id="c_notify_user_online" type="checkbox" />
+                    <div class="option-copy">
+                      <strong>联系人上线时提醒</strong>
+                      <span>当有联系人刚刚上线时，在右上角显示上线提示。</span>
+                    </div>
+                  </label>
+                </article>
+
+                <article class="settings-card">
+                  <div class="settings-card-head">
+                    <strong>说明</strong>
+                    <span>提醒规则</span>
+                  </div>
+
+                  <div class="settings-note-list">
+                    <div class="tip-item">打开正在查看的会话时，新消息不会重复提醒。</div>
+                    <div class="tip-item">切到其他联系人、其他房间，或程序不在前台时，新消息会计入未读并按设置提醒。</div>
+                    <div class="tip-item">未读数量会显示在房间或联系人右侧，最多显示为 99+。</div>
+                  </div>
+                </article>
+              </div>
+            </section>
+
+            <section class="panel glass view-panel gpt-panel" id="gptPanel" data-view-panel="gpt">
+              <div class="gpt-browser-shell" id="gptBrowserShell">
+                <div class="gpt-browser-toolbar">
+                  <div class="gpt-toolbar-group">
+                    <button class="toolbar-btn" id="btnGptBack">后退</button>
+                    <button class="toolbar-btn" id="btnGptForward">前进</button>
+                    <button class="toolbar-btn" id="btnGptReload">刷新</button>
+                  </div>
+
+                  <div class="gpt-toolbar-meta">
+                    <span class="gpt-toolbar-pill">
+                      <em>代理</em>
+                      <strong id="gptProxyInfo">SOCKS5 127.0.0.1:1080</strong>
+                    </span>
+
+                    <span class="gpt-toolbar-pill">
+                      <em>状态</em>
+                      <strong id="gptRuntimeState">等待打开</strong>
+                    </span>
+
+                    <span class="gpt-toolbar-pill">
+                      <em>我的提问</em>
+                      <strong id="gptMyQueryCount">0</strong>
+                    </span>
+                  </div>
+
+                  <div class="gpt-toolbar-group gpt-toolbar-actions">
+                    <button class="toolbar-btn" id="btnGptGoStats">AI 使用统计</button>
+                    <button class="toolbar-btn" id="btnGptOpenExternal">浏览器打开</button>
+                    <button class="toolbar-btn" id="btnGptToggleFullscreen">全屏</button>
+                  </div>
+                </div>
+
+                <div class="gpt-browser-content">
+                  <div class="gpt-browser-overlay" id="gptOverlay">
+                    <strong id="gptOverlayTitle">准备打开 ChatGPT</strong>
+                    <p id="gptOverlayText">请先开启发送服务，再打开内置 ChatGPT 网页。</p>
+                  </div>
+
+                  <div id="gptViewHost" class="gpt-native-host" aria-label="ChatGPT 工作区"></div>
+                </div>
+              </div>
+
+              <p class="panel-feedback" id="gpt_feedback" hidden></p>
+            </section>
+
+            <section class="panel glass view-panel gpt-panel" id="geminiPanel" data-view-panel="gemini">
+              <div class="gpt-browser-shell" id="geminiBrowserShell">
+                <div class="gpt-browser-toolbar">
+                  <div class="gpt-toolbar-group">
+                    <button class="toolbar-btn" id="btnGeminiBack">后退</button>
+                    <button class="toolbar-btn" id="btnGeminiForward">前进</button>
+                    <button class="toolbar-btn" id="btnGeminiReload">刷新</button>
+                  </div>
+
+                  <div class="gpt-toolbar-meta">
+                    <span class="gpt-toolbar-pill">
+                      <em>代理</em>
+                      <strong id="geminiProxyInfo">SOCKS5 127.0.0.1:1080</strong>
+                    </span>
+
+                    <span class="gpt-toolbar-pill">
+                      <em>状态</em>
+                      <strong id="geminiRuntimeState">等待打开</strong>
+                    </span>
+
+                    <span class="gpt-toolbar-pill">
+                      <em>登录</em>
+                      <strong>Google 账号</strong>
+                    </span>
+                  </div>
+
+                  <div class="gpt-toolbar-group gpt-toolbar-actions">
+                    <button class="toolbar-btn" id="btnGeminiOpenExternal">浏览器打开</button>
+                    <button class="toolbar-btn" id="btnGeminiToggleFullscreen">全屏</button>
+                  </div>
+                </div>
+
+                <div class="gpt-browser-content">
+                  <div class="gpt-browser-overlay" id="geminiOverlay">
+                    <strong id="geminiOverlayTitle">准备打开 Gemini</strong>
+                    <p id="geminiOverlayText">请先开启发送服务，再打开内置 Gemini 网页。</p>
+                  </div>
+
+                  <div id="geminiViewHost" class="gpt-native-host" aria-label="Gemini 工作区"></div>
+                </div>
+              </div>
+
+              <p class="panel-feedback" id="gemini_feedback" hidden></p>
+            </section>
+
+            <section class="panel glass view-panel gpt-stats-panel" id="gptStatsPanel" data-view-panel="gpt-stats">
+              <div class="panel-header">
+                <p>按时间范围查看账号提问次数分布、总提问量和各账号占比。</p>
+                <button id="btnBackToGpt">返回 ChatGPT 网页</button>
+              </div>
+
+              <div class="gpt-stats-filter">
+                <div class="gpt-range-fields">
+                  <label class="compact-control">
+                    <span>时间范围</span>
+                    <select id="gptStatsPreset">
+                      <option value="7d">最近 7 天</option>
+                      <option value="30d">最近 30 天</option>
+                      <option value="90d">最近 90 天</option>
+                      <option value="all">全部时间</option>
+                      <option value="custom">自定义</option>
+                    </select>
+                  </label>
+
+                  <label class="compact-control">
+                    <span>开始日期</span>
+                    <input id="gptStatsFrom" type="date" />
+                  </label>
+
+                  <label class="compact-control">
+                    <span>结束日期</span>
+                    <input id="gptStatsTo" type="date" />
+                  </label>
+                </div>
+
+                <div class="actions">
+                  <button class="primary" id="btnGptApplyRange">查询统计</button>
+                </div>
+              </div>
+
+              <p class="gpt-range-note" id="gptStatsRangeNote">统计范围：最近 30 天</p>
+
+              <div class="gpt-summary">
+                <article class="summary-card">
+                  <span class="summary-label">所选范围总提问数</span>
+                  <strong id="gptTotalQueries">0</strong>
+                </article>
+
+                <article class="summary-card">
+                  <span class="summary-label">我的提问数</span>
+                  <strong id="gptCurrentUserQueries">0</strong>
+                </article>
+
+                <article class="summary-card">
+                  <span class="summary-label">有记录的账号数</span>
+                  <strong id="gptUserCount">0</strong>
+                </article>
+              </div>
+
+              <div class="gpt-stats-layout">
+                <article class="gpt-chart-card">
+                  <h3>使用占比</h3>
+                  <div class="gpt-pie-chart" id="gptPieChart">
+                    <span id="gptPieCenter">暂无数据</span>
+                  </div>
+                </article>
+
+                <article class="gpt-chart-card">
+                  <h3>账号明细</h3>
+                  <div class="gpt-stats-legend" id="gptStatsLegend"></div>
+                </article>
+              </div>
+
+              <p class="panel-feedback" id="gpt_stats_feedback" hidden></p>
+            </section>
+          </div>
+
+          <aside class="view-menu glass no-drag">
+            <button class="view-nav-btn" data-view-target="sender">
+              <span>连接设置</span>
+              <small>发送端</small>
+            </button>
+
+            <button class="view-nav-btn" data-view-target="receiver">
+              <span>接收端设置</span>
+              <small>接收端</small>
+            </button>
+
+            <button class="view-nav-btn" data-view-target="logs">
+              <span>运行记录</span>
+              <small>状态查看</small>
+            </button>
+
+            <button class="view-nav-btn" data-view-target="account">
+              <span>账号与信息</span>
+              <small>登录与资料</small>
+            </button>
+
+            <button class="view-nav-btn gpt-nav-btn" data-view-target="gpt">
+              <span>ChatGPT 网页</span>
+              <small>内置网页</small>
+            </button>
+
+            <button class="view-nav-btn gpt-nav-btn" data-view-target="gemini">
+              <span>Gemini 网页</span>
+              <small>Google AI</small>
+            </button>
+
+            <button class="view-nav-btn" data-view-target="chat">
+              <span>联系人与聊天</span>
+              <small>会话窗口</small>
+            </button>
+
+            <button class="view-nav-btn" data-view-target="gpt-stats">
+              <span>AI 使用统计</span>
+              <small>提问统计</small>
+            </button>
+          </aside>
+        </div>
+      </main>
+    </div>
+
+    <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+    <div id="appContextMenu" class="app-context-menu" hidden></div>
+    <div id="setupGuide" class="setup-guide-overlay" hidden>
+      <section class="setup-guide-card glass">
+        <div class="setup-guide-head">
+          <span class="section-tag">首次启动</span>
+          <h2 id="setupGuideTitle">首次启动先完成基础配置</h2>
+        </div>
+
+        <p class="setup-guide-intro" id="setupGuideIntro">系统已经准备好本地配置模板。先补全账号服务地址并登录，随后再填写发送端连接信息。</p>
+
+        <ul class="setup-guide-checklist" id="setupGuideChecklist"></ul>
+
+        <div class="setup-guide-note">
+          本地模板会自动生成到用户目录，后续可以继续在项目目录或用户目录中调整默认配置。
+        </div>
+
+        <div class="actions setup-guide-actions">
+          <button id="btnSetupGuideDismiss">不再提醒</button>            <button id="btnSetupGuideImport">导入本地配置文件</button>          <button class="primary" id="btnSetupGuideAction">去填写登录信息</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>
+

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChatPortal X1 V4 个人资料</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./profile.css" />
+  </head>
+  <body>
+    <div class="profile-app">
+      <header class="topbar glass profile-topbar" id="profileTitlebar">
+        <div class="brand-block">
+          <span class="section-tag">个人资料</span>
+          <h1>个人资料</h1>
+          <p>这些内容会显示给在线联系人，用来帮助对方识别你。</p>
+          <p class="profile-room" id="p_server_scope">当前房间：-</p>
+        </div>
+
+        <div class="window-controls no-drag">
+          <button class="win-btn win-btn-min" id="p_btn_min" title="最小化" aria-label="最小化"></button>
+          <button class="win-btn win-btn-max" id="p_btn_max" title="最大化" aria-label="最大化"></button>
+          <button class="win-btn win-btn-close danger" id="p_close_window" title="关闭" aria-label="关闭"></button>
+        </div>
+      </header>
+
+      <main class="profile-main">
+        <section class="profile-form-card glass">
+          <div class="profile-section-head">
+            <span class="section-tag">资料设置</span>
+            <h2>编辑显示信息</h2>
+            <p>保存后会同步显示在账号信息、联系人列表和聊天消息里。</p>
+          </div>
+
+          <div class="profile-content">
+            <label>
+              <span>登录账号</span>
+              <input id="p_username" disabled />
+            </label>
+
+            <label>
+              <span>显示昵称</span>
+              <input id="p_display_name" maxlength="30" placeholder="例如 小王 / 设计部 / 助理 01" />
+            </label>
+
+            <label>
+              <span>一句话介绍</span>
+              <textarea id="p_bio" rows="5" maxlength="200" placeholder="例如：白天在线，急事请直接私聊"></textarea>
+            </label>
+
+            <label>
+              <span>头像文字</span>
+              <input id="p_avatar_text" maxlength="4" placeholder="例如 王 / A / 星" />
+            </label>
+          </div>
+        </section>
+
+        <aside class="profile-preview-panel glass">
+          <div class="profile-section-head">
+            <span class="section-tag">预览效果</span>
+            <h2>别人看到的样子</h2>
+            <p>这里会显示昵称、头像和简介的预览效果。</p>
+          </div>
+
+          <div class="preview-card">
+            <div class="preview-avatar" id="p_preview_avatar">?</div>
+            <div class="preview-meta">
+              <strong id="p_preview_name">-</strong>
+              <span id="p_preview_bio">-</span>
+            </div>
+          </div>
+
+          <div class="preview-tips">
+            <div class="tip-item">昵称尽量简洁，列表里会更清楚。</div>
+            <div class="tip-item">头像可使用一个字或一个符号，便于识别。</div>
+            <div class="tip-item">简介可以填写在线时间、用途或提醒信息。</div>
+          </div>
+
+          <p class="profile-state" id="p_state">资料已加载</p>
+        </aside>
+      </main>
+
+      <footer class="profile-actions">
+        <button id="p_cancel">关闭</button>
+        <button class="primary" id="p_save">保存更改</button>
+      </footer>
+    </div>
+
+    <script src="./profile.js"></script>
+  </body>
+</html>
+

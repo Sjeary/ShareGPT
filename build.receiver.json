@@ -1,0 +1,34 @@
+{
+  "appId": "com.sjeary.chatportalx1.v4.desktop.receiver",
+  "productName": "ChatPortal X1 V4 Receiver",
+  "asar": true,
+  "files": [
+    "src/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "build/bin",
+      "to": "bin",
+      "filter": [
+        "**/*"
+      ]
+    }
+  ],
+  "directories": {
+    "output": "release_receiver"
+  },
+  "win": {
+    "target": [
+      "portable"
+    ],
+    "artifactName": "chatportal-x1-v4-receiver-${version}.${ext}",
+    "executableName": "chatportal_x1_v4_receiver",
+    "signAndEditExecutable": false
+  },
+  "extraMetadata": {
+    "main": "src/main/main_receiver.js",
+    "name": "chatportal-x1-v4-receiver-desktop"
+  }
+}
+

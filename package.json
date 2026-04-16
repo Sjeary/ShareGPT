@@ -1,0 +1,85 @@
+{
+  "name": "chatportal-x1-desktop",
+  "version": "4.0.0",
+  "description": "Desktop client with built-in messaging and embedded ChatGPT and Gemini web access.",
+  "main": "src/main/main.js",
+  "author": "Sjeary",
+  "license": "UNLICENSED",
+  "homepage": "https://github.com/Sjeary/singbox-client",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:Sjeary/singbox-client.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Sjeary/singbox-client/issues"
+  },
+  "keywords": [
+    "electron",
+    "windows",
+    "desktop",
+    "network",
+    "chatgpt",
+    "gemini",
+    "sing-box"
+  ],
+  "scripts": {
+    "prepare:assets": "node scripts/prepare-assets.mjs",
+    "dev": "node scripts/prepare-assets.mjs && electron .",
+    "dev:sender": "node scripts/prepare-assets.mjs && electron . --mode=sender",
+    "dev:receiver": "node scripts/prepare-assets.mjs && electron . --mode=receiver",
+    "dist:win": "node scripts/prepare-assets.mjs && electron-builder --win portable",
+    "dist:win:sender": "node scripts/prepare-assets.mjs && electron-builder --win portable --config build.sender.json",
+    "dist:win:receiver": "node scripts/prepare-assets.mjs && electron-builder --win portable --config build.receiver.json",
+    "dist:win:split": "node scripts/prepare-assets.mjs && electron-builder --win portable --config build.sender.json && electron-builder --win portable --config build.receiver.json",
+    "dist:win:installer": "node scripts/prepare-assets.mjs && electron-builder --win nsis",
+    "dist:mac": "node scripts/prepare-assets.mjs && electron-builder --mac dmg",
+    "dist:mac:sender": "node scripts/prepare-assets.mjs && electron-builder --mac --config build.sender.json",
+    "dist:mac:sender:dmg": "node scripts/prepare-assets.mjs && electron-builder --mac dmg --config build.sender.json",
+    "dist:linux": "node scripts/prepare-assets.mjs && electron-builder --linux AppImage"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.sjeary.chatportalx1.v4.desktop",
+    "productName": "ChatPortal X1 V4",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/bin",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "artifactName": "chatportal-x1-v4-${version}.${ext}",
+      "executableName": "chatportal_x1_v4",
+      "signAndEditExecutable": false
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Network"
+    }
+  }
+}
+
