@@ -11,4 +11,5 @@ collab_server2/data/
 collab_server2.zip
 private.defaults.local.json
 .cache/
+.npm-cache/
 .DS_Store
