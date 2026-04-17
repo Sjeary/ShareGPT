@@ -23,19 +23,19 @@
     "sing-box"
   ],
   "scripts": {
-    "prepare:assets": "node scripts/prepare-assets.mjs",
-    "dev": "node scripts/prepare-assets.mjs && electron .",
-    "dev:sender": "node scripts/prepare-assets.mjs && electron . --mode=sender",
-    "dev:receiver": "node scripts/prepare-assets.mjs && electron . --mode=receiver",
-    "dist:win": "node scripts/prepare-assets.mjs && electron-builder --win portable",
-    "dist:win:sender": "node scripts/prepare-assets.mjs && electron-builder --win portable --config build.sender.json",
-    "dist:win:receiver": "node scripts/prepare-assets.mjs && electron-builder --win portable --config build.receiver.json",
-    "dist:win:split": "node scripts/prepare-assets.mjs && electron-builder --win portable --config build.sender.json && electron-builder --win portable --config build.receiver.json",
-    "dist:win:installer": "node scripts/prepare-assets.mjs && electron-builder --win nsis",
-    "dist:mac": "node scripts/prepare-assets.mjs && electron-builder --mac dmg",
-    "dist:mac:sender": "node scripts/prepare-assets.mjs && electron-builder --mac --config build.sender.json",
-    "dist:mac:sender:dmg": "node scripts/prepare-assets.mjs && electron-builder --mac dmg --config build.sender.json",
-    "dist:linux": "node scripts/prepare-assets.mjs && electron-builder --linux AppImage"
+    "prepare:assets": "node scripts/prepare-assets.mjs all",
+    "dev": "node scripts/prepare-assets.mjs all && electron .",
+    "dev:sender": "node scripts/prepare-assets.mjs sender && electron . --mode=sender",
+    "dev:receiver": "node scripts/prepare-assets.mjs receiver && electron . --mode=receiver",
+    "dist:win": "node scripts/prepare-assets.mjs all && electron-builder --win portable",
+    "dist:win:sender": "node scripts/prepare-assets.mjs sender && electron-builder --win portable --config build.sender.json",
+    "dist:win:receiver": "node scripts/prepare-assets.mjs receiver && electron-builder --win portable --config build.receiver.json",
+    "dist:win:split": "node scripts/prepare-assets.mjs sender && electron-builder --win portable --config build.sender.json && node scripts/prepare-assets.mjs receiver && electron-builder --win portable --config build.receiver.json",
+    "dist:win:installer": "node scripts/prepare-assets.mjs all && electron-builder --win nsis",
+    "dist:mac": "node scripts/prepare-assets.mjs sender && electron-builder --mac dmg",
+    "dist:mac:sender": "node scripts/prepare-assets.mjs sender && electron-builder --mac --config build.sender.json",
+    "dist:mac:sender:dmg": "node scripts/prepare-assets.mjs sender && electron-builder --mac dmg --config build.sender.json",
+    "dist:linux": "node scripts/prepare-assets.mjs all && electron-builder --linux AppImage"
   },
   "devDependencies": {
     "electron": "^31.7.7",

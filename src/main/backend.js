@@ -541,9 +541,10 @@ class Backend {
   }
 
   getPaths() {
+    const includeReceiver = this.appMode === "all" || this.appMode === "receiver";
     return {
       singbox: this.resolveBinary("sing-box"),
-      frpc: this.resolveBinary("frpc"),
+      frpc: includeReceiver ? this.resolveBinary("frpc") : "",
       runtimeDir: this.runtimeDir,
       userDataDir: this.app.getPath("userData"),
       settingsFile: this.settingsFile,

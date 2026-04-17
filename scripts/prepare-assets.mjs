@@ -15,6 +15,10 @@ const names = {
 };
 
 const outputDir = path.join(projectRoot, "build", "bin");
+const cliMode = process.argv
+  .slice(2)
+  .map((item) => String(item || "").trim().toLowerCase())
+  .find((item) => item === "sender" || item === "receiver" || item === "all") || "all";
 
 async function ensureDir(dir) {
   await fs.mkdir(dir, { recursive: true });
@@ -82,12 +86,22 @@ async function copyOne(label, fileName) {
 
 async function main() {
   await ensureDir(outputDir);
-  await copyOne("sing-box", names.singbox);
+  const needsSingbox = cliMode === "all" || cliMode === "sender" || cliMode === "receiver";
+  const needsFrpc = cliMode === "all" || cliMode === "receiver";
 
-  try {
-    await copyOne("frpc", names.frpc);
-  } catch (err) {
-    console.warn(`[assets] frpc 未准备，Receiver 模式将无法运行: ${err.message}`);
+  if (needsSingbox) {
+    await copyOne("sing-box", names.singbox);
+  }
+
+  if (needsFrpc) {
+    try {
+      await copyOne("frpc", names.frpc);
+    } catch (err) {
+      if (cliMode === "receiver") {
+        throw err;
+      }
+      console.warn(`[assets] frpc 未准备，Receiver 模式将无法运行: ${err.message}`);
+    }
   }
 }
 

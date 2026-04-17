@@ -3165,6 +3165,100 @@ body[data-theme="light"] .setup-guide-overlay {
   background: rgba(24, 24, 24, 0.2);
 }
 
+body[data-theme="dark"] input:focus,
+body[data-theme="dark"] select:focus,
+body[data-theme="dark"] textarea:focus {
+  border-color: rgba(245, 158, 11, 0.5);
+}
+
+body[data-theme="dark"] button.primary {
+  background: linear-gradient(135deg, #f59e0b, #fb7185);
+}
+
+body[data-theme="dark"] button.primary:hover {
+  background: linear-gradient(135deg, #fbbf24, #fb7185);
+}
+
+body[data-theme="dark"] .view-nav-btn.active {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.16), rgba(251, 113, 133, 0.12));
+}
+
+body[data-theme="dark"] .view-nav-btn.gpt-nav-btn {
+  background:
+    radial-gradient(circle at top left, rgba(10, 132, 255, 0.2), transparent 60%),
+    linear-gradient(180deg, rgba(10, 132, 255, 0.12), rgba(245, 158, 11, 0.14));
+}
+
+body[data-theme="dark"] .view-nav-btn.gpt-nav-btn:hover,
+body[data-theme="dark"] .view-nav-btn.gpt-nav-btn.active {
+  border-color: rgba(10, 132, 255, 0.3);
+  background:
+    radial-gradient(circle at top left, rgba(10, 132, 255, 0.24), transparent 56%),
+    linear-gradient(180deg, rgba(10, 132, 255, 0.18), rgba(245, 158, 11, 0.18));
+}
+
+body[data-theme="dark"] .chat-room-card {
+  border-color: rgba(245, 158, 11, 0.16);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.16), rgba(251, 113, 133, 0.1));
+}
+
+body[data-theme="dark"] .chat-room-card:hover,
+body[data-theme="dark"] .chat-room-card.active {
+  border-color: rgba(245, 158, 11, 0.32);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.22), rgba(251, 113, 133, 0.14));
+}
+
+body[data-theme="dark"] .chat-room-icon {
+  background: linear-gradient(135deg, #f59e0b, #fb7185);
+}
+
+body[data-theme="dark"] .chat-sidebar-tab:hover {
+  border-color: rgba(245, 158, 11, 0.2);
+}
+
+body[data-theme="dark"] .chat-sidebar-tab.active {
+  border-color: rgba(245, 158, 11, 0.28);
+}
+
+body[data-theme="dark"] .chat-reply-ref {
+  border-color: rgba(245, 158, 11, 0.18);
+  border-left-color: rgba(245, 158, 11, 0.72);
+}
+
+body[data-theme="dark"] .chat-item.self .chat-bubble {
+  border-color: rgba(245, 158, 11, 0.22);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.24), rgba(251, 113, 133, 0.18));
+  color: #fff7ea;
+}
+
+body[data-theme="dark"] #btnChatSend {
+  border-color: rgba(245, 158, 11, 0.24);
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.9), rgba(251, 113, 133, 0.82));
+  box-shadow: 0 14px 24px rgba(245, 158, 11, 0.18);
+}
+
+body[data-theme="dark"] #btnChatSend:hover {
+  border-color: rgba(251, 191, 36, 0.36);
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.96), rgba(251, 113, 133, 0.88));
+}
+
+body[data-theme="dark"] .setup-guide-card {
+  background:
+    radial-gradient(circle at top right, rgba(245, 158, 11, 0.12), transparent 28%),
+    radial-gradient(circle at bottom left, rgba(10, 132, 255, 0.12), transparent 30%),
+    rgba(10, 18, 28, 0.96);
+}
+
+body[data-theme="dark"] .setup-guide-checklist li::before,
+body[data-theme="dark"] .section-tag::before {
+  background: linear-gradient(135deg, #f59e0b, #fb7185);
+}
+
+body[data-theme="dark"] .setup-guide-checklist li::before {
+  box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.12);
+}
+
 body[data-theme="light"] .setup-guide-card {
   background: rgba(186, 196, 206, 0.98);
 }

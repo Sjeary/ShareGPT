@@ -6,6 +6,9 @@ release_receiver/
 collab_server/node_modules/
 collab_server/data/
 collab_server.zip
+collab_server2/node_modules/
+collab_server2/data/
+collab_server2.zip
 private.defaults.local.json
 .cache/
 .DS_Store
