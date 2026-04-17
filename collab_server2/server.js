@@ -9,15 +9,18 @@ const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number.parseInt(process.env.PORT || "8088", 10);
 const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, "data", "users.json");
 const GPT_USAGE_FILE = process.env.GPT_USAGE_FILE || path.join(__dirname, "data", "gpt_usage.json");
+const CHAT_HISTORY_FILE = process.env.CHAT_HISTORY_FILE || path.join(__dirname, "data", "chat_history.json");
 const SESSION_TTL_MS = Number.parseInt(process.env.SESSION_TTL_MS || `${24 * 60 * 60 * 1000}`, 10);
-const HISTORY_MAX = Number.parseInt(process.env.HISTORY_MAX || "200", 10);
+const HISTORY_MAX = Number.parseInt(process.env.HISTORY_MAX || "2000", 10);
 const MAX_AVATAR_LENGTH = Number.parseInt(process.env.MAX_AVATAR_LENGTH || `${150 * 1024}`, 10);
 const GPT_USAGE_MAX = Number.parseInt(process.env.GPT_USAGE_MAX || "50000", 10);
+const MAX_ATTACHMENTS_PER_MESSAGE = Number.parseInt(process.env.MAX_ATTACHMENTS_PER_MESSAGE || "4", 10);
+const MAX_ATTACHMENT_BYTES = Number.parseInt(process.env.MAX_ATTACHMENT_BYTES || `${30 * 1024 * 1024}`, 10);
+const RECALL_EDITABLE_WINDOW_MS = Number.parseInt(process.env.RECALL_EDITABLE_WINDOW_MS || `${7 * 24 * 60 * 60 * 1000}`, 10);
 
 const sessions = new Map();
 const wsClients = new Set();
 const wsByToken = new Map();
-const history = [];
 
 function safeEnvText(value) {
   return String(value || "").trim();
@@ -111,6 +114,155 @@ function normalizeUsageEvent(record) {
     count,
   };
 }
+
+function ensureChatHistoryFile() {
+  fs.mkdirSync(path.dirname(CHAT_HISTORY_FILE), { recursive: true });
+  if (!fs.existsSync(CHAT_HISTORY_FILE)) {
+    fs.writeFileSync(CHAT_HISTORY_FILE, JSON.stringify({ history: [] }, null, 2), "utf-8");
+  }
+}
+
+function normalizeAttachment(record) {
+  const dataUrl = safeText(record?.dataUrl);
+  const size = Math.max(0, Number.parseInt(String(record?.size || "0"), 10) || 0);
+  if (!dataUrl || size > MAX_ATTACHMENT_BYTES) {
+    return null;
+  }
+
+  return {
+    kind: safeText(record?.kind) === "image" ? "image" : "file",
+    name: safeText(record?.name).slice(0, 200) || "file",
+    mime: safeText(record?.mime).slice(0, 200),
+    size,
+    dataUrl,
+  };
+}
+
+function normalizeReplyTarget(record) {
+  const id = safeText(record?.id);
+  if (!id) return null;
+
+  return {
+    id,
+    from: safeText(record?.from || record?.username),
+    displayName: safeText(record?.displayName || record?.username || record?.from) || "消息",
+    preview: safeText(record?.preview).slice(0, 240) || "原消息",
+    timestamp: safeText(record?.timestamp),
+  };
+}
+
+function normalizeForwardedFrom(record) {
+  const from = safeText(record?.from || record?.username);
+  if (!from) return null;
+
+  return {
+    from,
+    displayName: safeText(record?.displayName || record?.username || record?.from) || "转发消息",
+  };
+}
+
+function normalizeReadByEntry(record) {
+  const username = safeText(record?.username || record?.from);
+  if (!username) return null;
+  return {
+    username,
+    displayName: safeText(record?.displayName || record?.username || record?.from) || username,
+    readAt: safeText(record?.readAt || record?.timestamp) || nowIso(),
+  };
+}
+
+function stableMessageId(record) {
+  const payload = {
+    scope: safeText(record?.scope),
+    from: safeText(record?.from || record?.username),
+    to: safeText(record?.to),
+    username: safeText(record?.username || record?.from),
+    text: String(record?.text || ""),
+    timestamp: safeText(record?.timestamp),
+    subnetKey: safeText(record?.subnetKey),
+    subnetLabel: safeText(record?.subnetLabel || record?.roomScope),
+    replyTo: safeText(record?.replyTo?.id),
+  };
+  return crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex").slice(0, 24);
+}
+
+function normalizeHistoryMessage(record) {
+  const recalled = Boolean(record?.recalled);
+  const scope = safeText(record?.scope) === "private" ? "private" : "subnet";
+  const text = recalled ? "" : String(record?.text || "").slice(0, 8000);
+  const attachments = recalled
+    ? []
+    : (Array.isArray(record?.attachments)
+      ? record.attachments.map(normalizeAttachment).filter(Boolean).slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
+      : []);
+  const replyTo = normalizeReplyTarget(record?.replyTo);
+  const forwardedFrom = normalizeForwardedFrom(record?.forwardedFrom);
+
+  if (!recalled && !safeText(text) && !attachments.length) {
+    return null;
+  }
+
+  return {
+    id: safeText(record?.id) || stableMessageId(record),
+    type: "chat",
+    scope,
+    from: safeText(record?.from || record?.username),
+    to: safeText(record?.to),
+    username: safeText(record?.username || record?.from),
+    displayName: safeText(record?.displayName || record?.username || record?.from),
+    avatar: safeText(record?.avatar),
+    text,
+    attachments,
+    replyTo,
+    forwardedFrom,
+    subnetKey: safeText(record?.subnetKey),
+    subnetLabel: safeText(record?.subnetLabel || record?.roomScope),
+    timestamp: safeText(record?.timestamp) || nowIso(),
+    readAt: scope === "private" ? safeText(record?.readAt) : "",
+    readBy: scope === "subnet"
+      ? (Array.isArray(record?.readBy) ? record.readBy.map(normalizeReadByEntry).filter(Boolean) : [])
+      : [],
+    edited: Boolean(record?.edited),
+    editedAt: Boolean(record?.edited) ? (safeText(record?.editedAt) || nowIso()) : "",
+    recalled,
+    recalledAt: recalled ? (safeText(record?.recalledAt) || nowIso()) : "",
+  };
+}
+
+function messageActivityTimestamp(record) {
+  const readByLatest = Array.isArray(record?.readBy)
+    ? record.readBy
+      .map((item) => safeText(item?.readAt))
+      .filter(Boolean)
+      .sort()
+      .at(-1)
+    : "";
+  return safeText(readByLatest || record?.readAt || record?.editedAt || record?.recalledAt || record?.timestamp);
+}
+
+function loadChatHistoryStore() {
+  ensureChatHistoryFile();
+  try {
+    const raw = JSON.parse(fs.readFileSync(CHAT_HISTORY_FILE, "utf-8"));
+    const items = Array.isArray(raw.history) ? raw.history.map(normalizeHistoryMessage).filter(Boolean) : [];
+    if (items.length > HISTORY_MAX) {
+      items.splice(0, items.length - HISTORY_MAX);
+    }
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+function saveChatHistoryStore(items) {
+  const history = Array.isArray(items) ? items.map(normalizeHistoryMessage).filter(Boolean) : [];
+  if (history.length > HISTORY_MAX) {
+    history.splice(0, history.length - HISTORY_MAX);
+  }
+  fs.writeFileSync(CHAT_HISTORY_FILE, JSON.stringify({ history }, null, 2), "utf-8");
+}
+
+const history = loadChatHistoryStore();
 
 function loadGptUsageStore() {
   ensureGptUsageFile();
@@ -352,10 +504,45 @@ function broadcastPresence() {
 }
 
 function addHistory(message) {
-  history.push(message);
+  const normalized = normalizeHistoryMessage(message);
+  if (!normalized) return;
+  history.push(normalized);
   if (history.length > HISTORY_MAX) {
     history.splice(0, history.length - HISTORY_MAX);
   }
+  saveChatHistoryStore(history);
+}
+
+function findHistoryMessage(messageId) {
+  const id = safeText(messageId);
+  if (!id) return { index: -1, message: null };
+  const index = history.findIndex((item) => item.id === id);
+  return {
+    index,
+    message: index >= 0 ? history[index] : null,
+  };
+}
+
+function persistHistorySnapshot() {
+  saveChatHistoryStore(history);
+}
+
+function buildHistorySyncPayload(client, sinceTimestamp = "") {
+  const visible = visibleHistoryForClient(client);
+  const sinceMs = safeText(sinceTimestamp) ? new Date(sinceTimestamp).getTime() : Number.NaN;
+  const filtered = Number.isFinite(sinceMs)
+    ? visible.filter((item) => {
+      const ts = new Date(messageActivityTimestamp(item)).getTime();
+      return Number.isFinite(ts) && ts > sinceMs;
+    })
+    : visible;
+
+  return {
+    type: "history_sync",
+    messages: filtered,
+    roomScope: client.subnetLabel,
+    timestamp: nowIso(),
+  };
 }
 
 function visibleHistoryForIdentity(username, subnetKey) {
@@ -369,6 +556,89 @@ function visibleHistoryForIdentity(username, subnetKey) {
 
 function visibleHistoryForClient(client) {
   return visibleHistoryForIdentity(client.username, client.subnetKey);
+}
+
+function markPrivateMessagesRead(username, messageIds, conversationWith = "") {
+  const reader = safeText(username);
+  const fromUser = safeText(conversationWith);
+  const ids = Array.isArray(messageIds)
+    ? [...new Set(messageIds.map((item) => safeText(item)).filter(Boolean))]
+    : [];
+
+  if (!reader || !ids.length) return [];
+
+  const now = nowIso();
+  const updated = [];
+
+  for (let index = 0; index < history.length; index += 1) {
+    const item = history[index];
+    if (item.scope !== "private") continue;
+    if (item.to !== reader) continue;
+    if (fromUser && item.from !== fromUser) continue;
+    if (!ids.includes(item.id)) continue;
+    if (safeText(item.readAt)) continue;
+
+    const next = {
+      ...item,
+      readAt: now,
+    };
+    history[index] = next;
+    updated.push(next);
+  }
+
+  if (updated.length) {
+    persistHistorySnapshot();
+  }
+
+  return updated;
+}
+
+function markSubnetMessagesRead(client, messageIds) {
+  const reader = safeText(client?.username);
+  const displayName = safeText(client?.displayName) || reader;
+  const subnetKey = safeText(client?.subnetKey);
+  const ids = Array.isArray(messageIds)
+    ? [...new Set(messageIds.map((item) => safeText(item)).filter(Boolean))]
+    : [];
+
+  if (!reader || !subnetKey || !ids.length) return [];
+
+  const now = nowIso();
+  const updated = [];
+
+  for (let index = 0; index < history.length; index += 1) {
+    const item = history[index];
+    if (item.scope !== "subnet") continue;
+    if (item.subnetKey !== subnetKey) continue;
+    if (!ids.includes(item.id)) continue;
+    if (item.system || item.recalled) continue;
+    if (item.from === reader) continue;
+
+    const currentReaders = Array.isArray(item.readBy)
+      ? item.readBy.map(normalizeReadByEntry).filter(Boolean)
+      : [];
+    if (currentReaders.some((entry) => entry.username === reader)) continue;
+
+    const next = {
+      ...item,
+      readBy: [
+        ...currentReaders,
+        {
+          username: reader,
+          displayName,
+          readAt: now,
+        },
+      ],
+    };
+    history[index] = next;
+    updated.push(next);
+  }
+
+  if (updated.length) {
+    persistHistorySnapshot();
+  }
+
+  return updated;
 }
 
 function closeDuplicateConnections(username, exceptClient) {
@@ -818,10 +1088,253 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    if (payload?.type === "history_sync") {
+      sendToClient(ws, buildHistorySyncPayload(ws, payload?.since));
+      return;
+    }
+
+    if (payload?.type === "chat_recall") {
+      const { index, message } = findHistoryMessage(payload?.messageId);
+      if (!message || index < 0) {
+        sendToClient(ws, {
+          type: "error",
+          text: "该消息不存在或已不可撤回",
+          timestamp: nowIso(),
+        });
+        return;
+      }
+
+      if (message.from !== ws.username) {
+        sendToClient(ws, {
+          type: "error",
+          text: "只能撤回自己发送的消息",
+          timestamp: nowIso(),
+        });
+        return;
+      }
+
+      if (message.recalled) {
+        sendToClient(ws, {
+          type: "error",
+          text: "该消息已经撤回",
+          timestamp: nowIso(),
+        });
+        return;
+      }
+
+      const createdAt = new Date(message.timestamp).getTime();
+      if (Number.isFinite(createdAt) && Date.now() - createdAt > RECALL_EDITABLE_WINDOW_MS) {
+        sendToClient(ws, {
+          type: "error",
+          text: "该消息已超过可撤回时间",
+          timestamp: nowIso(),
+        });
+        return;
+      }
+
+      const recalledMessage = {
+        ...message,
+        text: "",
+        attachments: [],
+        recalled: true,
+        recalledAt: nowIso(),
+      };
+      history[index] = recalledMessage;
+      persistHistorySnapshot();
+
+      const payloadToSend = {
+        type: "chat_recall",
+        message: recalledMessage,
+        roomScope: ws.subnetLabel,
+        timestamp: nowIso(),
+      };
+
+      if (message.scope === "private") {
+        const recipients = new Set([message.from, message.to].filter(Boolean));
+        for (const client of wsClients) {
+          if (client.readyState !== client.OPEN) continue;
+          if (!recipients.has(client.username)) continue;
+          sendToClient(client, payloadToSend);
+        }
+      } else {
+        broadcastToSubnet(message.subnetKey, payloadToSend);
+      }
+      return;
+    }
+
+    if (payload?.type === "chat_read") {
+      const scope = payload?.scope === "subnet" ? "subnet" : "private";
+      const conversationWith = safeText(payload?.with);
+      const messageIds = Array.isArray(payload?.messageIds) ? payload.messageIds : [];
+      if (scope === "private") {
+        const updated = markPrivateMessagesRead(ws.username, messageIds, conversationWith);
+        if (!updated.length) {
+          return;
+        }
+
+        const notifyPayload = {
+          type: "chat_read",
+          messages: updated,
+          reader: ws.username,
+          conversationWith,
+          timestamp: nowIso(),
+        };
+
+        const recipients = new Set(updated.flatMap((item) => [item.from, item.to]).filter(Boolean));
+        for (const client of wsClients) {
+          if (client.readyState !== client.OPEN) continue;
+          if (!recipients.has(client.username)) continue;
+          sendToClient(client, notifyPayload);
+        }
+        return;
+      }
+
+      const updated = markSubnetMessagesRead(ws, messageIds);
+      if (!updated.length) {
+        return;
+      }
+
+      const notifyPayload = {
+        type: "chat_read",
+        scope: "subnet",
+        messages: updated,
+        reader: ws.username,
+        timestamp: nowIso(),
+      };
+
+      broadcastToSubnet(ws.subnetKey, notifyPayload);
+      return;
+    }
+
+    if (payload?.type === "chat_edit") {
+      const { index, message } = findHistoryMessage(payload?.messageId);
+      if (!message || index < 0) {
+        sendToClient(ws, {
+          type: "error",
+          text: "该消息不存在或已无法编辑",
+          timestamp: nowIso(),
+        });
+        return;
+      }
+
+      if (message.from !== ws.username) {
+        sendToClient(ws, {
+          type: "error",
+          text: "只能编辑自己发送的消息",
+          timestamp: nowIso(),
+        });
+        return;
+      }
+
+      if (message.recalled) {
+        sendToClient(ws, {
+          type: "error",
+          text: "已撤回的消息不能编辑",
+          timestamp: nowIso(),
+        });
+        return;
+      }
+
+      if (Array.isArray(message.attachments) && message.attachments.length) {
+        sendToClient(ws, {
+          type: "error",
+          text: "暂不支持编辑带附件的消息",
+          timestamp: nowIso(),
+        });
+        return;
+      }
+
+      const text = String(payload?.text || "").slice(0, 8000);
+      if (!safeText(text)) {
+        sendToClient(ws, {
+          type: "error",
+          text: "编辑后的消息内容不能为空",
+          timestamp: nowIso(),
+        });
+        return;
+      }
+
+      const editedMessage = {
+        ...message,
+        text,
+        edited: true,
+        editedAt: nowIso(),
+      };
+      history[index] = editedMessage;
+      persistHistorySnapshot();
+
+      const payloadToSend = {
+        type: "chat_edit",
+        message: editedMessage,
+        roomScope: ws.subnetLabel,
+        timestamp: nowIso(),
+      };
+
+      if (message.scope === "private") {
+        const recipients = new Set([message.from, message.to].filter(Boolean));
+        for (const client of wsClients) {
+          if (client.readyState !== client.OPEN) continue;
+          if (!recipients.has(client.username)) continue;
+          sendToClient(client, payloadToSend);
+        }
+      } else {
+        broadcastToSubnet(message.subnetKey, payloadToSend);
+      }
+      return;
+    }
+
+    if (payload?.type === "chat_typing") {
+      const scope = payload?.scope === "private" ? "private" : "subnet";
+      const active = payload?.active !== false;
+
+      if (scope === "private") {
+        const to = safeText(payload?.to);
+        if (!to || to === ws.username) {
+          return;
+        }
+
+        for (const client of wsClients) {
+          if (client.readyState !== client.OPEN) continue;
+          if (client.username !== to) continue;
+          sendToClient(client, {
+            type: "chat_typing",
+            scope: "private",
+            active,
+            from: ws.username,
+            displayName: ws.displayName,
+            timestamp: nowIso(),
+          });
+        }
+        return;
+      }
+
+      for (const client of wsClients) {
+        if (client.readyState !== client.OPEN) continue;
+        if (client.subnetKey !== ws.subnetKey) continue;
+        if (client === ws) continue;
+        sendToClient(client, {
+          type: "chat_typing",
+          scope: "subnet",
+          active,
+          from: ws.username,
+          displayName: ws.displayName,
+          subnetKey: ws.subnetKey,
+          subnetLabel: ws.subnetLabel,
+          timestamp: nowIso(),
+        });
+      }
+      return;
+    }
+
     if (payload?.type !== "chat") return;
 
-    const text = String(payload?.text || "").trim();
-    if (!text) return;
+    const text = String(payload?.text || "").slice(0, 8000);
+    const attachments = Array.isArray(payload?.attachments)
+      ? payload.attachments.map(normalizeAttachment).filter(Boolean).slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
+      : [];
+    const replyTo = normalizeReplyTarget(payload?.replyTo);
+    const forwardedFrom = normalizeForwardedFrom(payload?.forwardedFrom);
+    if (!safeText(text) && !attachments.length) return;
 
     const scope = payload?.scope === "private" ? "private" : "subnet";
 
@@ -830,7 +1343,17 @@ wss.on("connection", (ws) => {
       if (!to) {
         sendToClient(ws, {
           type: "error",
-          text: "请选择私聊在线用户",
+          text: "请选择私聊联系人",
+          timestamp: nowIso(),
+        });
+        return;
+      }
+
+      const { user: targetUser } = findUser(to);
+      if (!targetUser) {
+        sendToClient(ws, {
+          type: "error",
+          text: `目标用户不存在: ${to}`,
           timestamp: nowIso(),
         });
         return;
@@ -844,36 +1367,35 @@ wss.on("connection", (ws) => {
         }
       }
 
-      if (!targetClient) {
-        sendToClient(ws, {
-          type: "error",
-          text: `目标用户不在线: ${to}`,
-          timestamp: nowIso(),
-        });
-        return;
-      }
-
-      const message = {
-        type: "chat",
+    const message = {
+      id: crypto.randomUUID(),
+      type: "chat",
         scope: "private",
         from: ws.username,
         to,
         username: ws.username,
         displayName: ws.displayName,
         avatar: ws.avatar || "",
-        text: text.slice(0, 2000),
+        text,
+        attachments,
+        replyTo,
+        forwardedFrom,
         timestamp: nowIso(),
+        readAt: "",
+        edited: false,
+        editedAt: "",
       };
 
       addHistory(message);
       sendToClient(ws, message);
-      if (targetClient !== ws) {
+      if (targetClient && targetClient !== ws) {
         sendToClient(targetClient, message);
       }
       return;
     }
 
-    const message = {
+      const message = {
+      id: crypto.randomUUID(),
       type: "chat",
       scope: "subnet",
       from: ws.username,
@@ -882,8 +1404,14 @@ wss.on("connection", (ws) => {
       avatar: ws.avatar || "",
       subnetKey: ws.subnetKey,
       subnetLabel: ws.subnetLabel,
-      text: text.slice(0, 2000),
+      text,
+      attachments,
+      replyTo,
+      forwardedFrom,
       timestamp: nowIso(),
+      readBy: [],
+      edited: false,
+      editedAt: "",
     };
 
     addHistory(message);

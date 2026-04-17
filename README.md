@@ -11,6 +11,11 @@ ChatPortal X1 V4 是一个桌面客户端，集成了联系人聊天、房间消
 ## 功能
 - Sender / Receiver 双模式
 - 账号登录、联系人列表、私聊、房间消息
+- 图片与文件消息
+- 本地聊天记录保存
+- 离线后重新上线自动补同步历史消息
+- 撤回自己发送的消息
+- 应用内提醒、系统通知、提示铃声
 - 内置 ChatGPT / Gemini 网页
 - AI 使用统计
 - 首次启动配置引导
@@ -38,6 +43,7 @@ https://github.com/Sjeary/singbox-client/releases
 4. 填写连接设置并启动发送服务
 5. 使用联系人聊天或内置 ChatGPT 网页
 6. 可切换到内置 Gemini 网页
+7. Sender 的设置、聊天记录和账号资料会自动保存在系统用户目录，覆盖安装新版本后会继续保留
 
 ### Receiver
 1. 下载 `chatportal-x1-v4-receiver-<version>.exe`
@@ -60,6 +66,12 @@ https://github.com/Sjeary/singbox-client/releases
 ### Receiver
 - `接收端设置`
 - `运行记录`
+
+## 聊天与资料持久化
+- Sender 的设置、本地聊天记录和 AI 网页会话保存在系统用户目录中，不保存在应用包本体内
+- macOS 将新版本拖到“应用程序”目录覆盖旧版本时，本地数据仍会继续保留
+- Windows 便携版覆盖更新时，本地数据同样会继续保留
+- 可在“账号与信息”页面导出或导入本机资料包，用于换机、迁移和手动备份
 
 ## 内置 ChatGPT 网页
 - 使用 Electron 内嵌 Chromium 打开 ChatGPT
@@ -219,14 +231,14 @@ npm run dev:receiver
   - 包含 Windows 所需二进制和 macOS Sender 所需 `sing-box`
 - `scripts/prepare-assets.mjs`
   - 启动和打包前整理运行资源
-- `collab_server/`
+- `collab_server2/`
   - 登录、聊天、在线状态和 AI 使用统计服务端
 
 ## 协作服务端
 快速启动：
 
 ```bash
-cd collab_server
+cd collab_server2
 npm install
 node add_user.js admin MyStrongPass123
 npm start
@@ -239,7 +251,7 @@ http://server.example.com:8088
 ```
 
 部署说明：
-- `collab_server/README.md`
+- `collab_server2/README.md`
 
 ## Git
 克隆仓库：
