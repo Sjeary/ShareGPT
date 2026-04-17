@@ -11,6 +11,10 @@ function firstChar(value) {
   return arr.length ? arr[0] : "";
 }
 
+function normalizeTheme(value) {
+  return safeText(value).toLowerCase() === "light" ? "light" : "dark";
+}
+
 const pageState = {
   serverUrl: "",
   token: "",
@@ -171,7 +175,21 @@ function readQuery() {
   pageState.username = safeText(params.get("username"));
 }
 
+async function applySavedTheme() {
+  document.body.dataset.theme = "dark";
+  if (!window.api?.loadSettings) return;
+
+  try {
+    const settings = await window.api.loadSettings();
+    document.body.dataset.theme = normalizeTheme(settings?.ui?.theme);
+  } catch {
+    document.body.dataset.theme = "dark";
+  }
+}
+
 async function init() {
+  document.body.dataset.platform = window.api?.platform || "unknown";
+  await applySavedTheme();
   readQuery();
 
   if (!pageState.serverUrl || !pageState.token) {

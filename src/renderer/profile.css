@@ -1,5 +1,9 @@
-:root {
+body[data-theme="dark"] {
   color-scheme: dark;
+}
+
+body[data-theme="light"] {
+  color-scheme: light;
 }
 
 html,
@@ -21,6 +25,14 @@ body {
 
 .profile-topbar {
   grid-template-columns: minmax(220px, 1fr) auto;
+}
+
+body[data-platform="darwin"] .profile-topbar {
+  padding-left: 84px;
+}
+
+body[data-platform="darwin"] .window-controls {
+  display: none;
 }
 
 .profile-room {
@@ -151,6 +163,17 @@ body {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
+}
+
+body[data-theme="light"] .preview-card {
+  background:
+    radial-gradient(circle at top right, rgba(245, 158, 11, 0.08), transparent 44%),
+    rgba(255, 255, 255, 0.78);
+}
+
+body[data-theme="light"] .tip-item,
+body[data-theme="light"] .profile-state {
+  background: rgba(255, 255, 255, 0.76);
 }
 
 .profile-actions {

@@ -1,5 +1,6 @@
+const fs = require("node:fs");
 const path = require("node:path");
-const { app, BrowserWindow, WebContentsView, ipcMain, session, shell } = require("electron/main");
+const { app, BrowserWindow, Notification, WebContentsView, clipboard, ipcMain, session, shell } = require("electron");
 const { Backend } = require("./backend");
 
 const GPT_ALLOWED_HOSTS = [
@@ -38,6 +39,7 @@ const AI_WORKSPACE_POLICIES = {
 };
 
 const AI_ALLOWED_PERMISSIONS = new Set(["clipboard-sanitized-write"]);
+const GPT_TAB_TITLE_LIMIT = 48;
 
 function getEventWindow(event, fallbackWindow) {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
@@ -63,6 +65,135 @@ function normalizeMode(baseMode, argv) {
 
 function safeText(value) {
   return String(value || "").trim();
+}
+
+function guessMimeType(filePath) {
+  const ext = path.extname(String(filePath || "")).toLowerCase();
+  const map = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".svg": "image/svg+xml",
+    ".heic": "image/heic",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".json": "application/json",
+    ".pdf": "application/pdf",
+    ".zip": "application/zip",
+    ".7z": "application/x-7z-compressed",
+    ".rar": "application/vnd.rar",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".csv": "text/csv",
+  };
+  return map[ext] || "application/octet-stream";
+}
+
+function normalizeClipboardFilePath(raw) {
+  const value = safeText(raw).replace(/\u0000/g, "");
+  if (!value) return "";
+
+  if (/^file:\/\//i.test(value)) {
+    try {
+      let pathname = decodeURIComponent(new URL(value).pathname || "");
+      if (process.platform === "win32" && /^\/[a-z]:/i.test(pathname)) {
+        pathname = pathname.slice(1);
+      }
+      return path.normalize(pathname);
+    } catch {
+      return "";
+    }
+  }
+
+  if (path.isAbsolute(value)) {
+    return path.normalize(value);
+  }
+  return "";
+}
+
+function decodeWindowsClipboardPaths(buffer) {
+  const text = Buffer.from(buffer || []).toString("utf16le").replace(/\u0000+$/, "");
+  return text
+    .split(/\u0000+/)
+    .map(normalizeClipboardFilePath)
+    .filter(Boolean);
+}
+
+function decodeUtf8ClipboardPaths(buffer) {
+  const text = Buffer.from(buffer || []).toString("utf8").replace(/\u0000/g, "").trim();
+  if (!text) return [];
+  return text
+    .split(/\r?\n/)
+    .map(normalizeClipboardFilePath)
+    .filter(Boolean);
+}
+
+function readClipboardFilePaths() {
+  const formats = typeof clipboard.availableFormats === "function" ? clipboard.availableFormats() : [];
+  const lowerToActual = new Map(formats.map((item) => [String(item).toLowerCase(), item]));
+
+  if (lowerToActual.has("filenamew")) {
+    const values = decodeWindowsClipboardPaths(clipboard.readBuffer(lowerToActual.get("filenamew")));
+    if (values.length) return values;
+  }
+
+  if (lowerToActual.has("public.file-url")) {
+    const values = decodeUtf8ClipboardPaths(clipboard.readBuffer(lowerToActual.get("public.file-url")));
+    if (values.length) return values;
+  }
+
+  const textFallback = normalizeClipboardFilePath(clipboard.readText());
+  if (textFallback) {
+    return [textFallback];
+  }
+
+  return [];
+}
+
+function buildClipboardAttachmentPayload() {
+  const filePath = readClipboardFilePaths().find((item) => {
+    try {
+      return fs.existsSync(item) && fs.statSync(item).isFile();
+    } catch {
+      return false;
+    }
+  });
+
+  if (filePath) {
+    const stat = fs.statSync(filePath);
+    const mime = guessMimeType(filePath);
+    const buffer = fs.readFileSync(filePath);
+    return {
+      source: "file",
+      preferredMode: "attachment",
+      kind: mime.startsWith("image/") ? "image" : "file",
+      name: path.basename(filePath),
+      mime,
+      size: stat.size,
+      dataUrl: `data:${mime};base64,${buffer.toString("base64")}`,
+    };
+  }
+
+  const image = clipboard.readImage();
+  if (!image.isEmpty()) {
+    const buffer = image.toPNG();
+    return {
+      source: "bitmap",
+      preferredMode: "inline-image",
+      kind: "image",
+      name: "pasted-image.png",
+      mime: "image/png",
+      size: buffer.length,
+      dataUrl: `data:image/png;base64,${buffer.toString("base64")}`,
+    };
+  }
+
+  return null;
 }
 
 function isAllowedUrlForHosts(rawUrl, allowedHosts) {
@@ -97,12 +228,24 @@ async function openExternalUrl(rawUrl) {
 }
 
 function createElectronApp(baseMode = "all") {
+  app.setName("ShareGPT");
+  if (typeof app.setAppUserModelId === "function") {
+    app.setAppUserModelId("ShareGPT");
+  }
+
   let mainWindow = null;
   let profileWindow = null;
   let backend = null;
   let appMode = normalizeMode(baseMode, process.argv);
   const configuredAiPartitions = new Set();
   const aiWorkspaces = new Map();
+  const gptTabOrder = [];
+  let activeGptTabId = "";
+  let gptTabCounter = 0;
+  let gptHostState = {
+    visible: false,
+    bounds: null,
+  };
 
   function emitAiEvent(kind, type, payload = {}) {
     if (!mainWindow || mainWindow.isDestroyed()) return null;
@@ -115,8 +258,58 @@ function createElectronApp(baseMode = "all") {
     return eventPayload;
   }
 
+  function emitAppEvent(type, payload = {}) {
+    if (!mainWindow || mainWindow.isDestroyed()) return null;
+    const eventPayload = {
+      type,
+      ...payload,
+    };
+    mainWindow.webContents.send("app:event", eventPayload);
+    return eventPayload;
+  }
+
+  function focusMainWindow() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    if (!mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+    mainWindow.focus();
+  }
+
   function getAiPolicy(kind) {
     return AI_WORKSPACE_POLICIES[safeText(kind)] || null;
+  }
+
+  function workspaceKey(kind, tabId = "") {
+    const targetKind = safeText(kind);
+    if (targetKind === "gpt") {
+      return `gpt:${safeText(tabId) || "default"}`;
+    }
+    return targetKind;
+  }
+
+  function getWorkspace(kind, tabId = "") {
+    const targetKind = safeText(kind);
+    if (targetKind === "gpt") {
+      const targetTabId = safeText(tabId) || activeGptTabId;
+      if (!targetTabId) return null;
+      return aiWorkspaces.get(workspaceKey(targetKind, targetTabId)) || null;
+    }
+    return aiWorkspaces.get(workspaceKey(targetKind)) || null;
+  }
+
+  function listGptWorkspaces() {
+    return gptTabOrder
+      .map((tabId) => getWorkspace("gpt", tabId))
+      .filter(Boolean);
+  }
+
+  function normalizeGptTabTitle(rawTitle, fallbackTitle) {
+    const title = safeText(rawTitle).replace(/\s+/g, " ").slice(0, GPT_TAB_TITLE_LIMIT);
+    return title || fallbackTitle || "ChatGPT";
   }
 
   function configureAiSession(targetSession, policy) {
@@ -157,6 +350,8 @@ function createElectronApp(baseMode = "all") {
 
     return {
       kind: workspace.kind,
+      tabId: safeText(workspace.id),
+      title: safeText(workspace.title) || safeText(workspace.defaultTitle),
       url: workspace.lastUrl || workspace.policy.homeUrl,
       loading: Boolean(workspace.loading),
       initialized: Boolean(workspace.initialized),
@@ -172,6 +367,111 @@ function createElectronApp(baseMode = "all") {
     });
   }
 
+  function attachWorkspaceView(workspace) {
+    if (!mainWindow || mainWindow.isDestroyed() || workspace.attached) {
+      return;
+    }
+    mainWindow.contentView.addChildView(workspace.view);
+    workspace.attached = true;
+  }
+
+  function detachWorkspaceView(workspace) {
+    if (!workspace) return;
+    if (workspace.attached) {
+      try {
+        mainWindow?.contentView?.removeChildView(workspace.view);
+      } catch {}
+      workspace.attached = false;
+    }
+    workspace.view.setVisible(false);
+    workspace.view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
+  }
+
+  function listGptTabsPayload() {
+    return {
+      tabs: listGptWorkspaces().map((workspace) => ({
+        ...getAiStatePayload(workspace),
+        id: safeText(workspace.id),
+      })),
+      activeTabId: activeGptTabId,
+    };
+  }
+
+  function emitGptTabsChanged() {
+    return emitAiEvent("gpt", "tabs-changed", listGptTabsPayload());
+  }
+
+  function syncActiveGptWorkspace() {
+    const activeWorkspace = getWorkspace("gpt", activeGptTabId);
+
+    for (const workspace of listGptWorkspaces()) {
+      if (workspace.id !== activeGptTabId) {
+        detachWorkspaceView(workspace);
+      }
+    }
+
+    if (!activeWorkspace) {
+      return false;
+    }
+
+    return syncAiBounds(activeWorkspace, gptHostState);
+  }
+
+  function createGptWorkspace(options = {}) {
+    const workspace = getOrCreateAiWorkspace("gpt", safeText(options.tabId), {
+      title: safeText(options.title),
+      lastUrl: safeText(options.lastUrl),
+    });
+
+    if (!gptTabOrder.includes(workspace.id)) {
+      gptTabOrder.push(workspace.id);
+    }
+
+    if (!activeGptTabId) {
+      activeGptTabId = workspace.id;
+    }
+
+    emitGptTabsChanged();
+    return workspace;
+  }
+
+  function closeGptWorkspace(tabId) {
+    const targetId = safeText(tabId);
+    const workspace = getWorkspace("gpt", targetId);
+    if (!workspace) {
+      return {
+        ...listGptTabsPayload(),
+        activeState: getWorkspace("gpt", activeGptTabId) ? getAiStatePayload(getWorkspace("gpt", activeGptTabId)) : null,
+      };
+    }
+
+    detachWorkspaceView(workspace);
+    aiWorkspaces.delete(workspaceKey("gpt", targetId));
+
+    const orderIndex = gptTabOrder.indexOf(targetId);
+    if (orderIndex >= 0) {
+      gptTabOrder.splice(orderIndex, 1);
+    }
+
+    try {
+      if (!workspace.view.webContents.isDestroyed()) {
+        workspace.view.webContents.close({ waitForBeforeUnload: false });
+      }
+    } catch {}
+
+      if (activeGptTabId === targetId) {
+        activeGptTabId = gptTabOrder[Math.max(0, orderIndex - 1)] || gptTabOrder[0] || "";
+      }
+
+    syncActiveGptWorkspace();
+    const activeWorkspace = getWorkspace("gpt", activeGptTabId);
+    emitGptTabsChanged();
+    return {
+      ...listGptTabsPayload(),
+      activeState: activeWorkspace ? getAiStatePayload(activeWorkspace) : null,
+    };
+  }
+
   function syncAiBounds(workspace, options = {}) {
     const visible = Boolean(options.visible);
     const bounds = options.bounds || null;
@@ -179,11 +479,15 @@ function createElectronApp(baseMode = "all") {
     workspace.visible = visible;
 
     if (!visible || !bounds || bounds.width <= 0 || bounds.height <= 0) {
-      workspace.view.setVisible(false);
-      workspace.view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
+      if (workspace.kind === "gpt") {
+        detachWorkspaceView(workspace);
+      } else {
+        detachWorkspaceView(workspace);
+      }
       return false;
     }
 
+    attachWorkspaceView(workspace);
     workspace.view.setBounds({
       x: Math.round(bounds.x),
       y: Math.round(bounds.y),
@@ -282,21 +586,31 @@ function createElectronApp(baseMode = "all") {
       emitAiState(workspace, "did-navigate-in-page", { url });
     });
 
+    wc.on("page-title-updated", (event, title) => {
+      event.preventDefault();
+      if (workspace.kind !== "gpt") return;
+      workspace.title = normalizeGptTabTitle(title, workspace.defaultTitle);
+      emitGptTabsChanged();
+    });
+
     wc.on("console-message", (_event, _level, message) => {
       emitAiEvent(workspace.kind, "console-message", { message: String(message || "") });
     });
   }
 
-  function getOrCreateAiWorkspace(kind) {
-    if (aiWorkspaces.has(kind)) {
-      return aiWorkspaces.get(kind);
+  function getOrCreateAiWorkspace(kind, tabId = "", options = {}) {
+    const targetKind = safeText(kind);
+    const targetTabId = targetKind === "gpt" ? (safeText(tabId) || `tab-${++gptTabCounter}`) : "";
+    const existing = getWorkspace(targetKind, targetTabId);
+    if (existing) {
+      return existing;
     }
 
     if (!mainWindow || mainWindow.isDestroyed()) {
       throw new Error("主窗口尚未就绪");
     }
 
-    const policy = getAiPolicy(kind);
+    const policy = getAiPolicy(targetKind);
     if (!policy) {
       throw new Error("不支持的 AI 工作区");
     }
@@ -316,29 +630,34 @@ function createElectronApp(baseMode = "all") {
     });
 
     const workspace = {
-      kind,
+      id: targetKind === "gpt" ? targetTabId : targetKind,
+      kind: targetKind,
       policy,
       view,
+      attached: false,
       initialized: false,
       loading: false,
       visible: false,
-      lastUrl: policy.homeUrl,
+      lastUrl: safeText(options.lastUrl) || policy.homeUrl,
+      defaultTitle: targetKind === "gpt"
+        ? normalizeGptTabTitle(safeText(options.title), "ChatGPT")
+        : safeText(options.title),
+      title: targetKind === "gpt"
+        ? normalizeGptTabTitle(safeText(options.title), "ChatGPT")
+        : safeText(options.title),
       proxySignature: "",
     };
 
     bindAiWorkspaceEvents(workspace);
     view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
     view.setVisible(false);
-    mainWindow.contentView.addChildView(view);
-    aiWorkspaces.set(kind, workspace);
+    aiWorkspaces.set(workspaceKey(targetKind, workspace.id), workspace);
     return workspace;
   }
 
   function disposeAiWorkspaces() {
     for (const workspace of aiWorkspaces.values()) {
-      try {
-        mainWindow?.contentView?.removeChildView(workspace.view);
-      } catch {}
+      detachWorkspaceView(workspace);
 
       try {
         if (!workspace.view.webContents.isDestroyed()) {
@@ -348,6 +667,8 @@ function createElectronApp(baseMode = "all") {
     }
 
     aiWorkspaces.clear();
+    gptTabOrder.length = 0;
+    activeGptTabId = "";
     configuredAiPartitions.clear();
   }
 
@@ -386,6 +707,9 @@ function createElectronApp(baseMode = "all") {
     });
 
     attachWindowGuards(mainWindow);
+    if (process.platform === "darwin") {
+      mainWindow.setWindowButtonVisibility(true);
+    }
     mainWindow.removeMenu();
     mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
     mainWindow.on("closed", () => {
@@ -405,19 +729,95 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("settings:load", () => backend.loadSettings());
     ipcMain.handle("settings:save", (_event, settings) => backend.saveSettings(settings));
     ipcMain.handle("settings:import", () => backend.importSettings());
+    ipcMain.handle("chat-history:load", () => backend.loadChatHistory());
+    ipcMain.handle("chat-history:save", (_event, payload) => backend.saveChatHistory(payload));
+    ipcMain.handle("user-data:export", () => backend.exportUserData());
+    ipcMain.handle("user-data:import", () => backend.importUserData());
+    ipcMain.handle("clipboard:read-attachment", () => buildClipboardAttachmentPayload());
     ipcMain.handle("service:status", () => backend.getStatus());
     ipcMain.handle("app:paths", () => backend.getPaths());
     ipcMain.handle("app:device-info", () => backend.getDeviceInfo());
     ipcMain.handle("app:mode", () => appMode);
+    ipcMain.handle("notifications:show", (_event, payload) => {
+      if (!Notification.isSupported()) {
+        return false;
+      }
+
+      const title = safeText(payload?.title) || "ShareGPT";
+      const body = safeText(payload?.body) || "";
+      const route = payload?.route && typeof payload.route === "object" ? payload.route : {};
+      const notification = new Notification({
+        title,
+        body,
+        silent: true,
+      });
+      notification.on("click", () => {
+        focusMainWindow();
+        emitAppEvent("notification-click", route);
+      });
+      notification.show();
+      return true;
+    });
     ipcMain.handle("shell:open-external", async (_event, rawUrl) => {
       const url = safeText(rawUrl);
       if (!url) return false;
       return openExternalUrl(url);
     });
 
+    ipcMain.handle("gpt-tabs:list", () => {
+      return {
+        ...listGptTabsPayload(),
+        activeState: getWorkspace("gpt", activeGptTabId) ? getAiStatePayload(getWorkspace("gpt", activeGptTabId)) : null,
+      };
+    });
+
+    ipcMain.handle("gpt-tabs:create", (_event, payload) => {
+      const workspace = createGptWorkspace({
+        title: safeText(payload?.title),
+        lastUrl: safeText(payload?.lastUrl),
+      });
+      activeGptTabId = workspace.id;
+      syncActiveGptWorkspace();
+      emitGptTabsChanged();
+      return {
+        ...listGptTabsPayload(),
+        activeState: getAiStatePayload(workspace),
+      };
+    });
+
+    ipcMain.handle("gpt-tabs:switch", (_event, payload) => {
+      const tabId = safeText(payload?.tabId);
+      const workspace = getWorkspace("gpt", tabId);
+      if (!workspace) {
+        throw new Error("目标 GPT 会话不存在");
+      }
+      activeGptTabId = workspace.id;
+      syncActiveGptWorkspace();
+      emitGptTabsChanged();
+      return {
+        ...listGptTabsPayload(),
+        activeState: getAiStatePayload(workspace),
+      };
+    });
+
+    ipcMain.handle("gpt-tabs:close", (_event, payload) => {
+      return closeGptWorkspace(payload?.tabId);
+    });
+
     ipcMain.handle("ai:ensure", async (_event, payload) => {
       const kind = safeText(payload?.kind);
-      const workspace = getOrCreateAiWorkspace(kind);
+      const requestedTabId = safeText(payload?.tabId);
+      if (kind === "gpt" && !requestedTabId && !activeGptTabId) {
+        return null;
+      }
+      const workspace = kind === "gpt"
+        ? getOrCreateAiWorkspace(kind, requestedTabId || activeGptTabId, {
+          lastUrl: safeText(payload?.lastUrl),
+        })
+        : getOrCreateAiWorkspace(kind);
+      if (kind === "gpt" && !activeGptTabId) {
+        activeGptTabId = workspace.id;
+      }
       const host = safeText(payload?.host || "127.0.0.1") || "127.0.0.1";
       const port = Number.parseInt(String(payload?.port || "1080"), 10);
       const userAgent = safeText(payload?.userAgent);
@@ -468,16 +868,23 @@ function createElectronApp(baseMode = "all") {
         workspace.view.webContents.reload();
       }
 
+      if (kind === "gpt") {
+        emitGptTabsChanged();
+      }
       return getAiStatePayload(workspace);
     });
 
     ipcMain.handle("ai:sync-host", (_event, payload) => {
       const kind = safeText(payload?.kind);
-      const workspace = aiWorkspaces.get(kind);
-      if (!workspace) return false;
-
       const bounds = payload?.bounds;
       const visible = Boolean(payload?.visible);
+      if (kind === "gpt") {
+        gptHostState = { bounds, visible };
+        return syncActiveGptWorkspace();
+      }
+
+      const workspace = getWorkspace(kind);
+      if (!workspace) return false;
       return syncAiBounds(workspace, { bounds, visible });
     });
 
@@ -485,7 +892,7 @@ function createElectronApp(baseMode = "all") {
       const kind = safeText(payload?.kind);
       const action = safeText(payload?.action);
       const url = safeText(payload?.url);
-      const workspace = aiWorkspaces.get(kind);
+      const workspace = getWorkspace(kind, safeText(payload?.tabId));
       if (!workspace) return null;
 
       const wc = workspace.view.webContents;
@@ -522,13 +929,16 @@ function createElectronApp(baseMode = "all") {
           break;
       }
 
+      if (kind === "gpt") {
+        emitGptTabsChanged();
+      }
       return getAiStatePayload(workspace);
     });
 
     ipcMain.handle("ai:execute-javascript", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       const code = String(payload?.code || "");
-      const workspace = aiWorkspaces.get(kind);
+      const workspace = getWorkspace(kind, safeText(payload?.tabId));
       if (!workspace || !code) return null;
       return workspace.view.webContents.executeJavaScript(code, true);
     });
@@ -560,6 +970,9 @@ function createElectronApp(baseMode = "all") {
       });
 
       attachWindowGuards(profileWindow);
+      if (process.platform === "darwin") {
+        profileWindow.setWindowButtonVisibility(true);
+      }
       const query = {
         serverUrl: String(payload?.serverUrl || ""),
         token: String(payload?.token || ""),

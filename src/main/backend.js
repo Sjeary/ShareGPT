@@ -49,6 +49,8 @@ const PUBLIC_DEFAULT_SETTINGS = {
     remember_password: false,
     saved_password: "",
     notify_message_popup: true,
+    notify_system_notification: true,
+    notify_sound_play: true,
     notify_user_online: false,
     pinned_users: [],
   },
@@ -73,8 +75,12 @@ const PUBLIC_DEFAULT_SETTINGS = {
   },
   ui: {
     setup_guide_dismissed: false,
+    theme: "dark",
   },
 };
+
+const LOCAL_CHAT_HISTORY_MAX_PER_CONVERSATION = 800;
+const LOCAL_CHAT_HISTORY_MAX_TOTAL = 6000;
 
 function mergeSettings(base, override = {}) {
   return {
@@ -113,6 +119,160 @@ function toInt(value, name) {
   return n;
 }
 
+function clampPositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function normalizeStoredAttachment(record) {
+  const name = String(record?.name || "").trim().slice(0, 200);
+  const kind = String(record?.kind || "").trim() === "image" ? "image" : "file";
+  const mime = String(record?.mime || "").trim().slice(0, 200);
+  const dataUrl = String(record?.dataUrl || "").trim();
+  const size = clampPositiveInt(record?.size, 0);
+
+  if (!dataUrl) return null;
+
+  return {
+    kind,
+    name: name || (kind === "image" ? "image" : "file"),
+    mime,
+    size,
+    dataUrl,
+  };
+}
+
+function normalizeStoredReplyTarget(record) {
+  const id = String(record?.id || "").trim();
+  if (!id) return null;
+
+  const preview = String(record?.preview || "").trim().slice(0, 240);
+  return {
+    id,
+    from: String(record?.from || record?.username || "").trim(),
+    displayName: String(record?.displayName || record?.username || record?.from || "消息").trim() || "消息",
+    preview: preview || "原消息",
+    timestamp: String(record?.timestamp || "").trim(),
+  };
+}
+
+function normalizeStoredForwardedFrom(record) {
+  const from = String(record?.from || record?.username || "").trim();
+  if (!from) return null;
+
+  return {
+    from,
+    displayName: String(record?.displayName || record?.username || record?.from || "转发消息").trim() || "转发消息",
+  };
+}
+
+function normalizeStoredMessage(record) {
+  const scope = String(record?.scope || "").trim() === "private" ? "private" : "subnet";
+  const recalled = Boolean(record?.recalled);
+  const text = String(record?.text || "");
+  const attachments = Array.isArray(record?.attachments)
+    ? record.attachments.map(normalizeStoredAttachment).filter(Boolean)
+    : [];
+  const replyTo = normalizeStoredReplyTarget(record?.replyTo);
+  const forwardedFrom = normalizeStoredForwardedFrom(record?.forwardedFrom);
+
+  if (!recalled && !String(text || "").trim() && !attachments.length) {
+    return null;
+  }
+
+  return {
+    id: String(record?.id || "").trim(),
+    type: String(record?.type || "chat").trim() || "chat",
+    scope,
+    from: String(record?.from || record?.username || "").trim(),
+    to: String(record?.to || "").trim(),
+    username: String(record?.username || record?.from || "").trim() || "系统通知",
+    displayName: String(record?.displayName || record?.username || record?.from || "").trim() || "系统通知",
+    avatar: String(record?.avatar || "").trim(),
+    text,
+    attachments,
+    timestamp: String(record?.timestamp || new Date().toISOString()).trim() || new Date().toISOString(),
+    readAt: scope === "private" ? String(record?.readAt || "").trim() : "",
+    readBy: scope === "subnet"
+      ? (Array.isArray(record?.readBy)
+          ? record.readBy
+              .map((item) => {
+                const username = String(item?.username || item?.from || "").trim();
+                if (!username) return null;
+                return {
+                  username,
+                  displayName: String(item?.displayName || item?.username || item?.from || "").trim() || username,
+                  readAt: String(item?.readAt || item?.timestamp || "").trim() || new Date().toISOString(),
+                };
+              })
+              .filter(Boolean)
+          : [])
+      : [],
+    edited: Boolean(record?.edited),
+    editedAt: Boolean(record?.edited) ? (String(record?.editedAt || "").trim() || new Date().toISOString()) : "",
+    subnetKey: String(record?.subnetKey || "").trim(),
+    subnetLabel: String(record?.subnetLabel || record?.roomScope || "").trim(),
+    system: Boolean(record?.system),
+    replyTo,
+    forwardedFrom,
+    recalled,
+    recalledAt: recalled ? (String(record?.recalledAt || new Date().toISOString()).trim() || new Date().toISOString()) : "",
+  };
+}
+
+function normalizeChatHistoryStore(store) {
+  const input = store && typeof store === "object" ? store : {};
+  const conversations = input.conversations && typeof input.conversations === "object"
+    ? input.conversations
+    : {};
+
+  const normalizedConversations = {};
+  let total = 0;
+
+  for (const [key, value] of Object.entries(conversations)) {
+    const conversationKey = String(key || "").trim();
+    if (!conversationKey) continue;
+
+    const items = Array.isArray(value) ? value.map(normalizeStoredMessage).filter(Boolean) : [];
+    if (!items.length) continue;
+
+    if (items.length > LOCAL_CHAT_HISTORY_MAX_PER_CONVERSATION) {
+      items.splice(0, items.length - LOCAL_CHAT_HISTORY_MAX_PER_CONVERSATION);
+    }
+
+    normalizedConversations[conversationKey] = items;
+    total += items.length;
+  }
+
+  if (total > LOCAL_CHAT_HISTORY_MAX_TOTAL) {
+    const buckets = Object.entries(normalizedConversations)
+      .flatMap(([key, items]) => items.map((message) => ({ key, message })))
+      .sort((a, b) => String(a.message.timestamp).localeCompare(String(b.message.timestamp)));
+
+    const overflow = total - LOCAL_CHAT_HISTORY_MAX_TOTAL;
+    let removed = 0;
+    const dropped = new Map();
+    for (const item of buckets) {
+      if (removed >= overflow) break;
+      dropped.set(item.key, (dropped.get(item.key) || 0) + 1);
+      removed += 1;
+    }
+
+    for (const [key, count] of dropped.entries()) {
+      normalizedConversations[key] = normalizedConversations[key].slice(count);
+      if (!normalizedConversations[key].length) {
+        delete normalizedConversations[key];
+      }
+    }
+  }
+
+  return {
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    conversations: normalizedConversations,
+  };
+}
+
 class Backend {
   constructor(app, getWindow, appMode = "all") {
     this.app = app;
@@ -120,6 +280,7 @@ class Backend {
     this.appMode = appMode;
 
     this.settingsFile = path.join(this.app.getPath("userData"), "settings.json");
+    this.chatHistoryFile = path.join(this.app.getPath("userData"), "chat_history.json");
     this.runtimeDir = path.join(this.app.getPath("userData"), "runtime");
 
     this.senderProcess = null;
@@ -196,6 +357,7 @@ class Backend {
   init() {
     fs.mkdirSync(this.runtimeDir, { recursive: true });
     this.ensureLocalDefaultsFile();
+    this.ensureChatHistoryFile();
   }
 
   log(source, line) {
@@ -213,6 +375,12 @@ class Backend {
     const configuredPath = String(process.env[envVar] || "").trim();
     const configuredDir = String(process.env.CHATPORTAL_BIN_DIR || "").trim();
     const appDir = path.dirname(this.app.getPath("exe"));
+    const appPath = this.app.getAppPath();
+    const packagedResourceRoots = [
+      String(process.resourcesPath || "").trim(),
+      path.join(appDir, "resources"),
+      appPath ? path.dirname(appPath) : "",
+    ].filter(Boolean);
 
     const configuredCandidates = [];
     if (configuredPath) {
@@ -228,9 +396,12 @@ class Backend {
     const candidates = this.app.isPackaged
       ? [
           ...configuredCandidates,
+          ...packagedResourceRoots.flatMap((root) => [
+            path.join(root, "bin", filename),
+            path.join(root, "bin", platformDir, filename),
+          ]),
           path.join(appDir, "bin", filename),
           path.join(appDir, filename),
-          path.join(process.resourcesPath, "bin", filename),
         ]
       : [
           ...configuredCandidates,
@@ -238,7 +409,9 @@ class Backend {
           path.join(repoRoot, "build", "bin", filename),
         ];
 
-    for (const candidate of candidates) {
+    const uniqueCandidates = [...new Set(candidates.map((candidate) => path.resolve(candidate)))];
+
+    for (const candidate of uniqueCandidates) {
       if (fs.existsSync(candidate)) {
         if (!isWindows()) {
           fs.chmodSync(candidate, 0o755);
@@ -247,7 +420,7 @@ class Backend {
       }
     }
 
-    return candidates[0];
+    return uniqueCandidates[0];
   }
 
   loadSettings() {
@@ -268,6 +441,81 @@ class Backend {
     const merged = mergeSettings(this.loadPrivateDefaults(), data);
     fs.writeFileSync(this.settingsFile, JSON.stringify(merged, null, 2), "utf-8");
     return merged;
+  }
+
+  ensureChatHistoryFile() {
+    if (!fs.existsSync(this.chatHistoryFile)) {
+      fs.writeFileSync(this.chatHistoryFile, JSON.stringify({
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        conversations: {},
+      }, null, 2), "utf-8");
+    }
+  }
+
+  loadChatHistory() {
+    this.ensureChatHistoryFile();
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.chatHistoryFile, "utf-8"));
+      return normalizeChatHistoryStore(raw);
+    } catch {
+      return normalizeChatHistoryStore({});
+    }
+  }
+
+  saveChatHistory(data) {
+    const normalized = normalizeChatHistoryStore(data);
+    fs.writeFileSync(this.chatHistoryFile, JSON.stringify(normalized, null, 2), "utf-8");
+    return normalized;
+  }
+
+  async exportUserData() {
+    const { dialog } = require("electron");
+    const window = this.getWindow();
+    if (!window) return null;
+
+    const result = await dialog.showSaveDialog(window, {
+      title: "导出本机资料包",
+      defaultPath: path.join(this.app.getPath("documents"), `chatportal-x1-v4-data-${new Date().toISOString().slice(0, 10)}.json`),
+      filters: [{ name: "ChatPortal 数据包", extensions: ["json"] }],
+    });
+
+    if (result.canceled || !result.filePath) return null;
+
+    const payload = {
+      format: "chatportal-x1-v4-user-data",
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      settings: this.loadSettings(),
+      chatHistory: this.loadChatHistory(),
+    };
+
+    fs.writeFileSync(result.filePath, JSON.stringify(payload, null, 2), "utf-8");
+    return { filePath: result.filePath };
+  }
+
+  async importUserData() {
+    const { dialog } = require("electron");
+    const window = this.getWindow();
+    if (!window) return null;
+
+    const result = await dialog.showOpenDialog(window, {
+      title: "导入本机资料包",
+      filters: [{ name: "ChatPortal 数据包", extensions: ["json"] }],
+      properties: ["openFile"],
+    });
+
+    if (result.canceled || !result.filePaths.length) return null;
+
+    try {
+      const filePath = result.filePaths[0];
+      const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      const settings = this.saveSettings(raw?.settings || {});
+      const chatHistory = this.saveChatHistory(raw?.chatHistory || {});
+      return { settings, chatHistory, filePath };
+    } catch (err) {
+      throw new Error(`无法导入资料包: ${err.message}`);
+    }
   }
 
   async importSettings() {
@@ -298,6 +546,8 @@ class Backend {
       frpc: this.resolveBinary("frpc"),
       runtimeDir: this.runtimeDir,
       userDataDir: this.app.getPath("userData"),
+      settingsFile: this.settingsFile,
+      chatHistoryFile: this.chatHistoryFile,
     };
   }
 

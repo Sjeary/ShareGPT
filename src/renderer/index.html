@@ -32,6 +32,10 @@
           </div>
         </div>
 
+        <button class="top-theme-toggle no-drag" id="btnThemeQuickToggle" type="button" title="切换主题" aria-label="切换主题">
+          切到日间
+        </button>
+
         <div class="top-collab-user no-drag" id="topCollabIdentity" title="点击查看更多操作">
           <span class="top-collab-avatar" id="topCollabAvatar">?</span>
           <div class="top-collab-meta">
@@ -298,6 +302,46 @@
                       <div class="tip-item">房间消息和私聊都在“联系人与聊天”页面查看。</div>
                     </div>
                   </article>
+
+                  <article class="account-tip-card">
+                    <h3>本机资料</h3>
+                    <div class="account-tip-list">
+                      <div class="tip-item">Sender 设置、账号信息和本地聊天记录会保存在系统用户目录中，覆盖安装新版本后会继续保留。</div>
+                      <div class="tip-item">如果需要换电脑或手动备份，可导出整套本机资料包，再在新版本中直接导入。</div>
+                    </div>
+                    <div class="actions account-actions">
+                      <button id="btnExportUserData">导出本机资料包</button>
+                      <button id="btnImportUserData">导入本机资料包</button>
+                    </div>
+                  </article>
+
+                  <article class="account-tip-card">
+                    <h3>界面外观</h3>
+                    <div class="account-tip-list">
+                      <div class="tip-item">可根据当前环境在日间和夜间模式之间切换。</div>
+                      <div class="tip-item">主题会自动保存，个人资料窗口也会跟随同一套设置。</div>
+                    </div>
+                    <div class="theme-choice-group account-theme-choice-group" role="group" aria-label="界面主题">
+                      <button
+                        class="theme-choice-btn"
+                        type="button"
+                        data-theme-choice="light"
+                        aria-pressed="false"
+                      >
+                        <span>日间模式</span>
+                        <small>明亮、通透，白天更舒适</small>
+                      </button>
+                      <button
+                        class="theme-choice-btn"
+                        type="button"
+                        data-theme-choice="dark"
+                        aria-pressed="true"
+                      >
+                        <span>夜间模式</span>
+                        <small>保留当前深色风格，适合长时间使用</small>
+                      </button>
+                    </div>
+                  </article>
                 </aside>
               </div>
             </section>
@@ -320,12 +364,47 @@
 
                   <button class="chat-settings-trigger" id="btnOpenMessageSettings" type="button">消息设置</button>
 
-                  <div class="chat-list-head">
-                    <span>联系人</span>
-                    <small id="c_online_count">0 人</small>
+                  <input
+                    id="c_chat_filter"
+                    class="chat-search-input"
+                    type="search"
+                    placeholder="搜索最近会话"
+                    autocomplete="off"
+                  />
+
+                  <div class="chat-sidebar-tabs" role="tablist" aria-label="聊天列表">
+                    <button
+                      id="btnChatSidebarRecent"
+                      class="chat-sidebar-tab active"
+                      data-chat-sidebar-tab="recent"
+                      type="button"
+                      role="tab"
+                      aria-selected="true"
+                    >
+                      <span>最近会话</span>
+                      <small id="c_recent_count">0 个</small>
+                    </button>
+                    <button
+                      id="btnChatSidebarContacts"
+                      class="chat-sidebar-tab"
+                      data-chat-sidebar-tab="contacts"
+                      type="button"
+                      role="tab"
+                      aria-selected="false"
+                    >
+                      <span>联系人</span>
+                      <small id="c_online_count">0 人在线</small>
+                    </button>
                   </div>
 
-                  <ul id="c_online_list"></ul>
+                  <div class="chat-sidebar-panels">
+                    <div class="chat-sidebar-panel active" id="c_sidebar_panel_recent" data-chat-sidebar-panel="recent" role="tabpanel">
+                      <ul id="c_recent_list"></ul>
+                    </div>
+                    <div class="chat-sidebar-panel" id="c_sidebar_panel_contacts" data-chat-sidebar-panel="contacts" role="tabpanel" hidden>
+                      <ul id="c_online_list"></ul>
+                    </div>
+                  </div>
                 </aside>
 
                 <section class="chat-stage">
@@ -338,8 +417,47 @@
                   </div>
 
                   <div id="c_chat_box"></div>
+                  <div class="chat-drop-overlay" id="c_chat_drop_overlay" hidden>
+                    <div class="chat-drop-card">
+                      <strong>拖拽到此处发送</strong>
+                      <span>松开鼠标后，将文件或图片加入当前聊天</span>
+                    </div>
+                  </div>
 
                   <div class="chat-compose">
+                    <div class="chat-reply-draft" id="c_reply_draft" hidden>
+                      <div class="chat-reply-draft-copy">
+                        <strong id="c_reply_draft_name"></strong>
+                        <span id="c_reply_draft_text"></span>
+                      </div>
+                      <button type="button" class="attachment-remove-btn" id="btnReplyDraftClear">取消</button>
+                    </div>
+
+                    <div class="chat-reply-draft edit-draft" id="c_edit_draft" hidden>
+                      <div class="chat-reply-draft-copy">
+                        <strong id="c_edit_draft_name"></strong>
+                        <span id="c_edit_draft_text"></span>
+                      </div>
+                      <button type="button" class="attachment-remove-btn" id="btnEditDraftClear">取消</button>
+                    </div>
+
+                    <div class="chat-reply-draft forward-draft" id="c_forward_draft" hidden>
+                      <div class="chat-reply-draft-copy">
+                        <strong id="c_forward_draft_name"></strong>
+                        <span id="c_forward_draft_text"></span>
+                      </div>
+                      <button type="button" class="attachment-remove-btn" id="btnForwardDraftClear">取消</button>
+                    </div>
+
+                    <div class="chat-attachment-preview" id="c_attachment_preview" hidden>
+                      <div class="chat-attachment-thumb" id="c_attachment_thumb">+</div>
+                      <div class="chat-attachment-copy">
+                        <strong id="c_attachment_name"></strong>
+                        <span id="c_attachment_meta"></span>
+                      </div>
+                      <button type="button" class="attachment-remove-btn" id="btnAttachmentRemove">移除</button>
+                    </div>
+
                     <div class="chat-hidden-controls">
                       <select id="c_chat_scope">
                         <option value="subnet">发送到当前房间</option>
@@ -354,7 +472,25 @@
                     <p class="panel-feedback" id="chat_feedback" hidden></p>
 
                     <div class="chat-input-row">
-                      <input id="c_chat_input" placeholder="输入消息，按 Enter 发送" />
+                      <input id="c_chat_file" type="file" hidden />
+                      <div class="chat-input-shell" id="c_chat_input_shell">
+                        <button id="btnChatAttach" class="chat-attach-trigger" type="button" aria-label="添加附件" title="添加附件">
+                          <span class="chat-attach-trigger-icon">+</span>
+                        </button>
+                        <div class="chat-inline-preview" id="c_inline_preview" hidden>
+                          <img id="c_inline_preview_img" alt="粘贴图片预览" />
+                          <div class="chat-inline-preview-copy">
+                            <strong id="c_inline_preview_name"></strong>
+                            <span id="c_inline_preview_meta"></span>
+                          </div>
+                          <button type="button" class="attachment-remove-btn inline-remove-btn" id="btnInlineAttachmentRemove">移除</button>
+                        </div>
+                        <textarea
+                          id="c_chat_input"
+                          rows="1"
+                          placeholder="输入消息，Enter 发送，Shift + Enter 换行，也可以直接粘贴图片"
+                        ></textarea>
+                      </div>
                       <button id="btnChatSend">发送</button>
                     </div>
                   </div>
@@ -378,8 +514,24 @@
                   <label class="option-row settings-option" for="c_notify_message_popup">
                     <input id="c_notify_message_popup" type="checkbox" />
                     <div class="option-copy">
-                      <strong>收到消息时提醒</strong>
-                      <span>未查看当前会话时，在右上角显示消息提示。</span>
+                      <strong>应用内弹出提醒</strong>
+                      <span>未查看当前会话时，在窗口右上角显示消息提示。</span>
+                    </div>
+                  </label>
+
+                  <label class="option-row settings-option" for="c_notify_system_notification">
+                    <input id="c_notify_system_notification" type="checkbox" />
+                    <div class="option-copy">
+                      <strong>系统通知</strong>
+                      <span>收到新消息时，使用 Windows 或 macOS 的系统通知。</span>
+                    </div>
+                  </label>
+
+                  <label class="option-row settings-option" for="c_notify_sound_play">
+                    <input id="c_notify_sound_play" type="checkbox" />
+                    <div class="option-copy">
+                      <strong>提示铃声</strong>
+                      <span>收到未读新消息时播放提示音。</span>
                     </div>
                   </label>
 
@@ -409,6 +561,11 @@
 
             <section class="panel glass view-panel gpt-panel" id="gptPanel" data-view-panel="gpt">
               <div class="gpt-browser-shell" id="gptBrowserShell">
+                <div class="gpt-tabbar">
+                  <div class="gpt-tablist" id="gptTabList" aria-label="ChatGPT 会话标签栏"></div>
+                  <button class="gpt-tab-add" id="btnGptNewTab" type="button" title="新建 ChatGPT 会话">+</button>
+                </div>
+
                 <div class="gpt-browser-toolbar">
                   <div class="gpt-toolbar-group">
                     <button class="toolbar-btn" id="btnGptBack">后退</button>
@@ -592,12 +749,12 @@
             </button>
 
             <button class="view-nav-btn gpt-nav-btn" data-view-target="gpt">
-              <span>ChatGPT 网页</span>
-              <small>内置网页</small>
+              <span>ChatGPT网页</span>
+              <small>GPT</small>
             </button>
 
             <button class="view-nav-btn gpt-nav-btn" data-view-target="gemini">
-              <span>Gemini 网页</span>
+              <span>Gemini网页</span>
               <small>Google AI</small>
             </button>
 
@@ -617,6 +774,16 @@
 
     <div id="toastStack" class="toast-stack" aria-live="polite"></div>
     <div id="appContextMenu" class="app-context-menu" hidden></div>
+    <div id="chatImageLightbox" class="chat-image-lightbox" hidden>
+      <button id="btnChatImageLightboxClose" class="chat-image-lightbox-close" type="button" aria-label="关闭图片预览">关闭</button>
+      <div class="chat-image-lightbox-meta">
+        <span id="chatImageLightboxZoom">100%</span>
+        <small>滚轮缩放 · 拖动查看</small>
+      </div>
+      <div id="chatImageLightboxStage" class="chat-image-lightbox-stage">
+        <img id="chatImageLightboxImg" alt="聊天图片预览" />
+      </div>
+    </div>
     <div id="setupGuide" class="setup-guide-overlay" hidden>
       <section class="setup-guide-card glass">
         <div class="setup-guide-head">
@@ -641,4 +808,3 @@
     <script src="./renderer.js"></script>
   </body>
 </html>
-
