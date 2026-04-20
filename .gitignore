@@ -3,6 +3,9 @@ release/
 release_sender/
 release_receiver/
 *.log
+build/bin/*
+!build/bin/
+!build/bin/README.md
 collab_server/node_modules/
 collab_server/data/
 collab_server.zip
@@ -13,3 +16,13 @@ private.defaults.local.json
 .cache/
 .npm-cache/
 .DS_Store
+start_dev_windows.bat
+start_sender_dev_windows.bat
+start_receiver_dev_windows.bat
+build_win_portable.bat
+build_win_sender.bat
+build_win_receiver.bat
+build_win_split.bat
+build_mac_sender.sh
+debug-electron.js
+collab_server2/start_server_windows.bat

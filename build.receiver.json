@@ -1,6 +1,6 @@
 {
-  "appId": "com.sjeary.chatportalx1.v4.desktop.receiver",
-  "productName": "ChatPortal X1 V4 Receiver",
+  "appId": "com.sjeary.sharegpt.desktop.receiver",
+  "productName": "ShareGPT Receiver",
   "asar": true,
   "files": [
     "src/**/*",
@@ -22,13 +22,13 @@
     "target": [
       "portable"
     ],
-    "artifactName": "chatportal-x1-v4-receiver-${version}.${ext}",
-    "executableName": "chatportal_x1_v4_receiver",
+    "artifactName": "sharegpt-receiver-${version}.${ext}",
+    "executableName": "sharegpt_receiver",
     "signAndEditExecutable": false
   },
   "extraMetadata": {
     "main": "src/main/main_receiver.js",
-    "name": "chatportal-x1-v4-receiver-desktop"
+    "name": "sharegpt-receiver-desktop"
   }
 }
 

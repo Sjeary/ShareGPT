@@ -130,7 +130,9 @@ function binaryName(stem) {
 }
 
 function envBinaryVariable(stem) {
-  return stem === "sing-box" ? "CHATPORTAL_SINGBOX_PATH" : "CHATPORTAL_FRPC_PATH";
+  return stem === "sing-box"
+    ? ["SHAREGPT_SINGBOX_PATH"]
+    : ["SHAREGPT_FRPC_PATH"];
 }
 
 function toInt(value, name) {
@@ -515,9 +517,9 @@ class Backend {
     const filename = binaryName(stem);
     const repoRoot = path.resolve(__dirname, "../..");
     const platformDir = currentPlatformDir();
-    const envVar = envBinaryVariable(stem);
-    const configuredPath = String(process.env[envVar] || "").trim();
-    const configuredDir = String(process.env.CHATPORTAL_BIN_DIR || "").trim();
+    const envVars = envBinaryVariable(stem);
+    const configuredPath = envVars.map((name) => String(process.env[name] || "").trim()).find(Boolean) || "";
+    const configuredDir = String(process.env.SHAREGPT_BIN_DIR || "").trim();
     const appDir = path.dirname(this.app.getPath("exe"));
     const appPath = this.app.getAppPath();
     const packagedResourceRoots = [
@@ -620,14 +622,14 @@ class Backend {
 
     const result = await dialog.showSaveDialog(window, {
       title: "导出本机资料包",
-      defaultPath: path.join(this.app.getPath("documents"), `chatportal-x1-v4-data-${new Date().toISOString().slice(0, 10)}.json`),
-      filters: [{ name: "ChatPortal 数据包", extensions: ["json"] }],
+      defaultPath: path.join(this.app.getPath("documents"), `sharegpt-data-${new Date().toISOString().slice(0, 10)}.json`),
+      filters: [{ name: "ShareGPT 数据包", extensions: ["json"] }],
     });
 
     if (result.canceled || !result.filePath) return null;
 
     const payload = {
-      format: "chatportal-x1-v4-user-data",
+      format: "sharegpt-user-data",
       version: 1,
       exportedAt: new Date().toISOString(),
       settings: this.loadSettings(),
@@ -645,7 +647,7 @@ class Backend {
 
     const result = await dialog.showOpenDialog(window, {
       title: "导入本机资料包",
-      filters: [{ name: "ChatPortal 数据包", extensions: ["json"] }],
+      filters: [{ name: "ShareGPT 数据包", extensions: ["json"] }],
       properties: ["openFile"],
     });
 
@@ -1139,7 +1141,7 @@ class Backend {
 
     const singboxPath = this.resolveBinary("sing-box");
     if (!fs.existsSync(singboxPath)) {
-      throw new Error(`未找到 sing-box: ${singboxPath}。请将二进制放入 build/bin/，或通过 CHATPORTAL_BIN_DIR / CHATPORTAL_SINGBOX_PATH 指定。`);
+        throw new Error(`未找到 sing-box: ${singboxPath}。请先按 build/bin/README.md 准备二进制，或通过 SHAREGPT_BIN_DIR / SHAREGPT_SINGBOX_PATH 指定。`);
     }
 
     const config = this.buildSenderConfig(settings);
@@ -1160,10 +1162,10 @@ class Backend {
     const frpcPath = this.resolveBinary("frpc");
 
     if (!fs.existsSync(singboxPath)) {
-      throw new Error(`未找到 sing-box: ${singboxPath}。请将二进制放入 build/bin/，或通过 CHATPORTAL_BIN_DIR / CHATPORTAL_SINGBOX_PATH 指定。`);
+      throw new Error(`未找到 sing-box: ${singboxPath}。请先按 build/bin/README.md 准备二进制，或通过 SHAREGPT_BIN_DIR / SHAREGPT_SINGBOX_PATH 指定。`);
     }
     if (!fs.existsSync(frpcPath)) {
-      throw new Error(`未找到 frpc: ${frpcPath}。请将二进制放入 build/bin/，或通过 CHATPORTAL_BIN_DIR / CHATPORTAL_FRPC_PATH 指定。`);
+      throw new Error(`未找到 frpc: ${frpcPath}。请先按 build/bin/README.md 准备二进制，或通过 SHAREGPT_BIN_DIR / SHAREGPT_FRPC_PATH 指定。`);
     }
 
     const { singbox, frpcIni } = this.buildReceiverFiles(settings);

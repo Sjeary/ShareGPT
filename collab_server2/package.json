@@ -1,8 +1,8 @@
 {
-  "name": "chatportal-x1-v4-collab-server",
+  "name": "sharegpt-collab-server",
   "version": "1.0.0",
   "private": true,
-  "description": "Authentication, presence, chat and GPT usage service for ChatPortal X1 V4",
+  "description": "Authentication, presence, chat and update service for ShareGPT",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
