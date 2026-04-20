@@ -1,6 +1,6 @@
 {
   "name": "chatportal-x1-desktop",
-  "version": "4.0.0",
+  "version": "4.0.2",
   "description": "Desktop client with built-in messaging and embedded ChatGPT and Gemini web access.",
   "main": "src/main/main.js",
   "author": "Sjeary",
@@ -35,7 +35,10 @@
     "dist:mac": "node scripts/prepare-assets.mjs sender && npm exec -- electron-builder --mac dmg",
     "dist:mac:sender": "node scripts/prepare-assets.mjs sender && npm exec -- electron-builder --mac --config build.sender.json",
     "dist:mac:sender:dmg": "node scripts/prepare-assets.mjs sender && npm exec -- electron-builder --mac dmg --config build.sender.json",
-    "dist:linux": "node scripts/prepare-assets.mjs all && npm exec -- electron-builder --linux AppImage"
+    "dist:linux": "node scripts/prepare-assets.mjs all && npm exec -- electron-builder --linux AppImage",
+    "dev:admin": "npm --prefix admin_console run dev",
+    "dist:admin:win": "npm --prefix admin_console run dist:win",
+    "dist:admin:mac": "npm --prefix admin_console run dist:mac"
   },
   "devDependencies": {
     "electron": "^31.7.7",

@@ -342,6 +342,29 @@
                       </button>
                     </div>
                   </article>
+
+                  <article class="account-tip-card">
+                    <h3>软件更新</h3>
+                    <div class="account-tip-list">
+                      <div class="tip-item">当前版本：<strong id="appVersionText">-</strong></div>
+                      <div class="tip-item">最新版本：<strong id="appLatestVersion">未检查</strong></div>
+                      <div class="tip-item" id="appUpdateNotes">登录后可从当前服务器读取新版本信息。</div>
+                    </div>
+                    <div class="actions account-actions">
+                      <button id="btnCheckAppUpdate">检查更新</button>
+                      <button id="btnInstallAppUpdate">下载并更新</button>
+                    </div>
+                    <div class="progress-block" id="appUpdateProgress" hidden>
+                      <div class="progress-meta">
+                        <span id="appUpdateProgressText">准备下载</span>
+                        <strong id="appUpdateProgressPercent">0%</strong>
+                      </div>
+                      <div class="progress-track">
+                        <div class="progress-fill" id="appUpdateProgressFill"></div>
+                      </div>
+                    </div>
+                    <p class="panel-feedback" id="app_update_feedback">登录后可检查新版本。</p>
+                  </article>
                 </aside>
               </div>
             </section>

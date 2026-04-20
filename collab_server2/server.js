@@ -10,6 +10,8 @@ const PORT = Number.parseInt(process.env.PORT || "8088", 10);
 const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, "data", "users.json");
 const GPT_USAGE_FILE = process.env.GPT_USAGE_FILE || path.join(__dirname, "data", "gpt_usage.json");
 const CHAT_HISTORY_FILE = process.env.CHAT_HISTORY_FILE || path.join(__dirname, "data", "chat_history.json");
+const CLIENT_BOOTSTRAP_FILE = process.env.CLIENT_BOOTSTRAP_FILE || path.join(__dirname, "data", "client_bootstrap.json");
+const RELEASES_DIR = process.env.RELEASES_DIR || path.join(__dirname, "data", "releases");
 const SESSION_TTL_MS = Number.parseInt(process.env.SESSION_TTL_MS || `${24 * 60 * 60 * 1000}`, 10);
 const HISTORY_MAX = Number.parseInt(process.env.HISTORY_MAX || "2000", 10);
 const MAX_AVATAR_LENGTH = Number.parseInt(process.env.MAX_AVATAR_LENGTH || `${150 * 1024}`, 10);
@@ -17,8 +19,35 @@ const GPT_USAGE_MAX = Number.parseInt(process.env.GPT_USAGE_MAX || "50000", 10);
 const MAX_ATTACHMENTS_PER_MESSAGE = Number.parseInt(process.env.MAX_ATTACHMENTS_PER_MESSAGE || "4", 10);
 const MAX_ATTACHMENT_BYTES = Number.parseInt(process.env.MAX_ATTACHMENT_BYTES || `${30 * 1024 * 1024}`, 10);
 const RECALL_EDITABLE_WINDOW_MS = Number.parseInt(process.env.RECALL_EDITABLE_WINDOW_MS || `${7 * 24 * 60 * 60 * 1000}`, 10);
+const SERVER_SENDER_BOOTSTRAP = {
+  proxy_server: process.env.CHATPORTAL_SENDER_PROXY_SERVER || process.env.SENDER_PROXY_SERVER || process.env.PROXY_SERVER || "",
+  proxy_port: process.env.CHATPORTAL_SENDER_PROXY_PORT || process.env.SENDER_PROXY_PORT || process.env.PROXY_PORT || "",
+  proxy_uuid: process.env.CHATPORTAL_SENDER_PROXY_UUID || process.env.SENDER_PROXY_UUID || process.env.PROXY_UUID || "",
+  socks_listen_port: process.env.CHATPORTAL_SENDER_SOCKS_PORT || process.env.SENDER_SOCKS_PORT || "1080",
+  fallback_mode: process.env.CHATPORTAL_SENDER_FALLBACK_MODE || process.env.SENDER_FALLBACK_MODE || "system_proxy",
+  fallback_local_port: process.env.CHATPORTAL_SENDER_FALLBACK_LOCAL_PORT || process.env.SENDER_FALLBACK_LOCAL_PORT || "",
+  target_domains: process.env.CHATPORTAL_SENDER_TARGET_DOMAINS || process.env.SENDER_TARGET_DOMAINS || "",
+};
+
+const DEFAULT_TARGET_DOMAINS = [
+  "chatgpt.com",
+  "openai.com",
+  "auth0.com",
+  "oaistatic.com",
+  "oaiusercontent.com",
+  "gravatar.com",
+  "cloudflare.com",
+  "wp.com",
+  "gemini.google.com",
+  "google.com",
+  "googleapis.com",
+  "googleusercontent.com",
+  "gstatic.com",
+  "gvt1.com",
+].join(",");
 
 const sessions = new Map();
+const adminSessions = new Map();
 const wsClients = new Set();
 const wsByToken = new Map();
 
@@ -55,6 +84,25 @@ function toSingleAvatarChar(value) {
   return chars.length ? chars[0] : "";
 }
 
+function normalizeClientInfo(raw) {
+  const input = raw && typeof raw === "object" ? raw : {};
+  const version = safeText(input.version).slice(0, 40);
+  const name = safeText(input.name).slice(0, 80);
+  const platform = safeText(input.platform).slice(0, 30);
+  const arch = safeText(input.arch).slice(0, 30);
+  const mode = safeText(input.mode).slice(0, 30);
+  const reportedAt = safeText(input.reportedAt) || nowIso();
+
+  return {
+    name,
+    version,
+    platform,
+    arch,
+    mode,
+    reportedAt,
+  };
+}
+
 function normalizeUserRecord(record) {
   const username = safeText(record?.username);
   const displayName = safeText(record?.displayName) || username;
@@ -69,7 +117,9 @@ function normalizeUserRecord(record) {
     avatar,
     avatarKind,
     bio,
+    isAdmin: Boolean(record?.isAdmin),
     disabled: Boolean(record?.disabled),
+    lastClient: normalizeClientInfo(record?.lastClient),
   };
 }
 
@@ -120,6 +170,142 @@ function ensureChatHistoryFile() {
   if (!fs.existsSync(CHAT_HISTORY_FILE)) {
     fs.writeFileSync(CHAT_HISTORY_FILE, JSON.stringify({ history: [] }, null, 2), "utf-8");
   }
+}
+
+function ensureClientBootstrapFile() {
+  fs.mkdirSync(path.dirname(CLIENT_BOOTSTRAP_FILE), { recursive: true });
+  if (!fs.existsSync(CLIENT_BOOTSTRAP_FILE)) {
+    fs.writeFileSync(CLIENT_BOOTSTRAP_FILE, JSON.stringify({
+      sender: {
+        proxy_server: "",
+        proxy_port: "",
+        proxy_uuid: "",
+        socks_listen_port: "1080",
+        fallback_mode: "system_proxy",
+        fallback_local_port: "",
+        target_domains: DEFAULT_TARGET_DOMAINS,
+      },
+      update: {
+        version: "",
+        notes: "",
+        publishedAt: "",
+        windows: {
+          url: "",
+          fileName: "",
+        },
+        macos: {
+          url: "",
+          fileName: "",
+        },
+      },
+      extra: {},
+    }, null, 2), "utf-8");
+  }
+}
+
+function normalizeBootstrapPayload(raw) {
+  const sender = raw?.sender && typeof raw.sender === "object" ? raw.sender : {};
+  const update = raw?.update && typeof raw.update === "object" ? raw.update : {};
+  const windows = update?.windows && typeof update.windows === "object" ? update.windows : {};
+  const macos = update?.macos && typeof update.macos === "object" ? update.macos : {};
+
+  return {
+    sender: {
+      proxy_server: safeText(sender.proxy_server),
+      proxy_port: safeText(sender.proxy_port),
+      proxy_uuid: safeText(sender.proxy_uuid),
+      socks_listen_port: safeText(sender.socks_listen_port) || "1080",
+      fallback_mode: safeText(sender.fallback_mode) || "system_proxy",
+      fallback_local_port: safeText(sender.fallback_local_port),
+      target_domains: safeText(sender.target_domains) || DEFAULT_TARGET_DOMAINS,
+    },
+    update: {
+      version: safeText(update.version),
+      notes: safeText(update.notes),
+      publishedAt: safeText(update.publishedAt),
+      windows: {
+        url: safeText(windows.url),
+        fileName: safeText(windows.fileName),
+      },
+      macos: {
+        url: safeText(macos.url),
+        fileName: safeText(macos.fileName),
+      },
+    },
+    extra: raw?.extra && typeof raw.extra === "object" ? raw.extra : {},
+  };
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const text = safeText(value);
+    if (text) return text;
+  }
+  return "";
+}
+
+function requestHostname(req) {
+  const forwardedHost = safeText(req?.headers?.["x-forwarded-host"]).split(",")[0];
+  const rawHost = forwardedHost || safeText(req?.headers?.host);
+  if (!rawHost) return "";
+  if (rawHost.startsWith("[")) {
+    const end = rawHost.indexOf("]");
+    return end > 0 ? rawHost.slice(1, end) : rawHost;
+  }
+  return rawHost.split(":")[0];
+}
+
+function serverSuggestedBootstrap(req) {
+  const host = requestHostname(req);
+  return normalizeBootstrapPayload({
+    sender: {
+      proxy_server: firstNonEmpty(SERVER_SENDER_BOOTSTRAP.proxy_server, host),
+      proxy_port: SERVER_SENDER_BOOTSTRAP.proxy_port,
+      proxy_uuid: SERVER_SENDER_BOOTSTRAP.proxy_uuid,
+      socks_listen_port: SERVER_SENDER_BOOTSTRAP.socks_listen_port,
+      fallback_mode: SERVER_SENDER_BOOTSTRAP.fallback_mode,
+      fallback_local_port: SERVER_SENDER_BOOTSTRAP.fallback_local_port,
+      target_domains: firstNonEmpty(SERVER_SENDER_BOOTSTRAP.target_domains, DEFAULT_TARGET_DOMAINS),
+    },
+  });
+}
+
+function mergeServerBootstrapFallback(stored, req) {
+  const normalized = normalizeBootstrapPayload(stored);
+  const suggested = serverSuggestedBootstrap(req);
+  return {
+    ...normalized,
+    sender: {
+      ...normalized.sender,
+      proxy_server: normalized.sender.proxy_server || suggested.sender.proxy_server,
+      proxy_port: normalized.sender.proxy_port || suggested.sender.proxy_port,
+      proxy_uuid: normalized.sender.proxy_uuid || suggested.sender.proxy_uuid,
+      socks_listen_port: normalized.sender.socks_listen_port || suggested.sender.socks_listen_port,
+      fallback_mode: normalized.sender.fallback_mode || suggested.sender.fallback_mode,
+      fallback_local_port: normalized.sender.fallback_local_port || suggested.sender.fallback_local_port,
+      target_domains: normalized.sender.target_domains || suggested.sender.target_domains,
+    },
+  };
+}
+
+function loadClientBootstrap(req = null) {
+  ensureClientBootstrapFile();
+  try {
+    const raw = JSON.parse(fs.readFileSync(CLIENT_BOOTSTRAP_FILE, "utf-8"));
+    return mergeServerBootstrapFallback(raw, req);
+  } catch {
+    return mergeServerBootstrapFallback({}, req);
+  }
+}
+
+function saveClientBootstrap(payload) {
+  const normalized = normalizeBootstrapPayload(payload);
+  fs.writeFileSync(CLIENT_BOOTSTRAP_FILE, JSON.stringify(normalized, null, 2), "utf-8");
+  return normalized;
+}
+
+function ensureReleasesDir() {
+  fs.mkdirSync(RELEASES_DIR, { recursive: true });
 }
 
 function normalizeAttachment(record) {
@@ -301,6 +487,11 @@ function findUser(username) {
   return { store, user };
 }
 
+function hasEnabledAdminUser() {
+  const store = loadUserStore();
+  return store.users.some((item) => item.isAdmin && !item.disabled);
+}
+
 function hashPassword(password, salt, iterations, digest) {
   const actualIterations = Number.isInteger(iterations) ? iterations : 120000;
   const actualDigest = digest || "sha256";
@@ -344,7 +535,7 @@ function sendJson(res, code, payload) {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, OPTIONS",
   });
   res.end(body);
 }
@@ -354,7 +545,7 @@ function sendText(res, code, text) {
     "Content-Type": "text/plain; charset=utf-8",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, OPTIONS",
   });
   res.end(text);
 }
@@ -397,6 +588,11 @@ function cleanupExpiredSessions() {
       wsByToken.delete(token);
     }
   }
+  for (const [token, session] of adminSessions.entries()) {
+    if (session.expiresAt <= now) {
+      adminSessions.delete(token);
+    }
+  }
 }
 
 function getOnlineClientMap() {
@@ -421,6 +617,7 @@ function activeUsers() {
       avatarKind: safeText(client.avatarKind) || inferAvatarKind(client.avatar),
       subnetKey: safeText(client.subnetKey),
       subnetLabel: safeText(client.subnetLabel),
+      client: normalizeClientInfo(client.clientInfo),
       online: true,
     });
   }
@@ -446,6 +643,7 @@ function buildUserDirectory() {
         online: Boolean(onlineClient),
         subnetKey: safeText(onlineClient?.subnetKey),
         subnetLabel: safeText(onlineClient?.subnetLabel),
+        client: onlineClient ? normalizeClientInfo(onlineClient.clientInfo) : normalizeClientInfo(user.lastClient),
       };
     });
 
@@ -511,6 +709,133 @@ function addHistory(message) {
     history.splice(0, history.length - HISTORY_MAX);
   }
   saveChatHistoryStore(history);
+}
+
+function resolveAdminSessionByToken(token) {
+  const normalized = safeText(token);
+  if (!normalized) return null;
+  const session = adminSessions.get(normalized);
+  if (!session) return null;
+  if (session.expiresAt <= Date.now()) {
+    adminSessions.delete(normalized);
+    return null;
+  }
+  return session;
+}
+
+function requireAdminSession(req, res) {
+  const token = extractBearer(req);
+  const session = resolveAdminSessionByToken(token);
+  if (!session) {
+    sendText(res, 401, "管理员未授权");
+    return null;
+  }
+  return session;
+}
+
+function createUserRecord(username, password, extra = {}) {
+  const normalized = safeText(username);
+  const pwd = String(password || "");
+  if (!normalized) {
+    throw new Error("用户名不能为空");
+  }
+  if (pwd.length < 6) {
+    throw new Error("密码长度至少 6 位");
+  }
+
+  const salt = crypto.randomBytes(16).toString("hex");
+  const now = nowIso();
+  return normalizeUserRecord({
+    username: normalized,
+    salt,
+    passwordHash: hashPassword(pwd, salt, 120000, "sha256"),
+    iterations: 120000,
+    digest: "sha256",
+    avatar: safeText(extra.avatar).slice(0, MAX_AVATAR_LENGTH),
+    bio: safeText(extra.bio).slice(0, 200),
+    displayName: safeText(extra.displayName) || normalized,
+    isAdmin: Boolean(extra.isAdmin),
+    disabled: Boolean(extra.disabled),
+    createdAt: safeText(extra.createdAt) || now,
+    updatedAt: now,
+  });
+}
+
+function readRawBody(req, maxBytes = 256 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    req.on("data", (chunk) => {
+      total += chunk.length;
+      if (total > maxBytes) {
+        reject(new Error("请求体过大"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      resolve(Buffer.concat(chunks));
+    });
+    req.on("error", reject);
+  });
+}
+
+function adminUserSummary(user) {
+  const onlineMap = getOnlineClientMap();
+  const onlineClient = onlineMap.get(user.username);
+  return {
+    username: user.username,
+    displayName: safeText(user.displayName) || user.username,
+    avatar: safeText(user.avatar),
+    avatarKind: safeText(user.avatarKind) || inferAvatarKind(user.avatar),
+    bio: safeText(user.bio),
+    isAdmin: Boolean(user.isAdmin),
+    disabled: Boolean(user.disabled),
+    online: Boolean(onlineClient),
+    client: onlineClient ? normalizeClientInfo(onlineClient.clientInfo) : normalizeClientInfo(user.lastClient),
+    createdAt: safeText(user.createdAt),
+    updatedAt: safeText(user.updatedAt),
+  };
+}
+
+function getBaseUrl(req) {
+  const proto = safeText(req.headers["x-forwarded-proto"]) || "http";
+  const host = safeText(req.headers["x-forwarded-host"] || req.headers.host);
+  return host ? `${proto}://${host}` : "";
+}
+
+function safeDownloadName(rawName) {
+  const base = path.basename(String(rawName || "").trim()).replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-");
+  return base || "";
+}
+
+function releasePublicUrl(req, fileName) {
+  const base = getBaseUrl(req);
+  if (!base) return "";
+  return `${base}/downloads/${encodeURIComponent(fileName)}`;
+}
+
+function serveReleaseDownload(req, res, pathname) {
+  const fileName = decodeURIComponent(String(pathname || "").replace(/^\/downloads\//, ""));
+  const safeName = safeDownloadName(fileName);
+  if (!safeName) {
+    sendText(res, 404, "Not Found");
+    return true;
+  }
+  const filePath = path.join(RELEASES_DIR, safeName);
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    sendText(res, 404, "Not Found");
+    return true;
+  }
+  res.writeHead(200, {
+    "Content-Type": "application/octet-stream",
+    "Content-Length": fs.statSync(filePath).size,
+    "Content-Disposition": `attachment; filename="${safeName}"`,
+    "Access-Control-Allow-Origin": "*",
+  });
+  fs.createReadStream(filePath).pipe(res);
+  return true;
 }
 
 function findHistoryMessage(messageId) {
@@ -764,7 +1089,7 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, OPTIONS",
     });
     res.end();
     return;
@@ -772,6 +1097,13 @@ const server = http.createServer(async (req, res) => {
 
   const reqUrl = new URL(req.url || "/", `http://${req.headers.host || "127.0.0.1"}`);
   const pathname = reqUrl.pathname;
+
+  if (req.method === "GET" && pathname.startsWith("/downloads/")) {
+    ensureReleasesDir();
+    if (serveReleaseDownload(req, res, pathname)) {
+      return;
+    }
+  }
 
   if (req.method === "GET" && pathname === "/api/health") {
     sendJson(res, 200, {
@@ -790,6 +1122,10 @@ const server = http.createServer(async (req, res) => {
       const payload = safeParseJson(body);
       const username = safeText(payload?.username);
       const password = String(payload?.password || "");
+      const clientInfo = normalizeClientInfo({
+        ...(payload?.client && typeof payload.client === "object" ? payload.client : {}),
+        reportedAt: nowIso(),
+      });
 
       if (!username || !password) {
         sendText(res, 400, "用户名或密码不能为空");
@@ -819,6 +1155,10 @@ const server = http.createServer(async (req, res) => {
       const subnetKey = subnetKeyFromIp(remoteIp);
       const subnetLabel = subnetLabelFromIp(remoteIp);
 
+      user.lastClient = clientInfo;
+      user.updatedAt = nowIso();
+      saveUserStore(store);
+
       sessions.set(token, {
         token,
         username,
@@ -829,6 +1169,7 @@ const server = http.createServer(async (req, res) => {
         expiresAt: now + SESSION_TTL_MS,
         subnetKey,
         subnetLabel,
+        clientInfo,
       });
 
       sendJson(res, 200, {
@@ -891,6 +1232,260 @@ const server = http.createServer(async (req, res) => {
     sendJson(res, 200, {
       profile: getPublicProfile(session.username),
       roomScope: session.subnetLabel,
+    });
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/admin/login") {
+    try {
+      cleanupExpiredSessions();
+      const body = await readBody(req);
+      const payload = safeParseJson(body);
+      const username = safeText(payload?.username);
+      const password = String(payload?.password || "");
+      const { user } = findUser(username);
+
+      if (!user || !user.isAdmin || user.disabled || !verifyPassword(user, password)) {
+        sendText(res, 401, "管理员账号或密码错误");
+        return;
+      }
+
+      const token = makeToken();
+      const now = Date.now();
+      adminSessions.set(token, {
+        token,
+        username,
+        displayName: safeText(user.displayName) || username,
+        issuedAt: now,
+        expiresAt: now + SESSION_TTL_MS,
+      });
+
+      sendJson(res, 200, {
+        token,
+        profile: adminUserSummary(user),
+      });
+    } catch (err) {
+      sendText(res, 500, err.message || "管理员登录失败");
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/admin/setup") {
+    try {
+      if (hasEnabledAdminUser()) {
+        sendText(res, 409, "服务器已经存在管理员账号");
+        return;
+      }
+      const body = await readBody(req);
+      const payload = safeParseJson(body) || {};
+      const username = safeText(payload.username);
+      const password = String(payload.password || "");
+      const displayName = safeText(payload.displayName) || username;
+
+      const store = loadUserStore();
+      const existing = store.users.find((item) => item.username === username);
+      if (existing) {
+        sendText(res, 409, "该用户已存在");
+        return;
+      }
+
+      const record = createUserRecord(username, password, {
+        displayName,
+        isAdmin: true,
+      });
+      store.users.push(record);
+      saveUserStore(store);
+
+      const token = makeToken();
+      const now = Date.now();
+      adminSessions.set(token, {
+        token,
+        username,
+        displayName: safeText(record.displayName) || username,
+        issuedAt: now,
+        expiresAt: now + SESSION_TTL_MS,
+      });
+
+      sendJson(res, 200, {
+        token,
+        profile: adminUserSummary(record),
+      });
+    } catch (err) {
+      sendText(res, 400, err.message || "初始化管理员失败");
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/admin/logout") {
+    const token = extractBearer(req);
+    if (token) {
+      adminSessions.delete(token);
+    }
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/api/admin/users") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    const store = loadUserStore();
+    sendJson(res, 200, {
+      users: store.users.map(adminUserSummary).sort((a, b) => a.username.localeCompare(b.username)),
+      admin: {
+        username: adminSession.username,
+        displayName: adminSession.displayName,
+      },
+    });
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/admin/users") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    try {
+      const body = await readBody(req);
+      const payload = safeParseJson(body) || {};
+      const username = safeText(payload.username);
+      const password = String(payload.password || "");
+      const store = loadUserStore();
+      const existing = store.users.find((item) => item.username === username);
+      if (existing) {
+        sendText(res, 409, "该用户已存在");
+        return;
+      }
+
+      const record = createUserRecord(username, password, payload);
+      store.users.push(record);
+      saveUserStore(store);
+      sendJson(res, 200, {
+        ok: true,
+        user: adminUserSummary(record),
+      });
+    } catch (err) {
+      sendText(res, 400, err.message || "创建用户失败");
+    }
+    return;
+  }
+
+  if ((req.method === "PATCH" || req.method === "PUT") && pathname.startsWith("/api/admin/users/")) {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    try {
+      const username = decodeURIComponent(pathname.slice("/api/admin/users/".length));
+      const store = loadUserStore();
+      const user = store.users.find((item) => item.username === username);
+      if (!user) {
+        sendText(res, 404, "用户不存在");
+        return;
+      }
+
+      const body = await readBody(req);
+      const payload = safeParseJson(body) || {};
+      const nextPassword = String(payload.password || "");
+
+      if (typeof payload.displayName !== "undefined") user.displayName = safeText(payload.displayName).slice(0, 30) || user.username;
+      if (typeof payload.bio !== "undefined") user.bio = safeText(payload.bio).slice(0, 200);
+      if (typeof payload.avatar !== "undefined") {
+        user.avatar = safeText(payload.avatar).slice(0, MAX_AVATAR_LENGTH);
+        user.avatarKind = inferAvatarKind(user.avatar);
+      }
+      if (typeof payload.disabled !== "undefined") user.disabled = Boolean(payload.disabled);
+      if (typeof payload.isAdmin !== "undefined") user.isAdmin = Boolean(payload.isAdmin);
+      if (nextPassword) {
+        const salt = crypto.randomBytes(16).toString("hex");
+        user.salt = salt;
+        user.passwordHash = hashPassword(nextPassword, salt, 120000, "sha256");
+        user.iterations = 120000;
+        user.digest = "sha256";
+      }
+      user.updatedAt = nowIso();
+      saveUserStore(store);
+      sendJson(res, 200, {
+        ok: true,
+        user: adminUserSummary(normalizeUserRecord(user)),
+      });
+    } catch (err) {
+      sendText(res, 400, err.message || "更新用户失败");
+    }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/api/admin/bootstrap") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    sendJson(res, 200, loadClientBootstrap(req));
+    return;
+  }
+
+  if ((req.method === "PUT" || req.method === "POST") && pathname === "/api/admin/bootstrap") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    try {
+      const body = await readBody(req, 512 * 1024);
+      const payload = safeParseJson(body) || {};
+      const saved = saveClientBootstrap(payload);
+      sendJson(res, 200, {
+        ok: true,
+        bootstrap: saved,
+      });
+    } catch (err) {
+      sendText(res, 400, err.message || "保存客户端配置失败");
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/admin/releases/upload") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    try {
+      ensureReleasesDir();
+      const platformKey = safeText(reqUrl.searchParams.get("platform") || req.headers["x-update-platform"]);
+      if (!["windows", "macos"].includes(platformKey)) {
+        sendText(res, 400, "缺少合法的平台标识");
+        return;
+      }
+      const requestedName = safeDownloadName(reqUrl.searchParams.get("fileName") || req.headers["x-file-name"]);
+      if (!requestedName) {
+        sendText(res, 400, "缺少文件名");
+        return;
+      }
+      const body = await readRawBody(req, 512 * 1024 * 1024);
+      const filePath = path.join(RELEASES_DIR, requestedName);
+      fs.writeFileSync(filePath, body);
+
+      const bootstrap = loadClientBootstrap();
+      bootstrap.update.version = safeText(reqUrl.searchParams.get("version") || req.headers["x-update-version"]) || bootstrap.update.version;
+      bootstrap.update.notes = safeText(reqUrl.searchParams.get("notes") || req.headers["x-update-notes"]) || bootstrap.update.notes;
+      bootstrap.update.publishedAt = nowIso();
+      bootstrap.update[platformKey] = {
+        url: releasePublicUrl(req, requestedName),
+        fileName: requestedName,
+      };
+      const saved = saveClientBootstrap(bootstrap);
+
+      sendJson(res, 200, {
+        ok: true,
+        fileName: requestedName,
+        url: saved.update[platformKey].url,
+        bootstrap: saved,
+      });
+    } catch (err) {
+      sendText(res, 400, err.message || "上传安装包失败");
+    }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/api/client/bootstrap") {
+    const token = extractBearer(req);
+    const session = resolveSessionByToken(token);
+    if (!session) {
+      sendText(res, 401, "未授权");
+      return;
+    }
+
+    sendJson(res, 200, {
+      ...loadClientBootstrap(req),
+      fetchedAt: nowIso(),
     });
     return;
   }
@@ -1043,6 +1638,7 @@ server.on("upgrade", (request, socket, head) => {
     ws.displayName = session.displayName || session.username;
     ws.avatar = session.avatar || "";
     ws.avatarKind = session.avatarKind || inferAvatarKind(session.avatar);
+    ws.clientInfo = normalizeClientInfo(session.clientInfo);
     ws.clientIp = normalizeIp(request.socket?.remoteAddress);
     ws.subnetKey = subnetKeyFromIp(ws.clientIp);
     ws.subnetLabel = subnetLabelFromIp(ws.clientIp);
@@ -1061,6 +1657,7 @@ wss.on("connection", (ws) => {
     displayName: ws.displayName,
     avatar: ws.avatar,
     avatarKind: ws.avatarKind,
+    client: normalizeClientInfo(ws.clientInfo),
     roomScope: ws.subnetLabel,
     timestamp: nowIso(),
   });

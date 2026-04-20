@@ -63,6 +63,49 @@ function normalizeMode(baseMode, argv) {
   return argMode || "all";
 }
 
+function copyMissingUserDataEntries(sourceDir, targetDir) {
+  if (!sourceDir || !targetDir) return;
+  const from = path.resolve(sourceDir);
+  const to = path.resolve(targetDir);
+  if (from === to || !fs.existsSync(from)) return;
+
+  fs.mkdirSync(to, { recursive: true });
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    const sourcePath = path.join(from, entry.name);
+    const targetPath = path.join(to, entry.name);
+    if (fs.existsSync(targetPath)) continue;
+    if (entry.isDirectory()) {
+      fs.cpSync(sourcePath, targetPath, { recursive: true, errorOnExist: false });
+    } else if (entry.isFile()) {
+      fs.copyFileSync(sourcePath, targetPath);
+    }
+  }
+}
+
+function applyStableUserDataPath(appInstance) {
+  const legacyUserDataDir = appInstance.getPath("userData");
+  const stableUserDataDir = path.join(appInstance.getPath("appData"), "ShareGPT");
+
+  try {
+    copyMissingUserDataEntries(legacyUserDataDir, stableUserDataDir);
+  } catch (err) {
+    console.warn("Unable to migrate existing user data:", err.message || err);
+  }
+
+  appInstance.setPath("userData", stableUserDataDir);
+}
+
+async function flushAiSessionStorage() {
+  const partitions = Object.values(AI_WORKSPACE_POLICIES).map((policy) => policy.partition);
+  await Promise.all(partitions.map(async (partition) => {
+    try {
+      await session.fromPartition(partition).flushStorageData();
+    } catch (err) {
+      console.warn(`Unable to flush ${partition}:`, err.message || err);
+    }
+  }));
+}
+
 function safeText(value) {
   return String(value || "").trim();
 }
@@ -736,8 +779,33 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("clipboard:read-attachment", () => buildClipboardAttachmentPayload());
     ipcMain.handle("service:status", () => backend.getStatus());
     ipcMain.handle("app:paths", () => backend.getPaths());
+    ipcMain.handle("app:meta", () => backend.getAppMeta());
     ipcMain.handle("app:device-info", () => backend.getDeviceInfo());
     ipcMain.handle("app:mode", () => appMode);
+    ipcMain.handle("app:update-download", async (event, payload) => {
+      return backend.downloadUpdatePackage(payload || {}, (progress) => {
+        event.sender.send("app:update-progress", progress);
+      });
+    });
+    ipcMain.handle("app:update-open", async (_event, payload) => {
+      const filePath = safeText(payload?.filePath);
+      if (!filePath) {
+        throw new Error("缺少更新包路径");
+      }
+      await flushAiSessionStorage();
+      const backup = backend.createUpdateBackup("before-open-update");
+      const result = await shell.openPath(filePath);
+      if (result) {
+        throw new Error(result);
+      }
+      shell.showItemInFolder(filePath);
+      if (payload?.quitAfterOpen !== false) {
+        setTimeout(() => {
+          app.quit();
+        }, 1500);
+      }
+      return { ok: true, backupDir: backup.backupDir, willQuit: payload?.quitAfterOpen !== false };
+    });
     ipcMain.handle("notifications:show", (_event, payload) => {
       if (!Notification.isSupported()) {
         return false;
@@ -1050,6 +1118,7 @@ function createElectronApp(baseMode = "all") {
   }
 
   app.whenReady().then(() => {
+    applyStableUserDataPath(app);
     backend = new Backend(app, () => mainWindow, appMode);
     backend.init();
 
