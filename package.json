@@ -1,7 +1,7 @@
 {
-  "name": "chatportal-x1-desktop",
-  "version": "4.0.2",
-  "description": "Desktop client with built-in messaging and embedded ChatGPT and Gemini web access.",
+  "name": "sharegpt-desktop",
+  "version": "4.1.0",
+  "description": "ShareGPT desktop client with built-in messaging and embedded ChatGPT and Gemini web access.",
   "main": "src/main/main.js",
   "author": "Sjeary",
   "license": "UNLICENSED",
@@ -45,8 +45,8 @@
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId": "com.sjeary.chatportalx1.v4.desktop",
-    "productName": "ChatPortal X1 V4",
+    "appId": "com.sjeary.sharegpt.desktop",
+    "productName": "ShareGPT",
     "asar": true,
     "files": [
       "src/**/*",
@@ -68,8 +68,8 @@
       "target": [
         "portable"
       ],
-      "artifactName": "chatportal-x1-v4-${version}.${ext}",
-      "executableName": "chatportal_x1_v4",
+      "artifactName": "sharegpt-${version}.${ext}",
+      "executableName": "sharegpt",
       "signAndEditExecutable": false
     },
     "mac": {

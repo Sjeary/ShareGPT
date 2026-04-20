@@ -1,16 +1,16 @@
 [Unit]
-Description=ChatPortal X1 V4 Collaboration Server
+Description=ShareGPT Collaboration Server
 After=network.target
 
 [Service]
 Type=simple
-User=chatportal
-Group=chatportal
-WorkingDirectory=/opt/chatportal-x1-v4-collab
+User=sharegpt
+Group=sharegpt
+WorkingDirectory=/opt/sharegpt-collab
 Environment=NODE_ENV=production
 Environment=PORT=8088
 Environment=HOST=0.0.0.0
-Environment=USERS_FILE=/opt/chatportal-x1-v4-collab/data/users.json
+Environment=USERS_FILE=/opt/sharegpt-collab/data/users.json
 Environment=SESSION_TTL_MS=86400000
 Environment=HISTORY_MAX=200
 ExecStart=/usr/bin/env node server.js
@@ -19,4 +19,3 @@ RestartSec=3
 
 [Install]
 WantedBy=multi-user.target
-

@@ -20,13 +20,13 @@ const MAX_ATTACHMENTS_PER_MESSAGE = Number.parseInt(process.env.MAX_ATTACHMENTS_
 const MAX_ATTACHMENT_BYTES = Number.parseInt(process.env.MAX_ATTACHMENT_BYTES || `${30 * 1024 * 1024}`, 10);
 const RECALL_EDITABLE_WINDOW_MS = Number.parseInt(process.env.RECALL_EDITABLE_WINDOW_MS || `${7 * 24 * 60 * 60 * 1000}`, 10);
 const SERVER_SENDER_BOOTSTRAP = {
-  proxy_server: process.env.CHATPORTAL_SENDER_PROXY_SERVER || process.env.SENDER_PROXY_SERVER || process.env.PROXY_SERVER || "",
-  proxy_port: process.env.CHATPORTAL_SENDER_PROXY_PORT || process.env.SENDER_PROXY_PORT || process.env.PROXY_PORT || "",
-  proxy_uuid: process.env.CHATPORTAL_SENDER_PROXY_UUID || process.env.SENDER_PROXY_UUID || process.env.PROXY_UUID || "",
-  socks_listen_port: process.env.CHATPORTAL_SENDER_SOCKS_PORT || process.env.SENDER_SOCKS_PORT || "1080",
-  fallback_mode: process.env.CHATPORTAL_SENDER_FALLBACK_MODE || process.env.SENDER_FALLBACK_MODE || "system_proxy",
-  fallback_local_port: process.env.CHATPORTAL_SENDER_FALLBACK_LOCAL_PORT || process.env.SENDER_FALLBACK_LOCAL_PORT || "",
-  target_domains: process.env.CHATPORTAL_SENDER_TARGET_DOMAINS || process.env.SENDER_TARGET_DOMAINS || "",
+  proxy_server: process.env.SHAREGPT_SENDER_PROXY_SERVER || process.env.SENDER_PROXY_SERVER || process.env.PROXY_SERVER || "",
+  proxy_port: process.env.SHAREGPT_SENDER_PROXY_PORT || process.env.SENDER_PROXY_PORT || process.env.PROXY_PORT || "",
+  proxy_uuid: process.env.SHAREGPT_SENDER_PROXY_UUID || process.env.SENDER_PROXY_UUID || process.env.PROXY_UUID || "",
+  socks_listen_port: process.env.SHAREGPT_SENDER_SOCKS_PORT || process.env.SENDER_SOCKS_PORT || "1080",
+  fallback_mode: process.env.SHAREGPT_SENDER_FALLBACK_MODE || process.env.SENDER_FALLBACK_MODE || "system_proxy",
+  fallback_local_port: process.env.SHAREGPT_SENDER_FALLBACK_LOCAL_PORT || process.env.SENDER_FALLBACK_LOCAL_PORT || "",
+  target_domains: process.env.SHAREGPT_SENDER_TARGET_DOMAINS || process.env.SENDER_TARGET_DOMAINS || "",
 };
 
 const DEFAULT_TARGET_DOMAINS = [

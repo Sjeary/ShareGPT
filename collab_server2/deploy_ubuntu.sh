@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="chatportal-x1-v4-collab"
-SERVICE_NAME="chatportal-x1-v4-collab"
-APP_USER="chatportal"
-APP_GROUP="chatportal"
-INSTALL_DIR="/opt/chatportal-x1-v4-collab"
+APP_NAME="sharegpt-collab"
+SERVICE_NAME="sharegpt-collab"
+APP_USER="sharegpt"
+APP_GROUP="sharegpt"
+INSTALL_DIR="/opt/sharegpt-collab"
 PORT="${PORT:-8088}"
 HOST="${HOST:-0.0.0.0}"
 SESSION_TTL_MS="${SESSION_TTL_MS:-86400000}"
@@ -64,7 +64,7 @@ fi
 echo "[6/7] 生成 systemd 服务"
 cat >/etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
-Description=ChatPortal X1 V4 Collaboration Server
+Description=ShareGPT Collaboration Server
 After=network.target
 
 [Service]

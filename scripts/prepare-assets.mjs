@@ -34,8 +34,11 @@ async function exists(filePath) {
 }
 
 function configuredCandidates(fileName) {
-  const explicit = fileName === names.singbox ? process.env.CHATPORTAL_SINGBOX_PATH : process.env.CHATPORTAL_FRPC_PATH;
-  const binDir = process.env.CHATPORTAL_BIN_DIR;
+  const explicitNames = fileName === names.singbox
+    ? ["SHAREGPT_SINGBOX_PATH"]
+    : ["SHAREGPT_FRPC_PATH"];
+  const explicit = explicitNames.map((name) => process.env[name]).find((value) => String(value || "").trim());
+  const binDir = process.env.SHAREGPT_BIN_DIR;
   const result = [];
 
   if (explicit) {
@@ -75,13 +78,13 @@ async function copyOne(label, fileName) {
         await fs.chmod(dest, 0o755);
       }
       console.log(`[assets] ${label}: ${candidate} -> ${dest}`);
-      return;
+      return true;
     }
   }
-
-  throw new Error(
-    `未找到 ${label} 二进制: ${fileName}。请放到 build/bin/、build/bin/${platform}/，或通过 CHATPORTAL_BIN_DIR / 专用环境变量指定。`,
+  console.warn(
+    `[assets] ${label} 未准备：${fileName}。仓库仍可继续启动界面和打包，但在使用相关代理功能前，需要先按 build/bin/README.md 准备第三方二进制，或通过 SHAREGPT_BIN_DIR / SHAREGPT_*_PATH 指定。`,
   );
+  return false;
 }
 
 async function main() {
@@ -94,17 +97,9 @@ async function main() {
   }
 
   if (needsFrpc) {
-    try {
-      await copyOne("frpc", names.frpc);
-    } catch (err) {
-      if (cliMode === "receiver") {
-        throw err;
-      }
-      console.warn(`[assets] frpc 未准备，Receiver 模式将无法运行: ${err.message}`);
-    }
+    await copyOne("frpc", names.frpc);
   }
 }
-
 main().catch((err) => {
   console.error(err.message || err);
   process.exit(1);
