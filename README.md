@@ -19,6 +19,9 @@ ChatPortal X1 V4 是一个桌面客户端，集成了联系人聊天、房间消
 - 内置 ChatGPT / Gemini 网页
 - AI 使用统计
 - 首次启动配置引导
+- 首次登录后从服务端自动下发 Sender 连接配置
+- 应用内检查、下载并打开新版本安装包
+- 独立管理端，用于用户、配置和版本发布管理
 - Windows 便携打包
 
 ## 下载
@@ -43,7 +46,13 @@ https://github.com/Sjeary/singbox-client/releases
 4. 填写连接设置并启动发送服务
 5. 使用联系人聊天或内置 ChatGPT 网页
 6. 可切换到内置 Gemini 网页
-7. Sender 的设置、聊天记录和账号资料会自动保存在系统用户目录，覆盖安装新版本后会继续保留
+7. Sender 的设置、聊天记录、账号资料和 AI 网页登录状态会自动保存在系统用户目录，覆盖安装新版本后会继续保留
+
+首次登录说明：
+- 用户只需要填写协作服务地址、账号和密码
+- 登录成功后，客户端会向服务端请求 Sender 默认连接配置
+- 服务端返回有效配置后，客户端会自动写入本机设置，用户不需要手动导入配置文件
+- 本机已经保存过的用户自定义配置不会被无提示覆盖
 
 ### Receiver
 1. 下载 `chatportal-x1-v4-receiver-<version>.exe`
@@ -68,10 +77,29 @@ https://github.com/Sjeary/singbox-client/releases
 - `运行记录`
 
 ## 聊天与资料持久化
-- Sender 的设置、本地聊天记录和 AI 网页会话保存在系统用户目录中，不保存在应用包本体内
+- Sender 的设置、本地聊天记录、账号资料和 AI 网页会话保存在系统用户目录中，不保存在应用包本体内
+- 当前用户数据目录固定为 `ShareGPT`，避免因为安装包名称变化导致数据目录漂移
+- 启动时会兼容迁移旧应用名目录中尚未复制的数据，不覆盖当前目录已有数据
+- Windows 数据目录：`%APPDATA%\ShareGPT`
+- macOS 数据目录：`~/Library/Application Support/ShareGPT`
+- ChatGPT 会话使用 `persist:gpt-chat`，Gemini 会话使用 `persist:gemini-chat`
 - macOS 将新版本拖到“应用程序”目录覆盖旧版本时，本地数据仍会继续保留
-- Windows 便携版覆盖更新时，本地数据同样会继续保留
+- Windows 便携版或安装包覆盖更新时，本地数据同样会继续保留
+- 打开新版本安装包前会自动生成更新前资料快照，默认保留最近 5 份
+- 更新前资料快照目录：Windows `%APPDATA%\ShareGPT Backups`，macOS `~/Library/Application Support/ShareGPT Backups`
+- 如果更新后用户数据目录缺失，启动时会从最近一次快照中自动恢复缺失的设置、聊天记录和 AI 网页会话目录
 - 可在“账号与信息”页面导出或导入本机资料包，用于换机、迁移和手动备份
+
+## 应用更新
+- 客户端会从协作服务端获取当前可用版本信息
+- 用户可以在“账号与信息”页面下载并打开新版本安装包
+- Windows 会打开下载后的 `.exe`，macOS 会打开下载后的 `.dmg` 或 `.zip`
+- 更新包会保存到系统“下载”目录下的 `ShareGPT Updates/<version>/`，文件名带下载时间，便于直接找到并区分新旧版本
+- 当前实现是“辅助更新”：负责检查、下载和打开安装包，不会静默替换正在运行的程序
+- 更新后继续读取同一个 `ShareGPT` 用户数据目录，因此账号、聊天、配置、ChatGPT 登录状态和 Gemini 登录状态会保留
+- 打开安装包前会刷新 ChatGPT / Gemini 持久会话数据并生成更新前快照；快照失败时不会继续打开安装包
+- 安装包打开成功后，当前程序会自动退出，避免旧程序占用文件导致覆盖安装失败
+- 如果未来需要完全静默自动更新，应切换到签名安装包和 `electron-updater` 方案
 
 ## 内置 ChatGPT 网页
 - 使用 Electron 内嵌 Chromium 打开 ChatGPT
@@ -233,6 +261,41 @@ npm run dev:receiver
   - 启动和打包前整理运行资源
 - `collab_server2/`
   - 登录、聊天、在线状态和 AI 使用统计服务端
+- `admin_console/`
+  - 独立管理端，可在 Windows 和 macOS 打开
+
+## 管理端
+管理端是独立桌面程序，源码位于：
+
+- `admin_console/`
+
+能力：
+- 管理员登录和首次管理员初始化
+- 查看用户、创建用户、修改用户信息
+- 维护首次登录自动下发的 Sender 配置
+- 上传 Windows / macOS 新版本安装包
+- 保存服务端备用扩展配置
+
+从根目录启动：
+
+```bash
+npm run dev:admin
+```
+
+从根目录打包：
+
+```bash
+npm run dist:admin:win
+npm run dist:admin:mac
+```
+
+也可以进入子目录单独运行：
+
+```bash
+cd admin_console
+npm install
+npm run dev
+```
 
 ## 协作服务端
 快速启动：
@@ -240,7 +303,7 @@ npm run dev:receiver
 ```bash
 cd collab_server2
 npm install
-node add_user.js admin MyStrongPass123
+node add_user.js admin MyStrongPass123 --admin
 npm start
 ```
 
@@ -252,6 +315,15 @@ http://server.example.com:8088
 
 部署说明：
 - `collab_server2/README.md`
+
+服务端运行数据：
+- `collab_server2/data/users.json`
+- `collab_server2/data/chat_history.json`
+- `collab_server2/data/gpt_usage.json`
+- `collab_server2/data/client_bootstrap.json`
+- `collab_server2/data/releases/`
+
+这些数据目录不纳入 Git。生产环境部署时应单独备份。
 
 ## Git
 克隆仓库：
@@ -282,6 +354,6 @@ git push
 
 ## 仓库说明
 - 仓库中保留源码、构建配置和运行所需二进制
-- `node_modules/`、`release*/`、服务端运行数据不会进入 Git
+- `node_modules/`、`release*/`、服务端运行数据、管理端构建产物不会进入 Git
 
 

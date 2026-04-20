@@ -1,7 +1,10 @@
 const fs = require("node:fs");
+const http = require("node:http");
+const https = require("node:https");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const os = require("node:os");
+const { URL } = require("node:url");
 
 const DEFAULT_TARGET_DOMAINS = [
   "chatgpt.com",
@@ -81,6 +84,25 @@ const PUBLIC_DEFAULT_SETTINGS = {
 
 const LOCAL_CHAT_HISTORY_MAX_PER_CONVERSATION = 800;
 const LOCAL_CHAT_HISTORY_MAX_TOTAL = 6000;
+const UPDATE_BACKUP_KEEP = 5;
+const UPDATE_BACKUP_ENTRIES = [
+  "settings.json",
+  "chat_history.json",
+  "private.defaults.local.json",
+  "Partitions",
+];
+const UPDATE_BACKUP_SKIP_NAMES = new Set([
+  "Cache",
+  "Code Cache",
+  "GPUCache",
+  "DawnCache",
+  "ShaderCache",
+  "CachedData",
+  "Crashpad",
+  "logs",
+  "updates",
+  "runtime",
+]);
 
 function mergeSettings(base, override = {}) {
   return {
@@ -154,6 +176,86 @@ function normalizeStoredReplyTarget(record) {
     preview: preview || "原消息",
     timestamp: String(record?.timestamp || "").trim(),
   };
+}
+
+function makeFileSafeTimestamp() {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+function copyImportantPath(sourcePath, targetPath, errors, options = {}) {
+  const overwrite = options.overwrite !== false;
+  let stat;
+  try {
+    stat = fs.statSync(sourcePath);
+  } catch {
+    return;
+  }
+
+  try {
+    if (stat.isDirectory()) {
+      fs.mkdirSync(targetPath, { recursive: true });
+      for (const name of fs.readdirSync(sourcePath)) {
+        if (UPDATE_BACKUP_SKIP_NAMES.has(name)) continue;
+        copyImportantPath(path.join(sourcePath, name), path.join(targetPath, name), errors, options);
+      }
+      return;
+    }
+
+    if (stat.isFile()) {
+      if (!overwrite && fs.existsSync(targetPath)) return;
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.copyFileSync(sourcePath, targetPath);
+    }
+  } catch (err) {
+    errors.push({
+      source: sourcePath,
+      message: err.message || String(err),
+    });
+  }
+}
+
+function pruneOldUpdateBackups(backupRoot) {
+  let entries;
+  try {
+    entries = fs.readdirSync(backupRoot, { withFileTypes: true })
+      .filter((item) => item.isDirectory() && item.name.startsWith("update-"))
+      .map((item) => {
+        const fullPath = path.join(backupRoot, item.name);
+        let mtimeMs = 0;
+        try {
+          mtimeMs = fs.statSync(fullPath).mtimeMs;
+        } catch {}
+        return { fullPath, mtimeMs };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+  } catch {
+    return;
+  }
+
+  for (const entry of entries.slice(UPDATE_BACKUP_KEEP)) {
+    try {
+      fs.rmSync(entry.fullPath, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+function latestUpdateBackupDir(backupRoot) {
+  try {
+    const entries = fs.readdirSync(backupRoot, { withFileTypes: true })
+      .filter((item) => item.isDirectory() && item.name.startsWith("update-"))
+      .map((item) => {
+        const fullPath = path.join(backupRoot, item.name);
+        let mtimeMs = 0;
+        try {
+          mtimeMs = fs.statSync(fullPath).mtimeMs;
+        } catch {}
+        return { fullPath, mtimeMs };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return entries[0]?.fullPath || "";
+  } catch {
+    return "";
+  }
 }
 
 function normalizeStoredForwardedFrom(record) {
@@ -282,6 +384,8 @@ class Backend {
     this.settingsFile = path.join(this.app.getPath("userData"), "settings.json");
     this.chatHistoryFile = path.join(this.app.getPath("userData"), "chat_history.json");
     this.runtimeDir = path.join(this.app.getPath("userData"), "runtime");
+    this.updatesDir = path.join(this.app.getPath("downloads"), "ShareGPT Updates");
+    this.updateBackupsDir = path.join(this.app.getPath("appData"), "ShareGPT Backups");
 
     this.senderProcess = null;
     this.receiverFrpc = null;
@@ -356,8 +460,48 @@ class Backend {
 
   init() {
     fs.mkdirSync(this.runtimeDir, { recursive: true });
+    fs.mkdirSync(this.updatesDir, { recursive: true });
+    fs.mkdirSync(this.updateBackupsDir, { recursive: true });
+    this.restoreMissingDataFromLatestUpdateBackup();
     this.ensureLocalDefaultsFile();
     this.ensureChatHistoryFile();
+  }
+
+  restoreMissingDataFromLatestUpdateBackup() {
+    const backupDir = latestUpdateBackupDir(this.updateBackupsDir);
+    if (!backupDir) return null;
+
+    const userDataDir = this.app.getPath("userData");
+    const restored = [];
+    const errors = [];
+
+    for (const entryName of UPDATE_BACKUP_ENTRIES) {
+      const sourcePath = path.join(backupDir, entryName);
+      const targetPath = path.join(userDataDir, entryName);
+      if (!fs.existsSync(sourcePath)) continue;
+
+      const before = fs.existsSync(targetPath);
+      copyImportantPath(sourcePath, targetPath, errors, { overwrite: false });
+      const after = fs.existsSync(targetPath);
+      if (!before && after) {
+        restored.push(entryName);
+      }
+    }
+
+    if (restored.length || errors.length) {
+      const report = {
+        checkedAt: new Date().toISOString(),
+        sourceBackup: backupDir,
+        restored,
+        errors,
+      };
+      try {
+        fs.writeFileSync(path.join(userDataDir, "update_restore_report.json"), JSON.stringify(report, null, 2), "utf-8");
+      } catch {}
+      return report;
+    }
+
+    return null;
   }
 
   log(source, line) {
@@ -518,6 +662,45 @@ class Backend {
     }
   }
 
+  createUpdateBackup(reason = "manual") {
+    const userDataDir = this.app.getPath("userData");
+    const backupRoot = this.updateBackupsDir;
+    const backupName = `update-${makeFileSafeTimestamp()}`;
+    const backupDir = path.join(backupRoot, backupName);
+    const errors = [];
+
+    fs.mkdirSync(backupDir, { recursive: true });
+
+    for (const entryName of UPDATE_BACKUP_ENTRIES) {
+      const sourcePath = path.join(userDataDir, entryName);
+      const targetPath = path.join(backupDir, entryName);
+      copyImportantPath(sourcePath, targetPath, errors);
+    }
+
+    const manifest = {
+      app: this.app.getName(),
+      version: this.app.getVersion(),
+      reason: String(reason || "manual"),
+      createdAt: new Date().toISOString(),
+      userDataDir,
+      backupDir,
+      entries: UPDATE_BACKUP_ENTRIES,
+      skippedNames: Array.from(UPDATE_BACKUP_SKIP_NAMES),
+      errors,
+    };
+    fs.writeFileSync(path.join(backupDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf-8");
+    pruneOldUpdateBackups(backupRoot);
+
+    if (errors.length) {
+      throw new Error(`更新前资料备份未完全成功，已停止打开安装包。备份目录：${backupDir}`);
+    }
+
+    return {
+      backupDir,
+      errors,
+    };
+  }
+
   async importSettings() {
     const { dialog } = require("electron");
     const window = this.getWindow();
@@ -546,10 +729,154 @@ class Backend {
       singbox: this.resolveBinary("sing-box"),
       frpc: includeReceiver ? this.resolveBinary("frpc") : "",
       runtimeDir: this.runtimeDir,
+      updatesDir: this.updatesDir,
+      updateBackupsDir: this.updateBackupsDir,
       userDataDir: this.app.getPath("userData"),
       settingsFile: this.settingsFile,
       chatHistoryFile: this.chatHistoryFile,
     };
+  }
+
+  getAppMeta() {
+    return {
+      name: this.app.getName(),
+      version: this.app.getVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      mode: this.appMode,
+      userDataDir: this.app.getPath("userData"),
+    };
+  }
+
+  sanitizeUpdateFileName(rawName, fallbackExt = "") {
+    const source = String(rawName || "").trim();
+    const cleaned = path.basename(source).replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-").trim();
+    if (cleaned) return cleaned;
+    return `ShareGPT-update${fallbackExt}`;
+  }
+
+  resolveUpdateDownloadTarget(rawUrl, preferredName = "", version = "") {
+    let parsed;
+    try {
+      parsed = new URL(String(rawUrl || "").trim());
+    } catch {
+      throw new Error("更新链接无效");
+    }
+
+    if (!/^https?:$/i.test(parsed.protocol)) {
+      throw new Error("更新链接仅支持 http/https");
+    }
+
+    const ext = path.extname(parsed.pathname || "");
+    const originalName = this.sanitizeUpdateFileName(preferredName || path.basename(parsed.pathname || ""), ext);
+    const originalExt = path.extname(originalName) || ext;
+    const originalBase = path.basename(originalName, originalExt);
+    const stamp = new Date().toISOString().replace(/[^\d]/g, "").slice(0, 14);
+    const fileName = this.sanitizeUpdateFileName(`${originalBase}-${stamp}${originalExt}`, originalExt);
+    const versionText = String(version || "").trim();
+    const versionDir = versionText
+      ? this.sanitizeUpdateFileName(`v${versionText}`, "")
+      : "manual";
+    return {
+      url: parsed,
+      filePath: path.join(this.updatesDir, versionDir, fileName),
+    };
+  }
+
+  async downloadUpdatePackage(payload = {}, onProgress = null) {
+    fs.mkdirSync(this.updatesDir, { recursive: true });
+    const { url, filePath } = this.resolveUpdateDownloadTarget(payload?.url, payload?.fileName, payload?.version);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const protocol = url.protocol === "https:" ? https : http;
+    const emitProgress = typeof onProgress === "function" ? onProgress : () => {};
+
+    return new Promise((resolve, reject) => {
+      const request = protocol.get(url, (response) => {
+        const status = Number(response.statusCode || 0);
+
+        if ([301, 302, 303, 307, 308].includes(status) && response.headers.location) {
+          response.resume();
+          this.downloadUpdatePackage({
+            ...payload,
+            url: new URL(response.headers.location, url).toString(),
+          }, onProgress).then(resolve, reject);
+          return;
+        }
+
+        if (status < 200 || status >= 300) {
+          response.resume();
+          reject(new Error(`下载更新失败（${status}）`));
+          return;
+        }
+
+        const tempPath = `${filePath}.download`;
+        const output = fs.createWriteStream(tempPath);
+        const total = Number.parseInt(String(response.headers["content-length"] || "0"), 10) || 0;
+        let transferred = 0;
+        emitProgress({
+          phase: "download",
+          fileName: path.basename(filePath),
+          transferred,
+          total,
+          percent: 0,
+        });
+
+        output.on("error", (err) => {
+          response.destroy();
+          try { fs.unlinkSync(tempPath); } catch {}
+          reject(err);
+        });
+
+        response.on("error", (err) => {
+          output.destroy(err);
+        });
+
+        response.on("data", (chunk) => {
+          transferred += chunk.length;
+          emitProgress({
+            phase: "download",
+            fileName: path.basename(filePath),
+            transferred,
+            total,
+            percent: total ? Math.min(100, Math.round((transferred / total) * 100)) : 0,
+          });
+        });
+
+        output.on("finish", () => {
+          output.close(() => {
+            try {
+              if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+              }
+              fs.renameSync(tempPath, filePath);
+              emitProgress({
+                phase: "download",
+                fileName: path.basename(filePath),
+                transferred,
+                total: total || transferred,
+                percent: 100,
+                done: true,
+              });
+              resolve({
+                filePath,
+                fileName: path.basename(filePath),
+                size: fs.statSync(filePath).size,
+              });
+            } catch (err) {
+              try { fs.unlinkSync(tempPath); } catch {}
+              reject(err);
+            }
+          });
+        });
+
+        response.pipe(output);
+      });
+
+      request.on("error", reject);
+      request.setTimeout(120000, () => {
+        request.destroy(new Error("下载更新超时"));
+      });
+    });
   }
 
   getDeviceInfo() {

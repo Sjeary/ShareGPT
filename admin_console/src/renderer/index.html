@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ShareGPT Admin</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar glass">
+        <div class="brand-block">
+          <h1>ShareGPT Admin</h1>
+          <p id="topbarSubtitle">集中管理用户、默认 Sender 分发配置和版本发布。</p>
+        </div>
+
+        <div class="top-meta">
+          <span class="meta-pill" id="serverMeta">未连接服务器</span>
+          <span class="meta-pill" id="adminMeta">未登录</span>
+        </div>
+
+        <div class="window-controls">
+          <button class="win-btn win-btn-min" id="btnWinMin" title="最小化"></button>
+          <button class="win-btn win-btn-max" id="btnWinMax" title="最大化"></button>
+          <button class="win-btn win-btn-close danger" id="btnWinClose" title="关闭"></button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="login-shell glass" id="loginShell">
+          <div class="login-card">
+            <h2>管理员登录</h2>
+            <p>使用管理员账号连接 ShareGPT 协作服务，后续的用户、配置和版本发布都在这里完成。</p>
+
+            <label>
+              <span>服务地址</span>
+              <input id="serverUrlInput" placeholder="http://server.example.com:8088" />
+            </label>
+
+            <label>
+              <span>管理员账号</span>
+              <input id="adminUsernameInput" placeholder="请输入管理员账号" />
+            </label>
+
+            <label>
+              <span>管理员密码</span>
+              <input id="adminPasswordInput" type="password" placeholder="请输入管理员密码" />
+            </label>
+
+            <div class="actions">
+              <button class="primary" id="btnAdminLogin">登录管理后台</button>
+              <button id="btnAdminSetup">首次初始化管理员</button>
+            </div>
+
+            <p class="feedback" id="loginFeedback" hidden></p>
+          </div>
+        </section>
+
+        <section class="dashboard-shell" id="dashboardShell" hidden>
+          <aside class="sidebar glass">
+            <button class="nav-btn active" data-tab-target="users">用户管理</button>
+            <button class="nav-btn" data-tab-target="bootstrap">Sender 配置</button>
+            <button class="nav-btn" data-tab-target="releases">版本发布</button>
+            <button class="nav-btn" data-tab-target="extras">备用配置</button>
+            <button class="nav-btn danger" id="btnAdminLogout">退出登录</button>
+          </aside>
+
+          <div class="content-stack">
+            <section class="panel glass tab-panel active" data-tab-panel="users">
+              <div class="panel-header">
+                <div>
+                  <h2>用户管理</h2>
+                  <p>查看当前用户状态，新增账号，或直接调整账号信息。</p>
+                </div>
+                <button id="btnRefreshUsers">刷新用户列表</button>
+              </div>
+
+              <div class="panel-grid users-grid">
+                <article class="card">
+                  <h3>新增用户</h3>
+                  <div class="form-grid">
+                    <label><span>用户名</span><input id="newUserUsername" /></label>
+                    <label><span>显示名</span><input id="newUserDisplayName" /></label>
+                    <label><span>密码</span><input id="newUserPassword" type="password" /></label>
+                    <label><span>头像</span><input id="newUserAvatar" placeholder="可选，单个字符或 emoji" /></label>
+                  </div>
+                  <label class="check-row"><input id="newUserIsAdmin" type="checkbox" /> 赋予管理员权限</label>
+                  <label><span>简介</span><textarea id="newUserBio" rows="3"></textarea></label>
+                  <div class="actions">
+                    <button class="primary" id="btnCreateUser">创建用户</button>
+                  </div>
+                  <p class="feedback" id="userCreateFeedback" hidden></p>
+                </article>
+
+                <article class="card">
+                  <h3>用户列表</h3>
+                  <div class="list-shell" id="userList"></div>
+                </article>
+
+                <article class="card">
+                  <h3>编辑用户</h3>
+                  <div class="form-grid">
+                    <label><span>用户名</span><input id="editUserUsername" disabled /></label>
+                    <label><span>显示名</span><input id="editUserDisplayName" /></label>
+                    <label><span>重设密码</span><input id="editUserPassword" type="password" placeholder="留空则不修改" /></label>
+                    <label><span>头像</span><input id="editUserAvatar" /></label>
+                  </div>
+                  <label><span>简介</span><textarea id="editUserBio" rows="3"></textarea></label>
+                  <div class="form-grid two-checks">
+                    <label class="check-row"><input id="editUserIsAdmin" type="checkbox" /> 管理员</label>
+                    <label class="check-row"><input id="editUserDisabled" type="checkbox" /> 禁用账号</label>
+                  </div>
+                  <div class="actions">
+                    <button class="primary" id="btnSaveUser">保存用户</button>
+                  </div>
+                  <p class="feedback" id="userEditFeedback" hidden></p>
+                </article>
+              </div>
+            </section>
+
+            <section class="panel glass tab-panel" data-tab-panel="bootstrap">
+              <div class="panel-header">
+                <div>
+                  <h2>Sender 默认配置</h2>
+                  <p>新用户第一次登录成功后，会自动从这里拉取 Sender 配置并写入客户端。</p>
+                </div>
+                <div class="panel-actions">
+                  <button id="btnUseServerSuggestedSender">读取服务器建议配置</button>
+                  <button id="btnReloadBootstrap">重新读取</button>
+                </div>
+              </div>
+
+              <div class="panel-grid">
+                <article class="card">
+                  <div class="form-grid">
+                    <label><span>服务器地址</span><input id="bootstrapProxyServer" /></label>
+                    <label><span>连接端口</span><input id="bootstrapProxyPort" /></label>
+                    <label><span>连接身份码</span><input id="bootstrapProxyUuid" /></label>
+                    <label><span>本地代理端口</span><input id="bootstrapSocksPort" /></label>
+                    <label><span>其他网站访问方式</span><input id="bootstrapFallbackMode" /></label>
+                    <label><span>已有代理端口</span><input id="bootstrapFallbackLocalPort" /></label>
+                  </div>
+                  <label><span>固定目标域名</span><textarea id="bootstrapTargetDomains" rows="6"></textarea></label>
+                  <div class="actions">
+                    <button class="primary" id="btnSaveBootstrap">保存 Sender 默认配置</button>
+                  </div>
+                  <p class="feedback" id="bootstrapFeedback" hidden></p>
+                </article>
+              </div>
+            </section>
+
+            <section class="panel glass tab-panel" data-tab-panel="releases">
+              <div class="panel-header">
+                <div>
+                  <h2>版本发布</h2>
+                  <p>上传新版本后，客户端会从服务器检查更新，并能直接下载打开安装包。</p>
+                </div>
+                <button id="btnReloadReleaseInfo">重新读取</button>
+              </div>
+
+              <div class="panel-grid releases-grid">
+                <article class="card">
+                  <h3>发布信息</h3>
+                  <div class="form-grid">
+                    <label><span>版本号</span><input id="releaseVersion" placeholder="例如 4.1.0" /></label>
+                    <label><span>发布时间</span><input id="releasePublishedAt" disabled /></label>
+                  </div>
+                  <label><span>更新说明</span><textarea id="releaseNotes" rows="5"></textarea></label>
+                </article>
+
+                <article class="card">
+                  <h3>Windows 安装包</h3>
+                  <div class="upload-row">
+                    <div class="upload-meta">
+                      <strong id="windowsFileName">未选择文件</strong>
+                      <span id="windowsFileSize">-</span>
+                      <small id="windowsCurrentUrl">当前地址：未配置</small>
+                    </div>
+                    <div class="actions">
+                      <button id="btnPickWindowsRelease">选择文件</button>
+                      <button class="primary" id="btnUploadWindowsRelease">上传 Windows 包</button>
+                    </div>
+                    <div class="progress-block" id="windowsUploadProgress" hidden>
+                      <div class="progress-meta">
+                        <span id="windowsUploadProgressText">准备上传</span>
+                        <strong id="windowsUploadProgressPercent">0%</strong>
+                      </div>
+                      <div class="progress-track">
+                        <div class="progress-fill" id="windowsUploadProgressFill"></div>
+                      </div>
+                    </div>
+                  </div>
+                </article>
+
+                <article class="card">
+                  <h3>macOS 安装包</h3>
+                  <div class="upload-row">
+                    <div class="upload-meta">
+                      <strong id="macosFileName">未选择文件</strong>
+                      <span id="macosFileSize">-</span>
+                      <small id="macosCurrentUrl">当前地址：未配置</small>
+                    </div>
+                    <div class="actions">
+                      <button id="btnPickMacRelease">选择文件</button>
+                      <button class="primary" id="btnUploadMacRelease">上传 macOS 包</button>
+                    </div>
+                    <div class="progress-block" id="macosUploadProgress" hidden>
+                      <div class="progress-meta">
+                        <span id="macosUploadProgressText">准备上传</span>
+                        <strong id="macosUploadProgressPercent">0%</strong>
+                      </div>
+                      <div class="progress-track">
+                        <div class="progress-fill" id="macosUploadProgressFill"></div>
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              </div>
+
+              <p class="feedback" id="releaseFeedback" hidden></p>
+            </section>
+
+            <section class="panel glass tab-panel" data-tab-panel="extras">
+              <div class="panel-header">
+                <div>
+                  <h2>备用配置</h2>
+                  <p>预留给后续功能扩展。这里保存的是服务端 `client_bootstrap.json` 里的 `extra` 对象。</p>
+                </div>
+              </div>
+
+              <article class="card">
+                <label><span>额外 JSON</span><textarea id="extraJsonInput" rows="18"></textarea></label>
+                <div class="actions">
+                  <button class="primary" id="btnSaveExtras">保存备用配置</button>
+                </div>
+                <p class="feedback" id="extraFeedback" hidden></p>
+              </article>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>

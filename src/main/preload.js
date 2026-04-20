@@ -13,8 +13,11 @@ contextBridge.exposeInMainWorld("api", {
 
   getStatus: () => ipcRenderer.invoke("service:status"),
   getPaths: () => ipcRenderer.invoke("app:paths"),
+  getAppMeta: () => ipcRenderer.invoke("app:meta"),
   getDeviceInfo: () => ipcRenderer.invoke("app:device-info"),
   getMode: () => ipcRenderer.invoke("app:mode"),
+  downloadAppUpdate: (payload) => ipcRenderer.invoke("app:update-download", payload),
+  openAppUpdate: (payload) => ipcRenderer.invoke("app:update-open", payload),
   showSystemNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
   listGptViews: () => ipcRenderer.invoke("gpt-tabs:list"),
@@ -66,5 +69,11 @@ contextBridge.exposeInMainWorld("api", {
     const listener = (_event, payload) => handler(payload);
     ipcRenderer.on("app:event", listener);
     return () => ipcRenderer.removeListener("app:event", listener);
+  },
+
+  onAppUpdateProgress: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("app:update-progress", listener);
+    return () => ipcRenderer.removeListener("app:update-progress", listener);
   },
 });

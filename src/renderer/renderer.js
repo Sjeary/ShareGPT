@@ -6,6 +6,16 @@ const state = {
   deviceInfo: null,
   contextMenuOpen: false,
   windowFocused: typeof document !== "undefined" ? document.hasFocus() : true,
+  app: {
+    name: "ShareGPT",
+    version: "",
+    platform: "",
+    arch: "",
+    updateInfo: null,
+    downloading: false,
+    downloadedFilePath: "",
+    updateProgress: null,
+  },
   ui: {
     setupGuideDismissed: false,
     theme: "dark",
@@ -197,6 +207,35 @@ function formatBytes(value) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(size >= 10 * 1024 ? 0 : 1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(size >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
+}
+
+function compareVersions(left, right) {
+  const leftParts = String(left || "").split(".").map((item) => Number.parseInt(item, 10) || 0);
+  const rightParts = String(right || "").split(".").map((item) => Number.parseInt(item, 10) || 0);
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const a = leftParts[index] || 0;
+    const b = rightParts[index] || 0;
+    if (a > b) return 1;
+    if (a < b) return -1;
+  }
+  return 0;
+}
+
+function currentUpdatePlatformKey() {
+  if (window.api?.platform === "darwin") return "macos";
+  return "windows";
+}
+
+function getClientVersionPayload() {
+  return {
+    name: safeText(state.app.name) || "ShareGPT",
+    version: safeText(state.app.version),
+    platform: safeText(state.app.platform || window.api?.platform),
+    arch: safeText(state.app.arch),
+    mode: safeText(state.mode),
+    reportedAt: new Date().toISOString(),
+  };
 }
 
 function normalizeMessageAttachments(items) {
@@ -2351,7 +2390,7 @@ function getSenderForm() {
     socks_listen_port: safeText(el("s_socks_listen_port")?.value),
     fallback_mode: el("s_fallback_mode")?.value,
     fallback_local_port: safeText(el("s_fallback_local_port")?.value),
-    target_domains: DEFAULT_TARGET_DOMAINS,
+    target_domains: safeText(el("s_target_domains")?.value) || DEFAULT_TARGET_DOMAINS,
   };
 }
 
@@ -2432,7 +2471,7 @@ function fillForm(settings) {
   if (el("s_fallback_mode")) el("s_fallback_mode").value = sender.fallback_mode || "system_proxy";
   if (el("s_fallback_local_port")) el("s_fallback_local_port").value = sender.fallback_local_port || "";
   if (el("s_target_domains")) {
-    el("s_target_domains").value = DEFAULT_TARGET_DOMAINS;
+    el("s_target_domains").value = sender.target_domains || DEFAULT_TARGET_DOMAINS;
     el("s_target_domains").readOnly = true;
   }
 
@@ -2503,6 +2542,7 @@ function fillForm(settings) {
   updateGptCounters();
   updateGptRuntimeState();
   updateGeminiRuntimeState();
+  syncUpdateControls();
   renderSetupGuide();
 }
 
@@ -2643,6 +2683,256 @@ function setCollabFeedback(text = "", tone = "") {
     node.dataset.tone = tone;
   } else {
     delete node.dataset.tone;
+  }
+}
+
+function setAppUpdateFeedback(text = "", tone = "") {
+  setPanelFeedback("app_update_feedback", text, tone);
+}
+
+function updateAppUpdateProgress(progress = null) {
+  const block = el("appUpdateProgress");
+  const fill = el("appUpdateProgressFill");
+  const textNode = el("appUpdateProgressText");
+  const percentNode = el("appUpdateProgressPercent");
+  if (!block || !fill || !textNode || !percentNode) return;
+
+  const active = Boolean(progress && (state.app.downloading || progress.done));
+  block.hidden = !active;
+  if (!active) {
+    fill.style.width = "0%";
+    textNode.textContent = "准备下载";
+    percentNode.textContent = "0%";
+    return;
+  }
+
+  const total = Number(progress.total || 0);
+  const transferred = Number(progress.transferred || 0);
+  const percent = total
+    ? Math.min(100, Math.max(0, Math.round((transferred / total) * 100)))
+    : Math.min(100, Math.max(0, Number(progress.percent || 0)));
+  fill.style.width = `${percent}%`;
+  percentNode.textContent = `${percent}%`;
+  textNode.textContent = total
+    ? `${safeText(progress.fileName) || "更新包"} · ${formatBytes(transferred)} / ${formatBytes(total)}`
+    : `${safeText(progress.fileName) || "更新包"} · ${formatBytes(transferred)}`;
+}
+
+function normalizeBootstrapPayload(payload = {}) {
+  const sender = payload?.sender && typeof payload.sender === "object" ? payload.sender : {};
+  const platformUpdate = payload?.update?.[currentUpdatePlatformKey()] && typeof payload.update[currentUpdatePlatformKey()] === "object"
+    ? payload.update[currentUpdatePlatformKey()]
+    : {};
+
+  return {
+    sender: {
+      proxy_server: safeText(sender.proxy_server),
+      proxy_port: safeText(sender.proxy_port),
+      proxy_uuid: safeText(sender.proxy_uuid),
+      socks_listen_port: safeText(sender.socks_listen_port),
+      fallback_mode: safeText(sender.fallback_mode) || "system_proxy",
+      fallback_local_port: safeText(sender.fallback_local_port),
+      target_domains: safeText(sender.target_domains) || DEFAULT_TARGET_DOMAINS,
+    },
+    update: {
+      version: safeText(payload?.update?.version),
+      notes: safeText(payload?.update?.notes),
+      publishedAt: safeText(payload?.update?.publishedAt),
+      url: safeText(platformUpdate.url),
+      fileName: safeText(platformUpdate.fileName),
+    },
+  };
+}
+
+function hasCompleteSenderBootstrap(sender = getSenderForm()) {
+  return Boolean(
+    safeText(sender?.proxy_server)
+    && safeText(sender?.proxy_port)
+    && safeText(sender?.proxy_uuid),
+  );
+}
+
+async function applySenderBootstrapConfig(serverSender, options = {}) {
+  const silent = Boolean(options.silent);
+  const normalized = normalizeBootstrapPayload({ sender: serverSender }).sender;
+  if (!hasCompleteSenderBootstrap(normalized)) {
+    return false;
+  }
+
+  const current = getSenderForm();
+  if (hasCompleteSenderBootstrap(current)) {
+    return false;
+  }
+
+  const mergedSender = {
+    ...current,
+    proxy_server: normalized.proxy_server || current.proxy_server,
+    proxy_port: normalized.proxy_port || current.proxy_port,
+    proxy_uuid: normalized.proxy_uuid || current.proxy_uuid,
+    socks_listen_port: normalized.socks_listen_port || current.socks_listen_port,
+    fallback_mode: normalized.fallback_mode || current.fallback_mode,
+    fallback_local_port: normalized.fallback_local_port || current.fallback_local_port,
+    target_domains: normalized.target_domains || current.target_domains || DEFAULT_TARGET_DOMAINS,
+  };
+
+  const nextSettings = {
+    ...(state.settings || {}),
+    sender: {
+      ...((state.settings && state.settings.sender) || {}),
+      ...mergedSender,
+    },
+  };
+
+  fillForm(nextSettings);
+  refreshFallbackVisibility();
+  await saveSettings({ silent: true });
+
+  if (!silent) {
+    setCollabFeedback("已从服务器同步发送服务配置。", "success");
+  }
+  return true;
+}
+
+function syncUpdateControls() {
+  const versionNode = el("appVersionText");
+  const latestNode = el("appLatestVersion");
+  const notesNode = el("appUpdateNotes");
+  const checkButton = el("btnCheckAppUpdate");
+  const installButton = el("btnInstallAppUpdate");
+  const update = state.app.updateInfo;
+  const currentVersion = safeText(state.app.version) || "-";
+  const latestVersion = safeText(update?.version);
+  const hasPackage = Boolean(update?.url);
+  const hasNewVersion = Boolean(
+    latestVersion
+    && currentVersion
+    && compareVersions(latestVersion, currentVersion) > 0
+    && hasPackage,
+  );
+
+  if (versionNode) {
+    versionNode.textContent = currentVersion;
+  }
+  if (latestNode) {
+    latestNode.textContent = latestVersion || "未发布";
+  }
+  if (notesNode) {
+    notesNode.textContent = safeText(update?.notes) || "服务器未提供更新说明。";
+  }
+  if (checkButton) {
+    checkButton.disabled = !state.collab.token || state.app.downloading;
+  }
+  if (installButton) {
+    installButton.disabled = !hasPackage || state.app.downloading;
+    installButton.textContent = state.app.downloading
+      ? "下载中…"
+      : (hasNewVersion ? "下载并安装更新" : "重新下载安装包");
+  }
+
+  if (!state.collab.token) {
+    setAppUpdateFeedback("登录后可检查新版本。");
+    return;
+  }
+
+  if (!update) {
+    setAppUpdateFeedback("点击“检查更新”后，会从当前服务器读取发布信息。");
+    return;
+  }
+
+  if (!hasPackage) {
+    setAppUpdateFeedback("当前服务器还没有配置本平台的安装包。");
+    return;
+  }
+
+  if (hasNewVersion) {
+    setAppUpdateFeedback(`发现新版本 ${latestVersion}，下载后会保留账号、聊天记录、配置和网页登录状态。`, "success");
+    return;
+  }
+
+  setAppUpdateFeedback("当前已经是最新版本。", "success");
+}
+
+async function fetchClientBootstrap(options = {}) {
+  const silent = Boolean(options.silent);
+  if (!state.collab.serverUrl || !state.collab.token) {
+    return null;
+  }
+
+  const response = await fetchWithFriendlyError(`${state.collab.serverUrl.replace(/\/+$/, "")}/api/client/bootstrap`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${state.collab.token}`,
+    },
+  }, 10000);
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `读取客户端配置失败（${response.status}）`);
+  }
+
+  const payload = normalizeBootstrapPayload(await response.json());
+  state.app.updateInfo = payload.update;
+  syncUpdateControls();
+
+  await applySenderBootstrapConfig(payload.sender, { silent });
+  return payload;
+}
+
+async function checkAppUpdate(options = {}) {
+  const silent = Boolean(options.silent);
+  try {
+    await fetchClientBootstrap({ silent: true });
+    if (!silent) {
+      syncUpdateControls();
+    }
+  } catch (err) {
+    if (!silent) {
+      setAppUpdateFeedback(err.message || String(err), "error");
+    }
+    throw err;
+  }
+}
+
+async function installAppUpdate() {
+  const update = state.app.updateInfo;
+  if (!update?.url) {
+    setAppUpdateFeedback("当前服务器还没有配置本平台的安装包。", "error");
+    return;
+  }
+
+  state.app.downloading = true;
+  state.app.updateProgress = { transferred: 0, total: 0, percent: 0, fileName: safeText(update.fileName) || "更新包" };
+  syncUpdateControls();
+  updateAppUpdateProgress(state.app.updateProgress);
+  setAppUpdateFeedback("正在下载更新包…");
+  let finalMessage = "";
+  let finalTone = "";
+
+  try {
+    const result = await window.api.downloadAppUpdate({
+      url: update.url,
+      fileName: update.fileName,
+      version: update.version,
+    });
+    state.app.downloadedFilePath = safeText(result?.filePath);
+    const opened = await window.api.openAppUpdate({
+      filePath: state.app.downloadedFilePath,
+      quitAfterOpen: true,
+    });
+    finalMessage = opened?.backupDir
+      ? `更新包已保存到：${state.app.downloadedFilePath}。已完成更新前资料快照：${opened.backupDir}。当前程序将自动退出以便完成更新。`
+      : `更新包已保存到：${state.app.downloadedFilePath}。安装程序已经打开，当前程序将自动退出。`;
+    finalTone = "success";
+  } catch (err) {
+    finalMessage = err.message || String(err);
+    finalTone = "error";
+  } finally {
+    state.app.downloading = false;
+    syncUpdateControls();
+    updateAppUpdateProgress(state.app.updateProgress);
+    if (finalMessage) {
+      setAppUpdateFeedback(finalMessage, finalTone);
+    }
   }
 }
 
@@ -3207,6 +3497,7 @@ function setCollabControls() {
   updateGptCounters();
   updateGptRuntimeState();
   updateGeminiRuntimeState();
+  syncUpdateControls();
   syncAuthLayout();
   renderSetupGuide();
 }
@@ -3853,11 +4144,41 @@ function closeCollabSocket() {
   setRoomScope("-");
 }
 
+async function stopSenderBecauseAccountOffline(reason = "账号已下线") {
+  if (state.mode === "receiver" || !window.api?.stopSender) return;
+
+  const wasRunning = Boolean(state.status?.senderRunning);
+  try {
+    const status = await window.api.stopSender();
+    if (status) {
+      setStatus(status);
+    }
+
+    if (wasRunning) {
+      const message = `${reason}，已自动关闭本机发送服务。`;
+      logLine("sender", message);
+      setPanelFeedback("s_feedback", message, "error");
+    }
+  } catch (err) {
+    const message = `${reason}，但自动关闭发送服务失败：${err.message || err}`;
+    logLine("sender", message);
+    setPanelFeedback("s_feedback", message, "error");
+  }
+}
+
+function requestStopSenderBecauseAccountOffline(reason) {
+  stopSenderBecauseAccountOffline(reason).catch((err) => {
+    logLine("sender", `账号下线保护失败：${err.message || err}`);
+  });
+}
+
 function setCollabManualReloginRequired(message) {
   cancelCollabReconnect();
+  requestStopSenderBecauseAccountOffline(message || "账号登录状态已失效");
   state.collab.connected = false;
   state.collab.token = "";
   state.collab.runtimePassword = "";
+  state.app.updateInfo = null;
   state.collab.reconnectStrategy = "socket";
   state.collab.silentReloginInFlight = false;
   setCollabState("请重新登录");
@@ -3931,8 +4252,10 @@ async function refreshUserDirectory() {
 async function collabLogout(notifyServer) {
   const serverUrl = state.collab.serverUrl;
   const token = state.collab.token;
+  const reason = notifyServer ? "账号已退出登录" : "账号已下线";
 
   closeCollabSocket();
+  await stopSenderBecauseAccountOffline(reason);
 
   if (notifyServer && serverUrl && token) {
     try {
@@ -3952,6 +4275,8 @@ async function collabLogout(notifyServer) {
   state.collab.username = "";
   state.collab.displayName = "";
   state.collab.avatar = "";
+  state.app.updateInfo = null;
+  state.app.downloadedFilePath = "";
   state.collab.runtimePassword = "";
   state.collab.connected = false;
   state.collab.conversationFilter = "";
@@ -4212,7 +4537,11 @@ async function performCollabLogin({
   const response = await fetchWithFriendlyError(`${serverUrl}/api/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({
+      username,
+      password,
+      client: getClientVersionPayload(),
+    }),
   }, 10000);
 
   if (!response.ok) {
@@ -4241,6 +4570,11 @@ async function performCollabLogin({
   refreshTopIdentity();
 
   await saveSettings({ silent: true });
+  try {
+    await fetchClientBootstrap({ silent: true });
+  } catch (err) {
+    logLine("collab", `读取客户端配置失败：${err.message || err}`);
+  }
   renderHistory(payload.history || []);
   resetPresenceState();
   setUserDirectory(payload.users || payload.onlineUsers || [], { silent: true });
@@ -4955,6 +5289,12 @@ async function main() {
       openConversationFromNotification(payload);
     });
   }
+  if (window.api.onAppUpdateProgress) {
+    window.api.onAppUpdateProgress((payload) => {
+      state.app.updateProgress = payload || null;
+      updateAppUpdateProgress(state.app.updateProgress);
+    });
+  }
 
   document.querySelectorAll("[data-view-target]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -5283,6 +5623,22 @@ async function main() {
     el("btnAccountLogout").addEventListener("click", async () => {
       await collabLogout(true);
       logLine("collab", "已退出登录");
+    });
+  }
+
+  if (el("btnCheckAppUpdate")) {
+    el("btnCheckAppUpdate").addEventListener("click", () => {
+      checkAppUpdate().catch((err) => {
+        setAppUpdateFeedback(err.message || String(err), "error");
+      });
+    });
+  }
+
+  if (el("btnInstallAppUpdate")) {
+    el("btnInstallAppUpdate").addEventListener("click", () => {
+      installAppUpdate().catch((err) => {
+        setAppUpdateFeedback(err.message || String(err), "error");
+      });
     });
   }
 
@@ -5811,6 +6167,13 @@ async function main() {
   const mode = await window.api.getMode();
   applyModeLayout(mode || "sender");
   await syncWindowMaxButton();
+  if (window.api.getAppMeta) {
+    const meta = await window.api.getAppMeta();
+    state.app.name = safeText(meta?.name) || "ShareGPT";
+    state.app.version = safeText(meta?.version) || "";
+    state.app.platform = safeText(meta?.platform) || "";
+    state.app.arch = safeText(meta?.arch) || "";
+  }
   bindAiWorkspaceEvents();
   initAiHostObservers();
   setChatSidebarTab(state.collab.chatSidebarTab);

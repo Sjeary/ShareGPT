@@ -1,0 +1,42 @@
+{
+  "name": "sharegpt-admin-console",
+  "version": "1.0.0",
+  "description": "Standalone admin console for ShareGPT server management.",
+  "main": "src/main/main.js",
+  "author": "Sjeary",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "npm exec -- electron .",
+    "dist:win": "npm exec -- electron-builder --win portable",
+    "dist:mac": "npm exec -- electron-builder --mac dmg"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.sjeary.sharegpt.admin",
+    "productName": "ShareGPT Admin",
+    "asar": true,
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "artifactName": "sharegpt-admin-${version}.${ext}",
+      "executableName": "sharegpt_admin",
+      "signAndEditExecutable": false
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ]
+    }
+  }
+}
