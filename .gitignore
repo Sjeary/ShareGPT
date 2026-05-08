@@ -1,6 +1,7 @@
 node_modules/
 release/
 release_sender/
+release_sender_*/
 release_receiver/
 *.log
 build/bin/*
@@ -26,3 +27,4 @@ build_win_split.bat
 build_mac_sender.sh
 debug-electron.js
 collab_server2/start_server_windows.bat
+build.sender.temp.json

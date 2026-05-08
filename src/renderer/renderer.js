@@ -70,8 +70,8 @@ const state = {
   },
   gpt: {
     partition: "persist:gpt-chat",
-    homeUrl: "https://chatgpt.com/",
-    lastUrl: "https://chatgpt.com/",
+    homeUrl: "https://chatgpt.com/auth/login",
+    lastUrl: "https://chatgpt.com/auth/login",
     proxyHost: "127.0.0.1",
     proxyPort: "1080",
     totalQueries: 0,
@@ -1057,7 +1057,12 @@ function normalizeGeminiUrl(rawUrl) {
 }
 
 function gptUserAgent() {
-  return String(window.navigator.userAgent || "").replace(/\s*Electron\/[^\s]+/i, "");
+  return String(window.navigator.userAgent || "")
+    .replace(/\s*Electron\/[^\s]+/ig, "")
+    .replace(/\s*ShareGPT\/[^\s]+/ig, "")
+    .replace(/\s*ChatPortal(?:\s+X1)?(?:\s+V\d+)?\/[^\s]+/ig, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 function setGptFeedback(text = "", tone = "") {
@@ -1242,6 +1247,10 @@ function bindAiWorkspaceEvents() {
       } else if (kind === "gemini") {
         setGeminiFeedback(`Gemini 页面加载失败：${errorText}`, "error");
       }
+    }
+
+    if (payload?.type === "raw-document-detected" && kind === "gpt") {
+      setGptFeedback("检测到 GPT 登录页返回异常文本，程序已自动重试。若仍异常，请刷新一次页面。", "warning");
     }
 
     if (payload?.type === "external-open-failed") {

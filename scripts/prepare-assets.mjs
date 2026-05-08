@@ -15,10 +15,14 @@ const names = {
 };
 
 const outputDir = path.join(projectRoot, "build", "bin");
-const cliMode = process.argv
-  .slice(2)
+const argv = process.argv.slice(2);
+const cliMode = argv
   .map((item) => String(item || "").trim().toLowerCase())
   .find((item) => item === "sender" || item === "receiver" || item === "all") || "all";
+const required = argv.some((item) => {
+  const value = String(item || "").trim().toLowerCase();
+  return value === "required" || value === "--required" || value === "--strict";
+});
 
 async function ensureDir(dir) {
   await fs.mkdir(dir, { recursive: true });
@@ -81,8 +85,12 @@ async function copyOne(label, fileName) {
       return true;
     }
   }
+  const message = `${label} 未准备：${fileName}。请先按 build/bin/README.md 准备第三方二进制，或通过 SHAREGPT_BIN_DIR / SHAREGPT_*_PATH 指定。`;
+  if (required) {
+    throw new Error(message);
+  }
   console.warn(
-    `[assets] ${label} 未准备：${fileName}。仓库仍可继续启动界面和打包，但在使用相关代理功能前，需要先按 build/bin/README.md 准备第三方二进制，或通过 SHAREGPT_BIN_DIR / SHAREGPT_*_PATH 指定。`,
+    `[assets] ${message} 仓库仍可继续启动界面；但当前产物如果用于代理功能，将无法正常运行。`,
   );
   return false;
 }
