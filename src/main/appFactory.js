@@ -27,7 +27,7 @@ const AI_WORKSPACE_POLICIES = {
   gpt: {
     kind: "gpt",
     partition: "persist:gpt-chat",
-    homeUrl: "https://chatgpt.com/",
+    homeUrl: "https://chatgpt.com/auth/login",
     allowedHosts: GPT_ALLOWED_HOSTS,
   },
   gemini: {
@@ -258,6 +258,38 @@ function normalizeExternalUrl(rawUrl) {
     return url.toString();
   } catch {
     return "";
+  }
+}
+
+function sanitizeEmbeddedUserAgent(rawUserAgent) {
+  return String(rawUserAgent || "")
+    .replace(/\s*Electron\/[^\s]+/ig, "")
+    .replace(/\s*ShareGPT\/[^\s]+/ig, "")
+    .replace(/\s*ChatPortal(?:\s+X1)?(?:\s+V\d+)?\/[^\s]+/ig, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+async function detectRawChatGptDocument(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    const payload = await webContents.executeJavaScript(`
+      (() => ({
+        contentType: String(document.contentType || ""),
+        text: String(document.body?.innerText || "").slice(0, 1200),
+      }))();
+    `, true);
+    const contentType = safeText(payload?.contentType).toLowerCase();
+    const text = String(payload?.text || "");
+    return (
+      contentType.startsWith("text/plain")
+      || (
+        text.startsWith('ChatGPT{"@context":"https://schema.org"')
+        && text.includes("window.__reactRouterContext")
+      )
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -603,6 +635,39 @@ function createElectronApp(baseMode = "all") {
       emitAiState(workspace, "did-stop-loading");
     });
 
+    wc.on("did-finish-load", () => {
+      if (workspace.kind !== "gpt") return;
+      void detectRawChatGptDocument(wc).then((isRawDocument) => {
+        if (!isRawDocument) {
+          workspace.rawDocumentRecoveryAttempted = false;
+          return;
+        }
+        if (workspace.rawDocumentRecoveryAttempted) {
+          emitAiEvent(workspace.kind, "raw-document-detected", {
+            ...getAiStatePayload(workspace),
+            url: safeText(wc.getURL()) || workspace.lastUrl || workspace.policy.homeUrl,
+          });
+          return;
+        }
+        workspace.rawDocumentRecoveryAttempted = true;
+        workspace.loading = true;
+        workspace.initialized = true;
+        workspace.lastUrl = workspace.policy.homeUrl;
+        if (workspace.userAgent) {
+          wc.setUserAgent(workspace.userAgent);
+        }
+        emitAiState(workspace, "did-start-loading", { url: workspace.policy.homeUrl });
+        void wc.loadURL(workspace.policy.homeUrl).catch((err) => {
+          workspace.loading = false;
+          emitAiEvent(workspace.kind, "did-fail-load", {
+            ...getAiStatePayload(workspace),
+            url: workspace.policy.homeUrl,
+            errorDescription: err.message || String(err),
+          });
+        });
+      }).catch(() => {});
+    });
+
     wc.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
       if (Number(errorCode) === -3) return;
       workspace.loading = false;
@@ -689,6 +754,8 @@ function createElectronApp(baseMode = "all") {
         ? normalizeGptTabTitle(safeText(options.title), "ChatGPT")
         : safeText(options.title),
       proxySignature: "",
+      userAgent: "",
+      rawDocumentRecoveryAttempted: false,
     };
 
     bindAiWorkspaceEvents(workspace);
@@ -888,7 +955,7 @@ function createElectronApp(baseMode = "all") {
       }
       const host = safeText(payload?.host || "127.0.0.1") || "127.0.0.1";
       const port = Number.parseInt(String(payload?.port || "1080"), 10);
-      const userAgent = safeText(payload?.userAgent);
+      const userAgent = sanitizeEmbeddedUserAgent(payload?.userAgent);
       const homeUrl = safeText(payload?.homeUrl);
       const lastUrl = safeText(payload?.lastUrl);
       const forceReload = Boolean(payload?.forceReload);
@@ -910,6 +977,7 @@ function createElectronApp(baseMode = "all") {
       }
 
       if (userAgent) {
+        workspace.userAgent = userAgent;
         workspace.view.webContents.setUserAgent(userAgent);
       }
 

@@ -59,8 +59,8 @@ const PUBLIC_DEFAULT_SETTINGS = {
   },
   gpt: {
     partition: "persist:gpt-chat",
-    home_url: "https://chatgpt.com/",
-    last_url: "https://chatgpt.com/",
+    home_url: "https://chatgpt.com/auth/login",
+    last_url: "https://chatgpt.com/auth/login",
     proxy_host: "127.0.0.1",
     proxy_port: "1080",
     total_queries: 0,
@@ -213,6 +213,16 @@ function copyImportantPath(sourcePath, targetPath, errors, options = {}) {
       source: sourcePath,
       message: err.message || String(err),
     });
+  }
+}
+
+function filesDiffer(sourcePath, targetPath) {
+  try {
+    const sourceStat = fs.statSync(sourcePath);
+    const targetStat = fs.statSync(targetPath);
+    return sourceStat.size !== targetStat.size || Math.trunc(sourceStat.mtimeMs) !== Math.trunc(targetStat.mtimeMs);
+  } catch {
+    return true;
   }
 }
 
@@ -527,6 +537,8 @@ class Backend {
       path.join(appDir, "resources"),
       appPath ? path.dirname(appPath) : "",
     ].filter(Boolean);
+    const persistedBinDir = path.join(this.app.getPath("userData"), "bundled-bin");
+    const persistedCandidate = path.join(persistedBinDir, filename);
 
     const configuredCandidates = [];
     if (configuredPath) {
@@ -539,15 +551,39 @@ class Backend {
       );
     }
 
+    const bundledPackagedCandidates = [
+      ...packagedResourceRoots.flatMap((root) => [
+        path.join(root, "bin", filename),
+        path.join(root, "bin", platformDir, filename),
+      ]),
+      path.join(appDir, "bin", filename),
+      path.join(appDir, filename),
+    ];
+
+    if (this.app.isPackaged && !configuredPath && !configuredDir) {
+      for (const bundledCandidate of bundledPackagedCandidates) {
+        if (!fs.existsSync(bundledCandidate)) continue;
+        try {
+          fs.mkdirSync(persistedBinDir, { recursive: true });
+          if (!fs.existsSync(persistedCandidate) || filesDiffer(bundledCandidate, persistedCandidate)) {
+            fs.copyFileSync(bundledCandidate, persistedCandidate);
+            if (!isWindows()) {
+              fs.chmodSync(persistedCandidate, 0o755);
+            }
+          }
+          return persistedCandidate;
+        } catch (err) {
+          this.log("app", `复制内置二进制失败（${filename}）：${err.message || err}`);
+          return bundledCandidate;
+        }
+      }
+    }
+
     const candidates = this.app.isPackaged
       ? [
           ...configuredCandidates,
-          ...packagedResourceRoots.flatMap((root) => [
-            path.join(root, "bin", filename),
-            path.join(root, "bin", platformDir, filename),
-          ]),
-          path.join(appDir, "bin", filename),
-          path.join(appDir, filename),
+          persistedCandidate,
+          ...bundledPackagedCandidates,
         ]
       : [
           ...configuredCandidates,
