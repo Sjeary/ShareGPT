@@ -5,13 +5,13 @@
   "main": "src/main/main.js",
   "author": "Sjeary",
   "license": "UNLICENSED",
-  "homepage": "https://github.com/Sjeary/singbox-client",
+  "homepage": "https://github.com/Sjeary/ShareGPT",
   "repository": {
     "type": "git",
-    "url": "git@github.com:Sjeary/singbox-client.git"
+    "url": "git@github.com:Sjeary/ShareGPT.git"
   },
   "bugs": {
-    "url": "https://github.com/Sjeary/singbox-client/issues"
+    "url": "https://github.com/Sjeary/ShareGPT/issues"
   },
   "keywords": [
     "electron",
