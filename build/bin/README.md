@@ -25,6 +25,14 @@ ShareGPT 运行代理能力时依赖以下第三方程序：
 - Windows：`sing-box.exe`、`frpc.exe`
 - macOS / Linux：`sing-box`、`frpc`
 
+macOS Sender 发行包只需要 `sing-box`，不需要 `frpc`。推荐放置方式：
+
+```bash
+mkdir -p build/bin/macos
+cp /path/to/sing-box build/bin/macos/sing-box
+chmod +x build/bin/macos/sing-box
+```
+
 ## 环境变量方式
 
 如果你不想把二进制放到仓库内，可以通过环境变量指定已有路径：
