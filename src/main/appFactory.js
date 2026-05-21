@@ -40,6 +40,11 @@ const AI_WORKSPACE_POLICIES = {
 
 const AI_ALLOWED_PERMISSIONS = new Set(["clipboard-sanitized-write"]);
 const GPT_TAB_TITLE_LIMIT = 48;
+const DIRECT_PROXY_CONFIG = {
+  mode: "direct",
+  proxyRules: "",
+  proxyBypassRules: "",
+};
 
 function getEventWindow(event, fallbackWindow) {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
@@ -104,6 +109,15 @@ async function flushAiSessionStorage() {
       console.warn(`Unable to flush ${partition}:`, err.message || err);
     }
   }));
+}
+
+async function forceDirectSessionProxy(targetSession, label = "session") {
+  if (!targetSession || typeof targetSession.setProxy !== "function") return;
+  try {
+    await targetSession.setProxy(DIRECT_PROXY_CONFIG);
+  } catch (err) {
+    console.warn(`Unable to force direct proxy for ${label}:`, err.message || err);
+  }
 }
 
 function safeText(value) {
@@ -387,12 +401,13 @@ function createElectronApp(baseMode = "all") {
     return title || fallbackTitle || "ChatGPT";
   }
 
-  function configureAiSession(targetSession, policy) {
+  async function configureAiSession(targetSession, policy) {
     if (!targetSession || !policy || configuredAiPartitions.has(policy.partition)) {
       return;
     }
 
     configuredAiPartitions.add(policy.partition);
+    await forceDirectSessionProxy(targetSession, policy.partition);
 
     targetSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
       const requestingUrl = safeText(details?.requestingUrl || webContents?.getURL?.());
@@ -965,7 +980,7 @@ function createElectronApp(baseMode = "all") {
       }
 
       const targetSession = session.fromPartition(workspace.policy.partition);
-      configureAiSession(targetSession, workspace.policy);
+      await configureAiSession(targetSession, workspace.policy);
 
       const proxySignature = `${host}:${port}`;
       if (workspace.proxySignature !== proxySignature) {
@@ -1185,8 +1200,9 @@ function createElectronApp(baseMode = "all") {
     });
   }
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     applyStableUserDataPath(app);
+    await forceDirectSessionProxy(session.defaultSession, "defaultSession");
     backend = new Backend(app, () => mainWindow, appMode);
     backend.init();
 

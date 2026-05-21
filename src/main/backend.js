@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const os = require("node:os");
 const { URL } = require("node:url");
 
@@ -139,6 +139,14 @@ function toInt(value, name) {
   const n = Number.parseInt(String(value), 10);
   if (!Number.isInteger(n) || n < 1 || n > 65535) {
     throw new Error(`${name} 必须是 1~65535 的整数`);
+  }
+  return n;
+}
+
+function toListenPort(value, name) {
+  const n = toInt(value, name);
+  if (n < 1024) {
+    throw new Error(`${name} 必须是 1024~65535 的整数，避免在 macOS 或 Windows 上要求管理员权限`);
   }
   return n;
 }
@@ -962,6 +970,14 @@ class Backend {
       this.log(source, String(buf).trim());
     });
 
+    child.on("error", (err) => {
+      this.log(source, `进程启动失败：${err.message || err}`);
+      if (source === "sender") this.senderProcess = null;
+      if (source === "receiver-frpc") this.receiverFrpc = null;
+      if (source === "receiver-singbox") this.receiverSingbox = null;
+      this.emitStatus();
+    });
+
     child.on("exit", (code) => {
       this.log(source, `进程退出，code=${code}`);
       if (source === "sender") this.senderProcess = null;
@@ -971,6 +987,29 @@ class Backend {
     });
 
     return child;
+  }
+
+  checkSingboxConfig(binaryPath, configPath, source) {
+    const result = spawnSync(binaryPath, ["check", "-c", configPath], {
+      encoding: "utf-8",
+      windowsHide: true,
+    });
+    const output = [result.stdout, result.stderr]
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .join("\n");
+
+    if (output) {
+      this.log(source, output);
+    }
+
+    if (result.error) {
+      throw new Error(`sing-box 配置检查失败：${result.error.message || result.error}`);
+    }
+
+    if (result.status !== 0) {
+      throw new Error(`sing-box 配置检查未通过：${output || `exit code ${result.status}`}`);
+    }
   }
 
   emitStatus() {
@@ -1011,7 +1050,7 @@ class Backend {
 
   buildSenderConfig(sender) {
     const proxyPort = toInt(sender.proxy_port, "公网端口");
-    const listenPort = toInt(sender.socks_listen_port, "本地SOCKS监听端口");
+    const listenPort = toListenPort(sender.socks_listen_port, "本地SOCKS监听端口");
     const fallbackMode = sender.fallback_mode === "direct" ? "direct" : "system_proxy";
 
     const domainsRaw =
@@ -1042,8 +1081,6 @@ class Backend {
         },
       },
       { type: "direct", tag: "direct" },
-      { type: "block", tag: "block" },
-      { type: "dns", tag: "dns_out" },
     ];
 
     if (fallbackMode === "system_proxy") {
@@ -1102,7 +1139,7 @@ class Backend {
       outbounds,
       route: {
         rules: [
-          { protocol: "dns", outbound: "dns_out" },
+          { protocol: "dns", action: "hijack-dns" },
           ...(uniqueDomains.length
             ? [
                 {
@@ -1131,7 +1168,7 @@ class Backend {
           type: "vmess",
           tag: "vmess_in",
           listen: "::",
-          listen_port: toInt(receiver.vmess_listen_port, "VMess监听端口"),
+          listen_port: toListenPort(receiver.vmess_listen_port, "VMess监听端口"),
           users: [{ uuid: String(receiver.vmess_uuid || "").trim() }],
           transport: {
             type: "ws",
@@ -1183,6 +1220,7 @@ class Backend {
     const config = this.buildSenderConfig(settings);
     const configPath = path.join(this.runtimeDir, "sender.runtime.json");
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+    this.checkSingboxConfig(singboxPath, configPath, "sender");
 
     this.senderProcess = this.spawnProcess("sender", singboxPath, ["run", "-c", configPath]);
     this.log("sender", `使用配置: ${configPath}`);
