@@ -283,14 +283,40 @@ async function detectRawChatGptDocument(webContents) {
     const text = String(payload?.text || "");
     return (
       contentType.startsWith("text/plain")
-      || (
-        text.startsWith('ChatGPT{"@context":"https://schema.org"')
-        && text.includes("window.__reactRouterContext")
-      )
+      || text.startsWith('ChatGPT{"@context":"https://schema.org"')
+      || (text.includes("@layer properties") && text.includes("document.documentElement"))
     );
   } catch {
     return false;
   }
+}
+
+function normalizeAiWorkspaceUrl(workspace, rawUrl) {
+  const url = safeText(rawUrl);
+  if (!url || !workspace) return "";
+  if (workspace.kind !== "gpt") return url;
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "chatgpt.com" && parsed.pathname === "/" && !parsed.search) {
+      return workspace.policy.homeUrl;
+    }
+  } catch {}
+
+  return url;
+}
+
+function htmlNavigationOptions(workspace) {
+  const options = {
+    extraHeaders: [
+      "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Upgrade-Insecure-Requests: 1",
+    ].join("\r\n"),
+  };
+  if (workspace?.userAgent) {
+    options.userAgent = workspace.userAgent;
+  }
+  return options;
 }
 
 async function openExternalUrl(rawUrl) {
@@ -584,19 +610,26 @@ function createElectronApp(baseMode = "all") {
     });
   }
 
+  function loadAiWorkspaceUrl(workspace, rawUrl) {
+    const targetUrl = normalizeAiWorkspaceUrl(workspace, rawUrl) || workspace.policy.homeUrl;
+    return workspace.view.webContents.loadURL(targetUrl, htmlNavigationOptions(workspace));
+  }
+
   function bindAiWorkspaceEvents(workspace) {
     const wc = workspace.view.webContents;
 
     wc.setWindowOpenHandler(({ url }) => {
       if (isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) {
+        const targetUrl = normalizeAiWorkspaceUrl(workspace, url);
         workspace.loading = true;
         workspace.initialized = true;
-        emitAiState(workspace, "did-start-loading", { url });
-        void wc.loadURL(url).catch((err) => {
+        workspace.lastUrl = targetUrl;
+        emitAiState(workspace, "did-start-loading", { url: targetUrl });
+        void loadAiWorkspaceUrl(workspace, targetUrl).catch((err) => {
           workspace.loading = false;
           emitAiEvent(workspace.kind, "did-fail-load", {
             ...getAiStatePayload(workspace),
-            url,
+            url: targetUrl,
             errorDescription: err.message || String(err),
           });
         });
@@ -608,13 +641,47 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("will-navigate", (event, url) => {
-      if (isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) return;
+      if (isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) {
+        const targetUrl = normalizeAiWorkspaceUrl(workspace, url);
+        if (targetUrl === url) return;
+        event.preventDefault();
+        workspace.loading = true;
+        workspace.initialized = true;
+        workspace.lastUrl = targetUrl;
+        emitAiState(workspace, "did-start-loading", { url: targetUrl });
+        void loadAiWorkspaceUrl(workspace, targetUrl).catch((err) => {
+          workspace.loading = false;
+          emitAiEvent(workspace.kind, "did-fail-load", {
+            ...getAiStatePayload(workspace),
+            url: targetUrl,
+            errorDescription: err.message || String(err),
+          });
+        });
+        return;
+      }
       event.preventDefault();
       handleBlockedAiNavigation(workspace, url);
     });
 
     wc.on("will-redirect", (event, url) => {
-      if (isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) return;
+      if (isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) {
+        const targetUrl = normalizeAiWorkspaceUrl(workspace, url);
+        if (targetUrl === url) return;
+        event.preventDefault();
+        workspace.loading = true;
+        workspace.initialized = true;
+        workspace.lastUrl = targetUrl;
+        emitAiState(workspace, "did-start-loading", { url: targetUrl });
+        void loadAiWorkspaceUrl(workspace, targetUrl).catch((err) => {
+          workspace.loading = false;
+          emitAiEvent(workspace.kind, "did-fail-load", {
+            ...getAiStatePayload(workspace),
+            url: targetUrl,
+            errorDescription: err.message || String(err),
+          });
+        });
+        return;
+      }
       event.preventDefault();
       handleBlockedAiNavigation(workspace, url);
     });
@@ -657,14 +724,17 @@ function createElectronApp(baseMode = "all") {
           wc.setUserAgent(workspace.userAgent);
         }
         emitAiState(workspace, "did-start-loading", { url: workspace.policy.homeUrl });
-        void wc.loadURL(workspace.policy.homeUrl).catch((err) => {
-          workspace.loading = false;
-          emitAiEvent(workspace.kind, "did-fail-load", {
-            ...getAiStatePayload(workspace),
-            url: workspace.policy.homeUrl,
-            errorDescription: err.message || String(err),
+        void wc.session.clearCache()
+          .catch(() => {})
+          .then(() => loadAiWorkspaceUrl(workspace, workspace.policy.homeUrl))
+          .catch((err) => {
+            workspace.loading = false;
+            emitAiEvent(workspace.kind, "did-fail-load", {
+              ...getAiStatePayload(workspace),
+              url: workspace.policy.homeUrl,
+              errorDescription: err.message || String(err),
+            });
           });
-        });
       }).catch(() => {});
     });
 
@@ -681,7 +751,7 @@ function createElectronApp(baseMode = "all") {
 
     wc.on("did-navigate", (_event, url) => {
       if (isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) {
-        workspace.lastUrl = url;
+        workspace.lastUrl = normalizeAiWorkspaceUrl(workspace, url);
       }
       workspace.initialized = true;
       emitAiState(workspace, "did-navigate", { url });
@@ -689,7 +759,7 @@ function createElectronApp(baseMode = "all") {
 
     wc.on("did-navigate-in-page", (_event, url) => {
       if (isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) {
-        workspace.lastUrl = url;
+        workspace.lastUrl = normalizeAiWorkspaceUrl(workspace, url);
       }
       emitAiState(workspace, "did-navigate-in-page", { url });
     });
@@ -981,16 +1051,19 @@ function createElectronApp(baseMode = "all") {
         workspace.view.webContents.setUserAgent(userAgent);
       }
 
-      const targetUrl = isAllowedUrlForHosts(lastUrl, workspace.policy.allowedHosts)
-        ? lastUrl
-        : (isAllowedUrlForHosts(homeUrl, workspace.policy.allowedHosts) ? homeUrl : workspace.policy.homeUrl);
+      const targetUrl = normalizeAiWorkspaceUrl(
+        workspace,
+        isAllowedUrlForHosts(lastUrl, workspace.policy.allowedHosts)
+          ? lastUrl
+          : (isAllowedUrlForHosts(homeUrl, workspace.policy.allowedHosts) ? homeUrl : workspace.policy.homeUrl),
+      ) || workspace.policy.homeUrl;
 
       if (!workspace.initialized || !safeText(workspace.view.webContents.getURL())) {
         workspace.initialized = true;
         workspace.loading = true;
         workspace.lastUrl = targetUrl;
         emitAiState(workspace, "did-start-loading", { url: targetUrl });
-        void workspace.view.webContents.loadURL(targetUrl).catch((err) => {
+        void loadAiWorkspaceUrl(workspace, targetUrl).catch((err) => {
           workspace.loading = false;
           emitAiEvent(workspace.kind, "did-fail-load", {
             ...getAiStatePayload(workspace),
@@ -1048,15 +1121,16 @@ function createElectronApp(baseMode = "all") {
           if (!isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) {
             throw new Error("不允许加载该页面");
           }
+          const targetUrl = normalizeAiWorkspaceUrl(workspace, url);
           workspace.loading = true;
           workspace.initialized = true;
-          workspace.lastUrl = url;
-          emitAiState(workspace, "did-start-loading", { url });
-          void wc.loadURL(url).catch((err) => {
+          workspace.lastUrl = targetUrl;
+          emitAiState(workspace, "did-start-loading", { url: targetUrl });
+          void loadAiWorkspaceUrl(workspace, targetUrl).catch((err) => {
             workspace.loading = false;
             emitAiEvent(workspace.kind, "did-fail-load", {
               ...getAiStatePayload(workspace),
-              url,
+              url: targetUrl,
               errorDescription: err.message || String(err),
             });
           });

@@ -984,6 +984,12 @@ function isGptAllowedUrl(rawUrl) {
 function normalizeGptUrl(rawUrl) {
   const url = safeText(rawUrl);
   if (url && isGptAllowedUrl(url)) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname === "chatgpt.com" && parsed.pathname === "/" && !parsed.search) {
+        return state.gpt.homeUrl;
+      }
+    } catch {}
     return url;
   }
   return state.gpt.homeUrl;
