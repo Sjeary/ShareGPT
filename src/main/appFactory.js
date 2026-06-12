@@ -625,7 +625,18 @@ function createElectronApp(baseMode = "all") {
 
   function loadAiWorkspaceUrl(workspace, rawUrl) {
     const targetUrl = normalizeAiWorkspaceUrl(workspace, rawUrl) || workspace.policy.homeUrl;
-    return workspace.view.webContents.loadURL(targetUrl, htmlNavigationOptions(workspace));
+    return workspace.view.webContents
+      .loadURL(targetUrl, htmlNavigationOptions(workspace))
+      .catch((err) => {
+        // ChatGPT 登录重定向链常在途中止(ERR_ABORTED / -3), 页面实际已正常加载,
+        // 属良性, 不应作为加载失败上报。仅吞此类中止, 其余错误照常抛出。
+        const message = String((err && (err.message || err)) || "");
+        const code = err && (err.code || err.errno);
+        if (code === -3 || code === "ERR_ABORTED" || /ERR_ABORTED|\(-3\)/i.test(message)) {
+          return;
+        }
+        throw err;
+      });
   }
 
   function bindAiWorkspaceEvents(workspace) {
