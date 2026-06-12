@@ -2,6 +2,7 @@ import { useCallback } from 'react'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore, type AuthProfile } from '@/store/useAuthStore'
+import { useChatStore } from '@/store/useChatStore'
 
 // 协作服务器登录/退出逻辑 (移植自旧 renderer.js performCollabLogin / collabLogout)。
 // 端点 (渲染层直连协作服务器, 非 IPC):
@@ -112,6 +113,17 @@ export function useAuth() {
 
       setSession({ token: payload.token, profile, password })
 
+      // 把登录身份写入聊天 store, 触发 useChat 的 WS 连接与鉴权统计。
+      // (移植自旧 renderer.js performCollabLogin ~4572: state.collab.token/username/...
+      //  + setCollabIdentity。这里只写身份, WS 由 useChat 监听 identity.token 自动建连。)
+      useChatStore.getState().setIdentity({
+        serverUrl: cleanedServer,
+        token: payload.token,
+        username: cleanedUser,
+        displayName: profile.displayName,
+        avatar: profile.avatar,
+      })
+
       // 持久化 collab 设置 (与旧版 settings.json 字段 100% 兼容)。
       await patchSection('collab', {
         server_url: cleanedServer,
@@ -154,6 +166,13 @@ export function useAuth() {
 
     clearSession()
     setAuthed(false)
+
+    // 清空聊天身份的 token (令 useChat 关闭 WS), 但保留本地历史 (messagesByConversation)
+    // 与 serverUrl/username 预填语义。setIdentity 只改 identity 切片, 不动历史。
+    // (对应旧 renderer.js collabLogout ~4267: 断开 socket、清 token、保留历史。)
+    useChatStore.getState().setIdentity({ token: '' })
+    useChatStore.getState().setConnection('idle')
+
     // 退出时保留 last_username / saved_password 以便下次预填; 仅清空头像缓存语义可选。
     void profile
   }, [clearSession, setAuthed])
