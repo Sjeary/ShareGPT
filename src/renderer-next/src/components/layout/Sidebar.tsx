@@ -33,9 +33,9 @@ export function Sidebar() {
             <button
               onClick={() => setActive(key)}
               className={cn(
-                'group flex w-full items-center gap-3 rounded-lg py-2.5 text-left transition-colors',
+                'group flex w-full items-center rounded-lg py-2.5 text-left transition-colors',
                 'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-                collapsed ? 'justify-center px-0' : 'px-2.5',
+                collapsed ? 'justify-center gap-0 px-0' : 'gap-3 px-2.5',
                 on
                   ? 'bg-sidebar-accent text-sidebar-accent-foreground'
                   : 'text-sidebar-foreground hover:bg-sidebar-accent/60',
@@ -53,8 +53,10 @@ export function Sidebar() {
               </span>
               <span
                 className={cn(
-                  'min-w-0 flex-1 overflow-hidden whitespace-nowrap transition-opacity duration-200',
-                  collapsed && 'pointer-events-none opacity-0',
+                  'overflow-hidden whitespace-nowrap transition-all duration-200',
+                  collapsed
+                    ? 'w-0 flex-none pointer-events-none opacity-0'
+                    : 'min-w-0 flex-1 opacity-100',
                 )}
               >
                 <span className="block truncate text-sm font-medium">{label}</span>
@@ -78,9 +80,9 @@ export function Sidebar() {
           onClick={toggleSidebar}
           aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
           className={cn(
-            'mt-auto flex items-center gap-3 rounded-lg py-2.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent/60',
+            'mt-auto flex items-center rounded-lg py-2.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent/60',
             'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            collapsed ? 'justify-center px-0' : 'px-2.5',
+            collapsed ? 'justify-center gap-0 px-0' : 'gap-3 px-2.5',
           )}
         >
           <span className="grid size-9 shrink-0 place-items-center rounded-full bg-sidebar-accent text-muted-foreground">
@@ -93,8 +95,10 @@ export function Sidebar() {
           </span>
           <span
             className={cn(
-              'flex-1 overflow-hidden whitespace-nowrap text-left text-sm transition-opacity duration-200',
-              collapsed && 'pointer-events-none opacity-0',
+              'overflow-hidden whitespace-nowrap text-left text-sm transition-all duration-200',
+              collapsed
+                ? 'w-0 flex-none pointer-events-none opacity-0'
+                : 'flex-1 opacity-100',
             )}
           >
             收起侧栏
