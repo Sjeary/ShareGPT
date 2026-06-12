@@ -364,20 +364,29 @@ export function ChatPanel() {
                   {subtitle}
                 </div>
               </div>
-              <span
-                className={cn(
-                  'flex items-center gap-1.5 text-xs',
-                  online ? 'text-success' : 'text-muted-foreground',
-                )}
-              >
+              {/* 右上仅在「与协作服务器的连接」异常时提示; 正常连接不显示, 避免被误解为对方在线。
+                  对话方/房间的真实在线状态见标题下方副标题。 */}
+              {connection !== 'online' && (
                 <span
                   className={cn(
-                    'size-2 rounded-full',
-                    online ? 'bg-success' : 'bg-muted-foreground/50',
+                    'flex items-center gap-1.5 text-xs',
+                    connection === 'closed' || connection === 'error'
+                      ? 'text-destructive'
+                      : 'text-muted-foreground',
                   )}
-                />
-                {connectionLabel(connection)}
-              </span>
+                  title="与协作服务器的连接状态"
+                >
+                  <span
+                    className={cn(
+                      'size-2 rounded-full',
+                      connection === 'closed' || connection === 'error'
+                        ? 'bg-destructive'
+                        : 'animate-pulse bg-muted-foreground/50',
+                    )}
+                  />
+                  {connectionLabel(connection)}
+                </span>
+              )}
             </>
           ) : (
             <span className="text-sm text-muted-foreground">协作聊天</span>

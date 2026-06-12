@@ -6,6 +6,9 @@ import { LogToolbar } from './logs/LogToolbar'
 import { useLogStore } from '@/store/useLogStore'
 import type { LogEntry } from './logs/types'
 
+// 最多渲染的日志行数(仅 DOM 渲染上限; store 仍按 MAX_LOG_ENTRIES 缓存)。
+const DISPLAY_LIMIT = 500
+
 // 运行日志面板。对齐旧版 renderer.js logLine + index.html #logBox/.ops-log-card:
 // - 只读消费全局 useLogStore (订阅由应用级 useLogStream 单次挂载, 早期日志不丢)
 // - 等宽字体滚动区, 自动滚到底
@@ -41,12 +44,23 @@ export function LogsPanel() {
     [entries, activeSource],
   )
 
+  // 只渲染最近 DISPLAY_LIMIT 行: 避免大量 DOM 行导致卡顿。
+  // store 仍缓存最多 MAX_LOG_ENTRIES 行, 「复制」可获取全部缓存。
+  const shown = useMemo(
+    () =>
+      visible.length > DISPLAY_LIMIT
+        ? visible.slice(visible.length - DISPLAY_LIMIT)
+        : visible,
+    [visible],
+  )
+  const truncated = visible.length - shown.length
+
   // 自动滚到底 (旧版 box.scrollTop = box.scrollHeight)。暂停时不滚。
   useEffect(() => {
     if (!autoScroll) return
     const node = scrollRef.current
     if (node) node.scrollTop = node.scrollHeight
-  }, [visible, autoScroll])
+  }, [shown, autoScroll])
 
   const handleCopy = () => {
     if (visible.length === 0) {
@@ -93,7 +107,16 @@ export function LogsPanel() {
               暂无日志
             </div>
           ) : (
-            visible.map((e) => <LogRow key={e.id} entry={e} />)
+            <>
+              {truncated > 0 && (
+                <div className="mb-1 text-center text-[11px] text-muted-foreground">
+                  仅显示最近 {shown.length} 行（共 {visible.length} 行，更早的可用「复制」获取）
+                </div>
+              )}
+              {shown.map((e) => (
+                <LogRow key={e.id} entry={e} />
+              ))}
+            </>
           )}
         </div>
       </div>

@@ -315,6 +315,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       title={meta.title}
       hint={meta.hint}
       hideHeader={aiImmersive}
+      scrollable={false}
       toolbar={
         <Badge variant="outline" className="gap-1.5">
           <span className={view.loading ? 'size-1.5 animate-pulse rounded-full bg-primary' : 'size-1.5 rounded-full bg-muted-foreground'} />
