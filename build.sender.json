@@ -4,6 +4,16 @@
   "asar": true,
   "files": [
     "src/**/*",
+    "!src/renderer-next/node_modules/**",
+    "!src/renderer-next/src/**",
+    "!src/renderer-next/public/**",
+    "!src/renderer-next/.gitignore",
+    "!src/renderer-next/README.md",
+    "!src/renderer-next/eslint.config.js",
+    "!src/renderer-next/tsconfig*.json",
+    "!src/renderer-next/vite.config.ts",
+    "!src/renderer-next/components.json",
+    "!src/renderer-next/package*.json",
     "package.json"
   ],
   "extraResources": [
