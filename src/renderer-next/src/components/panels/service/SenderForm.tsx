@@ -4,7 +4,6 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { useAppStore } from '@/store/useAppStore'
-import { useChatStore } from '@/store/useChatStore'
 import { api } from '@/lib/api'
 import type { SenderSettings } from '@/types/settings'
 import { Field } from './Field'
@@ -30,9 +29,6 @@ export function SenderForm() {
   const settings = useAppStore((s) => s.settings)
   const status = useAppStore((s) => s.status)
   const patchSection = useAppStore((s) => s.patchSection)
-  const setActive = useAppStore((s) => s.setActive)
-  // 对齐旧 refreshSenderAccess(~2314): 需登录并保持在线(协作 WS 已连)才能开启发送服务。
-  const online = useChatStore((s) => s.connection === 'online')
   const [busy, setBusy] = useState(false)
 
   const running = isSenderRunning(status)
@@ -75,10 +71,6 @@ export function SenderForm() {
   }
 
   async function handleStart() {
-    if (!online) {
-      toast.error('请先登录账号并保持在线，再开启发送服务')
-      return
-    }
     const err = validate()
     if (err) {
       toast.error(err)
@@ -197,17 +189,6 @@ export function SenderForm() {
         />
       </div>
 
-      {!online && !running && (
-        <button
-          type="button"
-          onClick={() => setActive('account')}
-          className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-left text-xs text-muted-foreground transition hover:bg-muted/70"
-        >
-          <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
-          需先在「账户」登录并保持在线，才能开启发送服务 · 点此前往登录
-        </button>
-      )}
-
       <div className="flex items-center gap-3 pt-1">
         {running ? (
           <Button variant="destructive" disabled={busy} onClick={handleStop}>
@@ -215,7 +196,7 @@ export function SenderForm() {
             停止发送服务
           </Button>
         ) : (
-          <Button disabled={busy || !online} onClick={handleStart}>
+          <Button disabled={busy} onClick={handleStart}>
             {busy ? <Loader2 className="animate-spin" /> : <Play />}
             开启发送服务
           </Button>
