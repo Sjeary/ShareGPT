@@ -1,18 +1,36 @@
 import { Cable } from 'lucide-react'
 import { PanelScaffold } from './PanelScaffold'
+import { Badge } from '@/components/ui/badge'
+import { useAppStore } from '@/store/useAppStore'
+import { SenderForm } from './service/SenderForm'
+import { isSenderRunning } from './service/helpers'
 
-// [团队重建目标] 连接服务面板:
-// - sender 表单: proxy_server/proxy_port/proxy_uuid/socks_listen_port/fallback_mode/fallback_local_port/target_domains + 启动/停止
-// - receiver 表单: frps_*/vmess_*/forward_proxy_port/tls/compression/encryption + 启停
-// - 服务状态(useAppStore.status) 实时显示, 启停调 window.api.startSender/stopSender 等
-// 用 shadcn (Tabs 切 sender/receiver, Card/Input/Label/Switch/Button)。
+// 本客户端只做「发送端」: 内嵌 sing-box 把指定流量代理转发到用户另行部署的接收端。
+// 接收端不在本客户端范围内, 故不提供接收服务 UI。
 export function ServicePanel() {
+  const status = useAppStore((s) => s.status)
+  const running = isSenderRunning(status)
+
   return (
-    <PanelScaffold icon={Cable} title="连接服务" hint="发送 / 接收 代理服务">
-      <div className="grid h-full place-items-center p-6">
-        <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-          连接服务面板 · 团队重建中
-        </div>
+    <PanelScaffold
+      icon={Cable}
+      title="代理转发"
+      hint="内嵌 sing-box · 把指定流量转发到接收端"
+      toolbar={
+        <Badge variant={running ? 'default' : 'outline'} className="gap-1.5">
+          <span
+            className={
+              running
+                ? 'size-1.5 rounded-full bg-success'
+                : 'size-1.5 rounded-full bg-muted-foreground'
+            }
+          />
+          {running ? '运行中' : '未开启'}
+        </Badge>
+      }
+    >
+      <div className="mx-auto max-w-3xl px-6 py-6">
+        <SenderForm />
       </div>
     </PanelScaffold>
   )
