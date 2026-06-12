@@ -909,6 +909,23 @@ function createElectronApp(baseMode = "all") {
     win.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
 
+  // 个人资料独立窗口加载策略, 与 loadMainRenderer 一致: 默认新版(renderer-next/dist/profile.html),
+  // dev 走 Vite server 的 /profile.html, SHAREGPT_UI_LEGACY=1 或缺产物时回退旧版。
+  function loadProfileRenderer(win, query) {
+    const devUrl = process.env.SHAREGPT_UI_DEV_URL;
+    if (process.env.SHAREGPT_UI_NEXT === "1" && devUrl && !app.isPackaged) {
+      const qs = new URLSearchParams(query || {}).toString();
+      win.loadURL(`${devUrl.replace(/\/$/, "")}/profile.html${qs ? `?${qs}` : ""}`);
+      return;
+    }
+    const builtNext = path.join(__dirname, "../renderer-next/dist/profile.html");
+    if (process.env.SHAREGPT_UI_LEGACY !== "1" && fs.existsSync(builtNext)) {
+      win.loadFile(builtNext, { query });
+      return;
+    }
+    win.loadFile(path.join(__dirname, "../renderer/profile.html"), { query });
+  }
+
   function createWindow() {
     mainWindow = new BrowserWindow({
       width: 1180,
@@ -1232,7 +1249,7 @@ function createElectronApp(baseMode = "all") {
       };
 
       profileWindow.removeMenu();
-      profileWindow.loadFile(path.join(__dirname, "../renderer/profile.html"), { query });
+      loadProfileRenderer(profileWindow, query);
       profileWindow.on("closed", () => {
         profileWindow = null;
       });

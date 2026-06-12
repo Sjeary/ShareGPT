@@ -19,5 +19,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    // 多页: 主界面 index.html + 独立个人资料窗口 profile.html。
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        profile: path.resolve(__dirname, 'profile.html'),
+      },
+    },
   },
 })
