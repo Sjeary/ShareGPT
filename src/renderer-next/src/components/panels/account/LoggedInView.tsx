@@ -1,15 +1,19 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { LogOut } from 'lucide-react'
+import { Download, LogOut, RefreshCw, UserCog } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
+import { cn } from '@/lib/utils'
+import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
+import { useChatStore } from '@/store/useChatStore'
 import { useAuth } from '@/hooks/useAuth'
+import { compareVersions, normalizeBootstrapPayload } from './bootstrap'
 import type { CollabSettings } from '@/types/settings'
 
 // 协作通知开关项 (对应 collab.notify_* 字段)。
@@ -38,6 +42,205 @@ function initialsOf(name: string): string {
   return trimmed.slice(0, 2).toUpperCase()
 }
 
+function safeText(value: unknown): string {
+  if (typeof value === 'string') return value.trim()
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  return ''
+}
+
+// 旧 formatBytes(~205): 字节人性化展示。
+function formatBytes(value: unknown): string {
+  const size = Math.max(0, Number(value) || 0)
+  if (size < 1024) return `${size} B`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size >= 10 * 1024 ? 0 : 1)} KB`
+  return `${(size / (1024 * 1024)).toFixed(size >= 10 * 1024 * 1024 ? 0 : 1)} MB`
+}
+
+interface UpdateProgress {
+  transferred?: number
+  total?: number
+  percent?: number
+  fileName?: string
+}
+
+// 应用内更新区。读 useAuthStore.updateInfo (bootstrap.update) 判定有无更新,
+// 接 api.onAppUpdateProgress 显示进度, 安装走 downloadAppUpdate -> openAppUpdate。
+// 移植自旧 renderer.js syncUpdateControls(~2811) / installAppUpdate(~2911)。
+function UpdateSection() {
+  const meta = useAppStore((s) => s.meta)
+  const token = useAuthStore((s) => s.token)
+  const updateInfo = useAuthStore((s) => s.updateInfo)
+
+  const [downloading, setDownloading] = useState(false)
+  const [progress, setProgress] = useState<UpdateProgress | null>(null)
+
+  useEffect(() => {
+    const off = api.onAppUpdateProgress((raw) => {
+      setProgress((raw && typeof raw === 'object' ? (raw as UpdateProgress) : null))
+    })
+    return off
+  }, [])
+
+  const currentVersion = safeText(meta.version) || '-'
+  const latestVersion = safeText(updateInfo?.version)
+  const notes = safeText(updateInfo?.notes)
+  const hasPackage = Boolean(safeText(updateInfo?.url))
+  const hasNewVersion = Boolean(
+    latestVersion &&
+      currentVersion &&
+      compareVersions(latestVersion, currentVersion) > 0 &&
+      hasPackage,
+  )
+
+  let hint: string
+  if (!token) {
+    hint = '登录后可检查新版本。'
+  } else if (!updateInfo) {
+    hint = '点击“检查更新”后，会从当前服务器读取发布信息。'
+  } else if (!hasPackage) {
+    hint = '当前服务器还没有配置本平台的安装包。'
+  } else if (hasNewVersion) {
+    hint = `发现新版本 ${latestVersion}，下载后会保留账号、聊天记录、配置和网页登录状态。`
+  } else {
+    hint = '当前已经是最新版本。'
+  }
+  const hintTone = hasNewVersion || (!!updateInfo && hasPackage && !hasNewVersion) ? 'success' : 'muted'
+
+  // 检查更新: 用当前已记忆的 server_url/token 重新拉取 bootstrap。
+  // (旧 checkAppUpdate -> fetchClientBootstrap; 这里直接调 /api/client/bootstrap 刷新 updateInfo。)
+  async function handleCheck() {
+    const serverUrl = safeText(useAppStore.getState().settings?.collab?.server_url)
+    const authToken = useAuthStore.getState().token
+    if (!serverUrl || !authToken) {
+      toast.error('请先登录账号后再检查更新')
+      return
+    }
+    setDownloading(true)
+    try {
+      const response = await fetch(`${serverUrl.replace(/\/+$/, '')}/api/client/bootstrap`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${authToken}` },
+      })
+      if (!response.ok) {
+        const text = await response.text().catch(() => '')
+        throw new Error(text || `读取更新信息失败（${response.status}）`)
+      }
+      const payload = normalizeBootstrapPayload(await response.json().catch(() => null))
+      useAuthStore.getState().setUpdateInfo(payload.update)
+      toast.success('已刷新更新信息')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '检查更新失败')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  // 下载并安装: downloadAppUpdate 拿到本地路径后 openAppUpdate(quitAfterOpen)。
+  async function handleInstall() {
+    const update = useAuthStore.getState().updateInfo
+    if (!update?.url) {
+      toast.error('当前服务器还没有配置本平台的安装包。')
+      return
+    }
+    setDownloading(true)
+    setProgress({ transferred: 0, total: 0, percent: 0, fileName: update.fileName || '更新包' })
+    try {
+      const result = (await api.downloadAppUpdate({
+        url: update.url,
+        fileName: update.fileName,
+        version: update.version,
+      })) as { filePath?: string } | undefined | null
+      const filePath = safeText(result?.filePath)
+      const opened = (await api.openAppUpdate({
+        filePath,
+        quitAfterOpen: true,
+      })) as { backupDir?: string } | undefined | null
+      const backupDir = safeText(opened?.backupDir)
+      toast.success(
+        backupDir
+          ? `更新包已保存：${filePath}。已完成资料快照：${backupDir}。程序将自动退出以完成更新。`
+          : `更新包已保存：${filePath}。安装程序已打开，程序将自动退出。`,
+      )
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '下载或安装更新失败')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  const percent = Math.max(0, Math.min(100, Math.round(Number(progress?.percent) || 0)))
+  const showProgress = downloading || (progress && (progress.transferred || progress.total))
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">应用更新</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <div className="grid gap-1.5 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted-foreground">当前版本</span>
+            <span className="font-medium">{currentVersion}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted-foreground">最新版本</span>
+            <span className="font-medium">{latestVersion || '未发布'}</span>
+          </div>
+        </div>
+
+        <p
+          className={cn(
+            'rounded-md border px-3 py-2 text-xs',
+            hintTone === 'success'
+              ? 'border-success/40 text-success'
+              : 'border-border text-muted-foreground',
+          )}
+        >
+          {hint}
+        </p>
+
+        {notes && (
+          <div className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+            <p className="mb-1 font-medium text-foreground">更新说明</p>
+            <p className="whitespace-pre-wrap">{notes}</p>
+          </div>
+        )}
+
+        {showProgress && (
+          <div className="grid gap-1">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-[width] duration-200"
+                style={{ width: `${percent}%` }}
+              />
+            </div>
+            <p className="text-right text-xs text-muted-foreground">
+              {safeText(progress?.fileName) || '更新包'} · {formatBytes(progress?.transferred)}
+              {progress?.total ? ` / ${formatBytes(progress?.total)}` : ''} · {percent}%
+            </p>
+          </div>
+        )}
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCheck}
+            disabled={!token || downloading}
+          >
+            <RefreshCw />
+            检查更新
+          </Button>
+          <Button size="sm" onClick={handleInstall} disabled={!hasPackage || downloading}>
+            <Download />
+            {downloading ? '下载中…' : hasNewVersion ? '下载并安装更新' : '重新下载安装包'}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export function LoggedInView() {
   const collab = useAppStore((s) => s.settings?.collab)
   const patchSection = useAppStore((s) => s.patchSection)
@@ -61,6 +264,23 @@ export function LoggedInView() {
       toast.error(err instanceof Error ? err.message : '退出失败')
     } finally {
       setLoggingOut(false)
+    }
+  }
+
+  // 打开个人资料编辑器 (独立窗口, 主进程托管)。
+  // 移植自旧 renderer.js openProfileEditor(~5253): 透传 serverUrl/token/username。
+  async function handleEditProfile() {
+    const serverUrl = collab?.server_url ?? ''
+    const token = useAuthStore.getState().token
+    const user = username || useChatStore.getState().identity.username
+    if (!token) {
+      toast.error('请先登录账号，再打开个人资料。')
+      return
+    }
+    try {
+      await api.openProfileEditor({ serverUrl, token, username: user })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '打开个人资料失败')
     }
   }
 
@@ -103,6 +323,11 @@ export function LoggedInView() {
         </CardContent>
       </Card>
 
+      <Button variant="outline" className="w-full" onClick={handleEditProfile}>
+        <UserCog />
+        编辑个人资料
+      </Button>
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">协作通知</CardTitle>
@@ -133,6 +358,8 @@ export function LoggedInView() {
           })}
         </CardContent>
       </Card>
+
+      <UpdateSection />
     </div>
   )
 }

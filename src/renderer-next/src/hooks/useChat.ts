@@ -65,6 +65,22 @@ const SILENT_LOGIN_TIMEOUT_MS = 10000
 // 静默重登失败时, 据错误判断是否需要用户手动重登 (移植自旧 attemptSilentCollabRelogin ~4665)。
 const MANUAL_RELOGIN_PATTERN = /401|403|账号|密码|登录失败|失效|未授权/i
 
+// history_sync 增量游标: 取所有已存消息的 max(readAt, recalledAt, editedAt, timestamp), 空则 ''。
+// (旧版固定 since:'' 全量; 这里改为增量, 减少重复历史拉取)。
+function latestHistoryCursor(): string {
+  let cursor = ''
+  const byConv = useChatStore.getState().messagesByConversation
+  for (const list of Object.values(byConv)) {
+    for (const m of list) {
+      const candidate = [m.readAt, m.recalledAt, m.editedAt, m.timestamp]
+        .filter(Boolean)
+        .reduce((a, b) => (a > b ? a : b), '')
+      if (candidate > cursor) cursor = candidate
+    }
+  }
+  return cursor
+}
+
 // 计算某条入站消息归属的会话存储 key (与 store.keyForMessage 对齐, 用于通知/已读判定)。
 function incomingConversationKey(
   message: ChatMessage,
@@ -442,7 +458,9 @@ export function useChat() {
         setConnection('online')
         void refreshDirectory()
         try {
-          ws.send(JSON.stringify({ type: 'history_sync', since: '' }))
+          ws.send(
+            JSON.stringify({ type: 'history_sync', since: latestHistoryCursor() }),
+          )
         } catch {
           /* ignore */
         }

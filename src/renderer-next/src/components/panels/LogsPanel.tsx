@@ -3,16 +3,17 @@ import { ScrollText } from 'lucide-react'
 import { toast } from 'sonner'
 import { PanelScaffold } from './PanelScaffold'
 import { LogToolbar } from './logs/LogToolbar'
-import { useLogStream } from './logs/useLogStream'
+import { useLogStore } from '@/store/useLogStore'
 import type { LogEntry } from './logs/types'
 
 // 运行日志面板。对齐旧版 renderer.js logLine + index.html #logBox/.ops-log-card:
-// - 实时订阅 api.onLog, 行结构 [时间] [来源] 文本
+// - 只读消费全局 useLogStore (订阅由应用级 useLogStream 单次挂载, 早期日志不丢)
 // - 等宽字体滚动区, 自动滚到底
 // - 顶部工具条: 清空 / 复制全部 / 暂停自动滚动 / 按来源过滤
-// - 容量上限裁剪 (见 useLogStream / MAX_LOG_ENTRIES)
+// - 容量上限裁剪 (见 useLogStore / MAX_LOG_ENTRIES)
 export function LogsPanel() {
-  const { entries, clear } = useLogStream()
+  const entries = useLogStore((s) => s.entries)
+  const clear = useLogStore((s) => s.clear)
   const [autoScroll, setAutoScroll] = useState(true)
   const [activeSource, setActiveSource] = useState<string | null>(null)
 

@@ -5,6 +5,7 @@ import type {
   ChatReplyTarget,
   ChatScope,
   DirectoryUser,
+  ReadReceiptUser,
 } from '@/store/useChatStore'
 
 // 把任意服务器/本地 payload 规范成 ChatMessage。
@@ -51,6 +52,25 @@ function normalizeReplyTarget(raw: unknown): ChatReplyTarget | null {
   }
 }
 
+// 群聊已读回执 (移植自旧 normalizeReadBy ~271): 去重 by username, 按 readAt 升序。
+export function normalizeReadBy(items: unknown): ReadReceiptUser[] {
+  if (!Array.isArray(items)) return []
+  const seen = new Set<string>()
+  const out: ReadReceiptUser[] = []
+  for (const raw of items) {
+    const item = raw as Record<string, unknown> | null | undefined
+    const username = s(item?.username ?? item?.from)
+    if (!username || seen.has(username)) continue
+    seen.add(username)
+    out.push({
+      username,
+      displayName: s(item?.displayName ?? item?.username ?? item?.from) || username,
+      readAt: s(item?.readAt ?? item?.timestamp) || new Date().toISOString(),
+    })
+  }
+  return out.sort((a, b) => a.readAt.localeCompare(b.readAt))
+}
+
 function normalizeForwardedFrom(raw: unknown): ChatForwardedFrom | null {
   const r = raw as Record<string, unknown> | null | undefined
   const from = s(r?.from ?? r?.username)
@@ -86,6 +106,7 @@ export function normalizeChatMessage(raw: unknown): ChatMessage {
     forwardedFrom: normalizeForwardedFrom(p.forwardedFrom),
     timestamp: s(p.timestamp) || new Date().toISOString(),
     readAt: scope === 'private' ? s(p.readAt) : '',
+    readBy: scope === 'subnet' ? normalizeReadBy(p.readBy) : [],
     edited,
     editedAt: edited ? s(p.editedAt) || new Date().toISOString() : '',
     subnetKey: s(p.subnetKey),

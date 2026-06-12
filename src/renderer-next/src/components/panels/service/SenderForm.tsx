@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
-import { Play, Square, Loader2 } from 'lucide-react'
+import { Play, Square, Loader2, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { useAppStore } from '@/store/useAppStore'
+import { useChatStore } from '@/store/useChatStore'
 import { api } from '@/lib/api'
 import type { SenderSettings } from '@/types/settings'
 import { Field } from './Field'
@@ -29,9 +30,13 @@ export function SenderForm() {
   const settings = useAppStore((s) => s.settings)
   const status = useAppStore((s) => s.status)
   const patchSection = useAppStore((s) => s.patchSection)
+  // 旧版 isCollabOnline() = token && connected; 新 store connection==='online' 即 token+WS 已连。
+  const connection = useChatStore((s) => s.connection)
   const [busy, setBusy] = useState(false)
 
   const running = isSenderRunning(status)
+  // 账号在线(已登录且 WS 在线)才允许开启发送服务, 对齐旧 btnStartSender 的 isCollabOnline 门禁。
+  const online = connection === 'online'
 
   const form = useMemo<SenderSettings>(
     () => ({ ...EMPTY, ...(settings?.sender ?? {}) }),
@@ -76,6 +81,11 @@ export function SenderForm() {
       toast.error(err)
       return
     }
+    // 对齐旧 btnStartSender: 字段校验通过后再确认账号在线(token+WS), 否则拒绝启动。
+    if (!online) {
+      toast.error('请先登录账号并保持在线')
+      return
+    }
     setBusy(true)
     try {
       const payload = buildPayload()
@@ -110,6 +120,16 @@ export function SenderForm() {
       <p className="text-sm text-muted-foreground">
         填写连接信息后，可开启发送端，让需要的网站通过这台设备访问。
       </p>
+
+      {!running && !online ? (
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-muted-foreground"
+        >
+          <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+          <span>请先登录账号并保持在线，再开启发送服务。</span>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field
@@ -196,7 +216,7 @@ export function SenderForm() {
             停止发送服务
           </Button>
         ) : (
-          <Button disabled={busy} onClick={handleStart}>
+          <Button disabled={busy || !online} onClick={handleStart}>
             {busy ? <Loader2 className="animate-spin" /> : <Play />}
             开启发送服务
           </Button>

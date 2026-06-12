@@ -34,6 +34,7 @@ export function Sidebar() {
               onClick={() => setActive(key)}
               className={cn(
                 'group flex w-full items-center gap-3 rounded-lg py-2.5 text-left transition-colors',
+                'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                 collapsed ? 'justify-center px-0' : 'px-2.5',
                 on
                   ? 'bg-sidebar-accent text-sidebar-accent-foreground'
@@ -78,6 +79,7 @@ export function Sidebar() {
           aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
           className={cn(
             'mt-auto flex items-center gap-3 rounded-lg py-2.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent/60',
+            'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
             collapsed ? 'justify-center px-0' : 'px-2.5',
           )}
         >

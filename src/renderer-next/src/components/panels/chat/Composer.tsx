@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { CornerUpLeft, Paperclip, Pencil, SendHorizontal, Share2, X } from 'lucide-react'
+import { CornerUpLeft, Paperclip, Pencil, SendHorizontal, Share2, Upload, X } from 'lucide-react'
+import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type {
@@ -10,7 +11,17 @@ import type {
 } from '@/store/useChatStore'
 import { formatBytes } from './format'
 
-const MAX_BYTES = 8 * 1024 * 1024 // 8MB, 与旧版 CHAT_ATTACHMENT_MAX_BYTES 同量级
+const MAX_BYTES = 30 * 1024 * 1024 // 30MB, 与旧版 CHAT_ATTACHMENT_MAX_BYTES 及服务器约束一致
+
+// 剪贴板兜底描述符 (旧 window.api.readClipboardAttachment 返回结构)。
+interface ClipboardAttachmentDescriptor {
+  dataUrl?: string
+  kind?: string
+  name?: string
+  mime?: string
+  size?: number
+  preferredMode?: string
+}
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -75,6 +86,7 @@ export function Composer({
   onEditSubmit,
   onCancelDraft,
   onTyping,
+  onArrowUpEmpty,
 }: {
   disabled: boolean
   placeholder: string
@@ -85,12 +97,16 @@ export function Composer({
   onEditSubmit: (id: string, text: string) => void
   onCancelDraft: () => void
   onTyping?: (active: boolean) => void
+  // ArrowUp 召回编辑: text 为空且非 edit/forward 态时触发 (旧 ~6077)。
+  onArrowUpEmpty?: () => void
 }) {
   // 进入编辑态: 以原文懒初始化 (Composer 在 edit.id 变化时由父级 key 重挂载,
   // 故此处一次性 seed 即可, 避免 effect 内 setState) (旧 setEditDraftFromMessage ~4806)。
   const [text, setText] = useState(() => edit?.preview ?? '')
   const [attachment, setAttachment] = useState<ChatAttachment | null>(null)
   const [error, setError] = useState('')
+  const [dragOver, setDragOver] = useState(false)
+  const dragDepth = useRef(0)
   const fileRef = useRef<HTMLInputElement>(null)
   const textRef = useRef<HTMLTextAreaElement>(null)
 
@@ -152,8 +168,98 @@ export function Composer({
     }
   }
 
+  // 由剪贴板描述符落地为附件 (旧 applyPendingAttachmentDescriptor/applyPendingInlineImageDescriptor)。
+  function applyDescriptor(descriptor: ClipboardAttachmentDescriptor) {
+    const dataUrl = String(descriptor.dataUrl || '')
+    if (!dataUrl) return
+    const size = Number(descriptor.size) || 0
+    if (size > MAX_BYTES) {
+      setError(`文件不能超过 ${formatBytes(MAX_BYTES)}。`)
+      return
+    }
+    const isImage =
+      descriptor.kind === 'image' ||
+      descriptor.preferredMode === 'inline-image'
+    setAttachment({
+      kind: isImage ? 'image' : 'file',
+      name:
+        (descriptor.name || '').trim() ||
+        (isImage ? 'pasted-image.png' : 'file'),
+      mime: (descriptor.mime || '').trim() || (isImage ? 'image/png' : ''),
+      size,
+      dataUrl,
+    })
+    setError('')
+  }
+
+  // 粘贴: 优先剪贴板里的图片/文件项, 否则走主进程剪贴板兜底 (旧 ~6040)。
+  async function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    if (inEdit) return
+    const items = Array.from(e.clipboardData?.items ?? [])
+    const imageItem = items.find((it) => String(it.type || '').startsWith('image/'))
+    const fileItem = items.find((it) => it.kind === 'file')
+    try {
+      if (imageItem || fileItem) {
+        const file = imageItem?.getAsFile?.() ?? fileItem?.getAsFile?.()
+        if (!file) return
+        e.preventDefault()
+        await pickFile(file)
+        return
+      }
+      const descriptor = (await api.readClipboardAttachment?.()) as
+        | ClipboardAttachmentDescriptor
+        | undefined
+      if (!descriptor?.dataUrl) return
+      e.preventDefault()
+      applyDescriptor(descriptor)
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : '读取剪贴板内容失败',
+      )
+    }
+  }
+
+  function dragHasFiles(e: React.DragEvent): boolean {
+    return Array.from(e.dataTransfer?.types ?? []).includes('Files')
+  }
+
   return (
-    <div className="shrink-0 border-t border-border p-3">
+    <div
+      className="relative shrink-0 border-t border-border p-3"
+      onDragEnter={(e) => {
+        if (disabled || inEdit || !dragHasFiles(e)) return
+        e.preventDefault()
+        dragDepth.current += 1
+        setDragOver(true)
+      }}
+      onDragOver={(e) => {
+        if (disabled || inEdit || !dragHasFiles(e)) return
+        e.preventDefault()
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
+        setDragOver(true)
+      }}
+      onDragLeave={(e) => {
+        if (!dragHasFiles(e)) return
+        e.preventDefault()
+        dragDepth.current = Math.max(0, dragDepth.current - 1)
+        if (dragDepth.current === 0) setDragOver(false)
+      }}
+      onDrop={(e) => {
+        if (disabled || inEdit || !dragHasFiles(e)) return
+        e.preventDefault()
+        dragDepth.current = 0
+        setDragOver(false)
+        void pickFile(e.dataTransfer?.files?.[0])
+      }}
+    >
+      {dragOver && (
+        <div className="pointer-events-none absolute inset-1 z-10 grid place-items-center rounded-xl border-2 border-dashed border-primary bg-background/85 text-sm font-medium text-primary">
+          <span className="flex items-center gap-2">
+            <Upload className="size-5" />
+            松开以添加附件
+          </span>
+        </div>
+      )}
       {error && (
         <div className="mb-2 text-xs text-destructive">{error}</div>
       )}
@@ -225,13 +331,32 @@ export function Composer({
             node.style.height = 'auto'
             node.style.height = `${Math.min(140, node.scrollHeight)}px`
           }}
+          onPaste={(e) => void handlePaste(e)}
           onKeyDown={(e) => {
             if (e.key === 'Escape' && (reply || edit || forward)) {
               e.preventDefault()
               cancelDraft()
               return
             }
-            if (e.key === 'Enter' && !e.shiftKey) {
+            // ArrowUp 召回编辑: 仅当输入为空、无附件、非 edit/forward 态 (旧 ~6077)。
+            if (
+              e.key === 'ArrowUp' &&
+              !e.shiftKey &&
+              !e.altKey &&
+              !e.ctrlKey &&
+              !e.metaKey &&
+              !e.nativeEvent.isComposing &&
+              !text &&
+              !attachment &&
+              !edit &&
+              !forward &&
+              onArrowUpEmpty
+            ) {
+              e.preventDefault()
+              onArrowUpEmpty()
+              return
+            }
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault()
               submit()
             }

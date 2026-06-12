@@ -42,6 +42,9 @@ interface AiStore {
 
   patchGemini: (patch: Partial<AiViewState>) => void
   setGeminiFeedback: (text: string, tone?: string) => void
+
+  // 进入工作区时以 settings.gemini.last_url 作为初始导航地址 (仅在尚未有运行态 url 时)。
+  seedGeminiLastUrl: (lastUrl: string) => void
 }
 
 const EMPTY_GEMINI: AiViewState = {
@@ -72,4 +75,8 @@ export const useAiStore = create<AiStore>((set) => ({
   patchGemini: (patch) => set((s) => ({ gemini: { ...s.gemini, ...patch } })),
 
   setGeminiFeedback: (text, tone = '') => set({ geminiFeedback: { text, tone } }),
+
+  // 仅当运行态 lastUrl 仍为空 (尚未从主进程收到 url 事件) 时, 用持久化值作为初始导航地址。
+  seedGeminiLastUrl: (lastUrl) =>
+    set((s) => (s.gemini.lastUrl ? {} : { gemini: { ...s.gemini, lastUrl } })),
 }))

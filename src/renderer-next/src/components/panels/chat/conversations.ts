@@ -8,6 +8,16 @@ import {
 } from '@/store/useChatStore'
 import { messagePreview } from './format'
 
+// 预览行已读态 (旧 recentMessageState ~427): 仅当最后一条是自己发的才有意义。
+//  - 'none': 不显示
+//  - 'sent': 已送达(✓)  / 'read': 已读(✓✓)  (私聊)
+//  - number: 群聊已读人数(N 已读), 0 表示无人已读不显示
+export type LastReadState =
+  | { kind: 'none' }
+  | { kind: 'sent' }
+  | { kind: 'read' }
+  | { kind: 'count'; count: number }
+
 // 会话列表项 (派生数据, 不入 store)。
 export interface ConversationItem {
   key: string
@@ -20,11 +30,28 @@ export interface ConversationItem {
   preview: string
   timestamp: string
   unread: number
+  lastReadState: LastReadState
 }
 
 function lastMessage(items: ChatMessage[] | undefined): ChatMessage | null {
   if (!items || !items.length) return null
   return items[items.length - 1]
+}
+
+// 预览行已读态 (移植自旧 recentMessageState ~427): 最后一条须自己发出且未撤回。
+function lastReadStateOf(
+  last: ChatMessage | null,
+  self: string,
+): LastReadState {
+  if (!last || last.system || last.recalled) return { kind: 'none' }
+  const from = last.from || last.username
+  if (!self || from !== self) return { kind: 'none' }
+  if (last.scope === 'private') {
+    return last.readAt ? { kind: 'read' } : { kind: 'sent' }
+  }
+  // 群聊: 统计已读人数(排除自己)。
+  const count = last.readBy.filter((r) => r.username !== self).length
+  return count > 0 ? { kind: 'count', count } : { kind: 'none' }
 }
 
 function partnerMeta(
@@ -48,6 +75,7 @@ export function buildConversations(params: {
   pinned: Set<string>
   filter: string
   activeKey: string
+  self: string
 }): ConversationItem[] {
   const {
     messagesByConversation,
@@ -57,6 +85,7 @@ export function buildConversations(params: {
     pinned,
     filter,
     activeKey,
+    self,
   } = params
 
   const items: ConversationItem[] = []
@@ -79,6 +108,7 @@ export function buildConversations(params: {
     preview: roomLast ? messagePreview(roomLast) : '房间广播消息会显示在这里',
     timestamp: roomLast?.recalledAt || roomLast?.timestamp || '',
     unread: unreadByKey[roomKey] ?? 0,
+    lastReadState: lastReadStateOf(roomLast, self),
   })
 
   // 私聊会话: 来自历史 key (user:*)
@@ -106,6 +136,7 @@ export function buildConversations(params: {
       preview: last ? messagePreview(last) : '还没有消息',
       timestamp: last?.recalledAt || last?.timestamp || '',
       unread: unreadByKey[privateConversationKey(username)] ?? 0,
+      lastReadState: lastReadStateOf(last, self),
     })
   }
 

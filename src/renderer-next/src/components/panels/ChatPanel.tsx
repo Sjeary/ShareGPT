@@ -20,6 +20,7 @@ import { cn } from '@/lib/utils'
 import { ConversationList } from './chat/ConversationList'
 import { MessageBubble, type MessageActions } from './chat/MessageBubble'
 import { Composer } from './chat/Composer'
+import { ImageLightbox, type LightboxTarget } from './chat/ImageLightbox'
 import {
   activeConversationMessages,
   buildConversations,
@@ -54,6 +55,22 @@ function forwardDraftFromMessage(m: ChatMessage): ChatForwardDraft | null {
     text: m.text,
     attachments: m.attachments,
   }
+}
+
+// 找当前会话内自己最后一条可编辑消息 (旧 findLastOwnEditableMessage ~4857)。
+function findLastOwnEditableMessage(
+  messages: ChatMessage[],
+  self: string,
+): ChatMessage | null {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i]
+    if (m.system || m.recalled) continue
+    if ((m.from || m.username) !== self) continue
+    if (m.attachments.length) continue
+    if (!m.text) continue
+    return m
+  }
+  return null
 }
 
 // 协作聊天面板 (Telegram 式)。
@@ -92,6 +109,9 @@ export function ChatPanel() {
   // 轻量未读计数: 收到非自己、非当前会话的消息时 +1; 切换会话清零。
   const [unreadByKey, setUnreadByKey] = useState<Record<string, number>>({})
   const lastSeenCount = useRef<Record<string, number>>({})
+
+  // 图片灯箱 (旧 openChatImageLightbox ~4975)。
+  const [lightbox, setLightbox] = useState<LightboxTarget | null>(null)
 
   useEffect(() => {
     const activeStoreKey =
@@ -135,6 +155,7 @@ export function ChatPanel() {
         pinned,
         filter,
         activeKey,
+        self: selfUsername,
       }),
     [
       messagesByConversation,
@@ -144,6 +165,7 @@ export function ChatPanel() {
       pinned,
       filter,
       activeKey,
+      selfUsername,
     ],
   )
 
@@ -181,13 +203,25 @@ export function ChatPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appActive, connection, activeKey, messages])
 
-  // 对端「正在输入…」(旧 conversationTypingSummary ~510)。
+  // 对端「正在输入…」(旧 conversationTypingSummary ~510): 房间多人时汇总。
   const typingText = useMemo(() => {
     if (!activeConversation) return ''
     const storeKey = storeKeyForActive(activeKey, roomScope)
-    const meta = typingByConversation[storeKey]
-    if (!meta) return ''
-    return `${meta.displayName || meta.from || '对方'} 正在输入…`
+    if (activeConversation.kind === 'private') {
+      const meta = typingByConversation[storeKey]
+      if (!meta) return ''
+      return `${meta.displayName || meta.from || '对方'} 正在输入…`
+    }
+    // 房间: 汇总同一 room key 下所有 subnet typer。
+    const typers = Object.entries(typingByConversation).filter(
+      ([key, meta]) => key === storeKey && meta.scope === 'subnet',
+    )
+    if (!typers.length) return ''
+    if (typers.length === 1) {
+      const meta = typers[0][1]
+      return `${meta.displayName || meta.from || '联系人'} 正在输入…`
+    }
+    return `${typers.length} 位联系人正在输入…`
   }, [activeConversation, activeKey, roomScope, typingByConversation])
 
   // 在线联系人 (排除自己 + 已在会话列表中的私聊对象), 供「在线联系人」分区开私聊。
@@ -240,6 +274,19 @@ export function ChatPanel() {
     setActiveKey(privateConversationKey(username))
   }
 
+  // 跳转到被回复的原消息并临时高亮 (旧 focusMessageById ~4871)。
+  function jumpToMessage(id: string) {
+    if (!id) return
+    const root = scrollRef.current
+    const node = root?.querySelector<HTMLElement>(
+      `[data-message-id="${(window.CSS?.escape ?? ((v: string) => v))(id)}"]`,
+    )
+    if (!node) return
+    node.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    node.classList.add('chat-jump-target')
+    window.setTimeout(() => node.classList.remove('chat-jump-target'), 1600)
+  }
+
   const messageActions: MessageActions = {
     onReply: (m) => {
       const draft = replyDraftFromMessage(m)
@@ -260,6 +307,14 @@ export function ChatPanel() {
         reportSendError(err)
       }
     },
+    onOpenImage: (dataUrl, alt) => setLightbox({ dataUrl, alt }),
+    onJumpToMessage: jumpToMessage,
+  }
+
+  // ArrowUp 召回编辑自己最后一条可编辑消息 (旧 ~6088)。
+  function handleArrowUpEdit() {
+    const target = findLastOwnEditableMessage(messages, selfUsername)
+    if (target?.id) setEditDraft({ id: target.id, preview: target.text })
   }
 
   const subtitle = (() => {
@@ -370,6 +425,7 @@ export function ChatPanel() {
                       message={message}
                       mine={mine}
                       showAvatar={showAvatar}
+                      selfUsername={selfUsername}
                       actions={messageActions}
                     />
                   </div>
@@ -400,8 +456,11 @@ export function ChatPanel() {
             if (!activeConversation) return
             chat.sendTyping(active, scope, activeConversation.username)
           }}
+          onArrowUpEmpty={handleArrowUpEdit}
         />
       </div>
+
+      <ImageLightbox target={lightbox} onClose={() => setLightbox(null)} />
     </section>
   )
 }

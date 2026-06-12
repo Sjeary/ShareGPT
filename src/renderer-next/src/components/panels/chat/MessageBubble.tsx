@@ -11,15 +11,34 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import type { ChatAttachment, ChatMessage } from '@/store/useChatStore'
 import { avatarMark, formatBytes, formatMessageTime } from './format'
+import {
+  buildMessageLinkPreview,
+  extractFirstUrl,
+  openMessageUrl,
+  renderMessageRichText,
+} from './richText'
 
-function AttachmentView({ att }: { att: ChatAttachment }) {
+function AttachmentView({
+  att,
+  onOpenImage,
+}: {
+  att: ChatAttachment
+  onOpenImage: (dataUrl: string, alt: string) => void
+}) {
   if (att.kind === 'image') {
     return (
-      <img
-        src={att.dataUrl}
-        alt={att.name}
-        className="mt-1 max-h-60 max-w-full rounded-lg object-contain"
-      />
+      <button
+        type="button"
+        aria-label={att.name || '查看图片'}
+        onClick={() => onOpenImage(att.dataUrl, att.name || '聊天图片')}
+        className="mt-1 block overflow-hidden rounded-lg"
+      >
+        <img
+          src={att.dataUrl}
+          alt={att.name}
+          className="max-h-60 max-w-full cursor-zoom-in object-contain"
+        />
+      </button>
     )
   }
   return (
@@ -42,6 +61,8 @@ export interface MessageActions {
   onForward: (message: ChatMessage) => void
   onEdit: (message: ChatMessage) => void
   onRecall: (message: ChatMessage) => void
+  onOpenImage: (dataUrl: string, alt: string) => void
+  onJumpToMessage: (id: string) => void
 }
 
 // 单条气泡: 系统消息居中; 自己消息右对齐主色气泡; 他人左对齐+头像。
@@ -50,14 +71,17 @@ export function MessageBubble({
   message,
   mine,
   showAvatar,
+  selfUsername,
   actions,
 }: {
   message: ChatMessage
   mine: boolean
   showAvatar: boolean
+  selfUsername: string
   actions: MessageActions
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [confirmRecall, setConfirmRecall] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -65,6 +89,7 @@ export function MessageBubble({
     const onDown = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false)
+        setConfirmRecall(false)
       }
     }
     document.addEventListener('mousedown', onDown)
@@ -85,7 +110,12 @@ export function MessageBubble({
   const canEdit =
     canAct && mine && Boolean(message.text) && message.attachments.length === 0
 
-  const menuItems: { label: string; icon: typeof CornerUpLeft; run: () => void }[] = []
+  const menuItems: {
+    label: string
+    icon: typeof CornerUpLeft
+    run: () => void
+    danger?: boolean
+  }[] = []
   if (canAct) {
     menuItems.push({
       label: '回复',
@@ -109,6 +139,7 @@ export function MessageBubble({
         label: '撤回',
         icon: Trash2,
         run: () => actions.onRecall(message),
+        danger: true,
       })
     }
   }
@@ -119,11 +150,31 @@ export function MessageBubble({
     setMenuOpen(true)
   }
 
+  // 群聊已读: 排除自己后的已读者 (旧 ~3870)。
+  const readByOthers =
+    mine && message.scope === 'subnet' && !message.recalled
+      ? message.readBy.filter((r) => r.username !== selfUsername)
+      : []
+  const readNames = readByOthers.map((r) => r.displayName || r.username)
+  const readSummary =
+    readNames.length <= 3
+      ? readNames.join('、')
+      : `${readNames.slice(0, 3).join('、')} 等${readNames.length}人`
+
+  // 正文富文本 + 首个 URL 链接预览卡。
+  const richBody = message.text ? renderMessageRichText(message.text) : null
+  const linkPreview = message.text
+    ? buildMessageLinkPreview(extractFirstUrl(message.text))
+    : null
+
   return (
     <div
+      data-message-id={message.id || undefined}
       className={cn(
-        'group/bubble relative flex w-full gap-2',
+        'group/bubble relative flex w-full gap-2 transition-colors',
         mine ? 'flex-row-reverse' : 'flex-row',
+        // 跳转高亮 (旧 chat-item-targeted)。
+        'rounded-xl [&.chat-jump-target]:bg-primary/10',
       )}
       onContextMenu={openContextMenu}
     >
@@ -157,26 +208,30 @@ export function MessageBubble({
         <div className="relative">
           <div
             className={cn(
-              'rounded-2xl px-3 py-2 text-sm break-words',
+              'rounded-2xl px-3 py-2 text-sm break-words [overflow-wrap:anywhere]',
               mine
                 ? 'rounded-br-md bg-primary text-primary-foreground'
                 : 'rounded-bl-md bg-secondary text-secondary-foreground',
             )}
           >
-            {message.replyTo && (
-              <div
+            {!message.recalled && message.replyTo && (
+              <button
+                type="button"
+                onClick={() => actions.onJumpToMessage(message.replyTo!.id)}
                 className={cn(
-                  'mb-1 flex items-center gap-1 rounded-md border-l-2 px-2 py-1 text-xs',
+                  'mb-1 flex w-full flex-col items-start gap-0 rounded-md border-l-2 px-2 py-1 text-left text-xs transition-colors',
                   mine
-                    ? 'border-primary-foreground/50 bg-primary-foreground/10'
-                    : 'border-primary/50 bg-background/40',
+                    ? 'border-primary-foreground/50 bg-primary-foreground/10 hover:bg-primary-foreground/20'
+                    : 'border-primary/50 bg-background/40 hover:bg-background/60',
                 )}
               >
-                <CornerUpLeft className="size-3 shrink-0" />
-                <span className="min-w-0 flex-1 truncate opacity-80">
+                <span className="max-w-full truncate font-medium">
+                  {message.replyTo.displayName || message.replyTo.from || '消息'}
+                </span>
+                <span className="max-w-full truncate opacity-80">
                   {message.replyTo.preview}
                 </span>
-              </div>
+              </button>
             )}
 
             {message.forwardedFrom && (
@@ -186,14 +241,42 @@ export function MessageBubble({
             )}
 
             {message.recalled ? (
-              <span className="italic opacity-70">[已撤回]</span>
+              <span className="italic opacity-70">
+                {mine
+                  ? '你撤回了一条消息'
+                  : `${message.displayName} 撤回了一条消息`}
+              </span>
             ) : (
               <>
-                {message.text && (
-                  <span className="whitespace-pre-wrap">{message.text}</span>
+                {richBody && (
+                  <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                    {richBody}
+                  </div>
+                )}
+                {linkPreview && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      openMessageUrl(linkPreview.url)
+                    }}
+                    className="mt-1.5 flex w-full min-w-0 flex-col items-start gap-0.5 rounded-lg border border-border/60 bg-background/40 px-3 py-2 text-left text-xs transition-colors hover:bg-background/70"
+                  >
+                    <strong className="max-w-full truncate font-medium">
+                      {linkPreview.host}
+                    </strong>
+                    <span className="max-w-full truncate text-muted-foreground [overflow-wrap:anywhere]">
+                      {linkPreview.url}
+                    </span>
+                  </button>
                 )}
                 {message.attachments.map((att, i) => (
-                  <AttachmentView key={i} att={att} />
+                  <AttachmentView
+                    key={i}
+                    att={att}
+                    onOpenImage={actions.onOpenImage}
+                  />
                 ))}
               </>
             )}
@@ -210,9 +293,14 @@ export function MessageBubble({
               <button
                 type="button"
                 aria-label="消息操作"
-                onClick={() => setMenuOpen((v) => !v)}
+                onClick={() => {
+                  setMenuOpen((v) => !v)
+                  setConfirmRecall(false)
+                }}
                 className={cn(
-                  'grid size-6 place-items-center rounded-full bg-secondary text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/bubble:opacity-100',
+                  'grid size-6 place-items-center rounded-full bg-secondary text-muted-foreground opacity-0 outline-none transition-opacity hover:text-foreground',
+                  'group-hover/bubble:opacity-100 group-focus-within/bubble:opacity-100',
+                  'focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring',
                   menuOpen && 'opacity-100',
                 )}
               >
@@ -221,33 +309,63 @@ export function MessageBubble({
               {menuOpen && (
                 <div
                   className={cn(
-                    'absolute top-7 z-20 min-w-32 overflow-hidden rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-md',
+                    'absolute top-7 z-20 min-w-32 origin-top overflow-hidden rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-md',
+                    'animate-in fade-in zoom-in-95',
                     mine ? 'left-0' : 'right-0',
                   )}
                 >
-                  {menuItems.map((item) => (
-                    <button
-                      key={item.label}
-                      type="button"
-                      onClick={() => {
-                        setMenuOpen(false)
-                        item.run()
-                      }}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
-                    >
-                      <item.icon className="size-4 text-muted-foreground" />
-                      {item.label}
-                    </button>
-                  ))}
+                  {menuItems.map((item) => {
+                    const needsConfirm = item.danger && !confirmRecall
+                    return (
+                      <button
+                        key={item.label}
+                        type="button"
+                        onClick={() => {
+                          if (needsConfirm) {
+                            setConfirmRecall(true)
+                            return
+                          }
+                          setMenuOpen(false)
+                          setConfirmRecall(false)
+                          item.run()
+                        }}
+                        className={cn(
+                          'flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent',
+                          item.danger && 'text-destructive',
+                        )}
+                      >
+                        <item.icon
+                          className={cn(
+                            'size-4',
+                            item.danger ? 'text-destructive' : 'text-muted-foreground',
+                          )}
+                        />
+                        {item.danger && confirmRecall ? '确认撤回？' : item.label}
+                      </button>
+                    )
+                  })}
                 </div>
               )}
             </div>
           )}
         </div>
 
-        <span className="px-1 text-[11px] text-muted-foreground">
+        <span
+          className="flex items-center gap-1 px-1 text-[11px] text-muted-foreground"
+          title={readByOthers.length ? `已读：${readSummary}` : undefined}
+        >
           {formatMessageTime(message.timestamp)}
           {message.edited && !message.recalled ? ' · 已编辑' : ''}
+          {message.recalled ? ' · 已撤回' : ''}
+          {/* 已读回执: 仅自己消息 */}
+          {mine && !message.recalled && message.scope === 'private' && (
+            <span className={cn(message.readAt ? 'text-primary' : '')}>
+              {message.readAt ? '✓✓' : '✓'}
+            </span>
+          )}
+          {mine && readByOthers.length > 0 && (
+            <span className="text-primary">{readByOthers.length} 人已读</span>
+          )}
         </span>
       </div>
     </div>

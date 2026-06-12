@@ -7,6 +7,7 @@ import { formatRangeText } from './stats/helpers'
 import { RangeControls } from './stats/RangeControls'
 import { PieChart } from './stats/PieChart'
 import { RankList } from './stats/RankList'
+import { StatsSkeleton } from './stats/StatsSkeleton'
 
 // 使用统计面板:
 // - 总查询数 (大数字, tabular-nums) + 参与人数
@@ -36,6 +37,13 @@ export function StatsPanel() {
 
   const total = stats.totalQueries
   const userCount = stats.userCount || stats.entries.length
+
+  // 是否已有数据 (含 0 次但有条目, 或 total > 0)。
+  const hasData = total > 0 || stats.entries.length > 0
+  // 首次加载 (无任何旧数据): 显示骨架。
+  const firstLoad = loading && !hasData && !error
+  // 已有旧数据时刷新: 给主体加遮罩防数值跳变。
+  const refreshing = loading && hasData
 
   return (
     <PanelScaffold
@@ -71,6 +79,16 @@ export function StatsPanel() {
           </div>
         )}
 
+        {firstLoad ? (
+          <StatsSkeleton />
+        ) : (
+          <div
+            className={
+              refreshing
+                ? 'pointer-events-none flex flex-col gap-4 opacity-60 transition-opacity'
+                : 'flex flex-col gap-4 transition-opacity'
+            }
+          >
         {/* 概览数字 */}
         <div className="grid gap-4 sm:grid-cols-2">
           <Card>
@@ -115,6 +133,8 @@ export function StatsPanel() {
             </div>
           </CardContent>
         </Card>
+          </div>
+        )}
       </div>
     </PanelScaffold>
   )

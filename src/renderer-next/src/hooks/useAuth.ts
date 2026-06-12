@@ -3,6 +3,17 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore, type AuthProfile } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import {
+  normalizeChatMessage,
+  normalizeDirectory,
+} from '@/components/panels/chat/normalize'
+import {
+  hasCompleteSenderBootstrap,
+  normalizeBootstrapPayload,
+  type BootstrapPayload,
+  type BootstrapSender,
+} from '@/components/panels/account/bootstrap'
+import type { SenderSettings } from '@/types/settings'
 
 // 协作服务器登录/退出逻辑 (移植自旧 renderer.js performCollabLogin / collabLogout)。
 // 端点 (渲染层直连协作服务器, 非 IPC):
@@ -14,6 +25,7 @@ import { useChatStore } from '@/store/useChatStore'
 
 const LOGIN_TIMEOUT_MS = 10000
 const LOGOUT_TIMEOUT_MS = 5000
+const BOOTSTRAP_TIMEOUT_MS = 10000
 
 export interface LoginParams {
   serverUrl: string
@@ -25,6 +37,10 @@ export interface LoginParams {
 interface LoginResponse {
   token?: string
   profile?: { avatar?: string; displayName?: string }
+  // 登录响应可携带初始历史/在线名录, 用于 WS 建连前即时灌入 (旧 performCollabLogin ~4593)。
+  history?: unknown
+  users?: unknown
+  onlineUsers?: unknown
 }
 
 function trimTrailingSlash(url: string): string {
@@ -61,6 +77,63 @@ async function fetchWithTimeout(
   } finally {
     clearTimeout(timer)
   }
+}
+
+// 本机 sender 配置不完整时, 用服务器下发的 sender 字段补全并持久化。
+// 移植自旧 renderer.js applySenderBootstrapConfig(~2770):
+//   - 服务器下发的 sender 本身不完整 -> 不动 (return)。
+//   - 本机 sender 已完整 -> 不覆盖用户已填内容 (return)。
+//   - 否则合并 (服务器值优先填空位) 并 patchSection('sender',...) 落盘。
+async function applySenderBootstrapConfig(serverSender: BootstrapSender): Promise<boolean> {
+  if (!hasCompleteSenderBootstrap(serverSender)) {
+    return false
+  }
+
+  const current = (useAppStore.getState().settings?.sender ?? {}) as Partial<SenderSettings>
+  if (hasCompleteSenderBootstrap(current)) {
+    return false
+  }
+
+  const merged: Partial<SenderSettings> = {
+    proxy_server: serverSender.proxy_server || current.proxy_server || '',
+    proxy_port: serverSender.proxy_port || current.proxy_port || '',
+    proxy_uuid: serverSender.proxy_uuid || current.proxy_uuid || '',
+    socks_listen_port: serverSender.socks_listen_port || current.socks_listen_port || '',
+    fallback_mode: serverSender.fallback_mode || current.fallback_mode || 'system_proxy',
+    fallback_local_port: serverSender.fallback_local_port || current.fallback_local_port || '',
+    target_domains: serverSender.target_domains || current.target_domains || '',
+  }
+
+  await useAppStore.getState().patchSection('sender', merged)
+  return true
+}
+
+// 登录后拉取客户端 bootstrap (更新信息 + 发送端配置同步)。
+// 移植自旧 renderer.js fetchClientBootstrap(~2870): best-effort, 失败不阻塞登录。
+async function fetchClientBootstrap(serverUrl: string, token: string): Promise<BootstrapPayload | null> {
+  const cleaned = trimTrailingSlash(serverUrl.trim())
+  if (!cleaned || !token) return null
+
+  const response = await fetchWithTimeout(
+    `${cleaned}/api/client/bootstrap`,
+    {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    },
+    BOOTSTRAP_TIMEOUT_MS,
+  )
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '')
+    throw new Error(text || `读取客户端配置失败（${response.status}）`)
+  }
+
+  const payload = normalizeBootstrapPayload(await response.json().catch(() => null))
+  // 更新信息存入 auth store 供更新 UI (LoggedInView 更新区) 读取。
+  useAuthStore.getState().setUpdateInfo(payload.update)
+  // 本机 sender 不完整时用服务器下发补全。
+  await applySenderBootstrapConfig(payload.sender)
+  return payload
 }
 
 export function useAuth() {
@@ -124,6 +197,20 @@ export function useAuth() {
         avatar: profile.avatar,
       })
 
+      // 登录响应可携带初始 history/users, WS 建连前即时灌入避免空白
+      // (移植自旧 renderer.js performCollabLogin ~4593: renderHistory / setUserDirectory)。
+      if (Array.isArray(payload.history) && payload.history.length) {
+        useChatStore.getState().mergeMessages(payload.history.map((m) => normalizeChatMessage(m)))
+      }
+      const rawUsers = Array.isArray(payload.users)
+        ? payload.users
+        : Array.isArray(payload.onlineUsers)
+          ? payload.onlineUsers
+          : null
+      if (rawUsers) {
+        useChatStore.getState().setDirectory(normalizeDirectory(rawUsers))
+      }
+
       // 持久化 collab 设置 (与旧版 settings.json 字段 100% 兼容)。
       await patchSection('collab', {
         server_url: cleanedServer,
@@ -134,6 +221,15 @@ export function useAuth() {
       })
 
       setAuthed(true)
+
+      // 拉取客户端 bootstrap (更新信息 + 发送端配置同步)。best-effort, 失败不阻塞登录。
+      // (移植自旧 performCollabLogin ~4588: try fetchClientBootstrap catch 记日志。)
+      try {
+        await fetchClientBootstrap(cleanedServer, payload.token)
+      } catch {
+        /* 忽略: 登录已成功, bootstrap 失败仅影响更新提示/自动补全 */
+      }
+
       return profile
     },
     [patchSection, setAuthed, setSession],
@@ -163,6 +259,11 @@ export function useAuth() {
         /* 忽略: 本地仍照常退出 */
       }
     }
+
+    // 账号下线后不再以本机转发: 停止发送服务 (best-effort, 失败不阻塞退出)。
+    // 移植自旧 renderer.js collabLogout(~4273): await stopSenderBecauseAccountOffline。
+    // 注意: 4002/4003/静默重登失败时的 stopSender 归 chat 域 (useChat.ts), 本域只管主动退出。
+    await api.stopSender().catch(() => {})
 
     clearSession()
     setAuthed(false)

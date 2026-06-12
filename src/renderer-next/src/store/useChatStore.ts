@@ -32,6 +32,13 @@ export interface ChatForwardedFrom {
   displayName: string
 }
 
+// 群聊已读回执用户 (旧 normalizeReadBy ~271)。
+export interface ReadReceiptUser {
+  username: string
+  displayName: string
+  readAt: string
+}
+
 // 编辑草稿 (旧 state.collab.editDraft ~5187)。
 export interface ChatEditDraft {
   id: string
@@ -71,6 +78,7 @@ export interface ChatMessage {
   forwardedFrom: ChatForwardedFrom | null
   timestamp: string
   readAt: string
+  readBy: ReadReceiptUser[]
   edited: boolean
   editedAt: string
   subnetKey: string
@@ -285,7 +293,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (message.id) {
         const idx = next.findIndex((x) => x.id === message.id)
         if (idx >= 0) {
-          next[idx] = { ...next[idx], ...message }
+          // 合并 readBy: 新消息已读非空则覆盖, 否则保留旧值 (旧 mergeMessageIntoConversation)。
+          const mergedReadBy =
+            message.readBy && message.readBy.length
+              ? message.readBy
+              : next[idx].readBy
+          next[idx] = { ...next[idx], ...message, readBy: mergedReadBy }
           return {
             messagesByConversation: { ...s.messagesByConversation, [key]: next },
           }

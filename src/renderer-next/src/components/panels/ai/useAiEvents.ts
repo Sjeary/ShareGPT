@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { api } from '@/lib/api'
 import { useAiStore } from '@/store/useAiStore'
 import type { GptTab } from '@/store/useAiStore'
+import { useAppStore } from '@/store/useAppStore'
 import { registerGptQuery } from './reportGptUsage'
 import {
   GPT_QUERY_MARKER,
@@ -15,6 +16,34 @@ import type { AiEventPayload, AiTabPayload } from './types'
 function safeText(value: unknown): string {
   if (value === undefined || value === null) return ''
   return String(value).trim()
+}
+
+// 旧 rememberGptUrl / rememberGeminiUrl: url 变更时把 last_url 写回设置。
+// 旧版每次 url 事件都整存一次 settings; 这里防抖合并, 仅在值真正变化时落盘。
+const URL_PERSIST_DELAY = 600
+const persistTimers: Record<'gpt' | 'gemini', ReturnType<typeof setTimeout> | null> = {
+  gpt: null,
+  gemini: null,
+}
+const lastPersistedUrl: Record<'gpt' | 'gemini', string> = { gpt: '', gemini: '' }
+
+function persistLastUrl(section: 'gpt' | 'gemini', url: string) {
+  const next = safeText(url)
+  if (!next || next === lastPersistedUrl[section]) return
+  lastPersistedUrl[section] = next
+
+  const timer = persistTimers[section]
+  if (timer) clearTimeout(timer)
+  persistTimers[section] = setTimeout(() => {
+    persistTimers[section] = null
+    void useAppStore
+      .getState()
+      .patchSection(section, { last_url: next })
+      .catch(() => {
+        // 保存页面位置失败不阻塞工作区; 允许下次再写。
+        lastPersistedUrl[section] = ''
+      })
+  }, URL_PERSIST_DELAY)
 }
 
 // 对齐旧 normalizeGptTab。
@@ -71,6 +100,9 @@ function applyGptState(payload: AiEventPayload) {
   if (nextUrl && isGptAllowedUrl(nextUrl)) patch.url = normalizeGptUrl(nextUrl)
 
   if (Object.keys(patch).length) store.patchGptTab(tabId, patch)
+
+  // 旧 rememberGptUrl: 仅活动标签的 url 变更写回 last_url。
+  if (patch.url && tabId === store.gptActiveTabId) persistLastUrl('gpt', patch.url)
 }
 
 // 对齐旧 applyAiWorkspaceState(kind==="gemini")。
@@ -86,6 +118,9 @@ function applyGeminiState(payload: AiEventPayload) {
   if (nextUrl && isGeminiAllowedUrl(nextUrl)) patch.lastUrl = normalizeGeminiUrl(nextUrl)
 
   if (Object.keys(patch).length) store.patchGemini(patch)
+
+  // 旧 rememberGeminiUrl: gemini-allowed url 变更写回 last_url。
+  if (patch.lastUrl) persistLastUrl('gemini', patch.lastUrl)
 }
 
 // 旧 handleGptTrackerMessage: 解析注入脚本通过 console.log 发回的查询事件。

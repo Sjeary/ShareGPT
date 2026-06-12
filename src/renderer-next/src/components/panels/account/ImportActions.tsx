@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { FileDown, FolderInput } from 'lucide-react'
+import { FileDown, FileUp, FolderInput } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
@@ -19,9 +19,13 @@ interface ImportUserDataPayload {
   filePath?: string
 }
 
+interface ExportUserDataPayload {
+  filePath?: string
+}
+
 export function ImportActions() {
   const reloadSettings = useAppStore((s) => s.reloadSettings)
-  const [busy, setBusy] = useState<'settings' | 'userData' | null>(null)
+  const [busy, setBusy] = useState<'settings' | 'userData' | 'export' | null>(null)
 
   async function handleImportConfig() {
     if (busy) return
@@ -60,6 +64,23 @@ export function ImportActions() {
     }
   }
 
+  // 导出本机资料包 (settings + chatHistory)。
+  // 移植自旧 renderer.js handleExportUserData(~5497): 用户取消(无 filePath)时静默。
+  async function handleExportUserData() {
+    if (busy) return
+    setBusy('export')
+    try {
+      const payload = (await api.exportUserData()) as ExportUserDataPayload | undefined | null
+      const filePath = payload?.filePath
+      if (!filePath) return
+      toast.success(`本机资料包已导出：${filePath}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '导出资料包失败')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   return (
     <div className="grid gap-2">
       <Button
@@ -81,6 +102,16 @@ export function ImportActions() {
       >
         <FolderInput />
         {busy === 'userData' ? '导入中…' : '导入用户数据'}
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full"
+        onClick={handleExportUserData}
+        disabled={busy !== null}
+      >
+        <FileUp />
+        {busy === 'export' ? '导出中…' : '导出用户数据'}
       </Button>
     </div>
   )

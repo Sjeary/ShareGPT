@@ -139,7 +139,10 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         return
       }
 
-      const lastUrl = normalizeGeminiUrl(gemini.lastUrl || GEMINI_HOME_URL)
+      // 读取最新运行态 (含初始化时由 settings.gemini.last_url 注入的 seed), 避免闭包旧值。
+      const lastUrl = normalizeGeminiUrl(
+        useAiStore.getState().gemini.lastUrl || GEMINI_HOME_URL,
+      )
       const payload = (await api.ensureAiWorkspace({
         kind: 'gemini',
         partition: GEMINI_PARTITION,
@@ -157,8 +160,17 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         if (Object.keys(patch).length) useAiStore.getState().patchGemini(patch)
       }
     },
-    [kind, senderRunning, proxyHost, proxyPort, gemini.lastUrl],
+    // gemini.lastUrl 改为调用时从 store 读取, 不再作为依赖。
+    [kind, senderRunning, proxyHost, proxyPort],
   )
+
+  // 进入工作区时以持久化的 settings.gemini.last_url 作为初始导航地址 (旧 loadSettings)。
+  // 仅在运行态 lastUrl 仍为空时生效, 避免覆盖已收到的实时 url。
+  useEffect(() => {
+    if (kind !== 'gemini') return
+    const persisted = safeText((settings?.gemini as Record<string, unknown> | undefined)?.last_url)
+    if (persisted) useAiStore.getState().seedGeminiLastUrl(normalizeGeminiUrl(persisted))
+  }, [kind, settings?.gemini])
 
   // 面板激活 / 发送服务就绪时: 拉取 GPT 标签列表并 ensure 工作区。
   useEffect(() => {

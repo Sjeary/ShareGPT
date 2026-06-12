@@ -67,12 +67,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       return true
     }
   })(),
-  toggleTheme: () =>
-    set((s) => {
-      const next = !s.dark
-      applyTheme(next)
-      return { dark: next }
-    }),
+  // 切换主题: 既写 localStorage (applyTheme 内), 也回写磁盘 settings.ui.theme,
+  // 与旧版资料包保持一致 (旧 renderer.js ~159 state.ui.theme + 保存)。
+  toggleTheme: () => {
+    const next = !get().dark
+    applyTheme(next)
+    set({ dark: next })
+    // 异步回写, 不阻塞 UI; 失败忽略 (localStorage 已兜底)。
+    void get()
+      .patchSection('ui', { theme: next ? 'dark' : 'light' })
+      .catch(() => undefined)
+  },
 
   sidebarCollapsed: (() => {
     try {
@@ -106,12 +111,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       api.getAppMeta().catch(() => ({})),
       api.getStatus().catch(() => ({})),
     ])
+    const mergedSettings = { ...EMPTY_SETTINGS, ...(settings as AppSettings) }
     set({
-      settings: { ...EMPTY_SETTINGS, ...(settings as AppSettings) },
+      settings: mergedSettings,
       mode: String(mode || ''),
       meta: meta as Record<string, unknown>,
       status: status as StatusPayload,
     })
+    // [LOW] 主题优先取磁盘 settings.ui.theme (跨设备/资料包一致), 无则回退 localStorage 现值。
+    const savedTheme = mergedSettings.ui?.theme
+    if (savedTheme === 'dark' || savedTheme === 'light') {
+      const dark = savedTheme === 'dark'
+      applyTheme(dark)
+      set({ dark })
+    } else {
+      // 无磁盘设置: 用启动时 localStorage 推断的 dark 重新落实到 DOM (确保 class 同步)。
+      applyTheme(get().dark)
+    }
     api.onStatus((payload) => set({ status: payload as StatusPayload }))
   },
 

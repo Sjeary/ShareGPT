@@ -88,6 +88,17 @@ export function ConversationList({
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                        {it.lastReadState.kind === 'sent' && (
+                          <span className="mr-1 text-muted-foreground/70">✓</span>
+                        )}
+                        {it.lastReadState.kind === 'read' && (
+                          <span className="mr-1 text-primary">✓✓</span>
+                        )}
+                        {it.lastReadState.kind === 'count' && (
+                          <span className="mr-1 text-primary">
+                            {it.lastReadState.count} 已读
+                          </span>
+                        )}
                         {it.preview}
                       </span>
                       {it.unread > 0 && (
