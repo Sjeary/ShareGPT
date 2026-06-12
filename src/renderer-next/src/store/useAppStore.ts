@@ -12,6 +12,10 @@ interface AppState {
   dark: boolean
   toggleTheme: () => void
 
+  // 侧栏收起 (图标轨)
+  sidebarCollapsed: boolean
+  toggleSidebar: () => void
+
   // 应用信息
   mode: string
   meta: Record<string, unknown>
@@ -68,6 +72,24 @@ export const useAppStore = create<AppState>((set, get) => ({
       const next = !s.dark
       applyTheme(next)
       return { dark: next }
+    }),
+
+  sidebarCollapsed: (() => {
+    try {
+      return localStorage.getItem('sharegpt-sidebar') === '1'
+    } catch {
+      return false
+    }
+  })(),
+  toggleSidebar: () =>
+    set((s) => {
+      const next = !s.sidebarCollapsed
+      try {
+        localStorage.setItem('sharegpt-sidebar', next ? '1' : '0')
+      } catch {
+        /* ignore */
+      }
+      return { sidebarCollapsed: next }
     }),
 
   mode: '',
