@@ -1,0 +1,148 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* ===== 设计 token (shadcn) · 深色琥珀玻璃 · 浅色亦统一琥珀 ===== */
+:root {
+  --radius: 0.75rem;
+
+  --background: #f6f7f9;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #d97706;
+  --primary-foreground: #ffffff;
+  --secondary: #eef1f4;
+  --secondary-foreground: #0f172a;
+  --muted: #eef1f4;
+  --muted-foreground: #566173;
+  --accent: #fef0d9;
+  --accent-foreground: #7c4a08;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --success: #16a34a;
+  --border: #e2e6ea;
+  --input: #e2e6ea;
+  --ring: #d97706;
+
+  --sidebar: #f0f2f5;
+  --sidebar-foreground: #0f172a;
+  --sidebar-primary: #d97706;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e4e8ec;
+  --sidebar-accent-foreground: #0f172a;
+  --sidebar-border: #dde2e7;
+  --sidebar-ring: #d97706;
+}
+
+.dark {
+  --background: #0b1118;
+  --foreground: #eef4fb;
+  --card: #101a27;
+  --card-foreground: #eef4fb;
+  --popover: #101a27;
+  --popover-foreground: #eef4fb;
+  --primary: #f59e0b;
+  --primary-foreground: #1a1206;
+  --secondary: #172230;
+  --secondary-foreground: #eef4fb;
+  --muted: #172230;
+  --muted-foreground: #9fb0c2;
+  --accent: #1c2937;
+  --accent-foreground: #f8d9a0;
+  --destructive: #ef4444;
+  --destructive-foreground: #fff5f5;
+  --success: #22c55e;
+  --border: #21303f;
+  --input: #21303f;
+  --ring: #f59e0b;
+
+  --sidebar: #0d1620;
+  --sidebar-foreground: #c8d4e0;
+  --sidebar-primary: #f59e0b;
+  --sidebar-primary-foreground: #1a1206;
+  --sidebar-accent: #18242f;
+  --sidebar-accent-foreground: #eef4fb;
+  --sidebar-border: #1a2532;
+  --sidebar-ring: #f59e0b;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: 'Segoe UI Variable Text', 'Microsoft YaHei UI', system-ui, sans-serif;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    overflow: hidden;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Electron 无边框窗口拖拽区 */
+  .app-drag {
+    -webkit-app-region: drag;
+  }
+  .app-no-drag {
+    -webkit-app-region: no-drag;
+  }
+  /* 细滚动条 */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--muted-foreground) 30%, transparent);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+  }
+}

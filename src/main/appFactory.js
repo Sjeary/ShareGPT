@@ -83,6 +83,19 @@ function copyMissingUserDataEntries(sourceDir, targetDir) {
 }
 
 function applyStableUserDataPath(appInstance) {
+  // 仅开发环境(未打包)且显式设置 SHAREGPT_USER_DATA 时, 使用隔离数据目录,
+  // 避免与正在运行的生产客户端抢占 userData 目录与缓存锁。生产打包版永不进入此分支。
+  const devUserDataDir = process.env.SHAREGPT_USER_DATA;
+  if (devUserDataDir && !appInstance.isPackaged) {
+    try {
+      fs.mkdirSync(devUserDataDir, { recursive: true });
+    } catch (err) {
+      console.warn("Unable to create dev user data dir:", err.message || err);
+    }
+    appInstance.setPath("userData", devUserDataDir);
+    return;
+  }
+
   const legacyUserDataDir = appInstance.getPath("userData");
   const stableUserDataDir = path.join(appInstance.getPath("appData"), "ShareGPT");
 
@@ -867,6 +880,26 @@ function createElectronApp(baseMode = "all") {
     });
   }
 
+  function loadMainRenderer(win) {
+    // 新渲染层(React/Vite)开关: 设 SHAREGPT_UI_NEXT=1 时加载新版界面。
+    // dev: SHAREGPT_UI_DEV_URL 指向 Vite dev server; prod: 加载 renderer-next/dist 构建产物。
+    // 缺省或找不到产物时回退到既有渲染层, 保证不影响现状。
+    if (process.env.SHAREGPT_UI_NEXT === "1") {
+      const devUrl = process.env.SHAREGPT_UI_DEV_URL;
+      if (devUrl && !app.isPackaged) {
+        win.loadURL(devUrl);
+        return;
+      }
+      const builtIndex = path.join(__dirname, "../renderer-next/dist/index.html");
+      if (fs.existsSync(builtIndex)) {
+        win.loadFile(builtIndex);
+        return;
+      }
+      console.warn("[ui-next] SHAREGPT_UI_NEXT=1 但未找到 renderer-next 产物, 回退旧渲染层。");
+    }
+    win.loadFile(path.join(__dirname, "../renderer/index.html"));
+  }
+
   function createWindow() {
     mainWindow = new BrowserWindow({
       width: 1180,
@@ -891,7 +924,7 @@ function createElectronApp(baseMode = "all") {
       mainWindow.setWindowButtonVisibility(true);
     }
     mainWindow.removeMenu();
-    mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
+    loadMainRenderer(mainWindow);
     mainWindow.on("closed", () => {
       disposeAiWorkspaces();
       mainWindow = null;
