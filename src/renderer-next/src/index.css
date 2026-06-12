@@ -3,70 +3,76 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* ===== 设计 token (shadcn) · 深色琥珀玻璃 · 浅色亦统一琥珀 ===== */
+/* =====================================================================
+   设计 token (shadcn) — 经护眼校准
+   浅色: 去纯白(表面柔白)+文字降眩(非纯黑)+边框定结构, 降低整体高对比眩光
+   深色: 非纯黑基底 + 分层抬升表面(elevation) + 提亮次级文字与边框, 改善"看不清"
+   参考: Material 深色 #121212/elevation 体系、WCAG AA(正文≥4.5:1, 但避免 16:1+ 的眩光/光晕)
+   ===================================================================== */
 :root {
   --radius: 0.75rem;
 
-  --background: #f6f7f9;
-  --foreground: #0f172a;
-  --card: #ffffff;
-  --card-foreground: #0f172a;
+  --background: #edeff2;
+  --foreground: #232a33;
+  --card: #f8f9fb;
+  --card-foreground: #232a33;
   --popover: #ffffff;
-  --popover-foreground: #0f172a;
-  --primary: #d97706;
+  --popover-foreground: #232a33;
+  --primary: #d6850c;
   --primary-foreground: #ffffff;
-  --secondary: #eef1f4;
-  --secondary-foreground: #0f172a;
-  --muted: #eef1f4;
-  --muted-foreground: #566173;
-  --accent: #fef0d9;
-  --accent-foreground: #7c4a08;
-  --destructive: #dc2626;
+  --secondary: #e4e7ec;
+  --secondary-foreground: #2a313b;
+  --muted: #e4e7ec;
+  --muted-foreground: #5d6775;
+  --accent: #f6e7cf;
+  --accent-foreground: #885209;
+  --destructive: #d23b34;
   --destructive-foreground: #ffffff;
-  --success: #16a34a;
-  --border: #e2e6ea;
-  --input: #e2e6ea;
-  --ring: #d97706;
+  --success: #1a9b4d;
+  --border: #dadfe5;
+  --input: #d3d8df;
+  --ring: #d6850c;
 
-  --sidebar: #f0f2f5;
-  --sidebar-foreground: #0f172a;
-  --sidebar-primary: #d97706;
+  --sidebar: #e6e9ed;
+  --sidebar-foreground: #2a313b;
+  --sidebar-primary: #d6850c;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e4e8ec;
-  --sidebar-accent-foreground: #0f172a;
-  --sidebar-border: #dde2e7;
-  --sidebar-ring: #d97706;
+  --sidebar-accent: #dbe0e6;
+  --sidebar-accent-foreground: #232a33;
+  --sidebar-border: #d6dbe1;
+  --sidebar-ring: #d6850c;
 }
 
 .dark {
-  --background: #0b1118;
-  --foreground: #eef4fb;
-  --card: #101a27;
-  --card-foreground: #eef4fb;
-  --popover: #101a27;
-  --popover-foreground: #eef4fb;
+  /* elevation: bg(0) < sidebar(1) < card(2) < popover(3), 越高越亮以区分层级 */
+  --background: #0f151d;
+  --foreground: #e6edf4;
+  --card: #1a2431;
+  --card-foreground: #e6edf4;
+  --popover: #1e2937;
+  --popover-foreground: #e6edf4;
   --primary: #f59e0b;
   --primary-foreground: #1a1206;
-  --secondary: #172230;
-  --secondary-foreground: #eef4fb;
-  --muted: #172230;
-  --muted-foreground: #9fb0c2;
-  --accent: #1c2937;
+  --secondary: #1e2835;
+  --secondary-foreground: #e6edf4;
+  --muted: #1e2835;
+  --muted-foreground: #a4b4c6;
+  --accent: #25313f;
   --accent-foreground: #f8d9a0;
-  --destructive: #ef4444;
-  --destructive-foreground: #fff5f5;
-  --success: #22c55e;
-  --border: #21303f;
-  --input: #21303f;
+  --destructive: #f0584f;
+  --destructive-foreground: #1c0c0b;
+  --success: #2ecc71;
+  --border: #2a3744;
+  --input: #2c3a48;
   --ring: #f59e0b;
 
-  --sidebar: #0d1620;
-  --sidebar-foreground: #c8d4e0;
+  --sidebar: #141c26;
+  --sidebar-foreground: #c6d2df;
   --sidebar-primary: #f59e0b;
   --sidebar-primary-foreground: #1a1206;
-  --sidebar-accent: #18242f;
+  --sidebar-accent: #202b38;
   --sidebar-accent-foreground: #eef4fb;
-  --sidebar-border: #1a2532;
+  --sidebar-border: #1d2632;
   --sidebar-ring: #f59e0b;
 }
 
