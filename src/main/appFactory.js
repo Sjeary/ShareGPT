@@ -881,21 +881,19 @@ function createElectronApp(baseMode = "all") {
   }
 
   function loadMainRenderer(win) {
-    // 新渲染层(React/Vite)开关: 设 SHAREGPT_UI_NEXT=1 时加载新版界面。
-    // dev: SHAREGPT_UI_DEV_URL 指向 Vite dev server; prod: 加载 renderer-next/dist 构建产物。
-    // 缺省或找不到产物时回退到既有渲染层, 保证不影响现状。
-    if (process.env.SHAREGPT_UI_NEXT === "1") {
-      const devUrl = process.env.SHAREGPT_UI_DEV_URL;
-      if (devUrl && !app.isPackaged) {
-        win.loadURL(devUrl);
-        return;
-      }
-      const builtIndex = path.join(__dirname, "../renderer-next/dist/index.html");
-      if (fs.existsSync(builtIndex)) {
-        win.loadFile(builtIndex);
-        return;
-      }
-      console.warn("[ui-next] SHAREGPT_UI_NEXT=1 但未找到 renderer-next 产物, 回退旧渲染层。");
+    // UI 加载策略:
+    // - 开发热更新: SHAREGPT_UI_NEXT=1 + SHAREGPT_UI_DEV_URL 指向 Vite dev server。
+    // - 默认: 加载重构后的新渲染层构建产物 renderer-next/dist (新 UI 为产品默认)。
+    // - 回退: SHAREGPT_UI_LEGACY=1, 或找不到新版产物时, 加载既有(旧)渲染层。
+    const devUrl = process.env.SHAREGPT_UI_DEV_URL;
+    if (process.env.SHAREGPT_UI_NEXT === "1" && devUrl && !app.isPackaged) {
+      win.loadURL(devUrl);
+      return;
+    }
+    const builtNext = path.join(__dirname, "../renderer-next/dist/index.html");
+    if (process.env.SHAREGPT_UI_LEGACY !== "1" && fs.existsSync(builtNext)) {
+      win.loadFile(builtNext);
+      return;
     }
     win.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
