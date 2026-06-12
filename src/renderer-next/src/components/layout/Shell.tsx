@@ -9,6 +9,7 @@ import { GptPanel } from '@/components/panels/GptPanel'
 import { GeminiPanel } from '@/components/panels/GeminiPanel'
 import { StatsPanel } from '@/components/panels/StatsPanel'
 import { LogsPanel } from '@/components/panels/LogsPanel'
+import { SetupGuide } from '@/components/SetupGuide'
 import { Toaster } from '@/components/ui/sonner'
 
 export function Shell() {
@@ -32,6 +33,7 @@ export function Shell() {
         {active === 'stats' && <StatsPanel />}
         {active === 'logs' && <LogsPanel />}
       </div>
+      <SetupGuide />
       <Toaster position="bottom-right" theme="dark" richColors />
     </div>
   )
