@@ -12,67 +12,69 @@
 :root {
   --radius: 0.75rem;
 
-  --background: #e5e7eb;
-  --foreground: #2d343e;
-  --card: #eef0f3;
-  --card-foreground: #2d343e;
-  --popover: #f4f5f7;
-  --popover-foreground: #2d343e;
+  /* Apple HIG 浅色分组体系 (grouped bg #f2f2f7 灰底为主 + 白卡为辅降眩光; systemGray5 #e5e5ea / Gray4 #d1d1d6; 文字 #1d1d1f) */
+  --background: #f2f2f7;
+  --foreground: #1d1d1f;
+  --card: #ffffff;
+  --card-foreground: #1d1d1f;
+  --popover: #ffffff;
+  --popover-foreground: #1d1d1f;
   --primary: #d6850c;
   --primary-foreground: #ffffff;
-  --secondary: #d9dde3;
-  --secondary-foreground: #333a44;
-  --muted: #d9dde3;
-  --muted-foreground: #66707e;
-  --accent: #efe0c9;
-  --accent-foreground: #885209;
-  --destructive: #d23b34;
+  --secondary: #e5e5ea;
+  --secondary-foreground: #1d1d1f;
+  --muted: #e5e5ea;
+  --muted-foreground: #6c6c70;
+  --accent: #f0e2cc;
+  --accent-foreground: #8a5207;
+  --destructive: #ff3b30;
   --destructive-foreground: #ffffff;
-  --success: #1a9b4d;
-  --border: #cfd4dc;
-  --input: #c8ced6;
+  --success: #34c759;
+  --border: #d1d1d6;
+  --input: #c7c7cc;
   --ring: #d6850c;
 
-  --sidebar: #dcdfe5;
-  --sidebar-foreground: #333a44;
+  --sidebar: #ebebf0;
+  --sidebar-foreground: #1d1d1f;
   --sidebar-primary: #d6850c;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #d2d7df;
-  --sidebar-accent-foreground: #2d343e;
-  --sidebar-border: #ccd1d9;
+  --sidebar-accent: #e1e1e8;
+  --sidebar-accent-foreground: #1d1d1f;
+  --sidebar-border: #d9d9de;
   --sidebar-ring: #d6850c;
 }
 
 .dark {
   /* elevation: bg(0) < sidebar(1) < card(2) < popover(3), 越高越亮以区分层级 */
-  --background: #090d13;
-  --foreground: #e2e9f1;
-  --card: #141c27;
-  --card-foreground: #e2e9f1;
-  --popover: #18212d;
-  --popover-foreground: #e2e9f1;
+  /* Telegram 桌面端蓝灰分层 (官方: 主#17212b/次级#232e3c/更暗层#0e1621/次级文字#708499), 取偏暗作底 */
+  --background: #0e1621;
+  --foreground: #f0f4f7;
+  --card: #17212b;
+  --card-foreground: #f0f4f7;
+  --popover: #232e3c;
+  --popover-foreground: #f0f4f7;
   --primary: #f59e0b;
   --primary-foreground: #1a1206;
-  --secondary: #141c27;
-  --secondary-foreground: #e2e9f1;
-  --muted: #141c27;
-  --muted-foreground: #9aabbe;
-  --accent: #1d2733;
+  --secondary: #1c2836;
+  --secondary-foreground: #f0f4f7;
+  --muted: #1c2836;
+  --muted-foreground: #7e8fa0;
+  --accent: #232e3c;
   --accent-foreground: #f8d9a0;
-  --destructive: #ef5349;
-  --destructive-foreground: #1c0c0b;
-  --success: #2ecc71;
-  --border: #222e3b;
-  --input: #25323f;
+  --destructive: #ec3942;
+  --destructive-foreground: #ffffff;
+  --success: #4dcd5e;
+  --border: #202d3b;
+  --input: #213040;
   --ring: #f59e0b;
 
-  --sidebar: #0c1118;
-  --sidebar-foreground: #c0cdda;
+  --sidebar: #0c131c;
+  --sidebar-foreground: #c4d0db;
   --sidebar-primary: #f59e0b;
   --sidebar-primary-foreground: #1a1206;
-  --sidebar-accent: #182230;
-  --sidebar-accent-foreground: #eef4fb;
-  --sidebar-border: #161f2a;
+  --sidebar-accent: #1c2836;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #141d27;
   --sidebar-ring: #f59e0b;
 }
 
