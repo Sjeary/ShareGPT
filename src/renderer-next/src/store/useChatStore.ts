@@ -32,6 +32,30 @@ export interface ChatForwardedFrom {
   displayName: string
 }
 
+// 编辑草稿 (旧 state.collab.editDraft ~5187)。
+export interface ChatEditDraft {
+  id: string
+  preview: string
+}
+
+// 转发草稿 (旧 state.collab.forwardDraft ~5188)。
+export interface ChatForwardDraft {
+  id: string
+  from: string
+  displayName: string
+  preview: string
+  text: string
+  attachments: ChatAttachment[]
+}
+
+// 对端输入中状态 (旧 state.collab.typingByConversation ~488)。
+export interface TypingMeta {
+  from: string
+  displayName: string
+  scope: ChatScope
+  updatedAt: number
+}
+
 export interface ChatMessage {
   id: string
   type: string
@@ -88,6 +112,17 @@ interface ChatState {
   messagesByConversation: Record<string, ChatMessage[]>
   directory: DirectoryUser[]
 
+  // 对端输入中 (按会话 key) (旧 typingByConversation ~488)
+  typingByConversation: Record<string, TypingMeta>
+  // 上线提醒所需: 已知在线用户集合 + 首批 presence 是否就绪 (旧 knownOnlineUsers/presenceReady ~3470)
+  knownOnlineUsers: string[]
+  presenceReady: boolean
+
+  // 输入区草稿 (回复/编辑/转发) (旧 replyDraft/editDraft/forwardDraft)
+  replyDraft: ChatReplyTarget | null
+  editDraft: ChatEditDraft | null
+  forwardDraft: ChatForwardDraft | null
+
   // UI
   activeKey: string // "" = 房间(默认), 或 "user:xxx"
   filter: string
@@ -99,6 +134,18 @@ interface ChatState {
   setDirectory: (users: DirectoryUser[]) => void
   setActiveKey: (key: string) => void
   setFilter: (filter: string) => void
+
+  // 对端输入中
+  setTyping: (key: string, meta: TypingMeta) => void
+  clearTyping: (key: string) => void
+  // 上线提醒状态推进 (返回新上线的用户, 供调用方弹提示)
+  advancePresence: (online: string[]) => { newlyOnline: string[]; ready: boolean }
+
+  // 草稿
+  setReplyDraft: (draft: ChatReplyTarget | null) => void
+  setEditDraft: (draft: ChatEditDraft | null) => void
+  setForwardDraft: (draft: ChatForwardDraft | null) => void
+  clearDrafts: () => void
 
   // 历史 (本地持久化反序列化)
   hydrate: (conversations: Record<string, ChatMessage[]>) => void
@@ -164,6 +211,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   roomScope: '-',
   messagesByConversation: {},
   directory: [],
+  typingByConversation: {},
+  knownOnlineUsers: [],
+  presenceReady: false,
+  replyDraft: null,
+  editDraft: null,
+  forwardDraft: null,
   activeKey: '', // 默认房间
   filter: '',
 
@@ -174,6 +227,39 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setDirectory: (directory) => set({ directory }),
   setActiveKey: (activeKey) => set({ activeKey }),
   setFilter: (filter) => set({ filter }),
+
+  setTyping: (key, meta) =>
+    set((s) =>
+      key ? { typingByConversation: { ...s.typingByConversation, [key]: meta } } : s,
+    ),
+  clearTyping: (key) =>
+    set((s) => {
+      if (!key || !(key in s.typingByConversation)) return s
+      const next = { ...s.typingByConversation }
+      delete next[key]
+      return { typingByConversation: next }
+    }),
+
+  // 推进在线集合, 返回相对上次「新上线」的用户 (旧 setUserDirectory ~3470 的上线提醒逻辑)。
+  advancePresence: (online) => {
+    const known = new Set(get().knownOnlineUsers)
+    const ready = get().presenceReady
+    const self = get().identity.username
+    const nextOnline = online.filter((u) => u && u !== self)
+    const newlyOnline = ready
+      ? nextOnline.filter((u) => !known.has(u))
+      : []
+    set({ knownOnlineUsers: nextOnline, presenceReady: true })
+    return { newlyOnline, ready }
+  },
+
+  setReplyDraft: (replyDraft) =>
+    set({ replyDraft, editDraft: null, forwardDraft: null }),
+  setEditDraft: (editDraft) =>
+    set({ editDraft, replyDraft: null, forwardDraft: null }),
+  setForwardDraft: (forwardDraft) =>
+    set({ forwardDraft, replyDraft: null, editDraft: null }),
+  clearDrafts: () => set({ replyDraft: null, editDraft: null, forwardDraft: null }),
 
   hydrate: (conversations) => {
     const cleaned: Record<string, ChatMessage[]> = {}
@@ -225,7 +311,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       roomScope: '-',
       messagesByConversation: {},
       directory: [],
+      typingByConversation: {},
+      knownOnlineUsers: [],
+      presenceReady: false,
+      replyDraft: null,
+      editDraft: null,
+      forwardDraft: null,
       activeKey: '',
       filter: '',
     }),
 }))
+
+// 当前 activeKey 对应的「会话存储 key」(房间会话 activeKey === "" 映射到 room:<scope>)。
+export function storeKeyForActive(activeKey: string, roomScope: string): string {
+  return activeKey === '' || isRoomKey(activeKey)
+    ? roomConversationKey(roomScope)
+    : activeKey
+}

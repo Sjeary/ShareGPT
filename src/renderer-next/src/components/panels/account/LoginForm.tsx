@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import { Loader2, LogIn } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -6,8 +6,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
+import { Separator } from '@/components/ui/separator'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
+import { ImportActions } from './ImportActions'
 
 // 未登录态: 居中登录表单。预填 store.settings.collab。
 export function LoginForm() {
@@ -21,6 +23,8 @@ export function LoginForm() {
     collab?.remember_password ? (collab?.saved_password ?? '') : '',
   )
   const [submitting, setSubmitting] = useState(false)
+  // 登录失败时聚焦并选中密码框 (移植自旧 renderer.js focusCollabField("c_password", true) ~4688)。
+  const passwordRef = useRef<HTMLInputElement>(null)
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -31,6 +35,11 @@ export function LoginForm() {
       toast.success(`登录成功，欢迎 ${profile.displayName}`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '登录失败，请稍后重试')
+      // 旧版用 setTimeout(…, 0) 延后聚焦; React 这里在状态复位后聚焦即可。
+      window.setTimeout(() => {
+        passwordRef.current?.focus()
+        passwordRef.current?.select()
+      }, 0)
     } finally {
       setSubmitting(false)
     }
@@ -73,6 +82,7 @@ export function LoginForm() {
             <div className="grid gap-2">
               <Label htmlFor="account-password">密码</Label>
               <Input
+                ref={passwordRef}
                 id="account-password"
                 type="password"
                 placeholder="密码"
@@ -109,6 +119,15 @@ export function LoginForm() {
               )}
             </Button>
           </form>
+
+          <Separator className="my-4" />
+
+          <div className="grid gap-2">
+            <p className="text-xs text-muted-foreground">
+              从备份文件恢复本机配置或资料包
+            </p>
+            <ImportActions />
+          </div>
         </CardContent>
       </Card>
     </div>

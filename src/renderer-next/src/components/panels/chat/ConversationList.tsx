@@ -1,25 +1,30 @@
-import { Search } from 'lucide-react'
+import { Search, Users } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarBadge, AvatarFallback } from '@/components/ui/avatar'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import type { DirectoryUser } from '@/store/useChatStore'
 import { avatarMark, formatConversationTime } from './format'
 import type { ConversationItem } from './conversations'
 
-// 左侧会话列表: 顶部搜索 + 列表(Avatar+名称+预览+时间+未读)。
+// 左侧会话列表: 顶部搜索 + 会话列表 + 在线联系人分区 (点击开私聊)。
 export function ConversationList({
   items,
+  contacts,
   activeKey,
   filter,
   onFilterChange,
   onSelect,
+  onStartPrivate,
 }: {
   items: ConversationItem[]
+  contacts: DirectoryUser[]
   activeKey: string
   filter: string
   onFilterChange: (v: string) => void
   onSelect: (key: string) => void
+  onStartPrivate: (username: string) => void
 }) {
   return (
     <div className="flex w-[300px] shrink-0 flex-col border-r border-border bg-sidebar">
@@ -97,6 +102,36 @@ export function ConversationList({
             )
           })}
         </ul>
+
+        {contacts.length > 0 && (
+          <div className="px-2 pb-2">
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-muted-foreground">
+              <Users className="size-3.5" />
+              在线联系人
+            </div>
+            <ul className="flex flex-col gap-0.5">
+              {contacts.map((user) => (
+                <li key={user.username}>
+                  <button
+                    type="button"
+                    onClick={() => onStartPrivate(user.username)}
+                    className="flex w-full items-center gap-3 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-sidebar-accent/60"
+                  >
+                    <Avatar size="default">
+                      <AvatarFallback>
+                        {avatarMark(user.avatar, user.displayName)}
+                      </AvatarFallback>
+                      {user.online && <AvatarBadge className="bg-success" />}
+                    </Avatar>
+                    <span className="min-w-0 flex-1 truncate text-sm">
+                      {user.displayName || user.username}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </ScrollArea>
     </div>
   )

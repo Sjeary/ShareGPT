@@ -21,8 +21,34 @@ export function isPortNumber(value: string): boolean {
   return /^\d+$/.test(value.trim())
 }
 
-// 旧版固定走连接的网站默认值由 GPT/Gemini 允许域拼接而来; 新渲染层不持有该常量,
-// 故 target_domains 为空时保持空字符串, 由主进程回填默认值 (旧逻辑 startSender 内已兜底)。
+// 旧版「固定走连接的网站」默认值由 GPT/Gemini 允许域拼接去重而来。
+// 逐字对照旧 renderer.js 的 GPT_ALLOWED_HOSTS(~108) 与 GEMINI_ALLOWED_HOSTS(~118)。
+const GPT_ALLOWED_HOSTS = [
+  'chatgpt.com',
+  'openai.com',
+  'auth0.com',
+  'oaistatic.com',
+  'oaiusercontent.com',
+  'gravatar.com',
+  'cloudflare.com',
+  'wp.com',
+]
+const GEMINI_ALLOWED_HOSTS = [
+  'gemini.google.com',
+  'google.com',
+  'googleapis.com',
+  'googleusercontent.com',
+  'gstatic.com',
+  'gvt1.com',
+]
+
+// 对应旧 renderer.js ~126 的 DEFAULT_TARGET_DOMAINS: 两组允许域去重后以逗号拼接。
+// target_domains 缺省/导入为空时回填此默认串 (旧 getSenderForm ~2408 / fillForm ~2489
+// / normalizeBootstrapPayload ~2750 / applySenderBootstrapConfig ~2790 行为一致)。
+export const DEFAULT_TARGET_DOMAINS = [
+  ...new Set([...GPT_ALLOWED_HOSTS, ...GEMINI_ALLOWED_HOSTS]),
+].join(',')
+
 export const FALLBACK_MODES = [
   { value: 'system_proxy', label: '通过本机代理访问' },
   { value: 'direct', label: '直接访问' },

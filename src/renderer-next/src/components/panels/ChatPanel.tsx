@@ -1,20 +1,60 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MessageSquare } from 'lucide-react'
+import { toast } from 'sonner'
 import { useAppStore } from '@/store/useAppStore'
-import { roomConversationKey, useChatStore } from '@/store/useChatStore'
-import type { ChatAttachment } from '@/store/useChatStore'
+import {
+  privateConversationKey,
+  roomConversationKey,
+  storeKeyForActive,
+  useChatStore,
+} from '@/store/useChatStore'
+import type {
+  ChatAttachment,
+  ChatForwardDraft,
+  ChatMessage,
+} from '@/store/useChatStore'
 import type { CollabSettings } from '@/types/settings'
 import { useChat } from '@/hooks/useChat'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { ConversationList } from './chat/ConversationList'
-import { MessageBubble } from './chat/MessageBubble'
+import { MessageBubble, type MessageActions } from './chat/MessageBubble'
 import { Composer } from './chat/Composer'
 import {
   activeConversationMessages,
   buildConversations,
 } from './chat/conversations'
-import { avatarMark, formatDateLabel, isSameDay } from './chat/format'
+import {
+  avatarMark,
+  formatDateLabel,
+  isSameDay,
+  messagePreview,
+} from './chat/format'
+
+// 由消息派生回复草稿 (旧 createReplyDraftFromMessage ~394)。
+function replyDraftFromMessage(m: ChatMessage) {
+  if (!m.id) return null
+  return {
+    id: m.id,
+    from: m.from || m.username,
+    displayName: m.displayName || m.username,
+    preview: messagePreview(m).slice(0, 240) || '原消息',
+    timestamp: m.timestamp,
+  }
+}
+
+// 由消息派生转发草稿 (旧 setForwardDraftFromMessage ~4824)。
+function forwardDraftFromMessage(m: ChatMessage): ChatForwardDraft | null {
+  if (!m.id || m.recalled) return null
+  return {
+    id: m.id,
+    from: m.from || m.username,
+    displayName: m.displayName || m.username,
+    preview: messagePreview(m).slice(0, 240) || '转发消息',
+    text: m.text,
+    attachments: m.attachments,
+  }
+}
 
 // 协作聊天面板 (Telegram 式)。
 // 左: 会话列表 (搜索 + Avatar + 预览 + 时间 + 未读)
@@ -34,6 +74,14 @@ export function ChatPanel() {
   const setActiveKey = useChatStore((s) => s.setActiveKey)
   const filter = useChatStore((s) => s.filter)
   const setFilter = useChatStore((s) => s.setFilter)
+  const typingByConversation = useChatStore((s) => s.typingByConversation)
+  const replyDraft = useChatStore((s) => s.replyDraft)
+  const editDraft = useChatStore((s) => s.editDraft)
+  const forwardDraft = useChatStore((s) => s.forwardDraft)
+  const setReplyDraft = useChatStore((s) => s.setReplyDraft)
+  const setEditDraft = useChatStore((s) => s.setEditDraft)
+  const setForwardDraft = useChatStore((s) => s.setForwardDraft)
+  const clearDrafts = useChatStore((s) => s.clearDrafts)
 
   const collab = (settings?.collab ?? {}) as Partial<CollabSettings>
   const pinned = useMemo(
@@ -117,25 +165,106 @@ export function ChatPanel() {
   }, [messages, activeKey])
 
   const online = connection === 'online'
+  const scope: 'subnet' | 'private' =
+    activeConversation?.kind === 'private' ? 'private' : 'subnet'
+
+  // 切换会话时清空草稿 (旧逻辑: 切换联系人会重置输入意图)。
+  useEffect(() => {
+    clearDrafts()
+  }, [activeKey, clearDrafts])
+
+  // 会话可见时批量已读 (旧 markVisible*ConversationRead, 打开会话 / 收到历史后触发)。
+  const appActive = useAppStore((s) => s.active)
+  useEffect(() => {
+    if (appActive !== 'chat' || connection !== 'online' || !activeConversation) return
+    chat.markConversationRead(messages, scope, activeConversation.username)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appActive, connection, activeKey, messages])
+
+  // 对端「正在输入…」(旧 conversationTypingSummary ~510)。
+  const typingText = useMemo(() => {
+    if (!activeConversation) return ''
+    const storeKey = storeKeyForActive(activeKey, roomScope)
+    const meta = typingByConversation[storeKey]
+    if (!meta) return ''
+    return `${meta.displayName || meta.from || '对方'} 正在输入…`
+  }, [activeConversation, activeKey, roomScope, typingByConversation])
+
+  // 在线联系人 (排除自己 + 已在会话列表中的私聊对象), 供「在线联系人」分区开私聊。
+  const contacts = useMemo(() => {
+    const existing = new Set(
+      conversations.filter((c) => c.kind === 'private').map((c) => c.username),
+    )
+    return directory.filter(
+      (u) => u.online && u.username !== selfUsername && !existing.has(u.username),
+    )
+  }, [directory, conversations, selfUsername])
+
+  function reportSendError(err: unknown) {
+    toast.error(String((err as Error)?.message || err))
+  }
 
   function handleSend(text: string, attachments: ChatAttachment[]) {
     if (!activeConversation) return
-    const scope = activeConversation.kind === 'private' ? 'private' : 'subnet'
     try {
-      chat.sendMessage({
-        text,
-        scope,
-        to: activeConversation.username,
-        attachments,
-      })
+      if (forwardDraft) {
+        chat.sendForward(forwardDraft, scope, activeConversation.username)
+      }
+      if (text || attachments.length) {
+        chat.sendMessage({
+          text,
+          scope,
+          to: activeConversation.username,
+          replyTo: replyDraft,
+          attachments,
+        })
+      }
+      clearDrafts()
     } catch (err) {
-      // 未连接时旧逻辑给出错误反馈; 这里用 toast 较轻量的方式由调用方处理。
-      console.warn(String((err as Error)?.message || err))
+      reportSendError(err)
     }
+  }
+
+  function handleEditSubmit(id: string, text: string) {
+    try {
+      chat.sendEdit(id, text)
+      clearDrafts()
+    } catch (err) {
+      reportSendError(err)
+    }
+  }
+
+  // 从在线联系人开启私聊 (旧 pickPrivateTarget ~3445)。
+  function handleStartPrivate(username: string) {
+    if (!username || username === selfUsername) return
+    setActiveKey(privateConversationKey(username))
+  }
+
+  const messageActions: MessageActions = {
+    onReply: (m) => {
+      const draft = replyDraftFromMessage(m)
+      if (draft) setReplyDraft(draft)
+    },
+    onForward: (m) => {
+      const draft = forwardDraftFromMessage(m)
+      if (draft) setForwardDraft(draft)
+    },
+    onEdit: (m) => {
+      if (!m.id || m.recalled || m.attachments.length) return
+      setEditDraft({ id: m.id, preview: m.text })
+    },
+    onRecall: (m) => {
+      try {
+        chat.sendRecall(m.id)
+      } catch (err) {
+        reportSendError(err)
+      }
+    },
   }
 
   const subtitle = (() => {
     if (!activeConversation) return ''
+    if (typingText) return typingText
     if (activeConversation.kind === 'room') {
       return `${directory.filter((u) => u.online).length} 人在线`
     }
@@ -146,10 +275,12 @@ export function ChatPanel() {
     <section className="flex min-w-0 flex-1">
       <ConversationList
         items={conversations}
+        contacts={contacts}
         activeKey={activeKey}
         filter={filter}
         onFilterChange={setFilter}
         onSelect={setActiveKey}
+        onStartPrivate={handleStartPrivate}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -239,6 +370,7 @@ export function ChatPanel() {
                       message={message}
                       mine={mine}
                       showAvatar={showAvatar}
+                      actions={messageActions}
                     />
                   </div>
                 )
@@ -247,8 +379,9 @@ export function ChatPanel() {
           )}
         </div>
 
-        {/* 输入区 */}
+        {/* 输入区 (编辑态用 key 重挂载以 seed 原文) */}
         <Composer
+          key={editDraft ? `edit:${editDraft.id}` : `compose:${activeKey}`}
           disabled={!online || !activeConversation}
           placeholder={
             online
@@ -257,14 +390,15 @@ export function ChatPanel() {
                 : '发送到房间…'
               : '登录账户后即可发送消息'
           }
+          reply={replyDraft}
+          edit={editDraft}
+          forward={forwardDraft}
           onSend={handleSend}
+          onEditSubmit={handleEditSubmit}
+          onCancelDraft={clearDrafts}
           onTyping={(active) => {
             if (!activeConversation) return
-            chat.sendTyping(
-              active,
-              activeConversation.kind === 'private' ? 'private' : 'subnet',
-              activeConversation.username,
-            )
+            chat.sendTyping(active, scope, activeConversation.username)
           }}
         />
       </div>

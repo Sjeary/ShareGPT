@@ -7,7 +7,13 @@ import { useAppStore } from '@/store/useAppStore'
 import { api } from '@/lib/api'
 import type { SenderSettings } from '@/types/settings'
 import { Field } from './Field'
-import { FALLBACK_MODES, isPortNumber, isSenderRunning, safeText } from './helpers'
+import {
+  DEFAULT_TARGET_DOMAINS,
+  FALLBACK_MODES,
+  isPortNumber,
+  isSenderRunning,
+  safeText,
+} from './helpers'
 
 const EMPTY: SenderSettings = {
   proxy_server: '',
@@ -36,8 +42,17 @@ export function SenderForm() {
   // 运行中或正在启停时锁定表单。
   const locked = running || busy
 
+  // 对齐旧 getSenderForm(~2408): target_domains 为空时回填默认域名清单,
+  // 既用于只读展示, 也用于随设置保存 / 启动发送时下发。
+  const resolvedTargetDomains = safeText(form.target_domains) || DEFAULT_TARGET_DOMAINS
+
   function update(patch: Partial<SenderSettings>) {
     void patchSection('sender', patch)
+  }
+
+  // 启动 / 保存时实际下发的发送端配置, 与旧版一致地把默认域名清单兜底写入。
+  function buildPayload(): SenderSettings {
+    return { ...form, target_domains: resolvedTargetDomains }
   }
 
   // 移植旧版启动前校验: 已填服务器时, 端口必须是数字, uuid 必填。
@@ -63,7 +78,13 @@ export function SenderForm() {
     }
     setBusy(true)
     try {
-      await api.startSender({ ...form })
+      const payload = buildPayload()
+      // 旧版 startSender 前先 saveSettings, 此处把回填后的默认域名清单一并持久化,
+      // 与旧 getSenderForm(target_domains || DEFAULT_TARGET_DOMAINS) 落库行为一致。
+      if (payload.target_domains !== safeText(form.target_domains)) {
+        update({ target_domains: payload.target_domains })
+      }
+      await api.startSender(payload)
       toast.success('发送服务已开启')
     } catch (e) {
       toast.error((e as Error)?.message || '开启发送服务失败')
@@ -162,7 +183,7 @@ export function SenderForm() {
           id="s_target_domains"
           rows={4}
           readOnly
-          value={form.target_domains}
+          value={resolvedTargetDomains}
           placeholder="开启后由系统自动维护"
           className="resize-none rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground shadow-xs outline-none"
         />
