@@ -27,6 +27,33 @@ export function formatMessageTime(ts: string): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+// 智能时间: 今天->时分; 昨天->昨天 时分; 前天及更早(本年)->月日; 跨年->年月日。
+// 用于已读名单等无日期上下文的场景, 避免只显示时分而看不出是哪天。
+export function formatSmartTime(ts: string): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  if (Number.isNaN(d.getTime())) return ''
+  const now = new Date()
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime()
+  const startOfTarget = new Date(
+    d.getFullYear(),
+    d.getMonth(),
+    d.getDate(),
+  ).getTime()
+  const diffDays = Math.round((startOfToday - startOfTarget) / 86400000)
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  if (diffDays === 0) return time
+  if (diffDays === 1) return `昨天 ${time}`
+  if (d.getFullYear() === now.getFullYear()) {
+    return `${d.getMonth() + 1}月${d.getDate()}日`
+  }
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
+}
+
 export function formatDateLabel(ts: string): string {
   if (!ts) return '今天'
   const d = new Date(ts)

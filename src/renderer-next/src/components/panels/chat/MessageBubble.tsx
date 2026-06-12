@@ -10,7 +10,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import type { ChatAttachment, ChatMessage } from '@/store/useChatStore'
-import { avatarMark, formatBytes, formatMessageTime } from './format'
+import { avatarMark, formatBytes, formatMessageTime, formatSmartTime } from './format'
 import {
   buildMessageLinkPreview,
   extractFirstUrl,
@@ -409,7 +409,7 @@ export function MessageBubble({
                       </span>
                       {r.readAt && (
                         <span className="shrink-0 text-[10px] text-muted-foreground">
-                          {formatMessageTime(r.readAt)}
+                          {formatSmartTime(r.readAt)}
                         </span>
                       )}
                     </div>
