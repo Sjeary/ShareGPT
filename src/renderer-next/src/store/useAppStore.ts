@@ -16,6 +16,10 @@ interface AppState {
   sidebarCollapsed: boolean
   toggleSidebar: () => void
 
+  // AI 网页沉浸全屏: 隐藏侧栏与面板头, 最大化内嵌网页区
+  aiImmersive: boolean
+  setAiImmersive: (v: boolean) => void
+
   // 应用信息
   mode: string
   meta: Record<string, unknown>
@@ -96,6 +100,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       return { sidebarCollapsed: next }
     }),
+
+  aiImmersive: false,
+  setAiImmersive: (v) => set({ aiImmersive: v }),
 
   mode: '',
   meta: {},

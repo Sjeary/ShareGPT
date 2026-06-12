@@ -50,6 +50,7 @@ export function Shell() {
   const active = useAppStore((s) => s.active)
   const dark = useAppStore((s) => s.dark)
   const setActive = useAppStore((s) => s.setActive)
+  const aiImmersive = useAppStore((s) => s.aiImmersive)
 
   // [MEDIUM] 全局日志订阅: 应用级单次挂载 (登录后 Shell 常驻),
   // 启动即采集, 早期/后台日志不因 LogsPanel 未挂载而丢失。订阅实现见 logs 域 useLogStream。
@@ -86,7 +87,7 @@ export function Shell() {
     <div className="flex h-full flex-col bg-background text-foreground">
       <Titlebar />
       <div className="flex min-h-0 flex-1">
-        <Sidebar />
+        {!aiImmersive && <Sidebar />}
         {active === 'service' && <ServicePanel />}
         {active === 'account' && <AccountPanel />}
         {active === 'gpt' && <GptPanel />}

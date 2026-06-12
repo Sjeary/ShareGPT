@@ -8,23 +8,27 @@ export function PanelScaffold({
   hint,
   children,
   toolbar,
+  hideHeader = false,
 }: {
   icon: LucideIcon
   title: string
   hint?: string
   children: ReactNode
   toolbar?: ReactNode
+  hideHeader?: boolean
 }) {
   return (
     <section className="flex min-w-0 flex-1 flex-col">
-      <div className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-6">
-        <Icon className="size-5 text-primary" />
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-base font-semibold leading-tight">{title}</h1>
-          {hint && <p className="truncate text-xs text-muted-foreground">{hint}</p>}
+      {!hideHeader && (
+        <div className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-6">
+          <Icon className="size-5 text-primary" />
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-base font-semibold leading-tight">{title}</h1>
+            {hint && <p className="truncate text-xs text-muted-foreground">{hint}</p>}
+          </div>
+          {toolbar}
         </div>
-        {toolbar}
-      </div>
+      )}
       <div className="min-h-0 flex-1 overflow-auto">{children}</div>
     </section>
   )

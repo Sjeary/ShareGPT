@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
-  ExternalLink,
+  Maximize2,
+  Minimize2,
   Home,
   RotateCw,
   Bot,
@@ -61,7 +62,21 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const meta = META[kind]
   const status = useAppStore((s) => s.status)
   const settings = useAppStore((s) => s.settings)
+  const aiImmersive = useAppStore((s) => s.aiImmersive)
+  const setAiImmersive = useAppStore((s) => s.setAiImmersive)
   const senderRunning = isSenderRunning(status)
+
+  // 沉浸全屏: Esc 退出; 离开 AI 面板(卸载)时复位, 避免回到其它面板侧栏仍隐藏。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') useAppStore.getState().setAiImmersive(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      useAppStore.getState().setAiImmersive(false)
+    }
+  }, [])
 
   const gptTabs = useAiStore((s) => s.gptTabs)
   const gptActiveTabId = useAiStore((s) => s.gptActiveTabId)
@@ -231,18 +246,6 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     }
   }, [kind, gptActiveTabId, setGptFeedback, setGeminiFeedback])
 
-  const openExternal = useCallback(async () => {
-    const fallback = kind === 'gpt' ? GPT_HOME_URL : GEMINI_HOME_URL
-    const url = safeText(view.lastUrl) || fallback
-    try {
-      await api.openExternal(url)
-    } catch (err) {
-      const text = err instanceof Error ? err.message : String(err)
-      if (kind === 'gpt') setGptFeedback(text, 'error')
-      else setGeminiFeedback(text, 'error')
-    }
-  }, [kind, view.lastUrl, setGptFeedback, setGeminiFeedback])
-
   // ---- GPT 多标签动作 ----
   const createTab = useCallback(async () => {
     try {
@@ -311,6 +314,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       icon={Icon}
       title={meta.title}
       hint={meta.hint}
+      hideHeader={aiImmersive}
       toolbar={
         <Badge variant="outline" className="gap-1.5">
           <span className={view.loading ? 'size-1.5 animate-pulse rounded-full bg-primary' : 'size-1.5 rounded-full bg-muted-foreground'} />
@@ -351,9 +355,14 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           )}
 
           <div className="ml-auto shrink-0">
-            <Button variant="ghost" size="sm" className="gap-1.5" title="在外部浏览器打开" disabled={!safeText(view.lastUrl)} onClick={() => void openExternal()}>
-              <ExternalLink className="size-4" />
-              外部打开
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              title={aiImmersive ? '退出全屏' : '全屏'}
+              onClick={() => setAiImmersive(!aiImmersive)}
+            >
+              {aiImmersive ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
             </Button>
           </div>
         </div>
