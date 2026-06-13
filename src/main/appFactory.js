@@ -294,29 +294,25 @@ async function detectRawChatGptDocument(webContents) {
     `, true);
     const contentType = safeText(payload?.contentType).toLowerCase();
     const text = String(payload?.text || "");
+    // 回退到 4.2.0 的窄判定: 必须同时命中前缀与 __reactRouterContext,
+    // 避免误判 Cloudflare 挑战页/正常页为"裸文档"而触发自愈跳转。
     return (
       contentType.startsWith("text/plain")
-      || text.startsWith('ChatGPT{"@context":"https://schema.org"')
-      || (text.includes("@layer properties") && text.includes("document.documentElement"))
+      || (
+        text.startsWith('ChatGPT{"@context":"https://schema.org"')
+        && text.includes("window.__reactRouterContext")
+      )
     );
   } catch {
     return false;
   }
 }
 
-function normalizeAiWorkspaceUrl(workspace, rawUrl) {
-  const url = safeText(rawUrl);
-  if (!url || !workspace) return "";
-  if (workspace.kind !== "gpt") return url;
-
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname === "chatgpt.com" && parsed.pathname === "/" && !parsed.search) {
-      return workspace.policy.homeUrl;
-    }
-  } catch {}
-
-  return url;
+function normalizeAiWorkspaceUrl(_workspace, rawUrl) {
+  // 4.2.0 行为: 不改写已允许域名的 URL。
+  // 之前把 chatgpt.com/ 改写成 /auth/login 并强制重载, 会打断 Cloudflare
+  // 过完人机验证后回跳 chatgpt.com 根路径的流程, 导致反复弹验证。故移除改写。
+  return safeText(rawUrl);
 }
 
 function htmlNavigationOptions(workspace) {
@@ -748,9 +744,8 @@ function createElectronApp(baseMode = "all") {
           wc.setUserAgent(workspace.userAgent);
         }
         emitAiState(workspace, "did-start-loading", { url: workspace.policy.homeUrl });
-        void wc.session.clearCache()
-          .catch(() => {})
-          .then(() => loadAiWorkspaceUrl(workspace, workspace.policy.homeUrl))
+        // 回退到 4.2.0: 仅重载, 不 clearCache (清缓存会一并清掉 Cloudflare 验证中间态)。
+        void loadAiWorkspaceUrl(workspace, workspace.policy.homeUrl)
           .catch((err) => {
             workspace.loading = false;
             emitAiEvent(workspace.kind, "did-fail-load", {
