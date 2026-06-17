@@ -40,6 +40,7 @@ const GEMINI_ALLOWED_HOSTS = [
   'googleusercontent.com',
   'gstatic.com',
   'gvt1.com',
+  'googletagmanager.com',
 ]
 // 对应旧 renderer.js ~126 的 DEFAULT_TARGET_DOMAINS: 各组允许域去重后以逗号拼接。
 // target_domains 缺省/导入为空时回填此默认串 (旧 getSenderForm ~2408 / fillForm ~2489

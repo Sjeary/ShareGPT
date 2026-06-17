@@ -21,6 +21,7 @@ const DEFAULT_TARGET_DOMAINS = [
   "googleusercontent.com",
   "gstatic.com",
   "gvt1.com",
+  "googletagmanager.com",
 ];
 
 const PUBLIC_DEFAULT_SETTINGS = {
