@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { app, BrowserWindow, Notification, WebContentsView, clipboard, ipcMain, session, shell } = require("electron");
+const { app, BrowserWindow, Notification, WebContentsView, clipboard, ipcMain, nativeTheme, session, shell } = require("electron");
 const { Backend } = require("./backend");
 
 const GPT_ALLOWED_HOSTS = [
@@ -960,6 +960,14 @@ function createElectronApp(baseMode = "all") {
   }
 
   function registerIpc() {
+    // 让内嵌网页(ChatGPT/Gemini, 设为"跟随系统")的明暗跟随 app UI 主题。
+    // nativeTheme.themeSource 影响所有 webContents 的 prefers-color-scheme;
+    // 渲染层自身用 .dark class 控制, 不受此影响。
+    ipcMain.handle("app:set-theme-source", (_event, source) => {
+      nativeTheme.themeSource =
+        source === "dark" ? "dark" : source === "light" ? "light" : "system";
+      return true;
+    });
     ipcMain.handle("settings:load", () => backend.loadSettings());
     ipcMain.handle("settings:save", (_event, settings) => backend.saveSettings(settings));
     ipcMain.handle("settings:import", () => backend.importSettings());

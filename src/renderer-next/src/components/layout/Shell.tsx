@@ -50,8 +50,10 @@ export function Shell() {
   const active = useAppStore((s) => s.active)
   const dark = useAppStore((s) => s.dark)
   const setActive = useAppStore((s) => s.setActive)
-  const aiImmersive = useAppStore((s) => s.aiImmersive)
+  const sidebarHidden = useAppStore((s) => s.sidebarHidden)
   const sidebarSide = useAppStore((s) => s.sidebarSide)
+  // 隐藏侧栏仅在 GPT/Gemini 面板生效 (clean view); 其它面板始终显示, 避免把导航藏没。
+  const hideSidebar = sidebarHidden && (active === 'gpt' || active === 'gemini')
 
   // [MEDIUM] 全局日志订阅: 应用级单次挂载 (登录后 Shell 常驻),
   // 启动即采集, 早期/后台日志不因 LogsPanel 未挂载而丢失。订阅实现见 logs 域 useLogStream。
@@ -93,7 +95,7 @@ export function Shell() {
           (sidebarSide === 'right' ? 'flex-row-reverse' : 'flex-row')
         }
       >
-        {!aiImmersive && <Sidebar />}
+        <Sidebar hidden={hideSidebar} />
         {active === 'service' && <ServicePanel />}
         {active === 'account' && <AccountPanel />}
         {active === 'gpt' && <GptPanel />}

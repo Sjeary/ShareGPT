@@ -4,6 +4,7 @@ import type { ShareGptApi } from '@/types/api'
 const noop = () => undefined
 const fallback = {
   platform: 'web',
+  setThemeSource: async () => undefined,
   loadSettings: async () => ({}),
   saveSettings: async () => undefined,
   importSettings: async () => undefined,

@@ -6,6 +6,9 @@ export type Unsubscribe = () => void
 export interface ShareGptApi {
   platform: NodeJS.Platform | string
 
+  // 让内嵌网页明暗跟随 app 主题 (nativeTheme.themeSource)。
+  setThemeSource: (source: 'dark' | 'light' | 'system') => Promise<unknown>
+
   // 设置 / 数据
   loadSettings: () => Promise<Record<string, unknown>>
   saveSettings: (settings: Record<string, unknown>) => Promise<unknown>

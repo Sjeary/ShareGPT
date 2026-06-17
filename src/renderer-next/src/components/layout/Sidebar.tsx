@@ -11,7 +11,7 @@ import { useAppStore } from '@/store/useAppStore'
 
 // 可收起侧栏 (对齐 shadcn Sidebar collapsible="icon" 成熟实践):
 // 宽度用 CSS transition 平滑过渡(非两帧切换), 标签淡出, 收起态图标配 Tooltip, 尊重 reduced-motion。
-export function Sidebar() {
+export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const active = useAppStore((s) => s.active)
   const setActive = useAppStore((s) => s.setActive)
   const collapsed = useAppStore((s) => s.sidebarCollapsed)
@@ -26,11 +26,18 @@ export function Sidebar() {
   return (
     <TooltipProvider delayDuration={0}>
       <aside
+        aria-hidden={hidden}
         className={cn(
-          'flex shrink-0 flex-col gap-1 overflow-hidden border-sidebar-border bg-sidebar p-2',
-          onRight ? 'border-l' : 'border-r',
-          'transition-[width] duration-200 ease-out motion-reduce:transition-none',
-          collapsed ? 'w-[68px]' : 'w-64',
+          'flex shrink-0 flex-col gap-1 overflow-hidden bg-sidebar',
+          // 宽度+内边距一起过渡, 实现"滑出/滑入"而非瞬间消失。
+          'transition-[width,padding] duration-200 ease-out motion-reduce:transition-none',
+          hidden
+            ? 'w-0 border-0 p-0 pointer-events-none'
+            : cn(
+                'border-sidebar-border p-2',
+                onRight ? 'border-l' : 'border-r',
+                collapsed ? 'w-[68px]' : 'w-64',
+              ),
         )}
       >
         {NAV.map(({ key, label, icon: Icon, hint }) => {
@@ -95,7 +102,8 @@ export function Sidebar() {
             <ChevronLeft
               className={cn(
                 'size-[18px] transition-transform duration-200',
-                collapsed && 'rotate-180',
+                // 右侧侧栏时箭头方向镜像: 展开态指向右(收起方向), 收起态指向左(展开方向)。
+                (onRight ? !collapsed : collapsed) && 'rotate-180',
               )}
             />
           </span>

@@ -20,9 +20,11 @@ interface AppState {
   sidebarSide: 'left' | 'right'
   setSidebarSide: (side: 'left' | 'right') => void
 
-  // AI 网页沉浸全屏: 隐藏侧栏与面板头, 最大化内嵌网页区
-  aiImmersive: boolean
-  setAiImmersive: (v: boolean) => void
+  // GPT/Gemini 页隐藏侧栏 (侧栏三态之一: 左 / 右 / 隐藏), 让内嵌网页占满看着清爽。
+  // 仅在 GPT/Gemini 面板生效 (见 Shell), 避免在其它面板把导航藏没了。
+  sidebarHidden: boolean
+  setSidebarHidden: (v: boolean) => void
+  toggleSidebarHidden: () => void
 
   // 应用信息
   mode: string
@@ -81,6 +83,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const next = !get().dark
     applyTheme(next)
     set({ dark: next })
+    // 内嵌网页(GPT/Gemini)明暗跟随 app 主题。
+    void api.setThemeSource(next ? 'dark' : 'light').catch(() => undefined)
     // 异步回写, 不阻塞 UI; 失败忽略 (localStorage 已兜底)。
     void get()
       .patchSection('ui', { theme: next ? 'dark' : 'light' })
@@ -129,8 +133,32 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { sidebarSide: side }
     }),
 
-  aiImmersive: false,
-  setAiImmersive: (v) => set({ aiImmersive: v }),
+  sidebarHidden: (() => {
+    try {
+      return localStorage.getItem('sharegpt-sidebar-hidden') === '1'
+    } catch {
+      return false
+    }
+  })(),
+  setSidebarHidden: (v) =>
+    set(() => {
+      try {
+        localStorage.setItem('sharegpt-sidebar-hidden', v ? '1' : '0')
+      } catch {
+        /* ignore */
+      }
+      return { sidebarHidden: v }
+    }),
+  toggleSidebarHidden: () =>
+    set((s) => {
+      const next = !s.sidebarHidden
+      try {
+        localStorage.setItem('sharegpt-sidebar-hidden', next ? '1' : '0')
+      } catch {
+        /* ignore */
+      }
+      return { sidebarHidden: next }
+    }),
 
   mode: '',
   meta: {},
@@ -163,6 +191,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       // 无磁盘设置: 用启动时 localStorage 推断的 dark 重新落实到 DOM (确保 class 同步)。
       applyTheme(get().dark)
     }
+    // 启动时同步内嵌网页明暗 = 当前 app 主题。
+    void api.setThemeSource(get().dark ? 'dark' : 'light').catch(() => undefined)
     // 侧栏左右位置同样优先取磁盘设置 (跨设备一致), 无则保留 localStorage 现值。
     const savedSide = mergedSettings.ui?.sidebarSide
     if (savedSide === 'left' || savedSide === 'right') {

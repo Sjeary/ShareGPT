@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
-  Maximize2,
-  Minimize2,
+  PanelLeftClose,
+  PanelLeftOpen,
   Home,
   RotateCw,
   Bot,
@@ -62,20 +62,17 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const meta = META[kind]
   const status = useAppStore((s) => s.status)
   const settings = useAppStore((s) => s.settings)
-  const aiImmersive = useAppStore((s) => s.aiImmersive)
-  const setAiImmersive = useAppStore((s) => s.setAiImmersive)
+  const sidebarHidden = useAppStore((s) => s.sidebarHidden)
+  const toggleSidebarHidden = useAppStore((s) => s.toggleSidebarHidden)
   const senderRunning = isSenderRunning(status)
 
-  // 沉浸全屏: Esc 退出; 离开 AI 面板(卸载)时复位, 避免回到其它面板侧栏仍隐藏。
+  // 隐藏侧栏时: 按 Esc 快速恢复显示 (隐藏态本身持久化, 离开 GPT/Gemini 面板会自动恢复显示, 见 Shell)。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') useAppStore.getState().setAiImmersive(false)
+      if (e.key === 'Escape') useAppStore.getState().setSidebarHidden(false)
     }
     window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      useAppStore.getState().setAiImmersive(false)
-    }
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
 
   const gptTabs = useAiStore((s) => s.gptTabs)
@@ -314,7 +311,6 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       icon={Icon}
       title={meta.title}
       hint={meta.hint}
-      hideHeader={aiImmersive}
       scrollable={false}
       toolbar={
         <Badge variant="outline" className="gap-1.5">
@@ -360,10 +356,10 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               variant="ghost"
               size="icon"
               className="size-8"
-              title={aiImmersive ? '退出全屏' : '全屏'}
-              onClick={() => setAiImmersive(!aiImmersive)}
+              title={sidebarHidden ? '显示侧栏' : '隐藏侧栏 (只看网页, 按 Esc 恢复)'}
+              onClick={toggleSidebarHidden}
             >
-              {aiImmersive ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+              {sidebarHidden ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
             </Button>
           </div>
         </div>

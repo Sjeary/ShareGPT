@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("api", {
   platform: process.platform,
+  setThemeSource: (source) => ipcRenderer.invoke("app:set-theme-source", source),
   loadSettings: () => ipcRenderer.invoke("settings:load"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   importSettings: () => ipcRenderer.invoke("settings:import"),

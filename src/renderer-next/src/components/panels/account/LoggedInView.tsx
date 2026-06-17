@@ -335,15 +335,16 @@ export function LoggedInView() {
           <CardTitle className="text-base">界面设置</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-1">
-          <div className="flex items-center justify-between gap-3 py-1.5">
-            <div className="min-w-0">
+          {/* flex-wrap: 窄窗或高 DPI 缩放下分段控件自动换到下一行, 不溢出卡片。 */}
+          <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 py-1.5">
+            <div className="min-w-0 flex-1">
               <Label className="cursor-default">侧栏位置</Label>
               <p className="truncate text-xs text-muted-foreground">
-                导航栏显示在窗口左侧或右侧，方便对称与左右手习惯。
+                导航栏显示在窗口左侧或右侧。
               </p>
             </div>
             {/* 左/右分段选择: 即时生效并持久化 (settings.ui.sidebarSide)。 */}
-            <div className="flex shrink-0 rounded-lg border border-border bg-muted/40 p-0.5">
+            <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-1">
               {([
                 { side: 'left', label: '左侧', icon: PanelLeft },
                 { side: 'right', label: '右侧', icon: PanelRight },
@@ -356,14 +357,14 @@ export function LoggedInView() {
                     onClick={() => setSidebarSide(side)}
                     aria-pressed={on}
                     className={cn(
-                      'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                      'flex items-center gap-1.5 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
                       'outline-none focus-visible:ring-2 focus-visible:ring-ring',
                       on
                         ? 'bg-background text-foreground shadow-sm'
                         : 'text-muted-foreground hover:text-foreground',
                     )}
                   >
-                    <Icon className="size-4" />
+                    <Icon className="size-4 shrink-0" />
                     {label}
                   </button>
                 )
