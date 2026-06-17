@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -9,10 +9,17 @@ import {
   Bot,
   Sparkles,
   Asterisk,
+  ShieldCheck,
+  ShieldAlert,
+  ShieldX,
+  Loader2,
+  X,
 } from 'lucide-react'
 import { PanelScaffold } from '@/components/panels/PanelScaffold'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import type { AiProxyReport } from '@/types/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAiStore } from '@/store/useAiStore'
 import type { AiKind } from '@/store/useAiStore'
@@ -87,6 +94,41 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const setFeedback = useAiStore((s) => s.setFeedback)
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
+
+  // 代理检测面板 (展示该页面流量是否全部经发送代理)。作为宿主上方的可折叠块渲染,
+  // 这样不会被原生 webview 盖住 (centered Dialog 会被原生 view 覆盖)。
+  const [proxyOpen, setProxyOpen] = useState(false)
+  const [proxyChecking, setProxyChecking] = useState(false)
+  const [proxyReport, setProxyReport] = useState<AiProxyReport | null>(null)
+
+  const runProxyCheck = useCallback(async () => {
+    setProxyChecking(true)
+    try {
+      const report = await api.checkAiProxy(kind, activeTabId)
+      setProxyReport(report)
+    } catch (err) {
+      setProxyReport({ ok: false, reason: err instanceof Error ? err.message : String(err) })
+    } finally {
+      setProxyChecking(false)
+    }
+  }, [kind, activeTabId])
+
+  const toggleProxyPanel = useCallback(() => {
+    setProxyOpen((open) => {
+      const next = !open
+      if (next) void runProxyCheck()
+      return next
+    })
+  }, [runProxyCheck])
+
+  // 代理检测状态色: 红=会话未走代理/检测失败; 黄=有域名回落(未走发送代理); 绿=全部走发送代理。
+  const proxyTone: 'ok' | 'warn' | 'bad' | 'idle' = !proxyReport
+    ? 'idle'
+    : !proxyReport.ok || !proxyReport.sessionProxied
+      ? 'bad'
+      : (proxyReport.fallbackCount ?? 0) > 0
+        ? 'warn'
+        : 'ok'
 
   // 视图运行态 (供遮罩/导航按钮判断)。
   const view = {
@@ -234,7 +276,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   )
 
   // 运行态 / 遮罩内容变化时, 重新同步宿主定位。
-  const overlayKey = `${senderRunning}|${activeTabId}|${view.initialized}`
+  const overlayKey = `${senderRunning}|${activeTabId}|${view.initialized}|${proxyOpen}|${proxyReport?.hosts?.length ?? 0}|${feedback.text ? 1 : 0}`
   const overlayRef = useRef(overlayKey)
   useEffect(() => {
     if (overlayRef.current !== overlayKey) {
@@ -303,7 +345,26 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
             onCreate={() => void createTab()}
           />
 
-          <div className="ml-auto shrink-0">
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1.5 px-2"
+              title="检测此页面流量是否全部经发送代理"
+              disabled={!senderRunning}
+              onClick={toggleProxyPanel}
+            >
+              {proxyTone === 'ok' ? (
+                <ShieldCheck className="size-4 text-emerald-500" />
+              ) : proxyTone === 'warn' ? (
+                <ShieldAlert className="size-4 text-amber-500" />
+              ) : proxyTone === 'bad' ? (
+                <ShieldX className="size-4 text-destructive" />
+              ) : (
+                <ShieldCheck className="size-4 text-muted-foreground" />
+              )}
+              <span className="text-xs">代理检测</span>
+            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -328,6 +389,18 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           </div>
         )}
 
+        {proxyOpen && (
+          <div className="shrink-0 border-b border-border bg-muted/30">
+            <ProxyReportPanel
+              report={proxyReport}
+              checking={proxyChecking}
+              tone={proxyTone}
+              onRefresh={() => void runProxyCheck()}
+              onClose={() => setProxyOpen(false)}
+            />
+          </div>
+        )}
+
         {/* 原生 view 宿主 + 遮罩 */}
         <div className="relative min-h-0 flex-1">
           <div ref={hostRef} className="absolute inset-0" />
@@ -343,6 +416,119 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         </div>
       </div>
     </PanelScaffold>
+  )
+}
+
+// 代理检测结果面板 (宿主上方的可折叠块)。逐域展示页面流量去向:
+// 走发送代理(梯子) vs 回落(本机代理/直连)。回落域名即未走发送代理, 可补进路由清单。
+function ProxyReportPanel({
+  report,
+  checking,
+  tone,
+  onRefresh,
+  onClose,
+}: {
+  report: AiProxyReport | null
+  checking: boolean
+  tone: 'ok' | 'warn' | 'bad' | 'idle'
+  onRefresh: () => void
+  onClose: () => void
+}) {
+  const hosts = report?.hosts ?? []
+  const proxyHosts = hosts.filter((h) => h.via === 'proxy')
+  const fallbackHosts = hosts.filter((h) => h.via === 'fallback')
+
+  const summary =
+    !report || !report.ok
+      ? checking
+        ? '正在检测页面流量去向…'
+        : report?.reason === 'no-workspace'
+          ? '请先打开一个网页标签，再进行检测。'
+          : '暂时无法检测，请刷新页面后重试。'
+      : !report.sessionProxied
+        ? '此页面未走代理（发送服务可能未开启，或代理未生效）。'
+        : fallbackHosts.length > 0
+          ? `共 ${hosts.length} 个域名：${proxyHosts.length} 个经发送代理（梯子），${fallbackHosts.length} 个回落（本机代理/直连，未走发送代理）。`
+          : `此页面流量已全部经发送代理（梯子）访问，共 ${hosts.length} 个域名。`
+
+  const SummaryIcon =
+    tone === 'ok' ? ShieldCheck : tone === 'warn' ? ShieldAlert : tone === 'bad' ? ShieldX : ShieldCheck
+  const summaryColor =
+    tone === 'ok'
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : tone === 'warn'
+        ? 'text-amber-600 dark:text-amber-400'
+        : tone === 'bad'
+          ? 'text-destructive'
+          : 'text-muted-foreground'
+
+  return (
+    <div className="px-4 py-3">
+      <div className="mb-2 flex items-center gap-2">
+        <SummaryIcon className={`size-4 shrink-0 ${summaryColor}`} />
+        <span className="text-sm font-medium">代理检测</span>
+        {report?.socksEndpoint && (
+          <Badge variant="outline" className="font-mono text-[11px]">
+            出口 socks5://{report.socksEndpoint}
+          </Badge>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          <Button variant="ghost" size="icon" className="size-7" title="重新检测" disabled={checking} onClick={onRefresh}>
+            {checking ? <Loader2 className="size-4 animate-spin" /> : <RotateCw className="size-4" />}
+          </Button>
+          <Button variant="ghost" size="icon" className="size-7" title="收起" onClick={onClose}>
+            <X className="size-4" />
+          </Button>
+        </div>
+      </div>
+
+      <p className={`mb-2 text-xs ${summaryColor}`}>{summary}</p>
+
+      {hosts.length > 0 && (
+        <ScrollArea className="max-h-44 rounded-md border border-border bg-background/60">
+          <div className="space-y-2 p-2">
+            {fallbackHosts.length > 0 && (
+              <div>
+                <div className="mb-1 px-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                  未走发送代理 · 回落本机代理/直连（{fallbackHosts.length}）
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {fallbackHosts.map((h) => (
+                    <span
+                      key={h.host}
+                      className="rounded bg-amber-500/10 px-1.5 py-0.5 font-mono text-[11px] text-amber-700 dark:text-amber-300"
+                    >
+                      {h.host}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div>
+              <div className="mb-1 px-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                走发送代理 · 梯子（{proxyHosts.length}）
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {proxyHosts.map((h) => (
+                  <span
+                    key={h.host}
+                    className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[11px] text-emerald-700 dark:text-emerald-300"
+                  >
+                    {h.host}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </ScrollArea>
+      )}
+
+      {report?.ok && fallbackHosts.length > 0 && (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          提示：回落域名未经发送代理（梯子）出网。若希望它们也走梯子，需要把对应域名加入发送路由清单。
+        </p>
+      )}
+    </div>
   )
 }
 

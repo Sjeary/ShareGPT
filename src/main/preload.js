@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld("api", {
   ensureAiWorkspace: (payload) => ipcRenderer.invoke("ai:ensure", payload),
   syncAiViewHost: (payload) => ipcRenderer.invoke("ai:sync-host", payload),
   navigateAiWorkspace: (payload) => ipcRenderer.invoke("ai:navigate", payload),
+  checkAiProxy: (kind, tabId) => ipcRenderer.invoke("ai:proxy-check", { kind, tabId }),
   executeAiJavaScript: (payload) => ipcRenderer.invoke("ai:execute-javascript", payload),
   openProfileEditor: (payload) => ipcRenderer.invoke("profile:open", payload),
   emitProfileUpdated: (payload) => ipcRenderer.send("profile:updated", payload),

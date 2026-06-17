@@ -1,7 +1,11 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { app, BrowserWindow, Notification, WebContentsView, clipboard, ipcMain, nativeTheme, session, shell } = require("electron");
-const { Backend } = require("./backend");
+const { Backend, DEFAULT_TARGET_DOMAINS } = require("./backend");
+
+// 记录每个 AI 会话(按 partition)实际访问过的主机名, 供「代理检测」展示页面流量去向。
+// 在 configureAiSession 内通过 webRequest 被动收集 (每个 partition 仅装一次)。
+const aiContactedHostsByPartition = new Map();
 
 const GPT_ALLOWED_HOSTS = [
   "chatgpt.com",
@@ -450,6 +454,21 @@ function createElectronApp(baseMode = "all") {
     }
 
     configuredAiPartitions.add(policy.partition);
+
+    // 被动记录该会话访问过的所有主机名 (含子资源 / XHR / 字体 / 图片等),
+    // 供「代理检测」按实际流量逐域判断是否走发送代理。仅装一次, 放行所有请求。
+    const contactedHosts = aiContactedHostsByPartition.get(policy.partition) || new Set();
+    aiContactedHostsByPartition.set(policy.partition, contactedHosts);
+    try {
+      // 纯观察, 非阻塞 (无 callback): 不会延迟/干扰请求, 对流式(SSE)聊天连接安全。
+      targetSession.webRequest.onCompleted((details) => {
+        try {
+          const host = new URL(details.url).hostname;
+          // 仅记录真实网络主机 (跳过 devtools/data/blob 等), 上限防止无界增长。
+          if (host && contactedHosts.size < 800) contactedHosts.add(host);
+        } catch {}
+      });
+    } catch {}
 
     targetSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
       const requestingUrl = safeText(details?.requestingUrl || webContents?.getURL?.());
@@ -1186,6 +1205,59 @@ function createElectronApp(baseMode = "all") {
       const workspace = getWorkspace(kind);
       if (!workspace) return false;
       return syncAiBounds(workspace, { bounds, visible });
+    });
+
+    // 代理检测: 汇报该 AI 页面流量是否全部经发送代理 (梯子)。
+    // 会话级: resolveProxy 确认 webview 出口确实指向本地 socks (sing-box)。
+    // 路由级: 把会话实际访问过的每个主机, 按 backend 的发送路由清单逐域判定
+    //   命中 target_domains -> 走发送代理(梯子); 未命中 -> 回落(本机代理/直连), 即未走发送代理。
+    ipcMain.handle("ai:proxy-check", async (_event, payload) => {
+      const kind = safeText(payload?.kind);
+      const workspace =
+        getWorkspace(kind, safeText(payload?.tabId)) || getWorkspace(kind, activeTabIdByKind[kind]);
+      if (!workspace) {
+        return { ok: false, reason: "no-workspace" };
+      }
+
+      const targetSession = session.fromPartition(workspace.policy.partition);
+      const wc = workspace.view.webContents;
+      const currentUrl =
+        safeText(wc.getURL()) || workspace.lastUrl || workspace.policy.homeUrl;
+
+      let sessionProxy = "";
+      try {
+        sessionProxy = safeText(await targetSession.resolveProxy(currentUrl));
+      } catch {}
+      const sessionProxied = /socks/i.test(sessionProxy);
+
+      const recorded = aiContactedHostsByPartition.get(workspace.policy.partition) || new Set();
+      const hostSet = new Set(recorded);
+      try {
+        const h = new URL(currentUrl).hostname;
+        if (h) hostSet.add(h);
+      } catch {}
+
+      const suffixes = Array.isArray(DEFAULT_TARGET_DOMAINS) ? DEFAULT_TARGET_DOMAINS : [];
+      const viaProxy = (host) =>
+        suffixes.some((s) => host === s || host.endsWith(`.${s}`));
+
+      const hosts = [...hostSet]
+        .filter(Boolean)
+        .sort()
+        .map((host) => ({ host, via: viaProxy(host) ? "proxy" : "fallback" }));
+
+      return {
+        ok: true,
+        kind: workspace.kind,
+        tabId: safeText(workspace.id),
+        currentUrl,
+        socksEndpoint: safeText(workspace.proxySignature),
+        sessionProxy,
+        sessionProxied,
+        proxyCount: hosts.filter((h) => h.via === "proxy").length,
+        fallbackCount: hosts.filter((h) => h.via === "fallback").length,
+        hosts,
+      };
     });
 
     ipcMain.handle("ai:navigate", async (_event, payload) => {

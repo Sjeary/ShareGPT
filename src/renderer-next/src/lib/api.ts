@@ -29,6 +29,7 @@ const fallback = {
   ensureAiWorkspace: async () => undefined,
   syncAiViewHost: async () => undefined,
   navigateAiWorkspace: async () => undefined,
+  checkAiProxy: async () => ({ ok: false, reason: 'unavailable' }),
   executeAiJavaScript: async () => undefined,
   openProfileEditor: async () => undefined,
   emitProfileUpdated: noop,

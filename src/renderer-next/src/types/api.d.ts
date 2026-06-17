@@ -3,6 +3,25 @@
 
 export type Unsubscribe = () => void
 
+// AI 页面代理检测结果 (ai:proxy-check)。
+export interface AiProxyHost {
+  host: string
+  via: 'proxy' | 'fallback'
+}
+export interface AiProxyReport {
+  ok: boolean
+  reason?: string
+  kind?: 'gpt' | 'gemini' | 'claude'
+  tabId?: string
+  currentUrl?: string
+  socksEndpoint?: string
+  sessionProxy?: string
+  sessionProxied?: boolean
+  proxyCount?: number
+  fallbackCount?: number
+  hosts?: AiProxyHost[]
+}
+
 export interface ShareGptApi {
   platform: NodeJS.Platform | string
 
@@ -39,6 +58,11 @@ export interface ShareGptApi {
   ensureAiWorkspace: (payload: unknown) => Promise<unknown>
   syncAiViewHost: (payload: unknown) => Promise<unknown>
   navigateAiWorkspace: (payload: unknown) => Promise<unknown>
+  // 代理检测: 检查该 AI 页面流量是否全部经发送代理 (梯子)。
+  checkAiProxy: (
+    kind: 'gpt' | 'gemini' | 'claude',
+    tabId?: string,
+  ) => Promise<AiProxyReport>
   executeAiJavaScript: (payload: unknown) => Promise<unknown>
 
   // profile 独立窗口

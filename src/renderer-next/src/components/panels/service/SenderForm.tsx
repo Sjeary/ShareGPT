@@ -29,6 +29,7 @@ const EMPTY: SenderSettings = {
 export function SenderForm() {
   const settings = useAppStore((s) => s.settings)
   const status = useAppStore((s) => s.status)
+  const mode = useAppStore((s) => s.mode)
   const patchSection = useAppStore((s) => s.patchSection)
   // 旧版 isCollabOnline() = token && connected; 新 store connection==='online' 即 token+WS 已连。
   const connection = useChatStore((s) => s.connection)
@@ -49,7 +50,13 @@ export function SenderForm() {
 
   // 对齐旧 getSenderForm(~2408): target_domains 为空时回填默认域名清单,
   // 既用于只读展示, 也用于随设置保存 / 启动发送时下发。
-  const resolvedTargetDomains = safeText(form.target_domains) || DEFAULT_TARGET_DOMAINS
+  // 注意: 发送端(sender)模式下 backend.buildSenderConfig 会强制使用其内置
+  // DEFAULT_TARGET_DOMAINS 并忽略此处存值, 故此模式下展示/下发同样强制用默认清单,
+  // 保证「固定走连接的网站」展示值 = 实际路由的域名 (否则旧存值会盖住新域名, 造成误导)。
+  const resolvedTargetDomains =
+    mode === 'sender'
+      ? DEFAULT_TARGET_DOMAINS
+      : safeText(form.target_domains) || DEFAULT_TARGET_DOMAINS
 
   function update(patch: Partial<SenderSettings>) {
     void patchSection('sender', patch)
