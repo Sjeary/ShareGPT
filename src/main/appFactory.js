@@ -349,12 +349,13 @@ function createElectronApp(baseMode = "all") {
   let appMode = normalizeMode(baseMode, process.argv);
   const configuredAiPartitions = new Set();
   const aiWorkspaces = new Map();
-  const gptTabOrder = [];
-  let activeGptTabId = "";
-  let gptTabCounter = 0;
-  let gptHostState = {
-    visible: false,
-    bounds: null,
+  // GPT 与 Gemini 均支持多标签: 标签顺序 / 活动标签 / 宿主矩形 均按 kind 索引。
+  const tabOrderByKind = { gpt: [], gemini: [] };
+  const activeTabIdByKind = { gpt: "", gemini: "" };
+  let aiTabCounter = 0;
+  const hostStateByKind = {
+    gpt: { visible: false, bounds: null },
+    gemini: { visible: false, bounds: null },
   };
 
   function emitAiEvent(kind, type, payload = {}) {
@@ -395,31 +396,28 @@ function createElectronApp(baseMode = "all") {
 
   function workspaceKey(kind, tabId = "") {
     const targetKind = safeText(kind);
-    if (targetKind === "gpt") {
-      return `gpt:${safeText(tabId) || "default"}`;
-    }
-    return targetKind;
+    return `${targetKind}:${safeText(tabId) || "default"}`;
   }
 
   function getWorkspace(kind, tabId = "") {
     const targetKind = safeText(kind);
-    if (targetKind === "gpt") {
-      const targetTabId = safeText(tabId) || activeGptTabId;
-      if (!targetTabId) return null;
-      return aiWorkspaces.get(workspaceKey(targetKind, targetTabId)) || null;
-    }
-    return aiWorkspaces.get(workspaceKey(targetKind)) || null;
+    const targetTabId = safeText(tabId) || activeTabIdByKind[targetKind];
+    if (!targetTabId) return null;
+    return aiWorkspaces.get(workspaceKey(targetKind, targetTabId)) || null;
   }
 
-  function listGptWorkspaces() {
-    return gptTabOrder
-      .map((tabId) => getWorkspace("gpt", tabId))
-      .filter(Boolean);
+  function listWorkspaces(kind) {
+    const order = tabOrderByKind[safeText(kind)] || [];
+    return order.map((tabId) => getWorkspace(kind, tabId)).filter(Boolean);
   }
 
-  function normalizeGptTabTitle(rawTitle, fallbackTitle) {
+  function defaultTitleForKind(kind) {
+    return safeText(kind) === "gpt" ? "ChatGPT" : "Gemini";
+  }
+
+  function normalizeAiTabTitle(rawTitle, fallbackTitle) {
     const title = safeText(rawTitle).replace(/\s+/g, " ").slice(0, GPT_TAB_TITLE_LIMIT);
-    return title || fallbackTitle || "ChatGPT";
+    return title || fallbackTitle || "网页";
   }
 
   function configureAiSession(targetSession, policy) {
@@ -497,25 +495,27 @@ function createElectronApp(baseMode = "all") {
     workspace.view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
   }
 
-  function listGptTabsPayload() {
+  function listTabsPayload(kind) {
+    const targetKind = safeText(kind);
     return {
-      tabs: listGptWorkspaces().map((workspace) => ({
+      tabs: listWorkspaces(targetKind).map((workspace) => ({
         ...getAiStatePayload(workspace),
         id: safeText(workspace.id),
       })),
-      activeTabId: activeGptTabId,
+      activeTabId: activeTabIdByKind[targetKind] || "",
     };
   }
 
-  function emitGptTabsChanged() {
-    return emitAiEvent("gpt", "tabs-changed", listGptTabsPayload());
+  function emitTabsChanged(kind) {
+    return emitAiEvent(safeText(kind), "tabs-changed", listTabsPayload(kind));
   }
 
-  function syncActiveGptWorkspace() {
-    const activeWorkspace = getWorkspace("gpt", activeGptTabId);
+  function syncActiveWorkspace(kind) {
+    const targetKind = safeText(kind);
+    const activeWorkspace = getWorkspace(targetKind, activeTabIdByKind[targetKind]);
 
-    for (const workspace of listGptWorkspaces()) {
-      if (workspace.id !== activeGptTabId) {
+    for (const workspace of listWorkspaces(targetKind)) {
+      if (workspace.id !== activeTabIdByKind[targetKind]) {
         detachWorkspaceView(workspace);
       }
     }
@@ -524,43 +524,48 @@ function createElectronApp(baseMode = "all") {
       return false;
     }
 
-    return syncAiBounds(activeWorkspace, gptHostState);
+    return syncAiBounds(activeWorkspace, hostStateByKind[targetKind]);
   }
 
-  function createGptWorkspace(options = {}) {
-    const workspace = getOrCreateAiWorkspace("gpt", safeText(options.tabId), {
+  function createTabWorkspace(kind, options = {}) {
+    const targetKind = safeText(kind);
+    const workspace = getOrCreateAiWorkspace(targetKind, safeText(options.tabId), {
       title: safeText(options.title),
       lastUrl: safeText(options.lastUrl),
     });
 
-    if (!gptTabOrder.includes(workspace.id)) {
-      gptTabOrder.push(workspace.id);
+    const order = tabOrderByKind[targetKind];
+    if (order && !order.includes(workspace.id)) {
+      order.push(workspace.id);
     }
 
-    if (!activeGptTabId) {
-      activeGptTabId = workspace.id;
+    if (!activeTabIdByKind[targetKind]) {
+      activeTabIdByKind[targetKind] = workspace.id;
     }
 
-    emitGptTabsChanged();
+    emitTabsChanged(targetKind);
     return workspace;
   }
 
-  function closeGptWorkspace(tabId) {
+  function closeTabWorkspace(kind, tabId) {
+    const targetKind = safeText(kind);
     const targetId = safeText(tabId);
-    const workspace = getWorkspace("gpt", targetId);
+    const workspace = getWorkspace(targetKind, targetId);
     if (!workspace) {
+      const active = getWorkspace(targetKind, activeTabIdByKind[targetKind]);
       return {
-        ...listGptTabsPayload(),
-        activeState: getWorkspace("gpt", activeGptTabId) ? getAiStatePayload(getWorkspace("gpt", activeGptTabId)) : null,
+        ...listTabsPayload(targetKind),
+        activeState: active ? getAiStatePayload(active) : null,
       };
     }
 
     detachWorkspaceView(workspace);
-    aiWorkspaces.delete(workspaceKey("gpt", targetId));
+    aiWorkspaces.delete(workspaceKey(targetKind, targetId));
 
-    const orderIndex = gptTabOrder.indexOf(targetId);
+    const order = tabOrderByKind[targetKind] || [];
+    const orderIndex = order.indexOf(targetId);
     if (orderIndex >= 0) {
-      gptTabOrder.splice(orderIndex, 1);
+      order.splice(orderIndex, 1);
     }
 
     try {
@@ -569,15 +574,15 @@ function createElectronApp(baseMode = "all") {
       }
     } catch {}
 
-      if (activeGptTabId === targetId) {
-        activeGptTabId = gptTabOrder[Math.max(0, orderIndex - 1)] || gptTabOrder[0] || "";
-      }
+    if (activeTabIdByKind[targetKind] === targetId) {
+      activeTabIdByKind[targetKind] = order[Math.max(0, orderIndex - 1)] || order[0] || "";
+    }
 
-    syncActiveGptWorkspace();
-    const activeWorkspace = getWorkspace("gpt", activeGptTabId);
-    emitGptTabsChanged();
+    syncActiveWorkspace(targetKind);
+    const activeWorkspace = getWorkspace(targetKind, activeTabIdByKind[targetKind]);
+    emitTabsChanged(targetKind);
     return {
-      ...listGptTabsPayload(),
+      ...listTabsPayload(targetKind),
       activeState: activeWorkspace ? getAiStatePayload(activeWorkspace) : null,
     };
   }
@@ -785,9 +790,8 @@ function createElectronApp(baseMode = "all") {
 
     wc.on("page-title-updated", (event, title) => {
       event.preventDefault();
-      if (workspace.kind !== "gpt") return;
-      workspace.title = normalizeGptTabTitle(title, workspace.defaultTitle);
-      emitGptTabsChanged();
+      workspace.title = normalizeAiTabTitle(title, workspace.defaultTitle);
+      emitTabsChanged(workspace.kind);
     });
 
     wc.on("console-message", (_event, _level, message) => {
@@ -797,7 +801,7 @@ function createElectronApp(baseMode = "all") {
 
   function getOrCreateAiWorkspace(kind, tabId = "", options = {}) {
     const targetKind = safeText(kind);
-    const targetTabId = targetKind === "gpt" ? (safeText(tabId) || `tab-${++gptTabCounter}`) : "";
+    const targetTabId = safeText(tabId) || `${targetKind}-${++aiTabCounter}`;
     const existing = getWorkspace(targetKind, targetTabId);
     if (existing) {
       return existing;
@@ -827,7 +831,7 @@ function createElectronApp(baseMode = "all") {
     });
 
     const workspace = {
-      id: targetKind === "gpt" ? targetTabId : targetKind,
+      id: targetTabId,
       kind: targetKind,
       policy,
       view,
@@ -836,12 +840,8 @@ function createElectronApp(baseMode = "all") {
       loading: false,
       visible: false,
       lastUrl: safeText(options.lastUrl) || policy.homeUrl,
-      defaultTitle: targetKind === "gpt"
-        ? normalizeGptTabTitle(safeText(options.title), "ChatGPT")
-        : safeText(options.title),
-      title: targetKind === "gpt"
-        ? normalizeGptTabTitle(safeText(options.title), "ChatGPT")
-        : safeText(options.title),
+      defaultTitle: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
+      title: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
       proxySignature: "",
       userAgent: "",
       rawDocumentRecoveryAttempted: false,
@@ -866,8 +866,10 @@ function createElectronApp(baseMode = "all") {
     }
 
     aiWorkspaces.clear();
-    gptTabOrder.length = 0;
-    activeGptTabId = "";
+    tabOrderByKind.gpt.length = 0;
+    tabOrderByKind.gemini.length = 0;
+    activeTabIdByKind.gpt = "";
+    activeTabIdByKind.gemini = "";
     configuredAiPartitions.clear();
   }
 
@@ -1031,59 +1033,63 @@ function createElectronApp(baseMode = "all") {
       return openExternalUrl(url);
     });
 
-    ipcMain.handle("gpt-tabs:list", () => {
+    // 标签管理 (GPT / Gemini 通用, 由 payload.kind 区分)。
+    ipcMain.handle("ai-tabs:list", (_event, payload) => {
+      const kind = safeText(payload?.kind) || "gpt";
+      const active = getWorkspace(kind, activeTabIdByKind[kind]);
       return {
-        ...listGptTabsPayload(),
-        activeState: getWorkspace("gpt", activeGptTabId) ? getAiStatePayload(getWorkspace("gpt", activeGptTabId)) : null,
+        ...listTabsPayload(kind),
+        activeState: active ? getAiStatePayload(active) : null,
       };
     });
 
-    ipcMain.handle("gpt-tabs:create", (_event, payload) => {
-      const workspace = createGptWorkspace({
+    ipcMain.handle("ai-tabs:create", (_event, payload) => {
+      const kind = safeText(payload?.kind) || "gpt";
+      const workspace = createTabWorkspace(kind, {
         title: safeText(payload?.title),
         lastUrl: safeText(payload?.lastUrl),
       });
-      activeGptTabId = workspace.id;
-      syncActiveGptWorkspace();
-      emitGptTabsChanged();
+      activeTabIdByKind[kind] = workspace.id;
+      syncActiveWorkspace(kind);
+      emitTabsChanged(kind);
       return {
-        ...listGptTabsPayload(),
+        ...listTabsPayload(kind),
         activeState: getAiStatePayload(workspace),
       };
     });
 
-    ipcMain.handle("gpt-tabs:switch", (_event, payload) => {
+    ipcMain.handle("ai-tabs:switch", (_event, payload) => {
+      const kind = safeText(payload?.kind) || "gpt";
       const tabId = safeText(payload?.tabId);
-      const workspace = getWorkspace("gpt", tabId);
+      const workspace = getWorkspace(kind, tabId);
       if (!workspace) {
-        throw new Error("目标 GPT 会话不存在");
+        throw new Error("目标会话不存在");
       }
-      activeGptTabId = workspace.id;
-      syncActiveGptWorkspace();
-      emitGptTabsChanged();
+      activeTabIdByKind[kind] = workspace.id;
+      syncActiveWorkspace(kind);
+      emitTabsChanged(kind);
       return {
-        ...listGptTabsPayload(),
+        ...listTabsPayload(kind),
         activeState: getAiStatePayload(workspace),
       };
     });
 
-    ipcMain.handle("gpt-tabs:close", (_event, payload) => {
-      return closeGptWorkspace(payload?.tabId);
+    ipcMain.handle("ai-tabs:close", (_event, payload) => {
+      const kind = safeText(payload?.kind) || "gpt";
+      return closeTabWorkspace(kind, payload?.tabId);
     });
 
     ipcMain.handle("ai:ensure", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       const requestedTabId = safeText(payload?.tabId);
-      if (kind === "gpt" && !requestedTabId && !activeGptTabId) {
+      if (!requestedTabId && !activeTabIdByKind[kind]) {
         return null;
       }
-      const workspace = kind === "gpt"
-        ? getOrCreateAiWorkspace(kind, requestedTabId || activeGptTabId, {
-          lastUrl: safeText(payload?.lastUrl),
-        })
-        : getOrCreateAiWorkspace(kind);
-      if (kind === "gpt" && !activeGptTabId) {
-        activeGptTabId = workspace.id;
+      const workspace = getOrCreateAiWorkspace(kind, requestedTabId || activeTabIdByKind[kind], {
+        lastUrl: safeText(payload?.lastUrl),
+      });
+      if (!activeTabIdByKind[kind]) {
+        activeTabIdByKind[kind] = workspace.id;
       }
       const host = safeText(payload?.host || "127.0.0.1") || "127.0.0.1";
       const port = Number.parseInt(String(payload?.port || "1080"), 10);
@@ -1139,9 +1145,7 @@ function createElectronApp(baseMode = "all") {
         workspace.view.webContents.reload();
       }
 
-      if (kind === "gpt") {
-        emitGptTabsChanged();
-      }
+      emitTabsChanged(kind);
       return getAiStatePayload(workspace);
     });
 
@@ -1149,11 +1153,10 @@ function createElectronApp(baseMode = "all") {
       const kind = safeText(payload?.kind);
       const bounds = payload?.bounds;
       const visible = Boolean(payload?.visible);
-      if (kind === "gpt") {
-        gptHostState = { bounds, visible };
-        return syncActiveGptWorkspace();
+      if (hostStateByKind[kind]) {
+        hostStateByKind[kind] = { bounds, visible };
+        return syncActiveWorkspace(kind);
       }
-
       const workspace = getWorkspace(kind);
       if (!workspace) return false;
       return syncAiBounds(workspace, { bounds, visible });
@@ -1201,9 +1204,7 @@ function createElectronApp(baseMode = "all") {
           break;
       }
 
-      if (kind === "gpt") {
-        emitGptTabsChanged();
-      }
+      emitTabsChanged(kind);
       return getAiStatePayload(workspace);
     });
 

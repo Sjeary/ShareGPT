@@ -1,12 +1,12 @@
 import { create } from 'zustand'
 
-// AI 网页工作区状态切片 (GPT 多标签 + Gemini 单视图)。
+// AI 网页工作区状态切片 (GPT / Gemini 均多标签)。
 // 真正的 WebContentsView 在主进程, 这里只镜像运行态用于渲染控制条/标签/遮罩。
-// 对应旧 renderer.js state.gpt / state.gemini 中与网页相关的字段。
+// 状态按 kind 索引, 两种网页同构 (对齐主进程的标签泛化)。
 
 export type AiKind = 'gpt' | 'gemini'
 
-export interface GptTab {
+export interface AiTab {
   id: string
   title: string
   url: string
@@ -15,68 +15,41 @@ export interface GptTab {
   canGoBack: boolean
   canGoForward: boolean
 }
-
-// Gemini 单视图运行态。
-export interface AiViewState {
-  webviewInitialized: boolean
-  webviewLoading: boolean
-  canGoBack: boolean
-  canGoForward: boolean
-  lastUrl: string
-}
+// 兼容旧引用名。
+export type GptTab = AiTab
 
 interface AiStore {
-  // GPT 多标签
-  gptTabs: GptTab[]
-  gptActiveTabId: string
+  tabsByKind: Record<AiKind, AiTab[]>
+  activeTabIdByKind: Record<AiKind, string>
   // 网页加载/导航错误反馈 (控制条下方提示)
-  gptFeedback: { text: string; tone: string }
+  feedbackByKind: Record<AiKind, { text: string; tone: string }>
 
-  // Gemini 单视图
-  gemini: AiViewState
-  geminiFeedback: { text: string; tone: string }
-
-  setGptTabs: (tabs: GptTab[], activeTabId: string) => void
-  patchGptTab: (tabId: string, patch: Partial<GptTab>) => void
-  setGptFeedback: (text: string, tone?: string) => void
-
-  patchGemini: (patch: Partial<AiViewState>) => void
-  setGeminiFeedback: (text: string, tone?: string) => void
-
-  // 进入工作区时以 settings.gemini.last_url 作为初始导航地址 (仅在尚未有运行态 url 时)。
-  seedGeminiLastUrl: (lastUrl: string) => void
-}
-
-const EMPTY_GEMINI: AiViewState = {
-  webviewInitialized: false,
-  webviewLoading: false,
-  canGoBack: false,
-  canGoForward: false,
-  lastUrl: '',
+  setTabs: (kind: AiKind, tabs: AiTab[], activeTabId: string) => void
+  patchTab: (kind: AiKind, tabId: string, patch: Partial<AiTab>) => void
+  setFeedback: (kind: AiKind, text: string, tone?: string) => void
 }
 
 export const useAiStore = create<AiStore>((set) => ({
-  gptTabs: [],
-  gptActiveTabId: '',
-  gptFeedback: { text: '', tone: '' },
+  tabsByKind: { gpt: [], gemini: [] },
+  activeTabIdByKind: { gpt: '', gemini: '' },
+  feedbackByKind: { gpt: { text: '', tone: '' }, gemini: { text: '', tone: '' } },
 
-  gemini: { ...EMPTY_GEMINI },
-  geminiFeedback: { text: '', tone: '' },
-
-  setGptTabs: (tabs, activeTabId) => set({ gptTabs: tabs, gptActiveTabId: activeTabId }),
-
-  patchGptTab: (tabId, patch) =>
+  setTabs: (kind, tabs, activeTabId) =>
     set((s) => ({
-      gptTabs: s.gptTabs.map((tab) => (tab.id === tabId ? { ...tab, ...patch } : tab)),
+      tabsByKind: { ...s.tabsByKind, [kind]: tabs },
+      activeTabIdByKind: { ...s.activeTabIdByKind, [kind]: activeTabId },
     })),
 
-  setGptFeedback: (text, tone = '') => set({ gptFeedback: { text, tone } }),
+  patchTab: (kind, tabId, patch) =>
+    set((s) => ({
+      tabsByKind: {
+        ...s.tabsByKind,
+        [kind]: s.tabsByKind[kind].map((t) => (t.id === tabId ? { ...t, ...patch } : t)),
+      },
+    })),
 
-  patchGemini: (patch) => set((s) => ({ gemini: { ...s.gemini, ...patch } })),
-
-  setGeminiFeedback: (text, tone = '') => set({ geminiFeedback: { text, tone } }),
-
-  // 仅当运行态 lastUrl 仍为空 (尚未从主进程收到 url 事件) 时, 用持久化值作为初始导航地址。
-  seedGeminiLastUrl: (lastUrl) =>
-    set((s) => (s.gemini.lastUrl ? {} : { gemini: { ...s.gemini, lastUrl } })),
+  setFeedback: (kind, text, tone = '') =>
+    set((s) => ({
+      feedbackByKind: { ...s.feedbackByKind, [kind]: { text, tone } },
+    })),
 }))

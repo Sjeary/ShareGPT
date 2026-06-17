@@ -31,10 +31,11 @@ export interface ShareGptApi {
   openExternal: (url: string) => Promise<unknown>
 
   // GPT / AI webview (原生 WebContentsView, 主进程管理)
-  listGptViews: () => Promise<unknown>
-  createGptView: (payload: unknown) => Promise<unknown>
-  switchGptView: (payload: unknown) => Promise<unknown>
-  closeGptView: (payload: unknown) => Promise<unknown>
+  // AI 标签 (GPT / Gemini 通用, 传 kind)
+  listAiViews: (kind: 'gpt' | 'gemini') => Promise<unknown>
+  createAiView: (kind: 'gpt' | 'gemini', payload?: unknown) => Promise<unknown>
+  switchAiView: (kind: 'gpt' | 'gemini', payload?: unknown) => Promise<unknown>
+  closeAiView: (kind: 'gpt' | 'gemini', payload?: unknown) => Promise<unknown>
   ensureAiWorkspace: (payload: unknown) => Promise<unknown>
   syncAiViewHost: (payload: unknown) => Promise<unknown>
   navigateAiWorkspace: (payload: unknown) => Promise<unknown>

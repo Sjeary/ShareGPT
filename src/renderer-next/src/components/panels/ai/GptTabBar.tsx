@@ -58,7 +58,7 @@ export function GptTabBar({
       })}
       <button
         type="button"
-        aria-label="新建 ChatGPT 标签页"
+        aria-label="新建标签页"
         title="新建标签页"
         disabled={disabled}
         onClick={onCreate}
