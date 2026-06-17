@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Download, LogOut, RefreshCw, UserCog } from 'lucide-react'
+import { Download, LogOut, PanelLeft, PanelRight, RefreshCw, UserCog } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -244,6 +244,8 @@ function UpdateSection() {
 export function LoggedInView() {
   const collab = useAppStore((s) => s.settings?.collab)
   const patchSection = useAppStore((s) => s.patchSection)
+  const sidebarSide = useAppStore((s) => s.sidebarSide)
+  const setSidebarSide = useAppStore((s) => s.setSidebarSide)
   const profile = useAuthStore((s) => s.profile)
   const { logout } = useAuth()
 
@@ -327,6 +329,49 @@ export function LoggedInView() {
         <UserCog />
         编辑个人资料
       </Button>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">界面设置</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-1">
+          <div className="flex items-center justify-between gap-3 py-1.5">
+            <div className="min-w-0">
+              <Label className="cursor-default">侧栏位置</Label>
+              <p className="truncate text-xs text-muted-foreground">
+                导航栏显示在窗口左侧或右侧，方便对称与左右手习惯。
+              </p>
+            </div>
+            {/* 左/右分段选择: 即时生效并持久化 (settings.ui.sidebarSide)。 */}
+            <div className="flex shrink-0 rounded-lg border border-border bg-muted/40 p-0.5">
+              {([
+                { side: 'left', label: '左侧', icon: PanelLeft },
+                { side: 'right', label: '右侧', icon: PanelRight },
+              ] as const).map(({ side, label, icon: Icon }) => {
+                const on = sidebarSide === side
+                return (
+                  <button
+                    key={side}
+                    type="button"
+                    onClick={() => setSidebarSide(side)}
+                    aria-pressed={on}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                      'outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                      on
+                        ? 'bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <Icon className="size-4" />
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

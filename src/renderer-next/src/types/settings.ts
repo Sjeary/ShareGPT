@@ -39,6 +39,7 @@ export interface CollabSettings {
 export interface UiSettings {
   setup_guide_dismissed: boolean
   theme: 'dark' | 'light'
+  sidebarSide: 'left' | 'right'
 }
 
 export interface AppSettings {

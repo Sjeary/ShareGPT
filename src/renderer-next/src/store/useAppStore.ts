@@ -16,6 +16,10 @@ interface AppState {
   sidebarCollapsed: boolean
   toggleSidebar: () => void
 
+  // 侧栏位置 (左/右), 为对称给用户选择 (设置项, 入口在账户面板)
+  sidebarSide: 'left' | 'right'
+  setSidebarSide: (side: 'left' | 'right') => void
+
   // AI 网页沉浸全屏: 隐藏侧栏与面板头, 最大化内嵌网页区
   aiImmersive: boolean
   setAiImmersive: (v: boolean) => void
@@ -101,6 +105,30 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { sidebarCollapsed: next }
     }),
 
+  sidebarSide: (() => {
+    try {
+      return localStorage.getItem('sharegpt-sidebar-side') === 'right'
+        ? 'right'
+        : 'left'
+    } catch {
+      return 'left'
+    }
+  })(),
+  // 设置侧栏左右: 写 localStorage (即时生效) + 回写磁盘 settings.ui.sidebarSide (跨设备一致)。
+  setSidebarSide: (side) =>
+    set((s) => {
+      if (s.sidebarSide === side) return s
+      try {
+        localStorage.setItem('sharegpt-sidebar-side', side)
+      } catch {
+        /* ignore */
+      }
+      void get()
+        .patchSection('ui', { sidebarSide: side })
+        .catch(() => undefined)
+      return { sidebarSide: side }
+    }),
+
   aiImmersive: false,
   setAiImmersive: (v) => set({ aiImmersive: v }),
 
@@ -134,6 +162,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     } else {
       // 无磁盘设置: 用启动时 localStorage 推断的 dark 重新落实到 DOM (确保 class 同步)。
       applyTheme(get().dark)
+    }
+    // 侧栏左右位置同样优先取磁盘设置 (跨设备一致), 无则保留 localStorage 现值。
+    const savedSide = mergedSettings.ui?.sidebarSide
+    if (savedSide === 'left' || savedSide === 'right') {
+      set({ sidebarSide: savedSide })
     }
     api.onStatus((payload) => set({ status: payload as StatusPayload }))
   },

@@ -16,13 +16,19 @@ export function Sidebar() {
   const setActive = useAppStore((s) => s.setActive)
   const collapsed = useAppStore((s) => s.sidebarCollapsed)
   const toggleSidebar = useAppStore((s) => s.toggleSidebar)
+  const sidebarSide = useAppStore((s) => s.sidebarSide)
   const meta = useAppStore((s) => s.meta)
+
+  // 侧栏在右时: 边框换到左侧, 收起态 Tooltip 弹向左侧 (避免被自身遮挡/出屏)。
+  const onRight = sidebarSide === 'right'
+  const tooltipSide = onRight ? 'left' : 'right'
 
   return (
     <TooltipProvider delayDuration={0}>
       <aside
         className={cn(
-          'flex shrink-0 flex-col gap-1 overflow-hidden border-r border-sidebar-border bg-sidebar p-2',
+          'flex shrink-0 flex-col gap-1 overflow-hidden border-sidebar-border bg-sidebar p-2',
+          onRight ? 'border-l' : 'border-r',
           'transition-[width] duration-200 ease-out motion-reduce:transition-none',
           collapsed ? 'w-[68px]' : 'w-64',
         )}
@@ -67,7 +73,7 @@ export function Sidebar() {
           return collapsed ? (
             <Tooltip key={key}>
               <TooltipTrigger asChild>{btn}</TooltipTrigger>
-              <TooltipContent side="right" className="font-medium">
+              <TooltipContent side={tooltipSide} className="font-medium">
                 {label}
               </TooltipContent>
             </Tooltip>
