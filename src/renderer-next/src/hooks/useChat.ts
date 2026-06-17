@@ -365,6 +365,13 @@ export function useChat() {
     const typingTimersMap = typingTimers.current
     let cancelled = false
 
+    // 账号被动断开、且已无法自动恢复(需手动重新登录)时, 停止本机发送服务(代理):
+    // 账号断开就不应继续以本机转发流量 (对齐旧版 stopSenderBecauseAccountOffline)。
+    // 仅在终态调用; socket/静默重登等瞬断会自动重连, 不在此停, 避免代理频繁起停。
+    const stopSenderForAccountOffline = () => {
+      void api.stopSender().catch(() => {})
+    }
+
     // 指数退避重连: socket 策略直接重连; relogin 策略先静默刷新 token。
     const scheduleReconnect = (strategy: 'socket' | 'relogin') => {
       if (cancelled || intentionalClose.current || reconnectTimer.current) return
@@ -395,6 +402,7 @@ export function useChat() {
         manualReloginRef.current = '服务已重启，请重新登录。'
         setConnection('error')
         showNotificationToast('需要重新登录', manualReloginRef.current)
+        stopSenderForAccountOffline()
         return
       }
       silentReloginInFlight.current = true
@@ -444,6 +452,7 @@ export function useChat() {
           manualReloginRef.current = '登录状态已失效，请重新登录。'
           setConnection('error')
           showNotificationToast('需要重新登录', manualReloginRef.current)
+          stopSenderForAccountOffline()
           return
         }
         // 网络类错误: 继续退避重试。
@@ -592,6 +601,7 @@ export function useChat() {
           manualReloginRef.current = '当前账号已在其他地方登录，请重新登录。'
           setConnection('error')
           showNotificationToast('需要重新登录', manualReloginRef.current)
+          stopSenderForAccountOffline()
           return
         }
         if (event?.code === 4002) {
@@ -599,6 +609,7 @@ export function useChat() {
           else {
             manualReloginRef.current = '服务已重启，请重新登录。'
             setConnection('error')
+            stopSenderForAccountOffline()
           }
           return
         }
@@ -607,6 +618,7 @@ export function useChat() {
         else {
           manualReloginRef.current = '服务连接已失效，请重新登录。'
           setConnection('error')
+          stopSenderForAccountOffline()
         }
       }
     }
