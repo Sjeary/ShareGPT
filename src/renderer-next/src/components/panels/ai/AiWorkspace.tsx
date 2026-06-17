@@ -8,7 +8,6 @@ import {
   RotateCw,
   Bot,
   Sparkles,
-  Asterisk,
   ShieldCheck,
   ShieldAlert,
   ShieldX,
@@ -36,7 +35,6 @@ import {
   partitionFor,
   normalizeGptUrl,
   normalizeGeminiUrl,
-  normalizeClaudeUrl,
 } from './constants'
 import type { AiEventPayload } from './types'
 
@@ -53,7 +51,6 @@ function resolveProxyPort(socksPort: unknown): string {
 
 function normalizeUrlFor(kind: AiKind, url: string): string {
   if (kind === 'gpt') return normalizeGptUrl(url)
-  if (kind === 'claude') return normalizeClaudeUrl(url)
   return normalizeGeminiUrl(url)
 }
 
@@ -66,7 +63,6 @@ interface AiMeta {
 const META: Record<AiKind, AiMeta> = {
   gpt: { title: 'ChatGPT', hint: '内嵌 ChatGPT 网页 · 经发送服务代理访问', icon: Bot },
   gemini: { title: 'Gemini', hint: '内嵌 Gemini 网页 · 经发送服务代理访问', icon: Sparkles },
-  claude: { title: 'Claude', hint: '内嵌 Claude 网页 · 经发送服务代理访问', icon: Asterisk },
 }
 
 // 共享 AI 网页工作区。GPT / Gemini 完全同构: 控制条 + 多标签 + 原生 view 宿主 + 遮罩。
@@ -538,7 +534,7 @@ function resolveOverlay(
   args: { senderRunning: boolean; hasTab: boolean; initialized: boolean; proxyHost: string; proxyPort: string },
 ): { title: string; text: string } | null {
   const { senderRunning, hasTab, initialized, proxyHost, proxyPort } = args
-  const label = kind === 'gpt' ? 'ChatGPT' : kind === 'claude' ? 'Claude' : 'Gemini'
+  const label = kind === 'gpt' ? 'ChatGPT' : 'Gemini'
 
   if (!senderRunning) {
     return {

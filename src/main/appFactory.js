@@ -27,22 +27,6 @@ const GEMINI_ALLOWED_HOSTS = [
   "gvt1.com",
 ];
 
-const CLAUDE_ALLOWED_HOSTS = [
-  "claude.ai",
-  "anthropic.com",
-  "claudeusercontent.com",
-  "claudemcpcontent.com",
-  "cloudflare.com",
-  "challenges.cloudflare.com",
-  "accounts.google.com",
-  "google.com",
-  "googleapis.com",
-  "gstatic.com",
-  "googleusercontent.com",
-  "sentry.io",
-  "stripe.com",
-];
-
 const AI_WORKSPACE_POLICIES = {
   gpt: {
     kind: "gpt",
@@ -55,12 +39,6 @@ const AI_WORKSPACE_POLICIES = {
     partition: "persist:gemini-chat",
     homeUrl: "https://gemini.google.com/",
     allowedHosts: GEMINI_ALLOWED_HOSTS,
-  },
-  claude: {
-    kind: "claude",
-    partition: "persist:claude-chat",
-    homeUrl: "https://claude.ai/",
-    allowedHosts: CLAUDE_ALLOWED_HOSTS,
   },
 };
 
@@ -376,13 +354,12 @@ function createElectronApp(baseMode = "all") {
   const configuredAiPartitions = new Set();
   const aiWorkspaces = new Map();
   // GPT 与 Gemini 均支持多标签: 标签顺序 / 活动标签 / 宿主矩形 均按 kind 索引。
-  const tabOrderByKind = { gpt: [], gemini: [], claude: [] };
-  const activeTabIdByKind = { gpt: "", gemini: "", claude: "" };
+  const tabOrderByKind = { gpt: [], gemini: [] };
+  const activeTabIdByKind = { gpt: "", gemini: "" };
   let aiTabCounter = 0;
   const hostStateByKind = {
     gpt: { visible: false, bounds: null },
     gemini: { visible: false, bounds: null },
-    claude: { visible: false, bounds: null },
   };
 
   function emitAiEvent(kind, type, payload = {}) {
@@ -440,7 +417,7 @@ function createElectronApp(baseMode = "all") {
 
   function defaultTitleForKind(kind) {
     const k = safeText(kind);
-    return k === "gpt" ? "ChatGPT" : k === "claude" ? "Claude" : "Gemini";
+    return k === "gpt" ? "ChatGPT" : "Gemini";
   }
 
   function normalizeAiTabTitle(rawTitle, fallbackTitle) {
@@ -911,10 +888,8 @@ function createElectronApp(baseMode = "all") {
     aiWorkspaces.clear();
     tabOrderByKind.gpt.length = 0;
     tabOrderByKind.gemini.length = 0;
-    tabOrderByKind.claude.length = 0;
     activeTabIdByKind.gpt = "";
     activeTabIdByKind.gemini = "";
-    activeTabIdByKind.claude = "";
     configuredAiPartitions.clear();
   }
 

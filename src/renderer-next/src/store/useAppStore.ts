@@ -63,7 +63,6 @@ const EMPTY_SETTINGS: AppSettings = {
   collab: {},
   gpt: {},
   gemini: {},
-  claude: {},
   ui: {},
 }
 

@@ -11,7 +11,7 @@ export interface AiProxyHost {
 export interface AiProxyReport {
   ok: boolean
   reason?: string
-  kind?: 'gpt' | 'gemini' | 'claude'
+  kind?: 'gpt' | 'gemini'
   tabId?: string
   currentUrl?: string
   socksEndpoint?: string
@@ -50,17 +50,17 @@ export interface ShareGptApi {
   openExternal: (url: string) => Promise<unknown>
 
   // GPT / AI webview (原生 WebContentsView, 主进程管理)
-  // AI 标签 (GPT / Gemini / Claude 通用, 传 kind)
-  listAiViews: (kind: 'gpt' | 'gemini' | 'claude') => Promise<unknown>
-  createAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
-  switchAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
-  closeAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
+  // AI 标签 (GPT / Gemini 通用, 传 kind)
+  listAiViews: (kind: 'gpt' | 'gemini') => Promise<unknown>
+  createAiView: (kind: 'gpt' | 'gemini', payload?: unknown) => Promise<unknown>
+  switchAiView: (kind: 'gpt' | 'gemini', payload?: unknown) => Promise<unknown>
+  closeAiView: (kind: 'gpt' | 'gemini', payload?: unknown) => Promise<unknown>
   ensureAiWorkspace: (payload: unknown) => Promise<unknown>
   syncAiViewHost: (payload: unknown) => Promise<unknown>
   navigateAiWorkspace: (payload: unknown) => Promise<unknown>
   // 代理检测: 检查该 AI 页面流量是否全部经发送代理 (梯子)。
   checkAiProxy: (
-    kind: 'gpt' | 'gemini' | 'claude',
+    kind: 'gpt' | 'gemini',
     tabId?: string,
   ) => Promise<AiProxyReport>
   executeAiJavaScript: (payload: unknown) => Promise<unknown>

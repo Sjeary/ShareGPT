@@ -21,14 +21,6 @@ const DEFAULT_TARGET_DOMAINS = [
   "googleusercontent.com",
   "gstatic.com",
   "gvt1.com",
-  // Claude (claude.ai 网页): 主站 + Anthropic(含 statsig.anthropic.com) + artifacts/MCP 内容
-  // + 错误上报(sentry) + 计费(stripe); 登录/验证走的 google/cloudflare 已在上方。
-  "claude.ai",
-  "anthropic.com",
-  "claudeusercontent.com",
-  "claudemcpcontent.com",
-  "sentry.io",
-  "stripe.com",
 ];
 
 const PUBLIC_DEFAULT_SETTINGS = {

@@ -48,7 +48,6 @@ export interface AppSettings {
   collab: Partial<CollabSettings>
   gpt: Record<string, unknown>
   gemini: Record<string, unknown>
-  claude: Record<string, unknown>
   ui: Partial<UiSettings>
 }
 
