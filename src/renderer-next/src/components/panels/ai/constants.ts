@@ -41,6 +41,8 @@ export const GEMINI_ALLOWED_HOSTS = [
 export const CLAUDE_ALLOWED_HOSTS = [
   'claude.ai',
   'anthropic.com',
+  'claudeusercontent.com',
+  'claudemcpcontent.com',
   'cloudflare.com',
   'challenges.cloudflare.com',
   'accounts.google.com',
@@ -48,6 +50,8 @@ export const CLAUDE_ALLOWED_HOSTS = [
   'googleapis.com',
   'gstatic.com',
   'googleusercontent.com',
+  'sentry.io',
+  'stripe.com',
 ]
 
 export function isAllowedUrlForHosts(rawUrl: string, allowedHosts: string[]): boolean {

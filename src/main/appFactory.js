@@ -26,11 +26,17 @@ const GEMINI_ALLOWED_HOSTS = [
 const CLAUDE_ALLOWED_HOSTS = [
   "claude.ai",
   "anthropic.com",
+  "claudeusercontent.com",
+  "claudemcpcontent.com",
   "cloudflare.com",
+  "challenges.cloudflare.com",
+  "accounts.google.com",
   "google.com",
   "googleapis.com",
   "gstatic.com",
   "googleusercontent.com",
+  "sentry.io",
+  "stripe.com",
 ];
 
 const AI_WORKSPACE_POLICIES = {
