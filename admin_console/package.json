@@ -6,9 +6,10 @@
   "author": "Sjeary",
   "license": "UNLICENSED",
   "scripts": {
-    "dev": "npm exec -- electron .",
-    "dist:win": "npm exec -- electron-builder --win portable",
-    "dist:mac": "npm exec -- electron-builder --mac dmg"
+    "build:ui": "npm --prefix ui install && npm --prefix ui run build",
+    "dev": "npm run build:ui && npm exec -- electron .",
+    "dist:win": "npm run build:ui && npm exec -- electron-builder --win portable",
+    "dist:mac": "npm run build:ui && npm exec -- electron-builder --mac dmg"
   },
   "devDependencies": {
     "electron": "^31.7.7",
@@ -20,7 +21,14 @@
     "asar": true,
     "files": [
       "src/**/*",
-      "package.json"
+      "ui/dist/**/*",
+      "package.json",
+      "!ui/src/**",
+      "!ui/node_modules/**",
+      "!ui/package*.json",
+      "!ui/tsconfig*.json",
+      "!ui/vite.config.ts",
+      "!ui/components.json"
     ],
     "directories": {
       "output": "release"

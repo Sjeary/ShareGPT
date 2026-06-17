@@ -151,10 +151,28 @@ function createWindow() {
     mainWindow.setWindowButtonVisibility(true);
   }
 
-  mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
+  loadRenderer(mainWindow);
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+}
+
+// UI 加载策略 (对齐 sender):
+// - 开发热更新: ADMIN_UI_DEV_URL 指向 Vite dev server。
+// - 默认: 加载重构后的 ui/dist 构建产物 (新版 React UI)。
+// - 回退: ADMIN_UI_LEGACY=1 或缺产物时, 加载旧的原生 HTML 渲染层。
+function loadRenderer(win) {
+  const devUrl = process.env.ADMIN_UI_DEV_URL;
+  if (devUrl && !app.isPackaged) {
+    win.loadURL(devUrl);
+    return;
+  }
+  const builtUi = path.join(__dirname, "../../ui/dist/index.html");
+  if (process.env.ADMIN_UI_LEGACY !== "1" && fs.existsSync(builtUi)) {
+    win.loadFile(builtUi);
+    return;
+  }
+  win.loadFile(path.join(__dirname, "../renderer/index.html"));
 }
 
 app.whenReady().then(() => {

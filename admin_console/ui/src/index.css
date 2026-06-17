@@ -1,0 +1,156 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* =====================================================================
+   设计 token (shadcn) — 经护眼校准
+   浅色: 去纯白(表面柔白)+文字降眩(非纯黑)+边框定结构, 降低整体高对比眩光
+   深色: 非纯黑基底 + 分层抬升表面(elevation) + 提亮次级文字与边框, 改善"看不清"
+   参考: Material 深色 #121212/elevation 体系、WCAG AA(正文≥4.5:1, 但避免 16:1+ 的眩光/光晕)
+   ===================================================================== */
+:root {
+  --radius: 0.75rem;
+
+  /* Apple HIG 浅色分组体系 (grouped bg #f2f2f7 灰底为主 + 白卡为辅降眩光; systemGray5 #e5e5ea / Gray4 #d1d1d6; 文字 #1d1d1f) */
+  --background: #f2f2f7;
+  --foreground: #1d1d1f;
+  --card: #ffffff;
+  --card-foreground: #1d1d1f;
+  --popover: #ffffff;
+  --popover-foreground: #1d1d1f;
+  --primary: #d6850c;
+  --primary-foreground: #ffffff;
+  --secondary: #e5e5ea;
+  --secondary-foreground: #1d1d1f;
+  --muted: #e5e5ea;
+  --muted-foreground: #6c6c70;
+  --accent: #f0e2cc;
+  --accent-foreground: #8a5207;
+  --destructive: #ff3b30;
+  --destructive-foreground: #ffffff;
+  --success: #34c759;
+  --border: #d1d1d6;
+  --input: #c7c7cc;
+  --ring: #d6850c;
+
+  --sidebar: #ebebf0;
+  --sidebar-foreground: #1d1d1f;
+  --sidebar-primary: #d6850c;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #e1e1e8;
+  --sidebar-accent-foreground: #1d1d1f;
+  --sidebar-border: #d9d9de;
+  --sidebar-ring: #d6850c;
+}
+
+.dark {
+  /* elevation: bg(0) < sidebar(1) < card(2) < popover(3), 越高越亮以区分层级 */
+  /* Telegram 桌面端蓝灰分层 (官方: 主#17212b/次级#232e3c/更暗层#0e1621/次级文字#708499), 取偏暗作底 */
+  --background: #0e1621;
+  --foreground: #f0f4f7;
+  --card: #17212b;
+  --card-foreground: #f0f4f7;
+  --popover: #232e3c;
+  --popover-foreground: #f0f4f7;
+  --primary: #f59e0b;
+  --primary-foreground: #1a1206;
+  --secondary: #1c2836;
+  --secondary-foreground: #f0f4f7;
+  --muted: #1c2836;
+  --muted-foreground: #7e8fa0;
+  --accent: #232e3c;
+  --accent-foreground: #f8d9a0;
+  --destructive: #ec3942;
+  --destructive-foreground: #ffffff;
+  --success: #4dcd5e;
+  --border: #202d3b;
+  --input: #213040;
+  --ring: #f59e0b;
+
+  --sidebar: #0c131c;
+  --sidebar-foreground: #c4d0db;
+  --sidebar-primary: #f59e0b;
+  --sidebar-primary-foreground: #1a1206;
+  --sidebar-accent: #1c2836;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #141d27;
+  --sidebar-ring: #f59e0b;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --font-sans: 'Segoe UI Variable Text', 'Microsoft YaHei UI', system-ui, sans-serif;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground;
+    margin: 0;
+    overflow: hidden;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Electron 无边框窗口拖拽区 */
+  .app-drag {
+    -webkit-app-region: drag;
+  }
+  .app-no-drag {
+    -webkit-app-region: no-drag;
+  }
+  /* 细滚动条 */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--muted-foreground) 30%, transparent);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
+  }
+}

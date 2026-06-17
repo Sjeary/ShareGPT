@@ -1,0 +1,101 @@
+import type { ReactNode } from 'react'
+import { useEffect, useState } from 'react'
+import { ShieldCheck, Moon, Sun, Minus, Square, Copy, X } from 'lucide-react'
+import { adminApi } from '@/lib/api'
+import { cn } from '@/lib/utils'
+import { useAdminStore } from '@/store/useAdminStore'
+
+function CtlButton({
+  onClick,
+  label,
+  danger,
+  children,
+}: {
+  onClick: () => void
+  label: string
+  danger?: boolean
+  children: ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={cn(
+        'grid size-9 place-items-center rounded-md text-muted-foreground transition hover:text-foreground',
+        'outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring',
+        danger
+          ? 'hover:bg-destructive hover:text-destructive-foreground'
+          : 'hover:bg-secondary',
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
+export function Titlebar() {
+  const dark = useAdminStore((s) => s.dark)
+  const toggleTheme = useAdminStore((s) => s.toggleTheme)
+  const authed = useAdminStore((s) => s.authed)
+  const serverUrl = useAdminStore((s) => s.serverUrl)
+  const profile = useAdminStore((s) => s.profile)
+
+  const [maximized, setMaximized] = useState(false)
+  useEffect(() => {
+    let alive = true
+    void adminApi
+      .isWindowMaximized()
+      .then((v) => alive && setMaximized(Boolean(v)))
+      .catch(() => alive && setMaximized(false))
+    return () => {
+      alive = false
+    }
+  }, [])
+
+  const handleToggleMax = () => {
+    void Promise.resolve(adminApi.toggleMaximizeWindow())
+      .then(() => adminApi.isWindowMaximized())
+      .then((v) => setMaximized(Boolean(v)))
+      .catch(() => undefined)
+  }
+
+  const adminLabel =
+    profile?.displayName || profile?.username || '管理员'
+
+  return (
+    <header className="app-drag flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
+      <div className="flex items-center gap-2.5">
+        <div className="grid size-6 place-items-center rounded-md bg-primary text-primary-foreground">
+          <ShieldCheck className="size-3.5" />
+        </div>
+        <span className="text-sm font-semibold tracking-tight">ShareGPT Admin</span>
+        {authed && (
+          <>
+            <span className="hidden rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground sm:inline">
+              {serverUrl || '未连接'}
+            </span>
+            <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {adminLabel}
+            </span>
+          </>
+        )}
+      </div>
+      <div className="app-no-drag flex items-center gap-1">
+        <CtlButton onClick={toggleTheme} label="切换主题">
+          {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+        </CtlButton>
+        <span aria-hidden className="mx-1 h-5 w-px bg-border" />
+        <CtlButton onClick={() => adminApi.minimizeWindow()} label="最小化">
+          <Minus className="size-4" />
+        </CtlButton>
+        <CtlButton onClick={handleToggleMax} label={maximized ? '还原窗口' : '最大化'}>
+          {maximized ? <Copy className="size-4" /> : <Square className="size-4" />}
+        </CtlButton>
+        <CtlButton onClick={() => adminApi.closeWindow()} label="关闭" danger>
+          <X className="size-4" />
+        </CtlButton>
+      </div>
+    </header>
+  )
+}
