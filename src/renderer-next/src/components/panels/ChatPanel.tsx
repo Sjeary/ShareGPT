@@ -196,15 +196,30 @@ export function ChatPanel() {
     return `${typers.length} 位联系人正在输入…`
   }, [activeConversation, activeKey, roomScope, typingByConversation])
 
-  // 在线联系人 (排除自己 + 已在会话列表中的私聊对象), 供「在线联系人」分区开私聊。
+  // 群组成员 (排除自己 + 已在会话列表中的私聊对象), 供底部「群组成员」分区开新私聊。
+  // 不再限定在线: 离线成员也要能选中发起会话, 否则无法找新的人聊天。
+  // 在线优先 + 按名称排序; 顶部搜索词同样作用于此列表, 便于按名字找人。
   const contacts = useMemo(() => {
     const existing = new Set(
       conversations.filter((c) => c.kind === 'private').map((c) => c.username),
     )
-    return directory.filter(
-      (u) => u.online && u.username !== selfUsername && !existing.has(u.username),
-    )
-  }, [directory, conversations, selfUsername])
+    const q = filter.trim().toLowerCase()
+    return directory
+      .filter((u) => u.username !== selfUsername && !existing.has(u.username))
+      .filter(
+        (u) =>
+          !q ||
+          (u.displayName || '').toLowerCase().includes(q) ||
+          u.username.toLowerCase().includes(q),
+      )
+      .sort((a, b) => {
+        if (a.online !== b.online) return a.online ? -1 : 1
+        return (a.displayName || a.username).localeCompare(
+          b.displayName || b.username,
+          'zh-Hans-CN',
+        )
+      })
+  }, [directory, conversations, selfUsername, filter])
 
   function reportSendError(err: unknown) {
     toast.error(String((err as Error)?.message || err))

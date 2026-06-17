@@ -26,6 +26,7 @@ export function ConversationList({
   onSelect: (key: string) => void
   onStartPrivate: (username: string) => void
 }) {
+  const onlineContacts = contacts.filter((u) => u.online).length
   return (
     <div className="flex w-[300px] shrink-0 flex-col border-r border-border bg-sidebar">
       <div className="flex h-14 shrink-0 items-center border-b border-border px-3">
@@ -34,7 +35,7 @@ export function ConversationList({
           <Input
             value={filter}
             onChange={(e) => onFilterChange(e.target.value)}
-            placeholder="搜索会话…"
+            placeholder="搜索会话或成员…"
             className="h-9 bg-background pl-8"
           />
         </div>
@@ -115,10 +116,13 @@ export function ConversationList({
         </ul>
 
         {contacts.length > 0 && (
-          <div className="px-2 pb-2">
+          <div className="mt-1 border-t border-border px-2 pb-2 pt-2">
             <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-muted-foreground">
               <Users className="size-3.5" />
-              在线联系人
+              <span>群组成员</span>
+              <span className="ml-auto tabular-nums text-[11px] text-muted-foreground/70">
+                {onlineContacts} / {contacts.length} 在线
+              </span>
             </div>
             <ul className="flex flex-col gap-0.5">
               {contacts.map((user) => (
@@ -128,19 +132,35 @@ export function ConversationList({
                     onClick={() => onStartPrivate(user.username)}
                     className="flex w-full items-center gap-3 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-sidebar-accent/60"
                   >
-                    <Avatar size="default">
+                    <Avatar size="default" className={cn(!user.online && 'opacity-60')}>
                       <AvatarFallback>
                         {avatarMark(user.avatar, user.displayName)}
                       </AvatarFallback>
                       {user.online && <AvatarBadge className="bg-success" />}
                     </Avatar>
-                    <span className="min-w-0 flex-1 truncate text-sm">
+                    <span
+                      className={cn(
+                        'min-w-0 flex-1 truncate text-sm',
+                        !user.online && 'text-muted-foreground',
+                      )}
+                    >
                       {user.displayName || user.username}
                     </span>
+                    {!user.online && (
+                      <span className="shrink-0 text-[11px] text-muted-foreground/70">
+                        离线
+                      </span>
+                    )}
                   </button>
                 </li>
               ))}
             </ul>
+          </div>
+        )}
+
+        {contacts.length === 0 && filter.trim() && items.length <= 1 && (
+          <div className="px-3 pb-3 pt-1 text-center text-xs text-muted-foreground">
+            没有匹配到群组成员
           </div>
         )}
       </ScrollArea>
