@@ -8,6 +8,7 @@ import {
   RotateCw,
   Bot,
   Sparkles,
+  Asterisk,
 } from 'lucide-react'
 import { PanelScaffold } from '@/components/panels/PanelScaffold'
 import { Button } from '@/components/ui/button'
@@ -28,6 +29,7 @@ import {
   partitionFor,
   normalizeGptUrl,
   normalizeGeminiUrl,
+  normalizeClaudeUrl,
 } from './constants'
 import type { AiEventPayload } from './types'
 
@@ -43,7 +45,9 @@ function resolveProxyPort(socksPort: unknown): string {
 }
 
 function normalizeUrlFor(kind: AiKind, url: string): string {
-  return kind === 'gpt' ? normalizeGptUrl(url) : normalizeGeminiUrl(url)
+  if (kind === 'gpt') return normalizeGptUrl(url)
+  if (kind === 'claude') return normalizeClaudeUrl(url)
+  return normalizeGeminiUrl(url)
 }
 
 interface AiMeta {
@@ -55,6 +59,7 @@ interface AiMeta {
 const META: Record<AiKind, AiMeta> = {
   gpt: { title: 'ChatGPT', hint: '内嵌 ChatGPT 网页 · 经发送服务代理访问', icon: Bot },
   gemini: { title: 'Gemini', hint: '内嵌 Gemini 网页 · 经发送服务代理访问', icon: Sparkles },
+  claude: { title: 'Claude', hint: '内嵌 Claude 网页 · 经发送服务代理访问', icon: Asterisk },
 }
 
 // 共享 AI 网页工作区。GPT / Gemini 完全同构: 控制条 + 多标签 + 原生 view 宿主 + 遮罩。
@@ -347,7 +352,7 @@ function resolveOverlay(
   args: { senderRunning: boolean; hasTab: boolean; initialized: boolean; proxyHost: string; proxyPort: string },
 ): { title: string; text: string } | null {
   const { senderRunning, hasTab, initialized, proxyHost, proxyPort } = args
-  const label = kind === 'gpt' ? 'ChatGPT' : 'Gemini'
+  const label = kind === 'gpt' ? 'ChatGPT' : kind === 'claude' ? 'Claude' : 'Gemini'
 
   if (!senderRunning) {
     return {
@@ -364,12 +369,16 @@ function resolveOverlay(
   }
 
   if (!initialized) {
-    return kind === 'gpt'
-      ? { title: '准备打开 ChatGPT', text: '正在初始化内置页面并连接本地代理。第一次进入可能稍慢。' }
-      : {
-          title: '准备打开 Gemini',
-          text: '正在初始化内置页面并连接本地代理。Google 登录可能会跳转到账号验证页面。',
-        }
+    if (kind === 'gemini') {
+      return {
+        title: '准备打开 Gemini',
+        text: '正在初始化内置页面并连接本地代理。Google 登录可能会跳转到账号验证页面。',
+      }
+    }
+    return {
+      title: `准备打开 ${label}`,
+      text: '正在初始化内置页面并连接本地代理。第一次进入可能稍慢。',
+    }
   }
 
   return null

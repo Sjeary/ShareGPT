@@ -4,7 +4,7 @@ import { create } from 'zustand'
 // 真正的 WebContentsView 在主进程, 这里只镜像运行态用于渲染控制条/标签/遮罩。
 // 状态按 kind 索引, 两种网页同构 (对齐主进程的标签泛化)。
 
-export type AiKind = 'gpt' | 'gemini'
+export type AiKind = 'gpt' | 'gemini' | 'claude'
 
 export interface AiTab {
   id: string
@@ -30,9 +30,13 @@ interface AiStore {
 }
 
 export const useAiStore = create<AiStore>((set) => ({
-  tabsByKind: { gpt: [], gemini: [] },
-  activeTabIdByKind: { gpt: '', gemini: '' },
-  feedbackByKind: { gpt: { text: '', tone: '' }, gemini: { text: '', tone: '' } },
+  tabsByKind: { gpt: [], gemini: [], claude: [] },
+  activeTabIdByKind: { gpt: '', gemini: '', claude: '' },
+  feedbackByKind: {
+    gpt: { text: '', tone: '' },
+    gemini: { text: '', tone: '' },
+    claude: { text: '', tone: '' },
+  },
 
   setTabs: (kind, tabs, activeTabId) =>
     set((s) => ({
