@@ -4,7 +4,6 @@ import { toast } from 'sonner'
 import { useAppStore } from '@/store/useAppStore'
 import {
   privateConversationKey,
-  roomConversationKey,
   storeKeyForActive,
   useChatStore,
 } from '@/store/useChatStore'
@@ -99,6 +98,9 @@ export function ChatPanel() {
   const setEditDraft = useChatStore((s) => s.setEditDraft)
   const setForwardDraft = useChatStore((s) => s.setForwardDraft)
   const clearDrafts = useChatStore((s) => s.clearDrafts)
+  // 未读计数改由 store 维护 (仅实时入站累加, 历史加载不计), 见 useChat.trackUnread。
+  const unreadByKey = useChatStore((s) => s.unreadByKey)
+  const clearUnread = useChatStore((s) => s.clearUnread)
 
   const collab = (settings?.collab ?? {}) as Partial<CollabSettings>
   const pinned = useMemo(
@@ -106,44 +108,8 @@ export function ChatPanel() {
     [collab.pinned_users],
   )
 
-  // 轻量未读计数: 收到非自己、非当前会话的消息时 +1; 切换会话清零。
-  const [unreadByKey, setUnreadByKey] = useState<Record<string, number>>({})
-  const lastSeenCount = useRef<Record<string, number>>({})
-
   // 图片灯箱 (旧 openChatImageLightbox ~4975)。
   const [lightbox, setLightbox] = useState<LightboxTarget | null>(null)
-
-  useEffect(() => {
-    const activeStoreKey =
-      activeKey === '' ? roomConversationKey(roomScope) : activeKey
-    setUnreadByKey((prev) => {
-      const next = { ...prev }
-      let changed = false
-      for (const [key, list] of Object.entries(messagesByConversation)) {
-        const prevCount = lastSeenCount.current[key] ?? 0
-        const curCount = list.length
-        if (curCount > prevCount) {
-          const fresh = list.slice(prevCount)
-          if (key !== activeStoreKey) {
-            const incoming = fresh.filter(
-              (m) => !m.system && m.from && m.from !== selfUsername,
-            ).length
-            if (incoming > 0) {
-              next[key] = (next[key] ?? 0) + incoming
-              changed = true
-            }
-          }
-        }
-        lastSeenCount.current[key] = curCount
-      }
-      // 当前会话清零
-      if ((next[activeStoreKey] ?? 0) > 0) {
-        next[activeStoreKey] = 0
-        changed = true
-      }
-      return changed ? next : prev
-    })
-  }, [messagesByConversation, activeKey, roomScope, selfUsername])
 
   const conversations = useMemo(
     () =>
@@ -202,6 +168,12 @@ export function ChatPanel() {
     chat.markConversationRead(messages, scope, activeConversation.username)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appActive, connection, activeKey, messages])
+
+  // 打开/查看会话即清除其未读标记 (旧 clearUnreadCount on open); 离线也清, 与旧版一致。
+  useEffect(() => {
+    if (appActive !== 'chat' || !activeConversation) return
+    clearUnread(storeKeyForActive(activeKey, roomScope))
+  }, [appActive, activeKey, roomScope, messages, activeConversation, clearUnread])
 
   // 对端「正在输入…」(旧 conversationTypingSummary ~510): 房间多人时汇总。
   const typingText = useMemo(() => {

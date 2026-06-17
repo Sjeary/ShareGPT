@@ -135,6 +135,9 @@ interface ChatState {
   activeKey: string // "" = 房间(默认), 或 "user:xxx"
   filter: string
 
+  // 未读计数 (旧 unreadByConversation): 仅实时入站消息累加, 历史加载不计。
+  unreadByKey: Record<string, number>
+
   // 动作
   setIdentity: (identity: Partial<ChatIdentity>) => void
   setConnection: (s: ConnectionState) => void
@@ -142,6 +145,10 @@ interface ChatState {
   setDirectory: (users: DirectoryUser[]) => void
   setActiveKey: (key: string) => void
   setFilter: (filter: string) => void
+
+  // 未读 (旧 increaseUnreadCount/clearUnreadCount)
+  incrementUnread: (key: string) => void
+  clearUnread: (key: string) => void
 
   // 对端输入中
   setTyping: (key: string, meta: TypingMeta) => void
@@ -227,6 +234,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   forwardDraft: null,
   activeKey: '', // 默认房间
   filter: '',
+  unreadByKey: {},
 
   setIdentity: (identity) =>
     set((s) => ({ identity: { ...s.identity, ...identity } })),
@@ -235,6 +243,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setDirectory: (directory) => set({ directory }),
   setActiveKey: (activeKey) => set({ activeKey }),
   setFilter: (filter) => set({ filter }),
+
+  incrementUnread: (key) =>
+    set((s) => {
+      if (!key) return s
+      return { unreadByKey: { ...s.unreadByKey, [key]: (s.unreadByKey[key] ?? 0) + 1 } }
+    }),
+  clearUnread: (key) =>
+    set((s) => {
+      if (!key || !s.unreadByKey[key]) return s
+      const next = { ...s.unreadByKey }
+      delete next[key]
+      return { unreadByKey: next }
+    }),
 
   setTyping: (key, meta) =>
     set((s) =>
@@ -332,6 +353,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       forwardDraft: null,
       activeKey: '',
       filter: '',
+      unreadByKey: {},
     }),
 }))
 

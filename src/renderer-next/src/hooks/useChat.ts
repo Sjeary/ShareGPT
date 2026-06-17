@@ -275,6 +275,26 @@ export function useChat() {
     }
   }, [])
 
+  // 未读计数 (旧 increaseUnreadCount): 仅对「实时」入站消息生效, 且会话不可见时才 +1。
+  // 历史加载走 mergeMessages 不经此处, 故重新登录不会把已读历史重新标未读。
+  const trackUnread = useCallback((message: ChatMessage) => {
+    if (message.system || !message.from) return
+    const state = useChatStore.getState()
+    const self = state.identity.username
+    if (message.from === self) return
+
+    const appActive = useAppStore.getState().active
+    const focused =
+      typeof document === 'undefined'
+        ? true
+        : document.hasFocus() && document.visibilityState !== 'hidden'
+    const key = incomingConversationKey(message, self, state.roomScope)
+    const activeStoreKey = storeKeyForActive(state.activeKey, state.roomScope)
+    const visible = appActive === 'chat' && key === activeStoreKey && focused
+    if (visible) return
+    state.incrementUnread(key)
+  }, [])
+
   // 对端 typing (移植自旧 chat_typing 分支 ~4427 + setConversationTyping ~488)。
   const handleTyping = useCallback(
     (payload: Record<string, unknown>) => {
@@ -517,6 +537,7 @@ export function useChat() {
             upsertMessage(message)
             maybeNotifyIncoming(message)
             sendReadReceipt(message)
+            trackUnread(message)
             break
           }
           case 'chat_typing': {
@@ -629,6 +650,7 @@ export function useChat() {
     setIdentity,
     setRoomScope,
     setSession,
+    trackUnread,
     upsertMessage,
   ])
 
