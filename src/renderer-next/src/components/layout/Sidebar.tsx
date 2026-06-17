@@ -17,7 +17,11 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const collapsed = useAppStore((s) => s.sidebarCollapsed)
   const toggleSidebar = useAppStore((s) => s.toggleSidebar)
   const sidebarSide = useAppStore((s) => s.sidebarSide)
+  const showGemini = useAppStore((s) => s.showGemini)
   const meta = useAppStore((s) => s.meta)
+
+  // 可按设置隐藏 Gemini 入口 (settings.ui.showGemini)。
+  const navItems = showGemini ? NAV : NAV.filter((item) => item.key !== 'gemini')
 
   // 侧栏在右时: 边框换到左侧, 收起态 Tooltip 弹向左侧 (避免被自身遮挡/出屏)。
   const onRight = sidebarSide === 'right'
@@ -40,7 +44,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
               ),
         )}
       >
-        {NAV.map(({ key, label, icon: Icon, hint }) => {
+        {navItems.map(({ key, label, icon: Icon, hint }) => {
           const on = key === active
           const btn = (
             <button

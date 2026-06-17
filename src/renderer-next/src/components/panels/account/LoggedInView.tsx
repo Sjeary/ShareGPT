@@ -246,6 +246,8 @@ export function LoggedInView() {
   const patchSection = useAppStore((s) => s.patchSection)
   const sidebarSide = useAppStore((s) => s.sidebarSide)
   const setSidebarSide = useAppStore((s) => s.setSidebarSide)
+  const showGemini = useAppStore((s) => s.showGemini)
+  const setShowGemini = useAppStore((s) => s.setShowGemini)
   const profile = useAuthStore((s) => s.profile)
   const { logout } = useAuth()
 
@@ -370,6 +372,25 @@ export function LoggedInView() {
                 )
               })}
             </div>
+          </div>
+
+          <Separator className="my-1" />
+
+          {/* 是否展示 Gemini: 关闭后导航栏不再显示 Gemini 入口 (settings.ui.showGemini)。 */}
+          <div className="flex items-center justify-between gap-3 py-1.5">
+            <div className="min-w-0">
+              <Label htmlFor="ui-show-gemini" className="cursor-pointer">
+                显示 Gemini
+              </Label>
+              <p className="truncate text-xs text-muted-foreground">
+                控制主页导航栏是否显示 Gemini 切换按钮。
+              </p>
+            </div>
+            <Switch
+              id="ui-show-gemini"
+              checked={showGemini}
+              onCheckedChange={setShowGemini}
+            />
           </div>
         </CardContent>
       </Card>

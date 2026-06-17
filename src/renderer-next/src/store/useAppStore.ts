@@ -20,6 +20,10 @@ interface AppState {
   sidebarSide: 'left' | 'right'
   setSidebarSide: (side: 'left' | 'right') => void
 
+  // 是否在导航栏展示 Gemini 入口 (设置项, 入口在账户面板)。默认展示。
+  showGemini: boolean
+  setShowGemini: (v: boolean) => void
+
   // GPT/Gemini 页隐藏侧栏 (侧栏三态之一: 左 / 右 / 隐藏), 让内嵌网页占满看着清爽。
   // 仅在 GPT/Gemini 面板生效 (见 Shell), 避免在其它面板把导航藏没了。
   sidebarHidden: boolean
@@ -133,6 +137,30 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { sidebarSide: side }
     }),
 
+  showGemini: (() => {
+    try {
+      // 默认展示: 仅当显式存为 '0' 时隐藏。
+      return localStorage.getItem('sharegpt-show-gemini') !== '0'
+    } catch {
+      return true
+    }
+  })(),
+  // 切换是否展示 Gemini: 写 localStorage + 回写磁盘 settings.ui.showGemini;
+  // 若在 Gemini 页时被关闭, 自动切回「代理转发」, 避免停留在已隐藏的空面板。
+  setShowGemini: (v) =>
+    set((s) => {
+      try {
+        localStorage.setItem('sharegpt-show-gemini', v ? '1' : '0')
+      } catch {
+        /* ignore */
+      }
+      void get()
+        .patchSection('ui', { showGemini: v })
+        .catch(() => undefined)
+      const nextActive = !v && s.active === 'gemini' ? 'service' : s.active
+      return { showGemini: v, active: nextActive }
+    }),
+
   sidebarHidden: (() => {
     try {
       return localStorage.getItem('sharegpt-sidebar-hidden') === '1'
@@ -197,6 +225,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const savedSide = mergedSettings.ui?.sidebarSide
     if (savedSide === 'left' || savedSide === 'right') {
       set({ sidebarSide: savedSide })
+    }
+    // 是否展示 Gemini 同样优先取磁盘设置, 无则保留 localStorage 现值。
+    const savedShowGemini = mergedSettings.ui?.showGemini
+    if (typeof savedShowGemini === 'boolean') {
+      set({ showGemini: savedShowGemini })
+      if (!savedShowGemini && get().active === 'gemini') set({ active: 'service' })
     }
     api.onStatus((payload) => set({ status: payload as StatusPayload }))
   },

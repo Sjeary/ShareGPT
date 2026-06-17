@@ -40,6 +40,7 @@ export interface UiSettings {
   setup_guide_dismissed: boolean
   theme: 'dark' | 'light'
   sidebarSide: 'left' | 'right'
+  showGemini: boolean
 }
 
 export interface AppSettings {
