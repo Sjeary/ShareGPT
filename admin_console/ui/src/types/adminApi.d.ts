@@ -38,6 +38,7 @@ export interface AdminApi {
   minimizeWindow: () => Promise<unknown>
   toggleMaximizeWindow: () => Promise<boolean>
   isWindowMaximized: () => Promise<boolean>
+  isWindowFullScreen: () => Promise<boolean>
   closeWindow: () => Promise<unknown>
   selectReleaseFile: () => Promise<ReleaseFilePick | null>
   uploadRelease: (payload: ReleaseUploadPayload) => Promise<{ bootstrap?: unknown }>

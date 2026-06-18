@@ -1374,6 +1374,12 @@ function createElectronApp(baseMode = "all") {
       return targetWindow.isMaximized();
     });
 
+    ipcMain.handle("window:is-fullscreen", (event) => {
+      const targetWindow = getEventWindow(event, mainWindow);
+      if (!targetWindow) return false;
+      return targetWindow.isFullScreen();
+    });
+
     ipcMain.handle("sender:start", (_event, senderSettings) => {
       assertMode("sender");
       return backend.startSender(senderSettings);

@@ -73,15 +73,35 @@ export function Titlebar() {
 
   const maxLabel = maximized ? '还原窗口' : '最大化'
 
-  // macOS 用系统原生红绿灯(左上角)管理窗口, 不再自绘最小化/最大化/关闭, 避免双份控件;
-  // 左侧留出红绿灯宽度, 顶栏内容不被遮挡。Windows 走自绘窗口控制(右上角)。
+  // macOS 全屏时系统红绿灯会隐藏, 此时左侧不再为它留白(否则图标停在右侧、左边空一块)。
+  // 进入/退出全屏窗口尺寸会变, 必触发 DOM resize, 据此重新查询全屏态, 无需主进程额外广播。
   const isMac = api.platform === 'darwin'
+  const [fullScreen, setFullScreen] = useState(false)
+  useEffect(() => {
+    if (!isMac) return
+    let alive = true
+    const sync = () => {
+      void api
+        .isWindowFullScreen()
+        .then((v) => alive && setFullScreen(Boolean(v)))
+        .catch(() => alive && setFullScreen(false))
+    }
+    sync()
+    window.addEventListener('resize', sync)
+    return () => {
+      alive = false
+      window.removeEventListener('resize', sync)
+    }
+  }, [isMac])
+
+  // 仅 macOS 非全屏时, 左侧为红绿灯留白。
+  const padForTrafficLights = isMac && !fullScreen
 
   return (
     <header
       className={cn(
         'app-drag flex h-11 shrink-0 items-center justify-between border-b border-border',
-        isMac ? 'pl-20 pr-3' : 'px-3',
+        padForTrafficLights ? 'pl-20 pr-3' : 'px-3',
       )}
     >
       <div className="flex items-center gap-2.5">

@@ -199,6 +199,10 @@ app.whenReady().then(() => {
     const target = getEventWindow(event);
     return target ? target.isMaximized() : false;
   });
+  ipcMain.handle("window:is-fullscreen", (event) => {
+    const target = getEventWindow(event);
+    return target ? target.isFullScreen() : false;
+  });
   ipcMain.handle("window:close", (event) => {
     getEventWindow(event)?.close();
     return true;

@@ -63,14 +63,32 @@ export function Titlebar() {
   const roleLabel =
     role === 'dev' ? '开发者' : profile?.displayName || profile?.username || '管理员'
 
-  // macOS 用系统红绿灯(左上角); 不自绘窗口控制, 左侧留出红绿灯宽度。Windows 走自绘控制。
+  // macOS 用系统红绿灯(左上角); 不自绘窗口控制, 非全屏时左侧留出红绿灯宽度。Windows 走自绘控制。
   const isMac = adminApi.platform === 'darwin'
+  const [fullScreen, setFullScreen] = useState(false)
+  useEffect(() => {
+    if (!isMac) return
+    let alive = true
+    const sync = () => {
+      void adminApi
+        .isWindowFullScreen()
+        .then((v) => alive && setFullScreen(Boolean(v)))
+        .catch(() => alive && setFullScreen(false))
+    }
+    sync()
+    window.addEventListener('resize', sync)
+    return () => {
+      alive = false
+      window.removeEventListener('resize', sync)
+    }
+  }, [isMac])
+  const padForTrafficLights = isMac && !fullScreen
 
   return (
     <header
       className={cn(
         'app-drag flex h-11 shrink-0 items-center justify-between border-b border-border',
-        isMac ? 'pl-20 pr-3' : 'px-3',
+        padForTrafficLights ? 'pl-20 pr-3' : 'px-3',
       )}
     >
       <div className="flex items-center gap-2.5">

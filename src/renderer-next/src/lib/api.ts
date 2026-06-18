@@ -37,6 +37,7 @@ const fallback = {
   toggleMaximizeWindow: async () => undefined,
   closeWindow: async () => undefined,
   isWindowMaximized: async () => false,
+  isWindowFullScreen: async () => false,
   startSender: async () => undefined,
   stopSender: async () => undefined,
   startReceiver: async () => undefined,

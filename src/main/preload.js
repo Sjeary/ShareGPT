@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld("api", {
   toggleMaximizeWindow: () => ipcRenderer.invoke("window:toggle-maximize"),
   closeWindow: () => ipcRenderer.invoke("window:close"),
   isWindowMaximized: () => ipcRenderer.invoke("window:is-maximized"),
+  isWindowFullScreen: () => ipcRenderer.invoke("window:is-fullscreen"),
 
   startSender: (settings) => ipcRenderer.invoke("sender:start", settings),
   stopSender: () => ipcRenderer.invoke("sender:stop"),

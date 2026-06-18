@@ -9,6 +9,7 @@ const fallback: AdminApi = {
   minimizeWindow: async () => undefined,
   toggleMaximizeWindow: async () => false,
   isWindowMaximized: async () => false,
+  isWindowFullScreen: async () => false,
   closeWindow: async () => undefined,
   selectReleaseFile: async () => null,
   uploadRelease: async () => ({}),
