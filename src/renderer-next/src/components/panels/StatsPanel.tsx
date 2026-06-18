@@ -3,7 +3,8 @@ import { PanelScaffold } from './PanelScaffold'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useStats } from './stats/useStats'
-import { formatRangeText } from './stats/helpers'
+import { formatRangeText, STATS_KIND_LABELS, type StatsKind } from './stats/helpers'
+import { cn } from '@/lib/utils'
 import { RangeControls } from './stats/RangeControls'
 import { PieChart } from './stats/PieChart'
 import { RankList } from './stats/RankList'
@@ -16,7 +17,8 @@ import { StatsSkeleton } from './stats/StatsSkeleton'
 // 数据直连协作服务器 GET /api/gpt/stats[?from&to], 带 Bearer useAuthStore.token。
 // 逻辑对照旧版 renderer.js loadGptRangeStats / renderGptStats / setGptStatsPreset。
 export function StatsPanel() {
-  const { authed, range, stats, loading, error, applyPreset, setCustomRange, apply } = useStats()
+  const { authed, range, kind, setKind, stats, loading, error, applyPreset, setCustomRange, apply } =
+    useStats()
 
   // 未登录: 参照账户面板的 authed 判断, 给出登录提示。
   if (!authed) {
@@ -58,6 +60,26 @@ export function StatsPanel() {
       }
     >
       <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6">
+        {/* AI 维度切换 (ChatGPT / Gemini / Claude) */}
+        <div className="inline-flex w-fit items-center gap-1 rounded-lg border border-border bg-muted/40 p-1">
+          {(Object.keys(STATS_KIND_LABELS) as StatsKind[]).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setKind(k)}
+              disabled={loading && kind === k}
+              className={cn(
+                'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                kind === k
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {STATS_KIND_LABELS[k]}
+            </button>
+          ))}
+        </div>
+
         {/* 区间筛选 */}
         <Card>
           <CardContent className="flex flex-col gap-3 pt-6">

@@ -262,7 +262,7 @@ export function MessageBubble({
             ) : (
               <>
                 {richBody && (
-                  <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                  <div className="selectable whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                     {richBody}
                   </div>
                 )}

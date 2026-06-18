@@ -145,12 +145,50 @@ export function ChatPanel() {
     [messagesByConversation, activeKey, roomScope],
   )
 
-  // 自动滚动到底部
+  // 自动滚动到底部。
+  // 旧实现仅在 useEffect 里同步设一次 scrollTop, 打开会话时面板可能尚未完成布局/可见
+  // (高度为 0), 设置无效, 结果停在最顶部最旧消息。改为:
+  //  - 切换会话时用双 rAF 等布局完成后强制贴底;
+  //  - 新消息仅在用户「已贴底」时跟随, 向上翻看历史时不打断。
   const scrollRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
+
+  // 跟踪用户是否贴在底部 (距底 < 80px 视为贴底)。
   useEffect(() => {
     const node = scrollRef.current
+    if (!node) return
+    const onScroll = () => {
+      const gap = node.scrollHeight - node.scrollTop - node.clientHeight
+      stickToBottomRef.current = gap < 80
+    }
+    node.addEventListener('scroll', onScroll, { passive: true })
+    return () => node.removeEventListener('scroll', onScroll)
+  }, [])
+
+  // 打开 / 切换会话: 强制定位到最新消息 (双 rAF 处理初次可见与异步布局)。
+  useEffect(() => {
+    stickToBottomRef.current = true
+    const node = scrollRef.current
+    if (!node) return
+    let raf2 = 0
+    const raf1 = requestAnimationFrame(() => {
+      node.scrollTop = node.scrollHeight
+      raf2 = requestAnimationFrame(() => {
+        node.scrollTop = node.scrollHeight
+      })
+    })
+    return () => {
+      cancelAnimationFrame(raf1)
+      cancelAnimationFrame(raf2)
+    }
+  }, [activeKey])
+
+  // 新消息到达: 仅当用户已贴底时跟随到底, 否则保持当前阅读位置。
+  useEffect(() => {
+    if (!stickToBottomRef.current) return
+    const node = scrollRef.current
     if (node) node.scrollTop = node.scrollHeight
-  }, [messages, activeKey])
+  }, [messages])
 
   const online = connection === 'online'
   const scope: 'subnet' | 'private' =
@@ -196,16 +234,27 @@ export function ChatPanel() {
     return `${typers.length} 位联系人正在输入…`
   }, [activeConversation, activeKey, roomScope, typingByConversation])
 
-  // 群组成员 (排除自己 + 已在会话列表中的私聊对象), 供底部「群组成员」分区开新私聊。
-  // 不再限定在线: 离线成员也要能选中发起会话, 否则无法找新的人聊天。
-  // 在线优先 + 按名称排序; 顶部搜索词同样作用于此列表, 便于按名字找人。
+  // 群组成员名册: 展示「全部其他成员」(不再排除已聊过的人), 在线优先 + 按名排序;
+  // 顶部搜索词作用于此列表。已聊过的人用 chattedUsernames 标注「已聊」。
+  // 头部「X / Y 在线」的 Y 取全体成员总数 (不受搜索过滤影响), 修正旧版误用「未聊人数」当分母。
+  const memberDirectory = useMemo(
+    () => directory.filter((u) => u.username !== selfUsername),
+    [directory, selfUsername],
+  )
+  const memberOnline = useMemo(
+    () => memberDirectory.filter((u) => u.online).length,
+    [memberDirectory],
+  )
+  const chattedUsernames = useMemo(
+    () =>
+      new Set(
+        conversations.filter((c) => c.kind === 'private').map((c) => c.username),
+      ),
+    [conversations],
+  )
   const contacts = useMemo(() => {
-    const existing = new Set(
-      conversations.filter((c) => c.kind === 'private').map((c) => c.username),
-    )
     const q = filter.trim().toLowerCase()
-    return directory
-      .filter((u) => u.username !== selfUsername && !existing.has(u.username))
+    return memberDirectory
       .filter(
         (u) =>
           !q ||
@@ -219,7 +268,7 @@ export function ChatPanel() {
           'zh-Hans-CN',
         )
       })
-  }, [directory, conversations, selfUsername, filter])
+  }, [memberDirectory, filter])
 
   function reportSendError(err: unknown) {
     toast.error(String((err as Error)?.message || err))
@@ -318,6 +367,9 @@ export function ChatPanel() {
       <ConversationList
         items={conversations}
         contacts={contacts}
+        chattedUsernames={chattedUsernames}
+        memberOnline={memberOnline}
+        memberTotal={memberDirectory.length}
         activeKey={activeKey}
         filter={filter}
         onFilterChange={setFilter}

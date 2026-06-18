@@ -75,6 +75,7 @@ export interface ShareGptApi {
   closeWindow: () => Promise<unknown>
   isWindowMaximized: () => Promise<boolean>
   isWindowFullScreen: () => Promise<boolean>
+  toggleWindowFullScreen: (value?: boolean) => Promise<boolean>
 
   // 服务启停
   startSender: (settings: unknown) => Promise<unknown>

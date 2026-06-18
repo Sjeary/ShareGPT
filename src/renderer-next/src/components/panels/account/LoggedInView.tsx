@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { Download, LogOut, PanelLeft, PanelRight, RefreshCw, UserCog } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -12,8 +11,10 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import { Download, LogOut, PanelLeft, PanelRight, RefreshCw, UserCog, History } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { compareVersions, normalizeBootstrapPayload } from './bootstrap'
+import { CHANGELOG } from './changelog'
 import type { CollabSettings } from '@/types/settings'
 
 // 协作通知开关项 (对应 collab.notify_* 字段)。
@@ -241,6 +242,130 @@ function UpdateSection() {
   )
 }
 
+// 更新日志区 (随包内置, 4.2.0 → 现在)。时间线样式, 当前版本高亮。
+function ChangelogSection() {
+  const meta = useAppStore((s) => s.meta)
+  const current = safeText(meta.version)
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <History className="size-4 text-muted-foreground" />
+          更新日志
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ol className="relative ml-1 border-l border-border/70">
+          {CHANGELOG.map((entry) => {
+            const isCurrent = current && entry.version === current
+            return (
+              <li key={entry.version} className="ml-4 pb-5 last:pb-0">
+                <span
+                  className={cn(
+                    'absolute -left-[5px] mt-1.5 size-2.5 rounded-full ring-4 ring-background',
+                    isCurrent ? 'bg-primary' : 'bg-muted-foreground/40',
+                  )}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="selectable text-sm font-semibold text-foreground">
+                    v{entry.version}
+                  </span>
+                  {isCurrent && (
+                    <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                      当前版本
+                    </span>
+                  )}
+                  <span className="selectable text-[11px] text-muted-foreground">
+                    {entry.date}
+                  </span>
+                </div>
+                <ul className="mt-1.5 grid gap-1">
+                  {entry.highlights.map((h, i) => (
+                    <li
+                      key={i}
+                      className="selectable flex gap-1.5 text-xs leading-relaxed text-muted-foreground"
+                    >
+                      <span className="mt-[3px] size-1 shrink-0 rounded-full bg-muted-foreground/50" />
+                      <span className="min-w-0">{h}</span>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            )
+          })}
+        </ol>
+      </CardContent>
+    </Card>
+  )
+}
+
+// 反馈建议: 登录用户提交一条文本反馈, 直连协作服务器 POST /api/feedback (Bearer)。
+// 管理端在 Admin 控制台「反馈」面板查看。
+function FeedbackSection() {
+  const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+
+  async function submit() {
+    const body = text.trim()
+    if (!body) {
+      toast.error('请先填写反馈内容')
+      return
+    }
+    const serverUrl = safeText(useAppStore.getState().settings?.collab?.server_url)
+    const token = useAuthStore.getState().token
+    if (!serverUrl || !token) {
+      toast.error('请先登录后再提交反馈')
+      return
+    }
+    setSending(true)
+    try {
+      const resp = await fetch(`${serverUrl.replace(/\/+$/, '')}/api/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          text: body.slice(0, 2000),
+          version: safeText(useAppStore.getState().meta.version),
+          platform: String(api.platform || ''),
+        }),
+      })
+      if (!resp.ok) {
+        const t = await resp.text().catch(() => '')
+        throw new Error(t || `提交失败（${resp.status}）`)
+      }
+      toast.success('感谢反馈，已提交！')
+      setText('')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '提交反馈失败')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">反馈建议</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-2">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={3}
+          maxLength={2000}
+          placeholder="使用中的问题或建议，写在这里提交给管理员～"
+          className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-muted-foreground">{text.length}/2000</span>
+          <Button size="sm" onClick={submit} disabled={sending || !text.trim()}>
+            {sending ? '提交中…' : '提交反馈'}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export function LoggedInView() {
   const collab = useAppStore((s) => s.settings?.collab)
   const patchSection = useAppStore((s) => s.patchSection)
@@ -303,36 +428,42 @@ export function LoggedInView() {
   }
 
   return (
-    <div className="mx-auto flex max-w-md flex-col gap-4 p-6">
+    <div className="mx-auto flex max-w-xl flex-col gap-4 p-6">
+      {/* 更新区 + 更新日志放最上面; 账户与其它设置放日志下面 (按需求重排)。 */}
+      <UpdateSection />
+      <ChangelogSection />
+
+      {/* 账户: 改为与其它设置一致的卡片样式, 便于查找。 */}
       <Card>
-        <CardContent className="flex items-center gap-4 pt-6">
-          <Avatar size="lg">
-            {avatar && <AvatarImage src={avatar} alt={displayName} />}
-            <AvatarFallback>{initialsOf(displayName)}</AvatarFallback>
-          </Avatar>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-base font-semibold">{displayName}</p>
-            {username && username !== displayName && (
-              <p className="truncate text-xs text-muted-foreground">{username}</p>
-            )}
-            <p className="truncate text-xs text-success">已连接协作服务</p>
+        <CardHeader>
+          <CardTitle className="text-base">账户</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          <div className="flex items-center gap-4">
+            <Avatar size="lg">
+              {avatar && <AvatarImage src={avatar} alt={displayName} />}
+              <AvatarFallback>{initialsOf(displayName)}</AvatarFallback>
+            </Avatar>
+            <div className="min-w-0 flex-1">
+              <p className="selectable truncate text-base font-semibold">{displayName}</p>
+              {username && username !== displayName && (
+                <p className="selectable truncate text-xs text-muted-foreground">{username}</p>
+              )}
+              <p className="truncate text-xs text-success">已连接协作服务</p>
+            </div>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleLogout}
-            disabled={loggingOut}
-          >
-            <LogOut />
-            {loggingOut ? '退出中…' : '退出'}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={handleEditProfile}>
+              <UserCog />
+              编辑个人资料
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleLogout} disabled={loggingOut}>
+              <LogOut />
+              {loggingOut ? '退出中…' : '退出登录'}
+            </Button>
+          </div>
         </CardContent>
       </Card>
-
-      <Button variant="outline" className="w-full" onClick={handleEditProfile}>
-        <UserCog />
-        编辑个人资料
-      </Button>
 
       <Card>
         <CardHeader>
@@ -447,7 +578,7 @@ export function LoggedInView() {
         </CardContent>
       </Card>
 
-      <UpdateSection />
+      <FeedbackSection />
     </div>
   )
 }

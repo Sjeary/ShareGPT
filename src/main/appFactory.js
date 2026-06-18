@@ -933,6 +933,16 @@ function createElectronApp(baseMode = "all") {
     wc.on("console-message", (_event, _level, message) => {
       emitAiEvent(workspace.kind, "console-message", { message: String(message || "") });
     });
+
+    // F11: 嵌入的 AI 网页获得焦点时, 渲染层收不到键盘事件; 在此拦截 F11 切换窗口全屏。
+    wc.on("before-input-event", (event, input) => {
+      if (input.type === "keyDown" && input.key === "F11" && !input.alt && !input.control && !input.meta && !input.shift) {
+        event.preventDefault();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.setFullScreen(!mainWindow.isFullScreen());
+        }
+      }
+    });
   }
 
   function getOrCreateAiWorkspace(kind, tabId = "", options = {}) {
@@ -1085,6 +1095,15 @@ function createElectronApp(baseMode = "all") {
     });
 
     attachWindowGuards(mainWindow);
+    // F11 切换全屏 (主窗口 chrome 获得焦点时; AI 网页获得焦点时由各 view 的 before-input-event 处理)。
+    mainWindow.webContents.on("before-input-event", (event, input) => {
+      if (input.type === "keyDown" && input.key === "F11" && !input.alt && !input.control && !input.meta && !input.shift) {
+        event.preventDefault();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.setFullScreen(!mainWindow.isFullScreen());
+        }
+      }
+    });
     if (process.platform === "darwin") {
       mainWindow.setWindowButtonVisibility(true);
     }
@@ -1500,6 +1519,18 @@ function createElectronApp(baseMode = "all") {
       const targetWindow = getEventWindow(event, mainWindow);
       if (!targetWindow) return false;
       return targetWindow.isFullScreen();
+    });
+
+    // 切换窗口全屏 (类似 F11)。供 AI 工作区「全屏」按钮与 F11 快捷键调用。
+    ipcMain.handle("window:toggle-fullscreen", (event, payload) => {
+      const targetWindow = getEventWindow(event, mainWindow) || mainWindow;
+      if (!targetWindow || targetWindow.isDestroyed()) return false;
+      const next =
+        payload && typeof payload.value === "boolean"
+          ? payload.value
+          : !targetWindow.isFullScreen();
+      targetWindow.setFullScreen(next);
+      return next;
     });
 
     ipcMain.handle("sender:start", (_event, senderSettings) => {

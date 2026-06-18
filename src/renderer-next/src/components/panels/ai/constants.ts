@@ -16,6 +16,13 @@ export const CLAUDE_PARTITION = 'persist:claude-chat'
 
 export const GPT_QUERY_MARKER = '__GPT_QUERY__'
 
+// 各 AI 的提问探测标记 (注入脚本经 console.log 回传查询事件, 用于使用统计)。
+export const AI_QUERY_MARKER: Record<AiKind, string> = {
+  gpt: GPT_QUERY_MARKER,
+  gemini: '__GEMINI_QUERY__',
+  claude: '__CLAUDE_QUERY__',
+}
+
 // 旧 renderer.js GPT_ALLOWED_HOSTS / GEMINI_ALLOWED_HOSTS。
 export const GPT_ALLOWED_HOSTS = [
   'chatgpt.com',

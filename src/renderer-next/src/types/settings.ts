@@ -44,6 +44,8 @@ export interface UiSettings {
   sidebarSide: 'left' | 'right'
   showGemini: boolean
   showClaude: boolean
+  // 登录页「发现新版本」提醒中点了「不再提示」的版本号集合 (按版本记忆)。
+  dismissed_update_versions: string[]
 }
 
 export interface AppSettings {

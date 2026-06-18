@@ -7,6 +7,7 @@ import { UsersPanel } from '@/components/panels/UsersPanel'
 import { BootstrapPanel } from '@/components/panels/BootstrapPanel'
 import { ReleasesPanel } from '@/components/panels/ReleasesPanel'
 import { ExtrasPanel } from '@/components/panels/ExtrasPanel'
+import { FeedbackPanel } from '@/components/panels/FeedbackPanel'
 
 const REFRESH_INTERVAL = 15000
 
@@ -34,6 +35,7 @@ export function Shell() {
           {active === 'users' && <UsersPanel />}
           {active === 'bootstrap' && <BootstrapPanel />}
           {active === 'releases' && <ReleasesPanel />}
+          {active === 'feedback' && <FeedbackPanel />}
           {active === 'extras' && <ExtrasPanel />}
         </main>
       </div>

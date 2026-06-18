@@ -4,6 +4,7 @@ import {
   Cable,
   Rocket,
   Braces,
+  MessageSquareText,
   type LucideIcon,
 } from 'lucide-react'
 import type { AdminTab } from '@/types/admin'
@@ -20,5 +21,6 @@ export const NAV: NavItem[] = [
   { key: 'users', label: '用户管理', icon: Users, hint: '查看 / 新增 / 编辑用户' },
   { key: 'bootstrap', label: 'Sender 配置', icon: Cable, hint: '首登下发默认配置' },
   { key: 'releases', label: '版本发布', icon: Rocket, hint: '上传安装包与说明' },
+  { key: 'feedback', label: '反馈建议', icon: MessageSquareText, hint: '用户提交的反馈' },
   { key: 'extras', label: '备用配置', icon: Braces, hint: 'client_bootstrap.extra' },
 ]

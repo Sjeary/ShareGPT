@@ -4,6 +4,8 @@ import {
   ArrowRight,
   PanelLeftClose,
   PanelLeftOpen,
+  Maximize2,
+  Minimize2,
   Home,
   RotateCw,
   Bot,
@@ -101,6 +103,26 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const [proxyOpen, setProxyOpen] = useState(false)
   const [proxyChecking, setProxyChecking] = useState(false)
   const [proxyReport, setProxyReport] = useState<AiProxyReport | null>(null)
+
+  // 窗口全屏 (类似 F11): 工具栏按钮切换; 用 resize 事件同步图标状态。
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  useEffect(() => {
+    let alive = true
+    const sync = () => {
+      void api.isWindowFullScreen?.().then((v) => {
+        if (alive) setIsFullscreen(Boolean(v))
+      })
+    }
+    sync()
+    window.addEventListener('resize', sync)
+    return () => {
+      alive = false
+      window.removeEventListener('resize', sync)
+    }
+  }, [])
+  const toggleFullscreen = useCallback(() => {
+    void api.toggleWindowFullScreen?.().then((v) => setIsFullscreen(Boolean(v)))
+  }, [])
 
   const runProxyCheck = useCallback(async () => {
     setProxyChecking(true)
@@ -395,6 +417,15 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               onClick={toggleSidebarHidden}
             >
               {sidebarHidden ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              title={isFullscreen ? '退出全屏 (F11)' : '全屏 (F11)'}
+              onClick={toggleFullscreen}
+            >
+              {isFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
             </Button>
           </div>
         </div>

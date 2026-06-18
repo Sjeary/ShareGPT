@@ -1,15 +1,105 @@
-import { useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
-import { Loader2, LogIn } from 'lucide-react'
+import { Loader2, LogIn, Download, Sparkles, X } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
+import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
 import { ImportActions } from './ImportActions'
+import { compareVersions, normalizeBootstrapPayload, type BootstrapUpdate } from './bootstrap'
+
+// 登录页「发现新版本」提醒。不依赖登录: 用已填的服务地址匿名拉取 /api/public/update,
+// 与本机版本比较; 有新版且未被「不再提示」(按版本记忆) 时展示。老服务端无此端点 -> 静默不显示。
+function LoginUpdateBanner({ serverUrl }: { serverUrl: string }) {
+  const meta = useAppStore((s) => s.meta)
+  const dismissed = useAppStore((s) => s.settings?.ui?.dismissed_update_versions)
+  const patchSection = useAppStore((s) => s.patchSection)
+  const [info, setInfo] = useState<BootstrapUpdate | null>(null)
+
+  useEffect(() => {
+    const base = serverUrl.trim().replace(/\/+$/, '')
+    if (!/^https?:\/\//i.test(base)) {
+      setInfo(null)
+      return
+    }
+    let alive = true
+    const ctrl = new AbortController()
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const resp = await fetch(`${base}/api/public/update`, { signal: ctrl.signal })
+          if (!resp.ok) {
+            if (alive) setInfo(null)
+            return
+          }
+          const json = await resp.json().catch(() => null)
+          const update = normalizeBootstrapPayload({ update: json }).update
+          if (alive) setInfo(update)
+        } catch {
+          if (alive) setInfo(null)
+        }
+      })()
+    }, 500)
+    return () => {
+      alive = false
+      ctrl.abort()
+      window.clearTimeout(timer)
+    }
+  }, [serverUrl])
+
+  const current = String(meta.version || '')
+  const latest = info?.version || ''
+  const hasNew = Boolean(
+    latest && current && info?.url && compareVersions(latest, current) > 0,
+  )
+  const isDismissed = Array.isArray(dismissed) && dismissed.includes(latest)
+  if (!hasNew || isDismissed) return null
+
+  async function dismiss() {
+    const next = Array.from(new Set([...(dismissed ?? []), latest]))
+    await patchSection('ui', { dismissed_update_versions: next }).catch(() => undefined)
+  }
+
+  return (
+    <div className="w-full max-w-sm rounded-lg border border-primary/40 bg-primary/10 px-4 py-3">
+      <div className="flex items-start gap-2">
+        <Sparkles className="mt-0.5 size-4 shrink-0 text-primary" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-foreground">
+            发现新版本 <span className="selectable">v{latest}</span>
+          </p>
+          {info?.notes && (
+            <p className="selectable mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+              {info.notes}
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={dismiss}
+          title="不再提示此版本"
+          className="shrink-0 rounded p-0.5 text-muted-foreground/70 transition-colors hover:text-foreground"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <Button size="sm" onClick={() => info?.url && void api.openExternal(info.url)}>
+          <Download />
+          下载新版本
+        </Button>
+        <Button size="sm" variant="ghost" onClick={dismiss}>
+          不再提示
+        </Button>
+      </div>
+    </div>
+  )
+}
 
 type ErrorField = 'server' | 'username' | 'password'
 
@@ -88,7 +178,8 @@ export function LoginForm() {
   }
 
   return (
-    <div className="grid h-full place-items-center p-6">
+    <div className="flex h-full flex-col items-center justify-center gap-3 p-6">
+      <LoginUpdateBanner serverUrl={serverUrl} />
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
           <CardTitle className="text-xl">登录协作服务</CardTitle>

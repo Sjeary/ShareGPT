@@ -7,6 +7,7 @@ import {
   type AdminTab,
   type AdminUser,
   type Bootstrap,
+  type FeedbackItem,
   type SharedRelease,
 } from '@/types/admin'
 
@@ -57,6 +58,8 @@ interface AdminState {
   users: AdminUser[]
   usersLoading: boolean
   bootstrap: Bootstrap | null
+  feedback: FeedbackItem[]
+  feedbackLoading: boolean
 
   // 导航 / 偏好
   activeTab: AdminTab
@@ -79,6 +82,7 @@ interface AdminState {
   loadBootstrap: (opts?: { silent?: boolean }) => Promise<void>
   saveBootstrap: (payload: Bootstrap) => Promise<Bootstrap | null>
   setBootstrap: (next: Bootstrap) => void
+  loadFeedback: (opts?: { silent?: boolean }) => Promise<void>
 
   // 开发者(全局发布)
   devLogin: (serverUrl: string, key: string) => Promise<void>
@@ -152,6 +156,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
     users: [],
     usersLoading: false,
     bootstrap: null,
+    feedback: [],
+    feedbackLoading: false,
 
     activeTab: 'overview',
     setActiveTab: (activeTab) => set({ activeTab }),
@@ -317,6 +323,20 @@ export const useAdminStore = create<AdminState>((set, get) => {
     },
 
     setBootstrap: (next) => set({ bootstrap: next }),
+
+    loadFeedback: async (opts) => {
+      set({ feedbackLoading: true })
+      try {
+        const payload = await request<{ feedback?: FeedbackItem[] }>('/api/admin/feedback')
+        set({ feedback: Array.isArray(payload.feedback) ? payload.feedback : [] })
+      } catch (err) {
+        if (!opts?.silent && !(err instanceof AuthExpiredError)) {
+          toast.error(err instanceof Error ? err.message : String(err))
+        }
+      } finally {
+        set({ feedbackLoading: false })
+      }
+    },
 
     // ===== 开发者 (全局发布) =====
     devLogin: async (serverUrl, key) => {

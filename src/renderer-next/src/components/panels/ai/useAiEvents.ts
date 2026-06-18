@@ -3,9 +3,9 @@ import { api } from '@/lib/api'
 import { useAiStore } from '@/store/useAiStore'
 import type { AiKind, AiTab } from '@/store/useAiStore'
 import { useAppStore } from '@/store/useAppStore'
-import { registerGptQuery } from './reportGptUsage'
+import { registerAiQuery } from './reportGptUsage'
 import {
-  GPT_QUERY_MARKER,
+  AI_QUERY_MARKER,
   isGptAllowedUrl,
   isGeminiAllowedUrl,
   isClaudeAllowedUrl,
@@ -123,35 +123,41 @@ function applyState(kind: AiKind, payload: AiEventPayload) {
   if (patch.url && tabId === store.activeTabIdByKind[kind]) persistLastUrl(kind, patch.url)
 }
 
-// 旧 handleGptTrackerMessage: 解析注入脚本通过 console.log 发回的查询事件。
-function handleGptTrackerMessage(message: unknown) {
+// 解析注入脚本通过 console.log 发回的查询事件 (按 kind 校验各自的标记)。
+function handleTrackerMessage(kind: AiKind, message: unknown) {
+  const marker = AI_QUERY_MARKER[kind]
   const raw = String(message || '')
-  if (!raw.startsWith(GPT_QUERY_MARKER)) return
+  if (!raw.startsWith(marker)) return
   try {
-    const payload = JSON.parse(raw.slice(GPT_QUERY_MARKER.length)) as { text?: string }
-    registerGptQuery(payload?.text || '')
+    const payload = JSON.parse(raw.slice(marker.length)) as { text?: string }
+    registerAiQuery(kind, payload?.text || '')
   } catch {
-    registerGptQuery('')
+    registerAiQuery(kind, '')
   }
 }
 
-// 旧 installGptQueryTracker: 在 GPT 页面注入监听 Enter / 发送按钮的脚本,
-// 用户发问时通过 console.log(marker + json) 把提问文本回传, 用于统计上报 (仅 GPT)。
-function installGptQueryTracker(tabId: string) {
-  const store = useAiStore.getState()
-  const targetId = safeText(tabId) || store.activeTabIdByKind.gpt
-  const tab = store.tabsByKind.gpt.find((item) => item.id === targetId)
-  if (!api.executeAiJavaScript || !tab || !isGptAllowedUrl(tab.url)) return
+function isTabUrlAllowed(kind: AiKind, url: string): boolean {
+  return isAllowedUrlFor(kind, url)
+}
 
-  const marker = JSON.stringify(GPT_QUERY_MARKER)
+// 在 AI 页面注入监听 Enter / 发送按钮的脚本; 用户发问时通过 console.log(marker + json)
+// 把提问文本回传, 用于统计上报。三家共用一套通用选择器 (覆盖 ChatGPT / Gemini / Claude
+// 的发送按钮与回车发送), 各自带不同标记。注入轻量、只读 DOM, 不改页面, 避免触发风控。
+function installQueryTracker(kind: AiKind, tabId: string) {
+  const store = useAiStore.getState()
+  const targetId = safeText(tabId) || store.activeTabIdByKind[kind]
+  const tab = store.tabsByKind[kind].find((item) => item.id === targetId)
+  if (!api.executeAiJavaScript || !tab || !isTabUrlAllowed(kind, tab.url)) return
+
+  const marker = JSON.stringify(AI_QUERY_MARKER[kind])
   void api
     .executeAiJavaScript({
-      kind: 'gpt',
+      kind,
       tabId: targetId,
       code: `
     (() => {
-      if (window.__gptQueryTrackerInstalled) return;
-      window.__gptQueryTrackerInstalled = true;
+      if (window.__aiQueryTrackerInstalled) return;
+      window.__aiQueryTrackerInstalled = true;
 
       const emit = () => {
         const textarea = document.querySelector("textarea");
@@ -161,7 +167,7 @@ function installGptQueryTracker(tabId: string) {
       };
 
       document.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" || event.shiftKey) return;
+        if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
         const target = event.target;
         const editable = Boolean(
           target?.closest?.("textarea")
@@ -174,7 +180,7 @@ function installGptQueryTracker(tabId: string) {
 
       document.addEventListener("click", (event) => {
         const button = event.target?.closest?.(
-          'button[data-testid="send-button"], button[aria-label*="Send"], button[aria-label*="发送"]',
+          'button[data-testid="send-button"], button[aria-label*="Send"], button[aria-label*="send"], button[aria-label*="发送"], button[aria-label*="Submit"]',
         );
         if (!button) return;
         setTimeout(emit, 0);
@@ -206,8 +212,8 @@ export function useAiEvents() {
 
       applyState(kind, payload)
 
-      if (payload?.type === 'console-message' && kind === 'gpt') {
-        handleGptTrackerMessage(payload.message)
+      if (payload?.type === 'console-message') {
+        handleTrackerMessage(kind, payload.message)
       }
 
       if (payload?.type === 'did-fail-load') {
@@ -229,8 +235,8 @@ export function useAiEvents() {
         useAiStore.getState().setFeedback(kind, `外部链接打开失败：${errorText}`, 'error')
       }
 
-      if (payload?.type === 'dom-ready' && kind === 'gpt') {
-        installGptQueryTracker(safeText(payload.tabId))
+      if (payload?.type === 'dom-ready') {
+        installQueryTracker(kind, safeText(payload.tabId))
       }
     })
   }, [])

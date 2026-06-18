@@ -133,6 +133,22 @@
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
+    /* 默认禁止选中/复制界面固定文案。例外见下方。
+       内嵌的 ChatGPT/Gemini/Claude 是独立 WebContentsView, 不受此样式影响,
+       网页内容照常可选可复制。 */
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  /* 例外: 可填写的表单控件、可编辑区, 以及标注 .selectable 的可变内容
+     (聊天消息正文、用户名/显示名、版本号、统计数字、更新说明等)。 */
+  input,
+  textarea,
+  [contenteditable='true'],
+  [contenteditable='true'] *,
+  .selectable,
+  .selectable * {
+    user-select: text;
+    -webkit-user-select: text;
   }
   /* Electron 无边框窗口拖拽区 */
   .app-drag {

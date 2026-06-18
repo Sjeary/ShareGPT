@@ -12,6 +12,9 @@ import type { ConversationItem } from './conversations'
 export function ConversationList({
   items,
   contacts,
+  chattedUsernames,
+  memberOnline,
+  memberTotal,
   activeKey,
   filter,
   onFilterChange,
@@ -20,13 +23,17 @@ export function ConversationList({
 }: {
   items: ConversationItem[]
   contacts: DirectoryUser[]
+  // 已与之有过私聊的成员用户名集合, 用于在名册中标注「已聊」。
+  chattedUsernames: Set<string>
+  // 头部「X / Y 在线」: 取全体成员 (不受搜索过滤影响) 的在线数与总数。
+  memberOnline: number
+  memberTotal: number
   activeKey: string
   filter: string
   onFilterChange: (v: string) => void
   onSelect: (key: string) => void
   onStartPrivate: (username: string) => void
 }) {
-  const onlineContacts = contacts.filter((u) => u.online).length
   return (
     <div className="flex w-[300px] shrink-0 flex-col border-r border-border bg-sidebar">
       <div className="flex h-14 shrink-0 items-center border-b border-border px-3">
@@ -115,52 +122,65 @@ export function ConversationList({
           })}
         </ul>
 
-        {contacts.length > 0 && (
+        {memberTotal > 0 && (
           <div className="mt-1 border-t border-border px-2 pb-2 pt-2">
             <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-muted-foreground">
               <Users className="size-3.5" />
               <span>群组成员</span>
               <span className="ml-auto tabular-nums text-[11px] text-muted-foreground/70">
-                {onlineContacts} / {contacts.length} 在线
+                {memberOnline} / {memberTotal} 在线
               </span>
             </div>
-            <ul className="flex flex-col gap-0.5">
-              {contacts.map((user) => (
-                <li key={user.username}>
-                  <button
-                    type="button"
-                    onClick={() => onStartPrivate(user.username)}
-                    className="flex w-full items-center gap-3 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-sidebar-accent/60"
-                  >
-                    <Avatar size="default" className={cn(!user.online && 'opacity-60')}>
-                      <AvatarFallback>
-                        {avatarMark(user.avatar, user.displayName)}
-                      </AvatarFallback>
-                      {user.online && <AvatarBadge className="bg-success" />}
-                    </Avatar>
-                    <span
-                      className={cn(
-                        'min-w-0 flex-1 truncate text-sm',
-                        !user.online && 'text-muted-foreground',
-                      )}
-                    >
-                      {user.displayName || user.username}
-                    </span>
-                    {!user.online && (
-                      <span className="shrink-0 text-[11px] text-muted-foreground/70">
-                        离线
-                      </span>
-                    )}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {contacts.length === 0 && filter.trim() && items.length <= 1 && (
-          <div className="px-3 pb-3 pt-1 text-center text-xs text-muted-foreground">
-            没有匹配到群组成员
+            {contacts.length === 0 ? (
+              <div className="px-3 py-3 text-center text-xs text-muted-foreground">
+                {filter.trim() ? '没有匹配到群组成员' : '暂无其他成员'}
+              </div>
+            ) : (
+              <ul className="flex flex-col gap-0.5">
+                {contacts.map((user) => {
+                  const chatted = chattedUsernames.has(user.username)
+                  return (
+                    <li key={user.username}>
+                      <button
+                        type="button"
+                        onClick={() => onStartPrivate(user.username)}
+                        className="flex w-full items-center gap-3 rounded-lg px-2.5 py-1.5 text-left transition-colors hover:bg-sidebar-accent/60"
+                      >
+                        <Avatar size="default" className={cn(!user.online && 'opacity-60')}>
+                          <AvatarFallback>
+                            {avatarMark(user.avatar, user.displayName)}
+                          </AvatarFallback>
+                          {user.online && <AvatarBadge className="bg-success" />}
+                        </Avatar>
+                        <span
+                          className={cn(
+                            'min-w-0 flex-1 truncate text-sm',
+                            !user.online && 'text-muted-foreground',
+                          )}
+                        >
+                          {user.displayName || user.username}
+                        </span>
+                        {chatted && (
+                          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground/80">
+                            已聊
+                          </span>
+                        )}
+                        <span
+                          className={cn(
+                            'shrink-0 text-[11px]',
+                            user.online
+                              ? 'text-success'
+                              : 'text-muted-foreground/70',
+                          )}
+                        >
+                          {user.online ? '在线' : '离线'}
+                        </span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
           </div>
         )}
       </ScrollArea>

@@ -57,7 +57,18 @@ export interface Bootstrap {
   extra: Record<string, unknown>
 }
 
-export type AdminTab = 'overview' | 'users' | 'bootstrap' | 'releases' | 'extras'
+export type AdminTab = 'overview' | 'users' | 'bootstrap' | 'releases' | 'extras' | 'feedback'
+
+// 用户反馈建议 (客户端 POST /api/feedback 提交, 管理端 GET /api/admin/feedback 查看)。
+export interface FeedbackItem {
+  id: string
+  username: string
+  displayName: string
+  text: string
+  version: string
+  platform: string
+  createdAt: string
+}
 
 // 全局发布 (开发者维度, 共享发布库)。
 export interface SharedReleaseAsset {

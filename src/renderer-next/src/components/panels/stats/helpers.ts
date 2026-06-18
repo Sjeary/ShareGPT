@@ -4,6 +4,15 @@
 
 export type StatsPreset = '7d' | '30d' | '90d' | 'all' | 'custom'
 
+// 统计的 AI 维度 (与 /api/{kind}/stats 对应)。
+export type StatsKind = 'gpt' | 'gemini' | 'claude'
+
+export const STATS_KIND_LABELS: Record<StatsKind, string> = {
+  gpt: 'ChatGPT',
+  gemini: 'Gemini',
+  claude: 'Claude',
+}
+
 // 排行条目 (对应旧版 state.gpt.statsEntries)。
 export interface StatsEntry {
   username: string
@@ -146,6 +155,7 @@ export async function fetchRangeStats(
   serverUrl: string,
   token: string,
   range: StatsRange,
+  kind: StatsKind = 'gpt',
 ): Promise<RangeStats> {
   if (!serverUrl || !token) {
     return { totalQueries: 0, userCount: 0, entries: [] }
@@ -155,13 +165,17 @@ export async function fetchRangeStats(
   if (range.from) params.set('from', range.from)
   if (range.to) params.set('to', range.to)
   const query = params.toString()
-  const url = `${normalizeBase(serverUrl)}/api/gpt/stats${query ? `?${query}` : ''}`
+  const url = `${normalizeBase(serverUrl)}/api/${kind}/stats${query ? `?${query}` : ''}`
 
   const response = await fetchWithFriendlyError(url, {
     method: 'GET',
     headers: authHeaders(token),
   })
 
+  // 老服务端没有 gemini/claude 的统计端点 → 视为暂无数据 (返回空), 不报错。
+  if (response.status === 404) {
+    return { totalQueries: 0, userCount: 0, entries: [] }
+  }
   if (!response.ok) {
     const text = await response.text().catch(() => '')
     throw new Error(text || `查询使用统计失败（${response.status}）`)
