@@ -64,7 +64,13 @@ const AI_WORKSPACE_POLICIES = {
   },
 };
 
-const AI_ALLOWED_PERMISSIONS = new Set(["clipboard-sanitized-write"]);
+// storage-access / top-level-storage-access: 允许 challenges.cloudflare.com 跨域 iframe 申请第三方存储,
+// 让 Turnstile 能读写 cf_clearance(配合关闭第三方存储分区), 是 Claude 验证能通过的关键之一。
+const AI_ALLOWED_PERMISSIONS = new Set([
+  "clipboard-sanitized-write",
+  "storage-access",
+  "top-level-storage-access",
+]);
 const GPT_TAB_TITLE_LIMIT = 48;
 
 function getEventWindow(event, fallbackWindow) {
@@ -321,61 +327,6 @@ function chromeifyClientHintBrands(rawValue) {
     .trim();
 }
 
-// 在内嵌页"任何脚本运行前"(document-start, 主世界)注入的去指纹脚本:
-// Cloudflare Turnstile(Claude 用)会在 JS 层读取 navigator.userAgentData 的品牌列表与
-// navigator.webdriver 来识别"嵌入式/自动化浏览器"。这里清掉 Electron 品牌、补上 Google Chrome、
-// 并让 webdriver 返回 false, 使其在 JS 层也看着像真实 Chrome。仅改这些只读属性, 不暴露任何能力。
-const STEALTH_SOURCE = `
-(function () {
-  try {
-    try {
-      Object.defineProperty(Navigator.prototype, 'webdriver', { get: function () { return false; }, configurable: true });
-    } catch (e) {}
-    var uad = navigator.userAgentData;
-    if (uad) {
-      var origBrands = (uad.brands || []).slice();
-      var chromium = origBrands.filter(function (b) { return /Chromium/i.test(b.brand); })[0];
-      var ver = chromium ? chromium.version : '';
-      var strip = function (list) {
-        var out = (list || []).filter(function (b) { return !/Electron/i.test(b.brand); });
-        if (ver && !out.some(function (b) { return /Google Chrome/i.test(b.brand); })) out.push({ brand: 'Google Chrome', version: ver });
-        return out;
-      };
-      try {
-        Object.defineProperty(uad, 'brands', { get: function () { return strip(origBrands); }, configurable: true });
-      } catch (e) {}
-      if (typeof uad.getHighEntropyValues === 'function') {
-        var orig = uad.getHighEntropyValues.bind(uad);
-        uad.getHighEntropyValues = function (hints) {
-          return orig(hints).then(function (r) {
-            try {
-              if (r && Array.isArray(r.brands)) r.brands = strip(r.brands);
-              if (r && Array.isArray(r.fullVersionList)) {
-                var fv = r.fullVersionList.filter(function (b) { return !/Electron/i.test(b.brand); });
-                var fchr = (r.fullVersionList.filter(function (b) { return /Chromium/i.test(b.brand); })[0] || {}).version || '';
-                if (fchr && !fv.some(function (b) { return /Google Chrome/i.test(b.brand); })) fv.push({ brand: 'Google Chrome', version: fchr });
-                r.fullVersionList = fv;
-              }
-            } catch (e) {}
-            return r;
-          });
-        };
-      }
-    }
-  } catch (e) {}
-})();
-`;
-
-// 给内嵌页 webContents 注入去指纹脚本(document-start, 主世界)。用 CDP Page.addScriptToEvaluateOnNewDocument,
-// 不动 contextIsolation/sandbox 等安全项; 不调用 Runtime.enable(避免常见的 CDP 被检测特征)。
-function installStealthScript(wc) {
-  try {
-    const dbg = wc.debugger;
-    if (!dbg.isAttached()) dbg.attach("1.3");
-    dbg.sendCommand("Page.addScriptToEvaluateOnNewDocument", { source: STEALTH_SOURCE }).catch(() => {});
-  } catch {}
-}
-
 // 内嵌页 UA: 仅去标识, 不改 Chrome 版本号。改写版本会与引擎真实的 Sec-CH-UA /
 // navigator.userAgentData 不一致, 触发 Cloudflare Turnstile(Claude 用)的"特征不一致"拒绝 -> 卡验证。
 function sanitizeEmbeddedUserAgent(rawUserAgent) {
@@ -447,12 +398,42 @@ function createElectronApp(baseMode = "all") {
     app.setAppUserModelId("ShareGPT");
   }
 
-  // 防止内嵌 WebContentsView 被 Chromium 判为"被遮挡/后台"而限流计时器(timer/rAF/动画帧):
-  // 否则 Cloudflare Turnstile 等依赖计时器的人机验证会因限流跑不完, 一直卡在"正在验证"页。
-  // 这是 Electron 内嵌视图 + Cloudflare 验证死循环的常见根因, 必须在 app ready 前设置。
-  app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
+  // Cloudflare Turnstile(Claude 用)在内嵌视图里死循环的两大根因 + 限流, 都在这里关掉:
+  // (1) 第三方存储分区/Cookie 限制: Turnstile 跑在 challenges.cloudflare.com 跨域 iframe, 需要写入
+  //     分区的 cf_clearance Cookie; Electron 默认开启第三方存储分区并拦第三方 Cookie -> 验证状态存不下
+  //     -> 一直重新验证。关掉这些特征让 cf_clearance 能落盘。
+  // (2) 遮挡/后台限流: 内嵌视图被判遮挡时 Chromium 会限流 timer/rAF, Turnstile 的计时器跑不完。
+  // 注意: 多个 disable-features 必须合并到一个开关里, 重复 appendSwitch("disable-features", ...) 会互相覆盖!
+  app.commandLine.appendSwitch(
+    "disable-features",
+    [
+      "CalculateNativeWinOcclusion",
+      "ThirdPartyStoragePartitioning",
+      "PartitionedCookies",
+      "ThirdPartyCookieDeprecation",
+      "PartitionConnectionsByNetworkIsolationKey",
+      "SplitCacheByNetworkIsolationKey",
+    ].join(","),
+  );
   app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
+  app.commandLine.appendSwitch("disable-background-timer-throttling");
+
+  // 关键: 用 app.userAgentFallback 去掉 UA 里的 Electron/应用 标识, 用引擎真实的 Chrome 版本号。
+  // 这是唯一能覆盖 Service Worker 的 UA 设置方式 —— setUserAgent / loadURL({userAgent}) /
+  // onBeforeSendHeaders 都不影响 service worker, 而 Turnstile 的检测逻辑跑在 service worker 里,
+  // 会一直拿到带 "Electron" 的原始 UA。必须在创建任何窗口前设置; 用真实 Chromium 版本(不伪造更高版本,
+  // 否则与 TLS/JA4 的版本对不上)。
+  try {
+    const chromeVer = process.versions.chrome || "126.0.0.0";
+    const platformToken =
+      process.platform === "darwin"
+        ? "Macintosh; Intel Mac OS X 10_15_7"
+        : process.platform === "win32"
+          ? "Windows NT 10.0; Win64; x64"
+          : "X11; Linux x86_64";
+    app.userAgentFallback = `Mozilla/5.0 (${platformToken}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVer} Safari/537.36`;
+  } catch {}
 
   let mainWindow = null;
   let profileWindow = null;
@@ -975,14 +956,12 @@ function createElectronApp(baseMode = "all") {
         sandbox: true,
         webSecurity: true,
         allowRunningInsecureContent: false,
-        // 关闭后台限流: 内嵌视图被切走/判为遮挡时也不限流计时器, 保证 Cloudflare
-        // 人机验证(Turnstile, 依赖 timer/rAF)能正常跑完, 不会卡在验证页死循环。
+        // 关闭后台限流 + 初始隐藏也绘制: 内嵌视图被切走/判遮挡时也不限流计时器、保持渲染,
+        // 保证 Cloudflare 人机验证(Turnstile, 依赖 timer/rAF/可见性)能正常跑完, 不卡在验证页。
         backgroundThrottling: false,
+        paintWhenInitiallyHidden: true,
       },
     });
-
-    // 注入去指纹脚本(清洗 navigator.userAgentData/webdriver), 让 Turnstile 在 JS 层也认作真实 Chrome。
-    installStealthScript(view.webContents);
 
     const workspace = {
       id: targetTabId,
