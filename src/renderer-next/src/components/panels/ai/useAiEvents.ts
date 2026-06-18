@@ -159,23 +159,29 @@ function installQueryTracker(kind: AiKind, tabId: string) {
       if (window.__aiQueryTrackerInstalled) return;
       window.__aiQueryTrackerInstalled = true;
 
-      const emit = () => {
+      const CE = '[contenteditable]:not([contenteditable="false"])';
+      const readText = () => {
         const textarea = document.querySelector("textarea");
-        const editor = document.querySelector('[contenteditable="true"]');
-        const text = String(textarea?.value || editor?.innerText || "").trim().slice(0, 160);
+        const editor = document.querySelector(CE);
+        return String(textarea?.value || editor?.innerText || "").trim().slice(0, 160);
+      };
+      const emit = (text) => {
+        if (!text) return;
         console.log(${marker} + JSON.stringify({ text, stamp: Date.now() }));
       };
 
+      // 同步读取后立即上报: 发送后输入框(尤其 Claude 的 contenteditable)会被立刻清空,
+      // 若延迟到 setTimeout 再读会读到空串导致漏记 (GPT 的 textarea 恰好能撑过这一拍)。
       document.addEventListener("keydown", (event) => {
         if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
         const target = event.target;
         const editable = Boolean(
           target?.closest?.("textarea")
-          || target?.closest?.('[contenteditable="true"]')
-          || target?.matches?.('[contenteditable="true"]'),
+          || target?.closest?.(CE)
+          || target?.matches?.(CE),
         );
         if (!editable) return;
-        setTimeout(emit, 0);
+        emit(readText());
       }, true);
 
       document.addEventListener("click", (event) => {
@@ -183,7 +189,7 @@ function installQueryTracker(kind: AiKind, tabId: string) {
           'button[data-testid="send-button"], button[aria-label*="Send"], button[aria-label*="send"], button[aria-label*="发送"], button[aria-label*="Submit"]',
         );
         if (!button) return;
-        setTimeout(emit, 0);
+        emit(readText());
       }, true);
     })();
   `,

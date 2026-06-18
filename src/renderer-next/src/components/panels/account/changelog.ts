@@ -9,6 +9,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '5.1.1',
+    date: '2026-06-19',
+    highlights: [
+      '修复 Gemini / Claude 的提问未计入使用统计（发送后输入框瞬间清空导致漏记，改为同步读取问题文本）',
+    ],
+  },
+  {
     version: '5.1.0',
     date: '2026-06-19',
     highlights: [
