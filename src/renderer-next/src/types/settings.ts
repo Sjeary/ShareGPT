@@ -10,6 +10,9 @@ export interface SenderSettings {
   target_domains: string
   // 测试用「全部流量走代理」(仅管理员可开): 除私有 IP 外所有流量都走梯子, 用于抓取实际访问的域名。
   route_all?: boolean
+  // 本机自动加入的额外代理域名: 代理检测发现"会用到但没走代理"的域名时自动累积到这里,
+  // 与内置 DEFAULT_TARGET_DOMAINS 合并参与路由。版本更新后会剔除已并入内置清单的项。
+  auto_domains?: string[]
 }
 
 export interface ReceiverSettings {
@@ -46,6 +49,8 @@ export interface UiSettings {
   showClaude: boolean
   // 登录页「发现新版本」提醒中点了「不再提示」的版本号集合 (按版本记忆)。
   dismissed_update_versions: string[]
+  // 上次运行的 app 版本; 版本变化时用于刷新代理自动域名 (剔除已并入内置清单的项)。
+  last_version: string
 }
 
 export interface AppSettings {

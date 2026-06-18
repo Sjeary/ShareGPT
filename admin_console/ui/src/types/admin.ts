@@ -57,7 +57,24 @@ export interface Bootstrap {
   extra: Record<string, unknown>
 }
 
-export type AdminTab = 'overview' | 'users' | 'bootstrap' | 'releases' | 'extras' | 'feedback'
+export type AdminTab =
+  | 'overview'
+  | 'users'
+  | 'bootstrap'
+  | 'releases'
+  | 'extras'
+  | 'feedback'
+  | 'proxy-missing'
+
+// 客户端上报的"会用到但没走代理"的域名 (聚合)。供维护内置代理清单。
+export interface ProxyMissingItem {
+  host: string
+  count: number
+  firstSeen: string
+  lastSeen: string
+  reporters: string[]
+  versions: string[]
+}
 
 // 用户反馈建议 (客户端 POST /api/feedback 提交, 管理端 GET /api/admin/feedback 查看)。
 export interface FeedbackItem {

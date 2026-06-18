@@ -8,6 +8,7 @@ import {
   type AdminUser,
   type Bootstrap,
   type FeedbackItem,
+  type ProxyMissingItem,
   type SharedRelease,
 } from '@/types/admin'
 
@@ -60,6 +61,8 @@ interface AdminState {
   bootstrap: Bootstrap | null
   feedback: FeedbackItem[]
   feedbackLoading: boolean
+  proxyMissing: ProxyMissingItem[]
+  proxyMissingLoading: boolean
 
   // 导航 / 偏好
   activeTab: AdminTab
@@ -83,6 +86,7 @@ interface AdminState {
   saveBootstrap: (payload: Bootstrap) => Promise<Bootstrap | null>
   setBootstrap: (next: Bootstrap) => void
   loadFeedback: (opts?: { silent?: boolean }) => Promise<void>
+  loadProxyMissing: (opts?: { silent?: boolean }) => Promise<void>
 
   // 开发者(全局发布)
   devLogin: (serverUrl: string, key: string) => Promise<void>
@@ -158,6 +162,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
     bootstrap: null,
     feedback: [],
     feedbackLoading: false,
+    proxyMissing: [],
+    proxyMissingLoading: false,
 
     activeTab: 'overview',
     setActiveTab: (activeTab) => set({ activeTab }),
@@ -335,6 +341,20 @@ export const useAdminStore = create<AdminState>((set, get) => {
         }
       } finally {
         set({ feedbackLoading: false })
+      }
+    },
+
+    loadProxyMissing: async (opts) => {
+      set({ proxyMissingLoading: true })
+      try {
+        const payload = await request<{ domains?: ProxyMissingItem[] }>('/api/admin/proxy-missing')
+        set({ proxyMissing: Array.isArray(payload.domains) ? payload.domains : [] })
+      } catch (err) {
+        if (!opts?.silent && !(err instanceof AuthExpiredError)) {
+          toast.error(err instanceof Error ? err.message : String(err))
+        }
+      } finally {
+        set({ proxyMissingLoading: false })
       }
     },
 

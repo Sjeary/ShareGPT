@@ -57,3 +57,31 @@ export function registerAiQuery(kind: AiKind, text: string): void {
 export function registerGptQuery(text: string): void {
   registerAiQuery('gpt', text)
 }
+
+// 上报"会用到但没走代理"的域名给管理员 (服务端聚合, 供维护内置清单)。best-effort, 失败忽略。
+export async function reportMissingDomains(domains: string[]): Promise<void> {
+  const list = Array.from(new Set(domains.map((d) => String(d || '').trim()).filter(Boolean)))
+  if (!list.length) return
+  const token = useAuthStore.getState().token
+  const serverUrl = String(useAppStore.getState().settings?.collab?.server_url || '').trim()
+  if (!serverUrl || !token) return
+  const meta = useAppStore.getState().meta
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 8000)
+  try {
+    await fetch(`${serverUrl.replace(/\/+$/, '')}/api/proxy/missing`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        domains: list,
+        version: String(meta.version ?? ''),
+        platform: String(meta.platform ?? ''),
+      }),
+      signal: controller.signal,
+    })
+  } catch {
+    /* 老服务端无此端点或网络失败: 忽略 */
+  } finally {
+    clearTimeout(timer)
+  }
+}

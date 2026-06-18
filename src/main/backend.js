@@ -1049,8 +1049,12 @@ class Backend {
     const routeAll =
       sender.route_all === true || sender.route_all === "1" || sender.route_all === "true";
 
+    // 本机自动加入的额外域名 (代理检测自动累积), 与内置清单合并。
+    const autoDomains = Array.isArray(sender.auto_domains) ? sender.auto_domains : [];
     const domainsRaw =
-      this.appMode === "sender" ? DEFAULT_TARGET_DOMAINS.join(",") : String(sender.target_domains || "");
+      this.appMode === "sender"
+        ? [...DEFAULT_TARGET_DOMAINS, ...autoDomains].join(",")
+        : String(sender.target_domains || "");
 
     const domains = String(domainsRaw)
       .replace(/\n/g, ",")

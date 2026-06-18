@@ -8,6 +8,7 @@ import { BootstrapPanel } from '@/components/panels/BootstrapPanel'
 import { ReleasesPanel } from '@/components/panels/ReleasesPanel'
 import { ExtrasPanel } from '@/components/panels/ExtrasPanel'
 import { FeedbackPanel } from '@/components/panels/FeedbackPanel'
+import { ProxyMissingPanel } from '@/components/panels/ProxyMissingPanel'
 
 const REFRESH_INTERVAL = 15000
 
@@ -36,6 +37,7 @@ export function Shell() {
           {active === 'bootstrap' && <BootstrapPanel />}
           {active === 'releases' && <ReleasesPanel />}
           {active === 'feedback' && <FeedbackPanel />}
+          {active === 'proxy-missing' && <ProxyMissingPanel />}
           {active === 'extras' && <ExtrasPanel />}
         </main>
       </div>

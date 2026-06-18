@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -28,8 +28,10 @@ import { useAiStore } from '@/store/useAiStore'
 import type { AiKind } from '@/store/useAiStore'
 import { isSenderRunning } from '@/components/panels/service/helpers'
 import { api } from '@/lib/api'
+import { toast } from 'sonner'
 import { useAiHostSync } from '@/hooks/useAiWorkspace'
 import { useAiEvents, applyAiTabsPayload } from './useAiEvents'
+import { reportMissingDomains } from './reportGptUsage'
 import { GptTabBar } from './GptTabBar'
 import {
   GPT_PROXY_HOST,
@@ -153,6 +155,56 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     const id = window.setInterval(() => void runProxyCheck(), 20000)
     return () => window.clearInterval(id)
   }, [senderRunning, activeTab?.webviewInitialized, activeTabId, runProxyCheck])
+
+  // 代理检测发现"会用到但没走代理"的域名: 自动累积到本机额外清单(持久化) + 上报管理员。
+  // 实际生效需重启 singbox —— 由代理面板的"一键加入并重启"按钮触发, 避免静默打断当前会话。
+  const reportedDomainsRef = useRef<Set<string>>(new Set())
+  const [restartingProxy, setRestartingProxy] = useState(false)
+  const fallbackDomains = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          (proxyReport?.hosts ?? [])
+            .filter((h) => h.via === 'fallback')
+            .map((h) => String(h.host || '').trim())
+            .filter(Boolean),
+        ),
+      ),
+    [proxyReport],
+  )
+  useEffect(() => {
+    if (!fallbackDomains.length) return
+    const sender = useAppStore.getState().settings?.sender
+    const existing = new Set(sender?.auto_domains ?? [])
+    const fresh = fallbackDomains.filter((d) => !existing.has(d))
+    if (fresh.length) {
+      void useAppStore
+        .getState()
+        .patchSection('sender', { auto_domains: [...existing, ...fresh] })
+        .catch(() => undefined)
+    }
+    const toReport = fallbackDomains.filter((d) => !reportedDomainsRef.current.has(d))
+    if (toReport.length) {
+      toReport.forEach((d) => reportedDomainsRef.current.add(d))
+      void reportMissingDomains(toReport)
+    }
+  }, [fallbackDomains])
+
+  // 一键加入并重启 singbox: 用已持久化(含 auto_domains)的发送端配置重启, 使新域名即时走代理。
+  const applyMissingDomains = useCallback(async () => {
+    const sender = useAppStore.getState().settings?.sender
+    if (!sender) return
+    setRestartingProxy(true)
+    try {
+      await api.startSender(sender)
+      toast.success('已加入并重启发送代理，正在重新检测…')
+      window.setTimeout(() => void runProxyCheck(), 1500)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '重启发送代理失败')
+    } finally {
+      setRestartingProxy(false)
+    }
+  }, [runProxyCheck])
 
   // 代理检测状态色: 只要有任何域名没走代理(回落) 或会话未走代理/检测失败 -> 直接爆红;
   // 全部走代理才是绿。(按需求: 一旦发现有域名没走代理就红色告警, 提醒补进清单。)
@@ -450,6 +502,8 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               report={proxyReport}
               checking={proxyChecking}
               tone={proxyTone}
+              applying={restartingProxy}
+              onApply={applyMissingDomains}
               onRefresh={() => void runProxyCheck()}
               onClose={() => setProxyOpen(false)}
             />
@@ -480,12 +534,16 @@ function ProxyReportPanel({
   report,
   checking,
   tone,
+  applying,
+  onApply,
   onRefresh,
   onClose,
 }: {
   report: AiProxyReport | null
   checking: boolean
   tone: 'ok' | 'warn' | 'bad' | 'idle'
+  applying: boolean
+  onApply: () => void
   onRefresh: () => void
   onClose: () => void
 }) {
@@ -540,12 +598,24 @@ function ProxyReportPanel({
       <p className={`mb-2 text-xs ${summaryColor}`}>{summary}</p>
 
       {report?.ok && fallbackHosts.length > 0 && (
-        <div className="mb-2 flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-          <ShieldX className="mt-0.5 size-4 shrink-0" />
-          <span>
-            <b>有 {fallbackHosts.length} 个域名没走代理！</b>
-            这些流量从你的真实 IP 出网（未经梯子）。请把下方红色域名加入发送路由清单。
-          </span>
+        <div className="mb-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div className="flex items-start gap-2">
+            <ShieldX className="mt-0.5 size-4 shrink-0" />
+            <span>
+              <b>有 {fallbackHosts.length} 个域名没走代理！</b>
+              这些流量从你的真实 IP 出网（未经梯子）。已自动加入本机代理清单并上报管理员，
+              点下方按钮重启发送代理即可生效。
+            </span>
+          </div>
+          <Button
+            size="sm"
+            className="mt-2 h-7 gap-1.5"
+            disabled={applying}
+            onClick={onApply}
+          >
+            {applying ? <Loader2 className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />}
+            {applying ? '重启中…' : `一键加入并重启 singbox（${fallbackHosts.length}）`}
+          </Button>
         </div>
       )}
 

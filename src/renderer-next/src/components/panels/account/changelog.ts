@@ -9,6 +9,18 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '5.2.0',
+    date: '2026-06-19',
+    highlights: [
+      '代理检测发现"会用到但没走代理"的域名时，自动加入本机代理清单并上报管理员；面板提供「一键加入并重启 singbox」按钮即时生效',
+      '版本更新后代理域名以最新内置清单为准（自动剔除已并入内置的自动域名）',
+      '管理端新增「漏走代理域名」面板，汇总客户端上报的待补域名',
+      '代理路由补充 jsdelivr.net / esm.sh（Claude artifacts / 代码运行 CDN）',
+      '代理检测前 20 秒/未点击保持中性默认色，不再开屏误报爆红',
+      '日志、代理检测域名、统计、版本等可变内容可复制；收紧使用统计的发送按钮识别',
+    ],
+  },
+  {
     version: '5.1.1',
     date: '2026-06-19',
     highlights: [
