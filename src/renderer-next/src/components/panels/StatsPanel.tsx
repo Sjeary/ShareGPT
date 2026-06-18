@@ -59,7 +59,7 @@ export function StatsPanel() {
         </Button>
       }
     >
-      <div className="mx-auto flex max-w-3xl flex-col gap-4 p-6">
+      <div className="selectable mx-auto flex max-w-3xl flex-col gap-4 p-6">
         {/* AI 维度切换 (ChatGPT / Gemini / Claude) */}
         <div className="inline-flex w-fit items-center gap-1 rounded-lg border border-border bg-muted/40 p-1">
           {(Object.keys(STATS_KIND_LABELS) as StatsKind[]).map((k) => (

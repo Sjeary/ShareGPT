@@ -185,8 +185,9 @@ function installQueryTracker(kind: AiKind, tabId: string) {
       }, true);
 
       document.addEventListener("click", (event) => {
+        // 仅匹配明确的"发送"按钮; 去掉过宽的 Submit/纯 send 子串以免误计入使用量。
         const button = event.target?.closest?.(
-          'button[data-testid="send-button"], button[aria-label*="Send"], button[aria-label*="send"], button[aria-label*="发送"], button[aria-label*="Submit"]',
+          'button[data-testid="send-button"], button[aria-label*="Send" i], button[aria-label*="发送"]',
         );
         if (!button) return;
         emit(readText());

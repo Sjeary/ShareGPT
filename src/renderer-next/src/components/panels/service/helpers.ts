@@ -58,6 +58,9 @@ const CLAUDE_ALLOWED_HOSTS = [
   'facebook.net',
   'intercom.io',
   'intercomcdn.com',
+  // Claude artifacts / 代码运行加载的 CDN (jsDelivr / esm.sh)。
+  'jsdelivr.net',
+  'esm.sh',
 ]
 
 // 对应旧 renderer.js ~126 的 DEFAULT_TARGET_DOMAINS: 各组允许域去重后以逗号拼接。

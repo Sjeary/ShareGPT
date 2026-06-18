@@ -178,7 +178,7 @@ function UpdateSection() {
         <CardTitle className="text-base">应用更新</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-3">
-        <div className="grid gap-1.5 text-sm">
+        <div className="selectable grid gap-1.5 text-sm">
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted-foreground">当前版本</span>
             <span className="font-medium">{currentVersion}</span>
@@ -203,7 +203,7 @@ function UpdateSection() {
         {notes && (
           <div className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
             <p className="mb-1 font-medium text-foreground">更新说明</p>
-            <p className="whitespace-pre-wrap">{notes}</p>
+            <p className="selectable whitespace-pre-wrap">{notes}</p>
           </div>
         )}
 

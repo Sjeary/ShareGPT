@@ -42,6 +42,9 @@ const DEFAULT_TARGET_DOMAINS = [
   // Claude 内的 Intercom 客服聊天组件 (api-iam / widget / nexus-websocket / cdn)。
   "intercom.io",
   "intercomcdn.com",
+  // Claude artifacts / 代码运行加载的 CDN (jsDelivr / esm.sh)。
+  "jsdelivr.net",
+  "esm.sh",
 ];
 
 const PUBLIC_DEFAULT_SETTINGS = {

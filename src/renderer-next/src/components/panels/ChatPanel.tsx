@@ -447,7 +447,7 @@ export function ChatPanel() {
               </div>
             </div>
           ) : (
-            <div className="flex flex-col gap-1.5">
+            <div className="selectable flex flex-col gap-1.5">
               {messages.map((message, i) => {
                 const prev = i > 0 ? messages[i - 1] : null
                 const showDate =

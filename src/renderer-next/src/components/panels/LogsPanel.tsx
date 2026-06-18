@@ -100,7 +100,7 @@ export function LogsPanel() {
 
         <div
           ref={scrollRef}
-          className="min-h-0 flex-1 overflow-auto bg-background px-4 py-3 font-mono text-xs leading-relaxed"
+          className="selectable min-h-0 flex-1 overflow-auto bg-background px-4 py-3 font-mono text-xs leading-relaxed"
         >
           {visible.length === 0 ? (
             <div className="flex h-full items-center justify-center text-sm text-muted-foreground">

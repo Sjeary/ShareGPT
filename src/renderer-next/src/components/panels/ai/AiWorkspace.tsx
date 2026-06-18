@@ -146,9 +146,10 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   // 自动巡检: 发送服务运行 + 页面已初始化时, 周期性跑代理检测, 让"有域名没走代理"能自动爆红,
   // 不必每次手点。(检测只是被动读取已记录的主机, 开销很小。)
+  // 注意: 不立即检测 —— 页面刚加载时流量尚未稳定, 马上检测容易误报爆红。前 20s 保持中性默认色,
+  // 首次自动检测延后到 interval 第一次触发(约 20s)后, 之后每 20s 一次; 用户手点仍即时检测。
   useEffect(() => {
     if (!senderRunning || !activeTab?.webviewInitialized || !activeTabId) return
-    void runProxyCheck()
     const id = window.setInterval(() => void runProxyCheck(), 20000)
     return () => window.clearInterval(id)
   }, [senderRunning, activeTab?.webviewInitialized, activeTabId, runProxyCheck])
@@ -400,7 +401,8 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               ) : proxyTone === 'bad' ? (
                 <ShieldX className="size-4 text-destructive" />
               ) : (
-                <ShieldCheck className="size-4 text-muted-foreground" />
+                // 未检测(前 20s / 未点击): 中性默认色 (夜间白 / 白天黑)。
+                <ShieldCheck className="size-4 text-foreground" />
               )}
               <span className="text-xs font-medium">代理检测</span>
               {proxyTone === 'bad' && fallbackCount > 0 && (
@@ -549,7 +551,7 @@ function ProxyReportPanel({
 
       {hosts.length > 0 && (
         <ScrollArea className="max-h-44 rounded-md border border-border bg-background/60">
-          <div className="space-y-2 p-2">
+          <div className="selectable space-y-2 p-2">
             {fallbackHosts.length > 0 && (
               <div>
                 <div className="mb-1 px-1 text-[11px] font-bold text-destructive">
