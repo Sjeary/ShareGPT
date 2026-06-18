@@ -300,15 +300,34 @@ function normalizeExternalUrl(rawUrl) {
   }
 }
 
-// 内嵌页 UA: 去标识 + 把 Chrome 版本号提升到当前稳定版(与渲染层 EMBEDDED_CHROME_VERSION 对齐),
-// 避免站点/Cloudflare 对旧浏览器额外验证。引擎仍是内置 Chromium, 仅 UA 字符串对齐当前 Chrome。
-const EMBEDDED_CHROME_VERSION = "149.0.0.0";
+// 把 Sec-CH-UA / Sec-CH-UA-Full-Version-List 里的 "Electron" 品牌洗成真实 Chrome:
+// - 去掉 "Electron";v="..." 品牌项;
+// - 若缺少 "Google Chrome" 品牌则按 Chromium 的版本补上(真实 Chrome 必有此品牌)。
+// 版本号沿用引擎真实的 Chromium 版本, 保证与 UA / navigator.userAgentData 一致(避免触发 Turnstile 拒绝)。
+function chromeifyClientHintBrands(rawValue) {
+  const value = String(rawValue || "");
+  if (!value) return value;
+  const chromiumMatch = value.match(/"Chromium";v="([^"]+)"/i);
+  if (!chromiumMatch) return value;
+  const version = chromiumMatch[1];
+  let out = value.replace(/,?\s*"Electron";v="[^"]*"/gi, "");
+  if (!/"Google Chrome";v=/i.test(out)) {
+    out = `${out}, "Google Chrome";v="${version}"`;
+  }
+  return out
+    .replace(/^\s*,\s*/, "")
+    .replace(/,\s*,/g, ", ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+// 内嵌页 UA: 仅去标识, 不改 Chrome 版本号。改写版本会与引擎真实的 Sec-CH-UA /
+// navigator.userAgentData 不一致, 触发 Cloudflare Turnstile(Claude 用)的"特征不一致"拒绝 -> 卡验证。
 function sanitizeEmbeddedUserAgent(rawUserAgent) {
   return String(rawUserAgent || "")
     .replace(/\s*Electron\/[^\s]+/ig, "")
     .replace(/\s*ShareGPT\/[^\s]+/ig, "")
     .replace(/\s*ChatPortal(?:\s+X1)?(?:\s+V\d+)?\/[^\s]+/ig, "")
-    .replace(/Chrome\/\d+(?:\.\d+)*/i, `Chrome/${EMBEDDED_CHROME_VERSION}`)
     .replace(/\s{2,}/g, " ")
     .trim();
 }
@@ -478,6 +497,26 @@ function createElectronApp(baseMode = "all") {
           // 仅记录真实网络主机 (跳过 devtools/data/blob 等), 上限防止无界增长。
           if (host && contactedHosts.size < 800) contactedHosts.add(host);
         } catch {}
+      });
+    } catch {}
+
+    // 把客户端提示(Sec-CH-UA)里的 "Electron" 品牌洗成真实 Chrome 品牌:
+    // Electron 默认会在 Sec-CH-UA 暴露 "Electron";v="31", 而 Cloudflare Turnstile(Claude 用)会读取
+    // 这些品牌判断是不是真浏览器 -> 暴露 Electron 就被当成嵌入式/非标准浏览器, 一直卡验证。
+    // 这里去掉 Electron 品牌并补上 "Google Chrome"(版本取引擎真实的 Chromium 版本, 保持一致)。
+    try {
+      targetSession.webRequest.onBeforeSendHeaders((details, callback) => {
+        try {
+          const headers = details.requestHeaders || {};
+          for (const key of Object.keys(headers)) {
+            if (/^sec-ch-ua$/i.test(key) || /^sec-ch-ua-full-version-list$/i.test(key)) {
+              headers[key] = chromeifyClientHintBrands(headers[key]);
+            }
+          }
+          callback({ requestHeaders: headers });
+        } catch {
+          callback({});
+        }
       });
     } catch {}
 

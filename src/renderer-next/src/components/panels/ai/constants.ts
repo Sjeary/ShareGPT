@@ -115,20 +115,16 @@ export function partitionFor(kind: AiKind): string {
   return kind === 'gpt' ? GPT_PARTITION : kind === 'claude' ? CLAUDE_PARTITION : GEMINI_PARTITION
 }
 
-// 内嵌页固定使用的 Chrome 主版本 (当前稳定版)。Electron 31 内置 Chromium 126,
-// UA 里若暴露旧版本号, Cloudflare / 部分站点会对"旧浏览器"更频繁地弹验证;
-// 这里把版本号对齐到当前 Chrome, 降低被额外挑战的概率 (引擎仍是内置 Chromium, 仅改 UA 字符串)。
-export const EMBEDDED_CHROME_VERSION = '149.0.0.0'
-
-// 旧 gptUserAgent: 去掉 Electron/ShareGPT/ChatPortal 标识 + 把 Chrome 版本号提升到当前稳定版,
-// 伪装成普通的、最新版 Chrome。
+// 旧 gptUserAgent: 仅去掉 Electron/ShareGPT/ChatPortal 标识, 伪装成普通 Chrome。
+// 注意: 不要改写 Chrome 版本号! UA 字符串的版本一旦与引擎真实的 Sec-CH-UA / navigator.userAgentData
+// 不一致, Cloudflare Turnstile(Claude 用的就是它)会判为"浏览器特征不一致"而拒绝验证, 导致一直卡在
+// 验证页(ChatGPT 的验证较宽松, 故只有 Claude 受影响)。保持 UA 与引擎一致是 Turnstile 通过的关键。
 export function embeddedUserAgent(): string {
   if (typeof navigator === 'undefined') return ''
   return String(navigator.userAgent || '')
     .replace(/\s*Electron\/[^\s]+/gi, '')
     .replace(/\s*ShareGPT\/[^\s]+/gi, '')
     .replace(/\s*ChatPortal(?:\s+X1)?(?:\s+V\d+)?\/[^\s]+/gi, '')
-    .replace(/Chrome\/\d+(?:\.\d+)*/i, `Chrome/${EMBEDDED_CHROME_VERSION}`)
     .replace(/\s{2,}/g, ' ')
     .trim()
 }
