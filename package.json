@@ -1,7 +1,7 @@
 {
   "name": "sharegpt-desktop",
-  "version": "4.2.1",
-  "description": "ShareGPT desktop client with built-in messaging and embedded ChatGPT and Gemini web access.",
+  "version": "5.0.0",
+  "description": "ShareGPT desktop client with built-in messaging and embedded ChatGPT, Gemini and Claude web access (Gemini/Claude optional).",
   "main": "src/main/main.js",
   "author": "Sjeary",
   "license": "UNLICENSED",
