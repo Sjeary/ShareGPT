@@ -953,6 +953,13 @@ class Backend {
     const child = spawn(cmd, args, {
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        // 兼容较新版 sing-box(1.11+/1.12+): 允许 legacy special outbounds(dns/block tag),
+        // 否则新版启动时会 FATAL 退出(旧版会忽略此变量, 跨平台安全)。
+        // 注: Win 端内置 sing-box 版本较旧, mac 上常装到 1.12.x; 此标志让两端一致可用。
+        ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS: "true",
+      },
     });
 
     child.stdout.on("data", (buf) => {
