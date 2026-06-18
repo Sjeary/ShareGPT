@@ -35,6 +35,9 @@ const DEFAULT_TARGET_DOMAINS = [
   "hcaptcha.com",
   "doubleclick.net",
   "datadoghq.com",
+  // Datadog 浏览器监控的「intake」是单独注册的域名(整段是一个标签, 非 *.datadoghq.com 子域),
+  // domain_suffix 要点边界匹配, 故须精确写出完整域名才能命中。Claude 用 us5 区。
+  "browser-intake-us5-datadoghq.com",
   "facebook.net",
 ];
 

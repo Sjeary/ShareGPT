@@ -54,6 +54,7 @@ const CLAUDE_ALLOWED_HOSTS = [
   'hcaptcha.com',
   'doubleclick.net',
   'datadoghq.com',
+  'browser-intake-us5-datadoghq.com',
   'facebook.net',
 ]
 
