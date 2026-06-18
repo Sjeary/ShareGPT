@@ -1,5 +1,5 @@
-# Logs
-logs
+# Logs (anchor to root so it never matches source dirs like src/components/panels/logs)
+/logs
 *.log
 npm-debug.log*
 yarn-debug.log*
