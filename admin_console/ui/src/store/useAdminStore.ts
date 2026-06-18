@@ -7,6 +7,7 @@ import {
   type AdminTab,
   type AdminUser,
   type Bootstrap,
+  type SharedRelease,
 } from '@/types/admin'
 
 const THEME_KEY = 'sharegpt-admin-theme'
@@ -35,6 +36,9 @@ interface AdminState {
   dark: boolean
   toggleTheme: () => void
 
+  // 角色: none(未登录) / admin(群管理员) / dev(开发者全局发布)
+  role: 'none' | 'admin' | 'dev'
+
   // 连接 / 鉴权
   serverUrl: string
   username: string
@@ -42,6 +46,10 @@ interface AdminState {
   profile: AdminProfile | null
   authed: boolean
   busy: boolean
+
+  // 开发者(全局发布)状态
+  devToken: string
+  release: SharedRelease | null
 
   // 数据
   users: AdminUser[]
@@ -69,6 +77,12 @@ interface AdminState {
   loadBootstrap: (opts?: { silent?: boolean }) => Promise<void>
   saveBootstrap: (payload: Bootstrap) => Promise<Bootstrap | null>
   setBootstrap: (next: Bootstrap) => void
+
+  // 开发者(全局发布)
+  devLogin: (serverUrl: string, key: string) => Promise<void>
+  devLogout: () => Promise<void>
+  loadDevRelease: () => Promise<void>
+  saveDevReleaseInfo: (patch: { version?: string; notes?: string }) => Promise<void>
 }
 
 function applyTheme(dark: boolean) {
@@ -99,6 +113,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
   function forceLogout(message?: string) {
     if (!get().authed && !get().token) return
     set({
+      role: 'none',
       token: '',
       profile: null,
       authed: false,
@@ -122,12 +137,15 @@ export const useAdminStore = create<AdminState>((set, get) => {
       set({ dark: next })
     },
 
+    role: 'none',
     serverUrl: '',
     username: '',
     token: '',
     profile: null,
     authed: false,
     busy: false,
+    devToken: '',
+    release: null,
 
     users: [],
     usersLoading: false,
@@ -181,6 +199,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
           token: String(payload.token || ''),
           profile: payload.profile || null,
           authed: true,
+          role: 'admin',
         })
         await adminApi.savePrefs({ serverUrl: base, username })
         await Promise.all([get().loadUsers({ silent: true }), get().loadBootstrap({ silent: true })])
@@ -213,6 +232,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
           token: String(payload.token || ''),
           profile: payload.profile || null,
           authed: true,
+          role: 'admin',
         })
         await adminApi.savePrefs({ serverUrl: base, username })
         await Promise.all([get().loadUsers({ silent: true }), get().loadBootstrap({ silent: true })])
@@ -229,6 +249,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
         /* 忽略登出请求失败 */
       }
       set({
+        role: 'none',
         token: '',
         profile: null,
         authed: false,
@@ -294,5 +315,78 @@ export const useAdminStore = create<AdminState>((set, get) => {
     },
 
     setBootstrap: (next) => set({ bootstrap: next }),
+
+    // ===== 开发者 (全局发布) =====
+    devLogin: async (serverUrl, key) => {
+      const base = normalizeServerUrl(serverUrl)
+      if (!base || !key) throw new Error('请填写服务地址和开发者密钥')
+      set({ busy: true })
+      try {
+        const res = await fetch(`${base}/api/dev/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key }),
+        })
+        const text = await res.text()
+        if (!res.ok) throw new Error(text || `开发者登录失败（${res.status}）`)
+        const payload = (text ? JSON.parse(text) : {}) as {
+          token?: string
+          release?: SharedRelease
+        }
+        set({
+          role: 'dev',
+          serverUrl: base,
+          devToken: String(payload.token || ''),
+          release: payload.release || null,
+        })
+        await adminApi.savePrefs({ serverUrl: base, username: get().username })
+      } finally {
+        set({ busy: false })
+      }
+    },
+
+    devLogout: async () => {
+      const { serverUrl, devToken } = get()
+      try {
+        await serverFetch(serverUrl, devToken, '/api/dev/logout', { method: 'POST' })
+      } catch {
+        /* 忽略 */
+      }
+      set({ role: 'none', devToken: '', release: null })
+    },
+
+    loadDevRelease: async () => {
+      const { serverUrl, devToken } = get()
+      try {
+        const res = await serverFetch<{ release?: SharedRelease }>(
+          serverUrl,
+          devToken,
+          '/api/dev/release',
+        )
+        if (res.release) set({ release: res.release })
+      } catch (err) {
+        if (err instanceof AuthExpiredError) {
+          set({ role: 'none', devToken: '', release: null })
+          toast.error('开发者登录已失效，请重新登录')
+        } else {
+          toast.error(err instanceof Error ? err.message : String(err))
+        }
+      }
+    },
+
+    saveDevReleaseInfo: async (patch) => {
+      const { serverUrl, devToken } = get()
+      const res = await serverFetch<{ release?: SharedRelease }>(
+        serverUrl,
+        devToken,
+        '/api/dev/release',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(patch),
+        },
+      )
+      if (res.release) set({ release: res.release })
+    },
   }
 })

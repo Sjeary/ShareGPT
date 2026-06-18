@@ -57,6 +57,18 @@ export interface Bootstrap {
 
 export type AdminTab = 'overview' | 'users' | 'bootstrap' | 'releases' | 'extras'
 
+// 全局发布 (开发者维度, 共享发布库)。
+export interface SharedReleaseAsset {
+  fileName: string
+}
+export interface SharedRelease {
+  version: string
+  notes: string
+  publishedAt: string
+  windows: SharedReleaseAsset
+  macos: SharedReleaseAsset
+}
+
 // 401 等鉴权失效时抛出, store 据此自动登出回登录页。
 export class AuthExpiredError extends Error {
   constructor(message = '登录已失效，请重新登录') {

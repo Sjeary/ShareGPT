@@ -3,10 +3,11 @@ import { Toaster } from '@/components/ui/sonner'
 import { useAdminStore } from '@/store/useAdminStore'
 import { Titlebar } from '@/components/layout/Titlebar'
 import { Shell } from '@/components/layout/Shell'
+import { DevShell } from '@/components/layout/DevShell'
 import { LoginScreen } from '@/components/LoginScreen'
 
 export default function App() {
-  const authed = useAdminStore((s) => s.authed)
+  const role = useAdminStore((s) => s.role)
   const init = useAdminStore((s) => s.init)
   const dark = useAdminStore((s) => s.dark)
 
@@ -16,8 +17,10 @@ export default function App() {
 
   return (
     <>
-      {authed ? (
+      {role === 'admin' ? (
         <Shell />
+      ) : role === 'dev' ? (
+        <DevShell />
       ) : (
         <div className="flex h-full flex-col bg-background text-foreground">
           <Titlebar />

@@ -22,6 +22,8 @@ export interface ReleaseUploadPayload {
   platformKey: 'windows' | 'macos'
   version: string
   notes: string
+  // 上传端点: 群管理员默认 /api/admin/releases/upload; 开发者用 /api/dev/releases/upload。
+  uploadPath?: string
 }
 
 export interface AdminPrefs {

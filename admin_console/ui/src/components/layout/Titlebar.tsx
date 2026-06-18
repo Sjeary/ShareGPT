@@ -37,7 +37,7 @@ function CtlButton({
 export function Titlebar() {
   const dark = useAdminStore((s) => s.dark)
   const toggleTheme = useAdminStore((s) => s.toggleTheme)
-  const authed = useAdminStore((s) => s.authed)
+  const role = useAdminStore((s) => s.role)
   const serverUrl = useAdminStore((s) => s.serverUrl)
   const profile = useAdminStore((s) => s.profile)
 
@@ -60,8 +60,8 @@ export function Titlebar() {
       .catch(() => undefined)
   }
 
-  const adminLabel =
-    profile?.displayName || profile?.username || '管理员'
+  const roleLabel =
+    role === 'dev' ? '开发者' : profile?.displayName || profile?.username || '管理员'
 
   return (
     <header className="app-drag flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
@@ -70,13 +70,20 @@ export function Titlebar() {
           <ShieldCheck className="size-3.5" />
         </div>
         <span className="text-sm font-semibold tracking-tight">ShareGPT Admin</span>
-        {authed && (
+        {role !== 'none' && (
           <>
             <span className="hidden rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground sm:inline">
               {serverUrl || '未连接'}
             </span>
-            <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-              {adminLabel}
+            <span
+              className={cn(
+                'rounded-full px-2 py-0.5 text-[10px] font-medium',
+                role === 'dev'
+                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                  : 'bg-secondary text-muted-foreground',
+              )}
+            >
+              {roleLabel}
             </span>
           </>
         )}

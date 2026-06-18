@@ -55,7 +55,8 @@ async function uploadReleaseFile(payload = {}, onProgress = null) {
     throw new Error("请选择有效的安装包文件");
   }
 
-  const target = new URL(`${serverUrl}/api/admin/releases/upload`);
+  const uploadPath = String(payload.uploadPath || "/api/admin/releases/upload").trim() || "/api/admin/releases/upload";
+  const target = new URL(`${serverUrl}${uploadPath}`);
   target.searchParams.set("platform", String(payload.platformKey || "").trim());
   target.searchParams.set("fileName", path.basename(filePath));
   target.searchParams.set("version", String(payload.version || "").trim());
