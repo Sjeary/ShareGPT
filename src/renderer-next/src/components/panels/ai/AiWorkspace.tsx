@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { AiProxyReport } from '@/types/api'
+import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { useAiStore } from '@/store/useAiStore'
 import type { AiKind } from '@/store/useAiStore'
@@ -121,14 +122,23 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     })
   }, [runProxyCheck])
 
-  // 代理检测状态色: 红=会话未走代理/检测失败; 黄=有域名回落(未走发送代理); 绿=全部走发送代理。
-  const proxyTone: 'ok' | 'warn' | 'bad' | 'idle' = !proxyReport
+  // 自动巡检: 发送服务运行 + 页面已初始化时, 周期性跑代理检测, 让"有域名没走代理"能自动爆红,
+  // 不必每次手点。(检测只是被动读取已记录的主机, 开销很小。)
+  useEffect(() => {
+    if (!senderRunning || !activeTab?.webviewInitialized || !activeTabId) return
+    void runProxyCheck()
+    const id = window.setInterval(() => void runProxyCheck(), 20000)
+    return () => window.clearInterval(id)
+  }, [senderRunning, activeTab?.webviewInitialized, activeTabId, runProxyCheck])
+
+  // 代理检测状态色: 只要有任何域名没走代理(回落) 或会话未走代理/检测失败 -> 直接爆红;
+  // 全部走代理才是绿。(按需求: 一旦发现有域名没走代理就红色告警, 提醒补进清单。)
+  const fallbackCount = proxyReport?.fallbackCount ?? 0
+  const proxyTone: 'ok' | 'bad' | 'idle' = !proxyReport
     ? 'idle'
-    : !proxyReport.ok || !proxyReport.sessionProxied
+    : !proxyReport.ok || !proxyReport.sessionProxied || fallbackCount > 0
       ? 'bad'
-      : (proxyReport.fallbackCount ?? 0) > 0
-        ? 'warn'
-        : 'ok'
+      : 'ok'
 
   // 视图运行态 (供遮罩/导航按钮判断)。
   const view = {
@@ -349,21 +359,33 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
             <Button
               variant="ghost"
               size="sm"
-              className="h-8 gap-1.5 px-2"
-              title="检测此页面流量是否全部经发送代理"
+              className={cn(
+                'h-8 gap-1.5 px-2',
+                // 有域名没走代理 -> 爆红: 红底红字, 醒目提示去看/补清单。
+                proxyTone === 'bad' &&
+                  'bg-destructive/15 text-destructive hover:bg-destructive/25 hover:text-destructive',
+              )}
+              title={
+                proxyTone === 'bad'
+                  ? `警告: 有 ${fallbackCount} 个域名没走代理！点击查看`
+                  : '检测此页面流量是否全部经发送代理'
+              }
               disabled={!senderRunning}
               onClick={toggleProxyPanel}
             >
               {proxyTone === 'ok' ? (
                 <ShieldCheck className="size-4 text-emerald-500" />
-              ) : proxyTone === 'warn' ? (
-                <ShieldAlert className="size-4 text-amber-500" />
               ) : proxyTone === 'bad' ? (
                 <ShieldX className="size-4 text-destructive" />
               ) : (
                 <ShieldCheck className="size-4 text-muted-foreground" />
               )}
-              <span className="text-xs">代理检测</span>
+              <span className="text-xs font-medium">代理检测</span>
+              {proxyTone === 'bad' && fallbackCount > 0 && (
+                <span className="ml-0.5 grid min-w-4 animate-pulse place-items-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+                  {fallbackCount}
+                </span>
+              )}
             </Button>
             <Button
               variant="ghost"
@@ -484,19 +506,29 @@ function ProxyReportPanel({
 
       <p className={`mb-2 text-xs ${summaryColor}`}>{summary}</p>
 
+      {report?.ok && fallbackHosts.length > 0 && (
+        <div className="mb-2 flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <ShieldX className="mt-0.5 size-4 shrink-0" />
+          <span>
+            <b>有 {fallbackHosts.length} 个域名没走代理！</b>
+            这些流量从你的真实 IP 出网（未经梯子）。请把下方红色域名加入发送路由清单。
+          </span>
+        </div>
+      )}
+
       {hosts.length > 0 && (
         <ScrollArea className="max-h-44 rounded-md border border-border bg-background/60">
           <div className="space-y-2 p-2">
             {fallbackHosts.length > 0 && (
               <div>
-                <div className="mb-1 px-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                <div className="mb-1 px-1 text-[11px] font-bold text-destructive">
                   未走发送代理 · 回落本机代理/直连（{fallbackHosts.length}）
                 </div>
                 <div className="flex flex-wrap gap-1">
                   {fallbackHosts.map((h) => (
                     <span
                       key={h.host}
-                      className="rounded bg-amber-500/10 px-1.5 py-0.5 font-mono text-[11px] text-amber-700 dark:text-amber-300"
+                      className="rounded bg-destructive/15 px-1.5 py-0.5 font-mono text-[11px] font-medium text-destructive"
                     >
                       {h.host}
                     </span>

@@ -57,6 +57,8 @@ export const CLAUDE_ALLOWED_HOSTS = [
   'datadoghq.com',
   'browser-intake-us5-datadoghq.com',
   'facebook.net',
+  'intercom.io',
+  'intercomcdn.com',
 ]
 
 export function isAllowedUrlForHosts(rawUrl: string, allowedHosts: string[]): boolean {

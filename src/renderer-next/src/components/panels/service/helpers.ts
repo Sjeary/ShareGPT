@@ -56,6 +56,8 @@ const CLAUDE_ALLOWED_HOSTS = [
   'datadoghq.com',
   'browser-intake-us5-datadoghq.com',
   'facebook.net',
+  'intercom.io',
+  'intercomcdn.com',
 ]
 
 // 对应旧 renderer.js ~126 的 DEFAULT_TARGET_DOMAINS: 各组允许域去重后以逗号拼接。

@@ -39,6 +39,9 @@ const DEFAULT_TARGET_DOMAINS = [
   // domain_suffix 要点边界匹配, 故须精确写出完整域名才能命中。Claude 用 us5 区。
   "browser-intake-us5-datadoghq.com",
   "facebook.net",
+  // Claude 内的 Intercom 客服聊天组件 (api-iam / widget / nexus-websocket / cdn)。
+  "intercom.io",
+  "intercomcdn.com",
 ];
 
 const PUBLIC_DEFAULT_SETTINGS = {

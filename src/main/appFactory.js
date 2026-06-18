@@ -46,6 +46,8 @@ const CLAUDE_ALLOWED_HOSTS = [
   "datadoghq.com",
   "browser-intake-us5-datadoghq.com",
   "facebook.net",
+  "intercom.io",
+  "intercomcdn.com",
 ];
 
 const AI_WORKSPACE_POLICIES = {
