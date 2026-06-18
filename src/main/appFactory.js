@@ -373,6 +373,13 @@ function createElectronApp(baseMode = "all") {
     app.setAppUserModelId("ShareGPT");
   }
 
+  // 防止内嵌 WebContentsView 被 Chromium 判为"被遮挡/后台"而限流计时器(timer/rAF/动画帧):
+  // 否则 Cloudflare Turnstile 等依赖计时器的人机验证会因限流跑不完, 一直卡在"正在验证"页。
+  // 这是 Electron 内嵌视图 + Cloudflare 验证死循环的常见根因, 必须在 app ready 前设置。
+  app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
+  app.commandLine.appendSwitch("disable-backgrounding-occluded-windows");
+  app.commandLine.appendSwitch("disable-renderer-backgrounding");
+
   let mainWindow = null;
   let profileWindow = null;
   let backend = null;
@@ -874,6 +881,9 @@ function createElectronApp(baseMode = "all") {
         sandbox: true,
         webSecurity: true,
         allowRunningInsecureContent: false,
+        // 关闭后台限流: 内嵌视图被切走/判为遮挡时也不限流计时器, 保证 Cloudflare
+        // 人机验证(Turnstile, 依赖 timer/rAF)能正常跑完, 不会卡在验证页死循环。
+        backgroundThrottling: false,
       },
     });
 
