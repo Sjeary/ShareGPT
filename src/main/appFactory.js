@@ -321,6 +321,61 @@ function chromeifyClientHintBrands(rawValue) {
     .trim();
 }
 
+// 在内嵌页"任何脚本运行前"(document-start, 主世界)注入的去指纹脚本:
+// Cloudflare Turnstile(Claude 用)会在 JS 层读取 navigator.userAgentData 的品牌列表与
+// navigator.webdriver 来识别"嵌入式/自动化浏览器"。这里清掉 Electron 品牌、补上 Google Chrome、
+// 并让 webdriver 返回 false, 使其在 JS 层也看着像真实 Chrome。仅改这些只读属性, 不暴露任何能力。
+const STEALTH_SOURCE = `
+(function () {
+  try {
+    try {
+      Object.defineProperty(Navigator.prototype, 'webdriver', { get: function () { return false; }, configurable: true });
+    } catch (e) {}
+    var uad = navigator.userAgentData;
+    if (uad) {
+      var origBrands = (uad.brands || []).slice();
+      var chromium = origBrands.filter(function (b) { return /Chromium/i.test(b.brand); })[0];
+      var ver = chromium ? chromium.version : '';
+      var strip = function (list) {
+        var out = (list || []).filter(function (b) { return !/Electron/i.test(b.brand); });
+        if (ver && !out.some(function (b) { return /Google Chrome/i.test(b.brand); })) out.push({ brand: 'Google Chrome', version: ver });
+        return out;
+      };
+      try {
+        Object.defineProperty(uad, 'brands', { get: function () { return strip(origBrands); }, configurable: true });
+      } catch (e) {}
+      if (typeof uad.getHighEntropyValues === 'function') {
+        var orig = uad.getHighEntropyValues.bind(uad);
+        uad.getHighEntropyValues = function (hints) {
+          return orig(hints).then(function (r) {
+            try {
+              if (r && Array.isArray(r.brands)) r.brands = strip(r.brands);
+              if (r && Array.isArray(r.fullVersionList)) {
+                var fv = r.fullVersionList.filter(function (b) { return !/Electron/i.test(b.brand); });
+                var fchr = (r.fullVersionList.filter(function (b) { return /Chromium/i.test(b.brand); })[0] || {}).version || '';
+                if (fchr && !fv.some(function (b) { return /Google Chrome/i.test(b.brand); })) fv.push({ brand: 'Google Chrome', version: fchr });
+                r.fullVersionList = fv;
+              }
+            } catch (e) {}
+            return r;
+          });
+        };
+      }
+    }
+  } catch (e) {}
+})();
+`;
+
+// 给内嵌页 webContents 注入去指纹脚本(document-start, 主世界)。用 CDP Page.addScriptToEvaluateOnNewDocument,
+// 不动 contextIsolation/sandbox 等安全项; 不调用 Runtime.enable(避免常见的 CDP 被检测特征)。
+function installStealthScript(wc) {
+  try {
+    const dbg = wc.debugger;
+    if (!dbg.isAttached()) dbg.attach("1.3");
+    dbg.sendCommand("Page.addScriptToEvaluateOnNewDocument", { source: STEALTH_SOURCE }).catch(() => {});
+  } catch {}
+}
+
 // 内嵌页 UA: 仅去标识, 不改 Chrome 版本号。改写版本会与引擎真实的 Sec-CH-UA /
 // navigator.userAgentData 不一致, 触发 Cloudflare Turnstile(Claude 用)的"特征不一致"拒绝 -> 卡验证。
 function sanitizeEmbeddedUserAgent(rawUserAgent) {
@@ -925,6 +980,9 @@ function createElectronApp(baseMode = "all") {
         backgroundThrottling: false,
       },
     });
+
+    // 注入去指纹脚本(清洗 navigator.userAgentData/webdriver), 让 Turnstile 在 JS 层也认作真实 Chrome。
+    installStealthScript(view.webContents);
 
     const workspace = {
       id: targetTabId,
