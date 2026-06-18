@@ -13,6 +13,12 @@ export interface SenderSettings {
   // 本机自动加入的额外代理域名: 代理检测发现"会用到但没走代理"的域名时自动累积到这里,
   // 与内置 DEFAULT_TARGET_DOMAINS 合并参与路由。版本更新后会剔除已并入内置清单的项。
   auto_domains?: string[]
+  // 代理出站方式 (可选, 默认 unified): unified = 统一 VMess 梯子; airport = 服务器下发的机场节点。
+  proxy_mode?: 'unified' | 'airport'
+  // 机场节点 (sing-box outbound, 由管理端从 Clash 节点转换后经 bootstrap 下发)。
+  airport_outbound?: Record<string, unknown> | null
+  // 机场节点展示名 (供 UI 显示当前用的是哪个节点)。
+  airport_name?: string
 }
 
 export interface ReceiverSettings {

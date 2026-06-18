@@ -146,6 +146,17 @@ async function fetchClientBootstrap(serverUrl: string, token: string): Promise<B
   useAuthStore.getState().setUpdateInfo(payload.update)
   // 本机 sender 不完整时用服务器下发补全。
   await applySenderBootstrapConfig(payload.sender)
+  // 机场节点: 服务器下发了节点就用最新的覆盖本机 (管理端可随时更新)。
+  // 不改 proxy_mode —— 是否启用机场由用户在发送端设置里自己选。
+  if (payload.airport && payload.airport.outbound) {
+    await useAppStore
+      .getState()
+      .patchSection('sender', {
+        airport_outbound: payload.airport.outbound,
+        airport_name: payload.airport.name,
+      })
+      .catch(() => undefined)
+  }
   return payload
 }
 

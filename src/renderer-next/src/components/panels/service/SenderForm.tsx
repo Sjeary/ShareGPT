@@ -8,6 +8,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { api } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import type { SenderSettings } from '@/types/settings'
 import { Field } from './Field'
 import {
@@ -73,10 +74,17 @@ export function SenderForm() {
 
   // 移植旧版启动前校验: 已填服务器时, 端口必须是数字, uuid 必填。
   function validate(): string | null {
-    const server = safeText(form.proxy_server)
-    if (!server) return '请先填写服务器地址，再开启发送服务'
-    if (!isPortNumber(safeText(form.proxy_port))) return '连接端口必须为数字'
-    if (!safeText(form.proxy_uuid)) return '请填写连接身份码'
+    if (form.proxy_mode === 'airport') {
+      // 机场模式: 用下发节点出站, 不需要统一梯子的 server/port/uuid。
+      if (!form.airport_outbound) {
+        return '当前没有可用的机场节点（管理员未下发），请改用「统一梯子」或联系管理员'
+      }
+    } else {
+      const server = safeText(form.proxy_server)
+      if (!server) return '请先填写服务器地址，再开启发送服务'
+      if (!isPortNumber(safeText(form.proxy_port))) return '连接端口必须为数字'
+      if (!safeText(form.proxy_uuid)) return '请填写连接身份码'
+    }
     const socks = safeText(form.socks_listen_port)
     if (socks && !isPortNumber(socks)) return '本地代理端口必须为数字'
     if (!directMode) {
@@ -131,6 +139,47 @@ export function SenderForm() {
       <p className="text-sm text-muted-foreground">
         填写连接信息后，可开启发送端，让需要的网站通过这台设备访问。
       </p>
+
+      {/* 代理方式 (可选): 统一梯子 (默认) 或 服务器下发的机场节点。运行中锁定, 需停止后切换。 */}
+      <div className="grid gap-1.5">
+        <Label className="cursor-default">代理方式</Label>
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={locked}
+            onClick={() => update({ proxy_mode: 'unified' })}
+            className={cn(
+              'flex-1 rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-60',
+              form.proxy_mode !== 'airport'
+                ? 'border-primary bg-primary/10'
+                : 'border-border hover:bg-accent/40',
+            )}
+          >
+            <div className="text-sm font-medium">统一梯子（默认）</div>
+            <div className="truncate text-xs text-muted-foreground">
+              经统一服务器 {safeText(form.proxy_server) || '——'} 出网
+            </div>
+          </button>
+          <button
+            type="button"
+            disabled={locked || !form.airport_outbound}
+            onClick={() => update({ proxy_mode: 'airport' })}
+            className={cn(
+              'flex-1 rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-50',
+              form.proxy_mode === 'airport'
+                ? 'border-primary bg-primary/10'
+                : 'border-border hover:bg-accent/40',
+            )}
+          >
+            <div className="text-sm font-medium">机场节点</div>
+            <div className="truncate text-xs text-muted-foreground">
+              {form.airport_outbound
+                ? `当前：${safeText(form.airport_name) || '已下发节点'}`
+                : '管理员暂未下发节点'}
+            </div>
+          </button>
+        </div>
+      </div>
 
       {!running && !online ? (
         <div

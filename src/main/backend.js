@@ -1041,9 +1041,16 @@ class Backend {
   }
 
   buildSenderConfig(sender) {
-    const proxyPort = toInt(sender.proxy_port, "公网端口");
     const listenPort = toInt(sender.socks_listen_port, "本地SOCKS监听端口");
     const fallbackMode = sender.fallback_mode === "direct" ? "direct" : "system_proxy";
+    // 代理出站方式 (可选): "unified" = 内置统一 VMess 梯子(默认); "airport" = 服务器下发的机场节点。
+    // 机场模式下 sender.airport_outbound 已是一份 sing-box outbound (由管理端从 Clash 节点转换)。
+    const proxyMode = sender.proxy_mode === "airport" ? "airport" : "unified";
+    const airportOutbound =
+      sender.airport_outbound && typeof sender.airport_outbound === "object"
+        ? sender.airport_outbound
+        : null;
+    const useAirport = proxyMode === "airport" && airportOutbound;
     // 测试用「全部流量走代理」: 除私有 IP 直连外, 所有流量(含 DNS)都走 proxy(梯子),
     // 不再只走 target_domains 清单。用于抓取页面到底访问了哪些域名 (仅管理员可开)。
     const routeAll =
@@ -1065,21 +1072,27 @@ class Backend {
     const uniqueDomains = [...new Set(domains)];
     const domainSuffix = uniqueDomains.map((d) => d.replace(/^\./, ""));
 
+    // "proxy" 出站: 机场模式用下发节点(强制 tag=proxy); 否则用统一 VMess 梯子。
+    // 两种方式都挂在 tag="proxy" 上, 路由/DNS 规则不变, 所有命中流量统一从此出站。
+    const proxyOutbound = useAirport
+      ? { ...airportOutbound, tag: "proxy" }
+      : {
+          type: "vmess",
+          tag: "proxy",
+          server: String(sender.proxy_server || "").trim(),
+          server_port: toInt(sender.proxy_port, "公网端口"),
+          uuid: String(sender.proxy_uuid || "").trim(),
+          packet_encoding: "packetaddr",
+          transport: {
+            type: "ws",
+            path: "",
+            max_early_data: 2048,
+            early_data_header_name: "Sec-WebSocket-Protocol",
+          },
+        };
+
     const outbounds = [
-      {
-        type: "vmess",
-        tag: "proxy",
-        server: String(sender.proxy_server || "").trim(),
-        server_port: proxyPort,
-        uuid: String(sender.proxy_uuid || "").trim(),
-        packet_encoding: "packetaddr",
-        transport: {
-          type: "ws",
-          path: "",
-          max_early_data: 2048,
-          early_data_header_name: "Sec-WebSocket-Protocol",
-        },
-      },
+      proxyOutbound,
       { type: "direct", tag: "direct" },
       { type: "block", tag: "block" },
       { type: "dns", tag: "dns_out" },
