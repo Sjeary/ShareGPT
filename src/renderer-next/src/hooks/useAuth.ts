@@ -36,7 +36,7 @@ export interface LoginParams {
 
 interface LoginResponse {
   token?: string
-  profile?: { avatar?: string; displayName?: string; isAdmin?: boolean }
+  profile?: { avatar?: string; displayName?: string; isAdmin?: boolean; chatDisabled?: boolean }
   // 登录响应可携带初始历史/在线名录, 用于 WS 建连前即时灌入 (旧 performCollabLogin ~4593)。
   history?: unknown
   users?: unknown
@@ -183,6 +183,7 @@ export function useAuth() {
         displayName: (payload.profile?.displayName ?? '').trim() || cleanedUser,
         avatar: (payload.profile?.avatar ?? '').trim(),
         isAdmin: Boolean(payload.profile?.isAdmin),
+        chatDisabled: Boolean(payload.profile?.chatDisabled),
       }
 
       setSession({ token: payload.token, profile, password })

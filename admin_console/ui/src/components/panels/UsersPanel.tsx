@@ -190,6 +190,7 @@ export function UsersPanel() {
                     {u.online && <Badge className="bg-success text-white">在线</Badge>}
                     {u.isAdmin && <Badge variant="secondary">管理员</Badge>}
                     {u.disabled && <Badge variant="destructive">已禁用</Badge>}
+                    {u.chatDisabled && <Badge variant="outline">禁聊天</Badge>}
                   </div>
                   <div className="mt-1 flex items-center justify-between gap-2">
                     <span className="truncate text-xs text-muted-foreground">
@@ -260,13 +261,14 @@ function EditUserCard({
   const [bio, setBio] = useState(user?.bio || '')
   const [isAdmin, setIsAdmin] = useState(Boolean(user?.isAdmin))
   const [disabled, setDisabled] = useState(Boolean(user?.disabled))
+  const [chatDisabled, setChatDisabled] = useState(Boolean(user?.chatDisabled))
   const [busy, setBusy] = useState(false)
 
   async function submit() {
     if (!user) return
     setBusy(true)
     try {
-      await onSave(user.username, { displayName, password, avatar, bio, isAdmin, disabled })
+      await onSave(user.username, { displayName, password, avatar, bio, isAdmin, disabled, chatDisabled })
       setPassword('')
       toast.success(`已保存用户 ${user.username}`)
     } catch (err) {
@@ -325,6 +327,13 @@ function EditUserCard({
           <Label className="cursor-default">禁用账号</Label>
           <Switch checked={disabled} onCheckedChange={setDisabled} />
         </div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <Label className="cursor-default">禁止协作聊天</Label>
+            <p className="truncate text-xs text-muted-foreground">无聊天入口、不收消息、别人发他也不弹窗</p>
+          </div>
+          <Switch checked={chatDisabled} onCheckedChange={setChatDisabled} />
+        </div>
         <Button disabled={busy} onClick={() => void submit()}>
           {busy ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
           保存用户
@@ -344,6 +353,7 @@ function CreateUserCard({
     avatar: string
     bio: string
     isAdmin: boolean
+    chatDisabled: boolean
   }) => Promise<AdminUser | null>
 }) {
   const [username, setUsername] = useState('')
@@ -352,6 +362,7 @@ function CreateUserCard({
   const [avatar, setAvatar] = useState('')
   const [bio, setBio] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
+  const [chatDisabled, setChatDisabled] = useState(false)
   const [busy, setBusy] = useState(false)
 
   async function submit() {
@@ -361,7 +372,7 @@ function CreateUserCard({
     }
     setBusy(true)
     try {
-      const created = await onCreate({ username, displayName, password, avatar, bio, isAdmin })
+      const created = await onCreate({ username, displayName, password, avatar, bio, isAdmin, chatDisabled })
       toast.success(`已创建用户 ${created?.username || username}`)
       setUsername('')
       setDisplayName('')
@@ -369,6 +380,7 @@ function CreateUserCard({
       setAvatar('')
       setBio('')
       setIsAdmin(false)
+      setChatDisabled(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
     } finally {
@@ -412,6 +424,13 @@ function CreateUserCard({
         <div className="flex items-center justify-between">
           <Label className="cursor-default">赋予管理员权限</Label>
           <Switch checked={isAdmin} onCheckedChange={setIsAdmin} />
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <Label className="cursor-default">禁止协作聊天</Label>
+            <p className="truncate text-xs text-muted-foreground">无聊天入口、不收消息、不弹窗</p>
+          </div>
+          <Switch checked={chatDisabled} onCheckedChange={setChatDisabled} />
         </div>
         <Button disabled={busy} onClick={() => void submit()}>
           {busy ? <Loader2 className="size-4 animate-spin" /> : <UserPlus className="size-4" />}

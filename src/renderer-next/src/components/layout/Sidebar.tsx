@@ -8,6 +8,7 @@ import {
 import { cn } from '@/lib/utils'
 import { NAV } from '@/lib/nav'
 import { useAppStore } from '@/store/useAppStore'
+import { useAuthStore } from '@/store/useAuthStore'
 
 // 可收起侧栏 (对齐 shadcn Sidebar collapsible="icon" 成熟实践):
 // 宽度用 CSS transition 平滑过渡(非两帧切换), 标签淡出, 收起态图标配 Tooltip, 尊重 reduced-motion。
@@ -20,11 +21,15 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const showGemini = useAppStore((s) => s.showGemini)
   const showClaude = useAppStore((s) => s.showClaude)
   const meta = useAppStore((s) => s.meta)
+  // 管理员可禁止某人用协作聊天: 禁用则隐藏「协作聊天」入口 (服务端不投递消息, 这里只隐藏入口)。
+  const chatDisabled = useAuthStore((s) => Boolean(s.profile?.chatDisabled))
 
-  // 可按设置隐藏 Gemini / Claude 入口 (settings.ui.showGemini / showClaude)。
+  // 可按设置隐藏 Gemini / Claude 入口, 以及对被禁用户隐藏协作聊天入口。
   const navItems = NAV.filter(
     (item) =>
-      (item.key !== 'gemini' || showGemini) && (item.key !== 'claude' || showClaude),
+      (item.key !== 'gemini' || showGemini) &&
+      (item.key !== 'claude' || showClaude) &&
+      (item.key !== 'chat' || !chatDisabled),
   )
 
   // 侧栏在右时: 边框换到左侧, 收起态 Tooltip 弹向左侧 (避免被自身遮挡/出屏)。
