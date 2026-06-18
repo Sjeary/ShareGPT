@@ -73,8 +73,17 @@ export function Titlebar() {
 
   const maxLabel = maximized ? '还原窗口' : '最大化'
 
+  // macOS 用系统原生红绿灯(左上角)管理窗口, 不再自绘最小化/最大化/关闭, 避免双份控件;
+  // 左侧留出红绿灯宽度, 顶栏内容不被遮挡。Windows 走自绘窗口控制(右上角)。
+  const isMac = api.platform === 'darwin'
+
   return (
-    <header className="app-drag flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
+    <header
+      className={cn(
+        'app-drag flex h-11 shrink-0 items-center justify-between border-b border-border',
+        isMac ? 'pl-20 pr-3' : 'px-3',
+      )}
+    >
       <div className="flex items-center gap-2.5">
         <div className="grid size-6 place-items-center rounded-md bg-primary text-primary-foreground">
           <Cable className="size-3.5" />
@@ -90,17 +99,22 @@ export function Titlebar() {
         <CtlButton onClick={toggleTheme} label="切换主题">
           {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
         </CtlButton>
-        {/* 主题切换与窗口控制间留分隔, 降低误触最小化/关闭。 */}
-        <span aria-hidden className="mx-1 h-5 w-px bg-border" />
-        <CtlButton onClick={() => api.minimizeWindow()} label="最小化">
-          <Minus className="size-4" />
-        </CtlButton>
-        <CtlButton onClick={handleToggleMax} label={maxLabel}>
-          {maximized ? <Copy className="size-4" /> : <Square className="size-4" />}
-        </CtlButton>
-        <CtlButton onClick={() => api.closeWindow()} label="关闭" danger>
-          <X className="size-4" />
-        </CtlButton>
+        {/* 仅 Windows 自绘窗口控制; macOS 用系统红绿灯。 */}
+        {!isMac && (
+          <>
+            {/* 主题切换与窗口控制间留分隔, 降低误触最小化/关闭。 */}
+            <span aria-hidden className="mx-1 h-5 w-px bg-border" />
+            <CtlButton onClick={() => api.minimizeWindow()} label="最小化">
+              <Minus className="size-4" />
+            </CtlButton>
+            <CtlButton onClick={handleToggleMax} label={maxLabel}>
+              {maximized ? <Copy className="size-4" /> : <Square className="size-4" />}
+            </CtlButton>
+            <CtlButton onClick={() => api.closeWindow()} label="关闭" danger>
+              <X className="size-4" />
+            </CtlButton>
+          </>
+        )}
       </div>
     </header>
   )

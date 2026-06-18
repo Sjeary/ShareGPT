@@ -63,8 +63,16 @@ export function Titlebar() {
   const roleLabel =
     role === 'dev' ? '开发者' : profile?.displayName || profile?.username || '管理员'
 
+  // macOS 用系统红绿灯(左上角); 不自绘窗口控制, 左侧留出红绿灯宽度。Windows 走自绘控制。
+  const isMac = adminApi.platform === 'darwin'
+
   return (
-    <header className="app-drag flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
+    <header
+      className={cn(
+        'app-drag flex h-11 shrink-0 items-center justify-between border-b border-border',
+        isMac ? 'pl-20 pr-3' : 'px-3',
+      )}
+    >
       <div className="flex items-center gap-2.5">
         <div className="grid size-6 place-items-center rounded-md bg-primary text-primary-foreground">
           <ShieldCheck className="size-3.5" />
@@ -92,16 +100,20 @@ export function Titlebar() {
         <CtlButton onClick={toggleTheme} label="切换主题">
           {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
         </CtlButton>
-        <span aria-hidden className="mx-1 h-5 w-px bg-border" />
-        <CtlButton onClick={() => adminApi.minimizeWindow()} label="最小化">
-          <Minus className="size-4" />
-        </CtlButton>
-        <CtlButton onClick={handleToggleMax} label={maximized ? '还原窗口' : '最大化'}>
-          {maximized ? <Copy className="size-4" /> : <Square className="size-4" />}
-        </CtlButton>
-        <CtlButton onClick={() => adminApi.closeWindow()} label="关闭" danger>
-          <X className="size-4" />
-        </CtlButton>
+        {!isMac && (
+          <>
+            <span aria-hidden className="mx-1 h-5 w-px bg-border" />
+            <CtlButton onClick={() => adminApi.minimizeWindow()} label="最小化">
+              <Minus className="size-4" />
+            </CtlButton>
+            <CtlButton onClick={handleToggleMax} label={maximized ? '还原窗口' : '最大化'}>
+              {maximized ? <Copy className="size-4" /> : <Square className="size-4" />}
+            </CtlButton>
+            <CtlButton onClick={() => adminApi.closeWindow()} label="关闭" danger>
+              <X className="size-4" />
+            </CtlButton>
+          </>
+        )}
       </div>
     </header>
   )

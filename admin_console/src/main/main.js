@@ -138,7 +138,7 @@ function createWindow() {
     minHeight: 760,
     title: "ShareGPT Admin",
     backgroundColor: "#0b1220",
-    frame: process.platform === "darwin",
+    frame: false,
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
