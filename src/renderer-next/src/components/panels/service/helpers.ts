@@ -51,6 +51,10 @@ const CLAUDE_ALLOWED_HOSTS = [
   'claudemcpcontent.com',
   'sentry.io',
   'stripe.com',
+  'hcaptcha.com',
+  'doubleclick.net',
+  'datadoghq.com',
+  'facebook.net',
 ]
 
 // 对应旧 renderer.js ~126 的 DEFAULT_TARGET_DOMAINS: 各组允许域去重后以逗号拼接。

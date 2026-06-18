@@ -52,6 +52,10 @@ export const CLAUDE_ALLOWED_HOSTS = [
   'googleusercontent.com',
   'sentry.io',
   'stripe.com',
+  'hcaptcha.com',
+  'doubleclick.net',
+  'datadoghq.com',
+  'facebook.net',
 ]
 
 export function isAllowedUrlForHosts(rawUrl: string, allowedHosts: string[]): boolean {

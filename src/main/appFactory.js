@@ -41,6 +41,10 @@ const CLAUDE_ALLOWED_HOSTS = [
   "googleusercontent.com",
   "sentry.io",
   "stripe.com",
+  "hcaptcha.com",
+  "doubleclick.net",
+  "datadoghq.com",
+  "facebook.net",
 ];
 
 const AI_WORKSPACE_POLICIES = {

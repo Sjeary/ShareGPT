@@ -30,6 +30,12 @@ const DEFAULT_TARGET_DOMAINS = [
   "claudemcpcontent.com",
   "sentry.io",
   "stripe.com",
+  // Claude 页面实际会访问的第三方(由「代理检测」抓取): 验证(hcaptcha)、埋点/监控(datadog)、
+  // 广告/统计(doubleclick/facebook)。按需求全部纳入梯子路由, 保证页面流量不回落本机代理/直连。
+  "hcaptcha.com",
+  "doubleclick.net",
+  "datadoghq.com",
+  "facebook.net",
 ];
 
 const PUBLIC_DEFAULT_SETTINGS = {
