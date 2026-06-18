@@ -142,7 +142,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
             {(meta?.productName as string) || 'ShareGPT'}
           </div>
           <div className="whitespace-nowrap">
-            v{(meta?.version as string) || '5.2.0'} · 新界面
+            v{(meta?.version as string) || '5.2.1'} · 新界面
           </div>
         </div>
       </aside>

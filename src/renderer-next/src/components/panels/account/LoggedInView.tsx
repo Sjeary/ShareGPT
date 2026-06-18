@@ -515,8 +515,8 @@ export function LoggedInView() {
               <Label htmlFor="ui-show-gemini" className="cursor-pointer">
                 显示 Gemini
               </Label>
-              <p className="truncate text-xs text-muted-foreground">
-                控制主页导航栏是否显示 Gemini 切换按钮。
+              <p className="text-xs text-muted-foreground">
+                默认隐藏。Gemini 需要 Google 登录，而内嵌客户端无法完成 Google 登录——我们尝试集成过，但实际用不了。如仍需要可在此开启。
               </p>
             </div>
             <Switch

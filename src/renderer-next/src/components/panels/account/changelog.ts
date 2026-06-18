@@ -9,6 +9,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '5.2.1',
+    date: '2026-06-19',
+    highlights: [
+      'Gemini 默认隐藏：Gemini 需要 Google 登录，内嵌客户端无法完成，集成尝试未成功；如仍需要可在「界面设置」中手动开启。',
+      '使用统计页相应只显示已启用的入口。',
+    ],
+  },
+  {
     version: '5.2.0',
     date: '2026-06-19',
     highlights: [

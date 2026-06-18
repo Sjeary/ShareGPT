@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { BarChart3, RefreshCw, TriangleAlert, Users } from 'lucide-react'
 import { PanelScaffold } from './PanelScaffold'
 import { Button } from '@/components/ui/button'
@@ -5,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useStats } from './stats/useStats'
 import { formatRangeText, STATS_KIND_LABELS, type StatsKind } from './stats/helpers'
 import { cn } from '@/lib/utils'
+import { useAppStore } from '@/store/useAppStore'
 import { RangeControls } from './stats/RangeControls'
 import { PieChart } from './stats/PieChart'
 import { RankList } from './stats/RankList'
@@ -19,6 +21,19 @@ import { StatsSkeleton } from './stats/StatsSkeleton'
 export function StatsPanel() {
   const { authed, range, kind, setKind, stats, loading, error, applyPreset, setCustomRange, apply } =
     useStats()
+  // 维度可见性跟随导航开关: Gemini 默认隐藏(集成未成功), Claude 跟随其开关; ChatGPT 始终有。
+  const showGemini = useAppStore((s) => s.showGemini)
+  const showClaude = useAppStore((s) => s.showClaude)
+  const kinds: StatsKind[] = [
+    'gpt',
+    ...(showGemini ? (['gemini'] as StatsKind[]) : []),
+    ...(showClaude ? (['claude'] as StatsKind[]) : []),
+  ]
+  // 当前维度若被隐藏(如 Gemini 关闭), 回落到 ChatGPT。
+  useEffect(() => {
+    if (!kinds.includes(kind)) setKind('gpt')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showGemini, showClaude, kind])
 
   // 未登录: 参照账户面板的 authed 判断, 给出登录提示。
   if (!authed) {
@@ -60,9 +75,10 @@ export function StatsPanel() {
       }
     >
       <div className="selectable mx-auto flex max-w-3xl flex-col gap-4 p-6">
-        {/* AI 维度切换 (ChatGPT / Gemini / Claude) */}
+        {/* AI 维度切换: 仅显示已启用的入口 (Gemini 默认隐藏)。单一维度时不显示切换。 */}
+        {kinds.length > 1 && (
         <div className="inline-flex w-fit items-center gap-1 rounded-lg border border-border bg-muted/40 p-1">
-          {(Object.keys(STATS_KIND_LABELS) as StatsKind[]).map((k) => (
+          {kinds.map((k) => (
             <button
               key={k}
               type="button"
@@ -79,6 +95,7 @@ export function StatsPanel() {
             </button>
           ))}
         </div>
+        )}
 
         {/* 区间筛选 */}
         <Card>

@@ -144,10 +144,11 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   showGemini: (() => {
     try {
-      // 默认展示: 仅当显式存为 '0' 时隐藏。
-      return localStorage.getItem('sharegpt-show-gemini') !== '0'
+      // 默认隐藏: 仅当显式存为 '1' 时展示。
+      // Gemini 依赖 Google 登录, 而内嵌客户端无法完成 Google 登录, 集成尝试未成功, 故默认隐藏。
+      return localStorage.getItem('sharegpt-show-gemini') === '1'
     } catch {
-      return true
+      return false
     }
   })(),
   // 切换是否展示 Gemini: 写 localStorage + 回写磁盘 settings.ui.showGemini;
