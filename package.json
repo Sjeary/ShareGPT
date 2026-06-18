@@ -1,8 +1,8 @@
 {
-  "name": "sharegpt-desktop",
+  "name": "sharegpt-sender-desktop",
   "version": "5.1.0",
   "description": "ShareGPT desktop client with built-in messaging and embedded ChatGPT, Gemini and Claude web access (Gemini/Claude optional).",
-  "main": "src/main/main.js",
+  "main": "src/main/main_sender.js",
   "author": "Sjeary",
   "license": "UNLICENSED",
   "homepage": "https://github.com/Sjeary/ShareGPT",
@@ -12,87 +12,5 @@
   },
   "bugs": {
     "url": "https://github.com/Sjeary/ShareGPT/issues"
-  },
-  "keywords": [
-    "electron",
-    "windows",
-    "desktop",
-    "network",
-    "chatgpt",
-    "gemini",
-    "sing-box"
-  ],
-  "scripts": {
-    "prepare:assets": "node scripts/prepare-assets.mjs all",
-    "build:next": "npm --prefix src/renderer-next install && npm --prefix src/renderer-next run build",
-    "dev": "node scripts/prepare-assets.mjs all && npm exec -- electron .",
-    "dev:sender": "node scripts/prepare-assets.mjs sender && npm exec -- electron . --mode=sender",
-    "dev:receiver": "node scripts/prepare-assets.mjs receiver && npm exec -- electron . --mode=receiver",
-    "dist:win": "npm run build:next && node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --win portable",
-    "dist:win:sender": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --win portable --config build.sender.json",
-    "dist:win:receiver": "node scripts/prepare-assets.mjs receiver --required && npm exec -- electron-builder --win portable --config build.receiver.json",
-    "dist:win:split": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --win portable --config build.sender.json && node scripts/prepare-assets.mjs receiver --required && npm exec -- electron-builder --win portable --config build.receiver.json",
-    "dist:win:installer": "npm run build:next && node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --win nsis",
-    "dist:mac": "node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --mac dmg",
-    "dist:mac:sender": "node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --mac --config build.sender.json",
-    "dist:mac:sender:dmg": "node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --mac dmg --config build.sender.json",
-    "dist:linux": "node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --linux AppImage",
-    "dev:admin": "npm --prefix admin_console run dev",
-    "dist:admin:win": "npm --prefix admin_console run dist:win",
-    "dist:admin:mac": "npm --prefix admin_console run dist:mac"
-  },
-  "devDependencies": {
-    "electron": "^31.7.7",
-    "electron-builder": "^24.13.3"
-  },
-  "build": {
-    "appId": "com.sjeary.sharegpt.desktop",
-    "productName": "ShareGPT",
-    "asar": true,
-    "files": [
-      "src/**/*",
-      "!src/renderer-next/node_modules/**",
-      "!src/renderer-next/src/**",
-      "!src/renderer-next/public/**",
-      "!src/renderer-next/.gitignore",
-      "!src/renderer-next/README.md",
-      "!src/renderer-next/eslint.config.js",
-      "!src/renderer-next/tsconfig*.json",
-      "!src/renderer-next/vite.config.ts",
-      "!src/renderer-next/components.json",
-      "!src/renderer-next/package*.json",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "build/bin",
-        "to": "bin",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
-    "directories": {
-      "output": "release"
-    },
-    "win": {
-      "target": [
-        "portable"
-      ],
-      "artifactName": "sharegpt-${version}.${ext}",
-      "executableName": "sharegpt",
-      "signAndEditExecutable": false
-    },
-    "mac": {
-      "target": [
-        "dmg"
-      ]
-    },
-    "linux": {
-      "target": [
-        "AppImage"
-      ],
-      "category": "Network"
-    }
   }
 }

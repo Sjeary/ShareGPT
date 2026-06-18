@@ -48,13 +48,26 @@ function trimTrailingSlash(url: string): string {
 }
 
 // 与旧 renderer.js getClientVersionPayload 对齐 (服务器据此记录客户端信息)。
-function clientVersionPayload(): Record<string, unknown> {
-  const meta = useAppStore.getState().meta
+// 兜底: 若 store 里的 meta 尚未就绪或缺 version, 直接向主进程取 (app.getVersion),
+// 避免上报空版本 — 修复「客户端版本统计为空」的问题; 并回填 store 供侧栏/账户读取。
+async function clientVersionPayload(): Promise<Record<string, unknown>> {
+  let meta = useAppStore.getState().meta as Record<string, unknown>
+  if (!meta || !meta.version) {
+    try {
+      const fresh = await api.getAppMeta()
+      if (fresh && typeof fresh === 'object' && (fresh as Record<string, unknown>).version) {
+        meta = fresh as Record<string, unknown>
+        useAppStore.setState({ meta })
+      }
+    } catch {
+      /* 保留 store 现值 */
+    }
+  }
   return {
-    name: String(meta.name ?? 'ShareGPT'),
-    version: String(meta.version ?? ''),
-    platform: String(meta.platform ?? api.platform ?? ''),
-    arch: String(meta.arch ?? ''),
+    name: String(meta?.name ?? 'ShareGPT'),
+    version: String(meta?.version ?? ''),
+    platform: String(meta?.platform ?? api.platform ?? ''),
+    arch: String(meta?.arch ?? ''),
     mode: String(useAppStore.getState().mode ?? ''),
     reportedAt: new Date().toISOString(),
   }
@@ -162,7 +175,7 @@ export function useAuth() {
           body: JSON.stringify({
             username: cleanedUser,
             password,
-            client: clientVersionPayload(),
+            client: await clientVersionPayload(),
           }),
         },
         LOGIN_TIMEOUT_MS,
