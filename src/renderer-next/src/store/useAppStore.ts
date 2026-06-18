@@ -24,6 +24,10 @@ interface AppState {
   showGemini: boolean
   setShowGemini: (v: boolean) => void
 
+  // 是否在导航栏展示 Claude 入口 (设置项, 入口在账户面板)。默认展示。
+  showClaude: boolean
+  setShowClaude: (v: boolean) => void
+
   // GPT/Gemini 页隐藏侧栏 (侧栏三态之一: 左 / 右 / 隐藏), 让内嵌网页占满看着清爽。
   // 仅在 GPT/Gemini 面板生效 (见 Shell), 避免在其它面板把导航藏没了。
   sidebarHidden: boolean
@@ -67,6 +71,7 @@ const EMPTY_SETTINGS: AppSettings = {
   collab: {},
   gpt: {},
   gemini: {},
+  claude: {},
   ui: {},
 }
 
@@ -161,6 +166,28 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { showGemini: v, active: nextActive }
     }),
 
+  showClaude: (() => {
+    try {
+      return localStorage.getItem('sharegpt-show-claude') !== '0'
+    } catch {
+      return true
+    }
+  })(),
+  // 切换是否展示 Claude: 同 Gemini 逻辑; 关闭时若正处于 Claude 页则切回「代理转发」。
+  setShowClaude: (v) =>
+    set((s) => {
+      try {
+        localStorage.setItem('sharegpt-show-claude', v ? '1' : '0')
+      } catch {
+        /* ignore */
+      }
+      void get()
+        .patchSection('ui', { showClaude: v })
+        .catch(() => undefined)
+      const nextActive = !v && s.active === 'claude' ? 'service' : s.active
+      return { showClaude: v, active: nextActive }
+    }),
+
   sidebarHidden: (() => {
     try {
       return localStorage.getItem('sharegpt-sidebar-hidden') === '1'
@@ -231,6 +258,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (typeof savedShowGemini === 'boolean') {
       set({ showGemini: savedShowGemini })
       if (!savedShowGemini && get().active === 'gemini') set({ active: 'service' })
+    }
+    const savedShowClaude = mergedSettings.ui?.showClaude
+    if (typeof savedShowClaude === 'boolean') {
+      set({ showClaude: savedShowClaude })
+      if (!savedShowClaude && get().active === 'claude') set({ active: 'service' })
     }
     api.onStatus((payload) => set({ status: payload as StatusPayload }))
   },

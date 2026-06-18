@@ -248,6 +248,8 @@ export function LoggedInView() {
   const setSidebarSide = useAppStore((s) => s.setSidebarSide)
   const showGemini = useAppStore((s) => s.showGemini)
   const setShowGemini = useAppStore((s) => s.setShowGemini)
+  const showClaude = useAppStore((s) => s.showClaude)
+  const setShowClaude = useAppStore((s) => s.setShowClaude)
   const profile = useAuthStore((s) => s.profile)
   const { logout } = useAuth()
 
@@ -390,6 +392,25 @@ export function LoggedInView() {
               id="ui-show-gemini"
               checked={showGemini}
               onCheckedChange={setShowGemini}
+            />
+          </div>
+
+          <Separator className="my-1" />
+
+          {/* 是否展示 Claude: 关闭后导航栏不再显示 Claude 入口 (settings.ui.showClaude)。 */}
+          <div className="flex items-center justify-between gap-3 py-1.5">
+            <div className="min-w-0">
+              <Label htmlFor="ui-show-claude" className="cursor-pointer">
+                显示 Claude
+              </Label>
+              <p className="truncate text-xs text-muted-foreground">
+                控制主页导航栏是否显示 Claude 切换按钮。
+              </p>
+            </div>
+            <Switch
+              id="ui-show-claude"
+              checked={showClaude}
+              onCheckedChange={setShowClaude}
             />
           </div>
         </CardContent>

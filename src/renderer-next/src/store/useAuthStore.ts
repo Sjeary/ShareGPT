@@ -9,6 +9,8 @@ export interface AuthProfile {
   username: string
   displayName: string
   avatar: string
+  // 是否为管理员 (服务端 /api/login 的 profile 下发)。用于门控仅管理员可用的功能。
+  isAdmin?: boolean
 }
 
 interface AuthState {

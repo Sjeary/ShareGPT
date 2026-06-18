@@ -22,6 +22,14 @@ const DEFAULT_TARGET_DOMAINS = [
   "gstatic.com",
   "gvt1.com",
   "googletagmanager.com",
+  // Claude (claude.ai 网页): 主站 + Anthropic(含 statsig.anthropic.com) + artifacts/MCP 内容
+  // + 错误上报(sentry) + 计费(stripe); 登录/验证走的 google/cloudflare 已在上方。
+  "claude.ai",
+  "anthropic.com",
+  "claudeusercontent.com",
+  "claudemcpcontent.com",
+  "sentry.io",
+  "stripe.com",
 ];
 
 const PUBLIC_DEFAULT_SETTINGS = {
@@ -1021,6 +1029,10 @@ class Backend {
     const proxyPort = toInt(sender.proxy_port, "公网端口");
     const listenPort = toInt(sender.socks_listen_port, "本地SOCKS监听端口");
     const fallbackMode = sender.fallback_mode === "direct" ? "direct" : "system_proxy";
+    // 测试用「全部流量走代理」: 除私有 IP 直连外, 所有流量(含 DNS)都走 proxy(梯子),
+    // 不再只走 target_domains 清单。用于抓取页面到底访问了哪些域名 (仅管理员可开)。
+    const routeAll =
+      sender.route_all === true || sender.route_all === "1" || sender.route_all === "true";
 
     const domainsRaw =
       this.appMode === "sender" ? DEFAULT_TARGET_DOMAINS.join(",") : String(sender.target_domains || "");
@@ -1095,7 +1107,7 @@ class Backend {
           { clash_mode: "global", server: "dns_proxy" },
           ...(domainSuffix.length ? [{ domain_suffix: domainSuffix, server: "dns_proxy" }] : []),
         ],
-        final: fallbackMode === "direct" ? "dns_local" : "dns_direct",
+        final: routeAll ? "dns_proxy" : fallbackMode === "direct" ? "dns_local" : "dns_direct",
       },
       inbounds: [
         {
@@ -1111,19 +1123,20 @@ class Backend {
       route: {
         rules: [
           { protocol: "dns", outbound: "dns_out" },
-          ...(uniqueDomains.length
-            ? [
+          // 全部走代理时不需要域名清单规则; 否则按 target_domains 命中走 proxy。
+          ...(routeAll || !uniqueDomains.length
+            ? []
+            : [
                 {
                   domain: uniqueDomains,
                   domain_suffix: domainSuffix,
                   outbound: "proxy",
                 },
-              ]
-            : []),
+              ]),
           { ip_is_private: true, outbound: "direct" },
-          { outbound: fallbackMode },
+          { outbound: routeAll ? "proxy" : fallbackMode },
         ],
-        final: fallbackMode,
+        final: routeAll ? "proxy" : fallbackMode,
         auto_detect_interface: true,
       },
     };

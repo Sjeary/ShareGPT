@@ -8,8 +8,10 @@ import {
   GPT_QUERY_MARKER,
   isGptAllowedUrl,
   isGeminiAllowedUrl,
+  isClaudeAllowedUrl,
   normalizeGptUrl,
   normalizeGeminiUrl,
+  normalizeClaudeUrl,
 } from './constants'
 import type { AiEventPayload, AiTabPayload } from './types'
 
@@ -21,14 +23,16 @@ function safeText(value: unknown): string {
 // 各 kind 的 url 归一 / 白名单 / 默认标题。
 function normalizeUrlFor(kind: AiKind, url: string): string {
   if (kind === 'gpt') return normalizeGptUrl(url)
+  if (kind === 'claude') return normalizeClaudeUrl(url)
   return normalizeGeminiUrl(url)
 }
 function isAllowedUrlFor(kind: AiKind, url: string): boolean {
   if (kind === 'gpt') return isGptAllowedUrl(url)
+  if (kind === 'claude') return isClaudeAllowedUrl(url)
   return isGeminiAllowedUrl(url)
 }
 function defaultTitleFor(kind: AiKind): string {
-  return kind === 'gpt' ? 'ChatGPT' : 'Gemini'
+  return kind === 'gpt' ? 'ChatGPT' : kind === 'claude' ? 'Claude' : 'Gemini'
 }
 
 // 旧 rememberGptUrl / rememberGeminiUrl: url 变更时把 last_url 写回设置。
@@ -37,8 +41,9 @@ const URL_PERSIST_DELAY = 600
 const persistTimers: Record<AiKind, ReturnType<typeof setTimeout> | null> = {
   gpt: null,
   gemini: null,
+  claude: null,
 }
-const lastPersistedUrl: Record<AiKind, string> = { gpt: '', gemini: '' }
+const lastPersistedUrl: Record<AiKind, string> = { gpt: '', gemini: '', claude: '' }
 
 function persistLastUrl(section: AiKind, url: string) {
   const next = safeText(url)
@@ -192,7 +197,7 @@ export function useAiEvents() {
     api.onAiEvent((raw) => {
       const payload = (raw || {}) as AiEventPayload
       const kind = safeText(payload?.kind) as AiKind
-      if (kind !== 'gpt' && kind !== 'gemini') return
+      if (kind !== 'gpt' && kind !== 'gemini' && kind !== 'claude') return
 
       if (payload?.type === 'tabs-changed') {
         applyTabsPayload(kind, payload)
@@ -207,7 +212,7 @@ export function useAiEvents() {
 
       if (payload?.type === 'did-fail-load') {
         const errorText = safeText(payload.errorDescription) || String(payload.errorCode || '未知错误')
-        const label = kind === 'gpt' ? 'GPT' : 'Gemini'
+        const label = kind === 'gpt' ? 'GPT' : kind === 'claude' ? 'Claude' : 'Gemini'
         useAiStore.getState().setFeedback(kind, `${label} 页面加载失败：${errorText}`, 'error')
       }
 

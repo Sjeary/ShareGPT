@@ -42,11 +42,22 @@ const GEMINI_ALLOWED_HOSTS = [
   'gvt1.com',
   'googletagmanager.com',
 ]
+// Claude (claude.ai 网页) 走代理的域名。须与 src/main/backend.js 的 DEFAULT_TARGET_DOMAINS
+// 中的 Claude 部分逐字一致, 这样「固定走连接的网站」展示值 = 实际路由的域名清单。
+const CLAUDE_ALLOWED_HOSTS = [
+  'claude.ai',
+  'anthropic.com',
+  'claudeusercontent.com',
+  'claudemcpcontent.com',
+  'sentry.io',
+  'stripe.com',
+]
+
 // 对应旧 renderer.js ~126 的 DEFAULT_TARGET_DOMAINS: 各组允许域去重后以逗号拼接。
 // target_domains 缺省/导入为空时回填此默认串 (旧 getSenderForm ~2408 / fillForm ~2489
 // / normalizeBootstrapPayload ~2750 / applySenderBootstrapConfig ~2790 行为一致)。
 export const DEFAULT_TARGET_DOMAINS = [
-  ...new Set([...GPT_ALLOWED_HOSTS, ...GEMINI_ALLOWED_HOSTS]),
+  ...new Set([...GPT_ALLOWED_HOSTS, ...GEMINI_ALLOWED_HOSTS, ...CLAUDE_ALLOWED_HOSTS]),
 ].join(',')
 
 export const FALLBACK_MODES = [

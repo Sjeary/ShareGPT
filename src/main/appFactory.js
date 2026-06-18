@@ -27,6 +27,22 @@ const GEMINI_ALLOWED_HOSTS = [
   "gvt1.com",
 ];
 
+const CLAUDE_ALLOWED_HOSTS = [
+  "claude.ai",
+  "anthropic.com",
+  "claudeusercontent.com",
+  "claudemcpcontent.com",
+  "cloudflare.com",
+  "challenges.cloudflare.com",
+  "accounts.google.com",
+  "google.com",
+  "googleapis.com",
+  "gstatic.com",
+  "googleusercontent.com",
+  "sentry.io",
+  "stripe.com",
+];
+
 const AI_WORKSPACE_POLICIES = {
   gpt: {
     kind: "gpt",
@@ -39,6 +55,12 @@ const AI_WORKSPACE_POLICIES = {
     partition: "persist:gemini-chat",
     homeUrl: "https://gemini.google.com/",
     allowedHosts: GEMINI_ALLOWED_HOSTS,
+  },
+  claude: {
+    kind: "claude",
+    partition: "persist:claude-chat",
+    homeUrl: "https://claude.ai/",
+    allowedHosts: CLAUDE_ALLOWED_HOSTS,
   },
 };
 
@@ -278,11 +300,15 @@ function normalizeExternalUrl(rawUrl) {
   }
 }
 
+// 内嵌页 UA: 去标识 + 把 Chrome 版本号提升到当前稳定版(与渲染层 EMBEDDED_CHROME_VERSION 对齐),
+// 避免站点/Cloudflare 对旧浏览器额外验证。引擎仍是内置 Chromium, 仅 UA 字符串对齐当前 Chrome。
+const EMBEDDED_CHROME_VERSION = "149.0.0.0";
 function sanitizeEmbeddedUserAgent(rawUserAgent) {
   return String(rawUserAgent || "")
     .replace(/\s*Electron\/[^\s]+/ig, "")
     .replace(/\s*ShareGPT\/[^\s]+/ig, "")
     .replace(/\s*ChatPortal(?:\s+X1)?(?:\s+V\d+)?\/[^\s]+/ig, "")
+    .replace(/Chrome\/\d+(?:\.\d+)*/i, `Chrome/${EMBEDDED_CHROME_VERSION}`)
     .replace(/\s{2,}/g, " ")
     .trim();
 }
@@ -354,12 +380,13 @@ function createElectronApp(baseMode = "all") {
   const configuredAiPartitions = new Set();
   const aiWorkspaces = new Map();
   // GPT 与 Gemini 均支持多标签: 标签顺序 / 活动标签 / 宿主矩形 均按 kind 索引。
-  const tabOrderByKind = { gpt: [], gemini: [] };
-  const activeTabIdByKind = { gpt: "", gemini: "" };
+  const tabOrderByKind = { gpt: [], gemini: [], claude: [] };
+  const activeTabIdByKind = { gpt: "", gemini: "", claude: "" };
   let aiTabCounter = 0;
   const hostStateByKind = {
     gpt: { visible: false, bounds: null },
     gemini: { visible: false, bounds: null },
+    claude: { visible: false, bounds: null },
   };
 
   function emitAiEvent(kind, type, payload = {}) {
@@ -417,7 +444,7 @@ function createElectronApp(baseMode = "all") {
 
   function defaultTitleForKind(kind) {
     const k = safeText(kind);
-    return k === "gpt" ? "ChatGPT" : "Gemini";
+    return k === "gpt" ? "ChatGPT" : k === "claude" ? "Claude" : "Gemini";
   }
 
   function normalizeAiTabTitle(rawTitle, fallbackTitle) {
@@ -888,8 +915,10 @@ function createElectronApp(baseMode = "all") {
     aiWorkspaces.clear();
     tabOrderByKind.gpt.length = 0;
     tabOrderByKind.gemini.length = 0;
+    tabOrderByKind.claude.length = 0;
     activeTabIdByKind.gpt = "";
     activeTabIdByKind.gemini = "";
+    activeTabIdByKind.claude = "";
     configuredAiPartitions.clear();
   }
 

@@ -3,8 +3,10 @@ import { Play, Square, Loader2, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import { useAppStore } from '@/store/useAppStore'
 import { useChatStore } from '@/store/useChatStore'
+import { useAuthStore } from '@/store/useAuthStore'
 import { api } from '@/lib/api'
 import type { SenderSettings } from '@/types/settings'
 import { Field } from './Field'
@@ -33,6 +35,8 @@ export function SenderForm() {
   const patchSection = useAppStore((s) => s.patchSection)
   // 旧版 isCollabOnline() = token && connected; 新 store connection==='online' 即 token+WS 已连。
   const connection = useChatStore((s) => s.connection)
+  // 仅管理员可见的「全部流量走代理」测试开关 (isAdmin 由服务端 /api/login 下发)。
+  const isAdmin = useAuthStore((s) => Boolean(s.profile?.isAdmin))
   const [busy, setBusy] = useState(false)
 
   const running = isSenderRunning(status)
@@ -215,6 +219,25 @@ export function SenderForm() {
           className="resize-none rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground shadow-xs outline-none"
         />
       </div>
+
+      {isAdmin && (
+        <div className="flex items-start justify-between gap-3 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2.5">
+          <div className="min-w-0">
+            <Label htmlFor="s_route_all" className="cursor-pointer text-amber-600 dark:text-amber-400">
+              全部流量走代理（测试 · 仅管理员）
+            </Label>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              开启后除内网外的所有流量都走梯子（不再只走上面的清单），用于排查内嵌页到底访问了哪些域名；配合各页面的「代理检测」查看实际流量。修改后需重启发送服务生效。
+            </p>
+          </div>
+          <Switch
+            id="s_route_all"
+            checked={Boolean(form.route_all)}
+            disabled={busy}
+            onCheckedChange={(v) => update({ route_all: v })}
+          />
+        </div>
+      )}
 
       <div className="flex items-center gap-3 pt-1">
         {running ? (

@@ -8,6 +8,8 @@ export interface SenderSettings {
   fallback_mode: string
   fallback_local_port: string
   target_domains: string
+  // 测试用「全部流量走代理」(仅管理员可开): 除私有 IP 外所有流量都走梯子, 用于抓取实际访问的域名。
+  route_all?: boolean
 }
 
 export interface ReceiverSettings {
@@ -41,6 +43,7 @@ export interface UiSettings {
   theme: 'dark' | 'light'
   sidebarSide: 'left' | 'right'
   showGemini: boolean
+  showClaude: boolean
 }
 
 export interface AppSettings {
@@ -49,6 +52,7 @@ export interface AppSettings {
   collab: Partial<CollabSettings>
   gpt: Record<string, unknown>
   gemini: Record<string, unknown>
+  claude: Record<string, unknown>
   ui: Partial<UiSettings>
 }
 
