@@ -1107,6 +1107,15 @@ class Backend {
       });
     }
 
+    // 机场节点的 server 常是只在系统/本地 DNS 才能解析的特殊域名(如机场 GTM 域名),
+    // 公共 DoH(Aliyun/1.1.1.1)解析不了。这里强制用 dns_local(系统 DNS, 同 Clash 行为)解析它,
+    // 否则会出现 "DNS query loopback" 或解析失败导致整条机场链路连不上。
+    const airportServer = useAirport ? String(airportOutbound.server || "").trim() : "";
+    const airportDnsRule =
+      airportServer && /[a-zA-Z]/.test(airportServer) && !airportServer.includes(":")
+        ? [{ domain: [airportServer], server: "dns_local" }]
+        : [];
+
     const config = {
       log: { level: "info", timestamp: true },
       dns: {
@@ -1135,6 +1144,7 @@ class Backend {
         ],
         rules: [
           { outbound: "dns_resolver", server: "dns_resolver" },
+          ...airportDnsRule,
           { clash_mode: "direct", server: "dns_direct" },
           { clash_mode: "global", server: "dns_proxy" },
           ...(domainSuffix.length ? [{ domain_suffix: domainSuffix, server: "dns_proxy" }] : []),
