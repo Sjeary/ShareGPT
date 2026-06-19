@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("api", {
   getAppMeta: () => ipcRenderer.invoke("app:meta"),
   getDeviceInfo: () => ipcRenderer.invoke("app:device-info"),
   getMode: () => ipcRenderer.invoke("app:mode"),
+  checkAppUpdate: () => ipcRenderer.invoke("app:update-check"),
   downloadAppUpdate: (payload) => ipcRenderer.invoke("app:update-download", payload),
   openAppUpdate: (payload) => ipcRenderer.invoke("app:update-open", payload),
   showSystemNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),

@@ -1150,6 +1150,13 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("app:meta", () => backend.getAppMeta());
     ipcMain.handle("app:device-info", () => backend.getDeviceInfo());
     ipcMain.handle("app:mode", () => appMode);
+    ipcMain.handle("app:update-check", async () => {
+      try {
+        return await backend.checkLatestRelease();
+      } catch (_err) {
+        return null;
+      }
+    });
     ipcMain.handle("app:update-download", async (event, payload) => {
       return backend.downloadUpdatePackage(payload || {}, (progress) => {
         event.sender.send("app:update-progress", progress);

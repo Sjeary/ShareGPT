@@ -9,6 +9,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '5.5.0',
+    date: '2026-06-19',
+    highlights: [
+      '自动更新改为以 GitHub Releases 为更新源（参考 cc-switch），不再经过自建服务器；检查哪个仓库由 package.json 决定，fork/自部署各自走自己的发布。',
+      '登录页与账户页的「检查更新」均直接查询 GitHub 最新版本，可一键下载安装（保留账号/聊天记录/网页登录态）。',
+    ],
+  },
+  {
     version: '5.4.1',
     date: '2026-06-19',
     highlights: ['更新日志默认只展开最新一条，历史版本可点击展开（避免太长）。'],

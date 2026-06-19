@@ -142,8 +142,7 @@ async function fetchClientBootstrap(serverUrl: string, token: string): Promise<B
   }
 
   const payload = normalizeBootstrapPayload(await response.json().catch(() => null))
-  // 更新信息存入 auth store 供更新 UI (LoggedInView 更新区) 读取。
-  useAuthStore.getState().setUpdateInfo(payload.update)
+  // 自动更新已改为查询 GitHub Releases (见 LoggedInView 更新区 / 登录页提示), 不再从服务器读取版本信息。
   // 本机 sender 不完整时用服务器下发补全。
   await applySenderBootstrapConfig(payload.sender)
   // 机场节点: 服务器下发了节点就用最新的覆盖本机 (管理端可随时更新)。

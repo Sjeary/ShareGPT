@@ -11,51 +11,32 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
 import { ImportActions } from './ImportActions'
-import { compareVersions, normalizeBootstrapPayload, type BootstrapUpdate } from './bootstrap'
+import { compareVersions, checkGithubUpdate, type BootstrapUpdate } from './bootstrap'
 
-// 登录页「发现新版本」提醒。不依赖登录: 用已填的服务地址匿名拉取 /api/public/update,
-// 与本机版本比较; 有新版且未被「不再提示」(按版本记忆) 时展示。老服务端无此端点 -> 静默不显示。
-function LoginUpdateBanner({ serverUrl }: { serverUrl: string }) {
+// 登录页「发现新版本」提醒。自动更新源 = GitHub Releases (参考 cc-switch), 不再查询任何自建服务器,
+// 与本机版本比较; 有新版且未被「不再提示」(按版本记忆) 时展示。GitHub 不可达 -> 静默不显示。
+function LoginUpdateBanner() {
   const meta = useAppStore((s) => s.meta)
   const dismissed = useAppStore((s) => s.settings?.ui?.dismissed_update_versions)
   const patchSection = useAppStore((s) => s.patchSection)
   const [info, setInfo] = useState<BootstrapUpdate | null>(null)
 
   useEffect(() => {
-    const base = serverUrl.trim().replace(/\/+$/, '')
-    if (!/^https?:\/\//i.test(base)) {
-      setInfo(null)
-      return
-    }
     let alive = true
-    const ctrl = new AbortController()
-    const timer = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const resp = await fetch(`${base}/api/public/update`, { signal: ctrl.signal })
-          if (!resp.ok) {
-            if (alive) setInfo(null)
-            return
-          }
-          const json = await resp.json().catch(() => null)
-          const update = normalizeBootstrapPayload({ update: json }).update
-          if (alive) setInfo(update)
-        } catch {
-          if (alive) setInfo(null)
-        }
-      })()
-    }, 500)
+    void (async () => {
+      const update = await checkGithubUpdate()
+      if (alive) setInfo(update)
+    })()
     return () => {
       alive = false
-      ctrl.abort()
-      window.clearTimeout(timer)
     }
-  }, [serverUrl])
+  }, [])
 
   const current = String(meta.version || '')
   const latest = info?.version || ''
+  const downloadUrl = info?.url || info?.htmlUrl || ''
   const hasNew = Boolean(
-    latest && current && info?.url && compareVersions(latest, current) > 0,
+    latest && current && downloadUrl && compareVersions(latest, current) > 0,
   )
   const isDismissed = Array.isArray(dismissed) && dismissed.includes(latest)
   if (!hasNew || isDismissed) return null
@@ -89,7 +70,7 @@ function LoginUpdateBanner({ serverUrl }: { serverUrl: string }) {
         </button>
       </div>
       <div className="mt-2 flex items-center gap-2">
-        <Button size="sm" onClick={() => info?.url && void api.openExternal(info.url)}>
+        <Button size="sm" onClick={() => downloadUrl && void api.openExternal(downloadUrl)}>
           <Download />
           下载新版本
         </Button>
@@ -179,7 +160,7 @@ export function LoginForm() {
 
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-6">
-      <LoginUpdateBanner serverUrl={serverUrl} />
+      <LoginUpdateBanner />
       <Card className="w-full max-w-sm">
         <CardHeader className="text-center">
           <CardTitle className="text-xl">登录协作服务</CardTitle>

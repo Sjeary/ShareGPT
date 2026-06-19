@@ -13,7 +13,7 @@ import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 import { Download, LogOut, PanelLeft, PanelRight, RefreshCw, UserCog, History } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
-import { compareVersions, normalizeBootstrapPayload } from './bootstrap'
+import { compareVersions, checkGithubUpdate } from './bootstrap'
 import { CHANGELOG } from './changelog'
 import type { CollabSettings } from '@/types/settings'
 
@@ -69,7 +69,6 @@ interface UpdateProgress {
 // 移植自旧 renderer.js syncUpdateControls(~2811) / installAppUpdate(~2911)。
 function UpdateSection() {
   const meta = useAppStore((s) => s.meta)
-  const token = useAuthStore((s) => s.token)
   const updateInfo = useAuthStore((s) => s.updateInfo)
 
   const [downloading, setDownloading] = useState(false)
@@ -80,6 +79,18 @@ function UpdateSection() {
       setProgress((raw && typeof raw === 'object' ? (raw as UpdateProgress) : null))
     })
     return off
+  }, [])
+
+  // 挂载时自动从 GitHub Releases 查询最新版 (自动更新源, 不经任何自建服务器)。
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      const update = await checkGithubUpdate()
+      if (alive && update) useAuthStore.getState().setUpdateInfo(update)
+    })()
+    return () => {
+      alive = false
+    }
   }, [])
 
   const currentVersion = safeText(meta.version) || '-'
@@ -93,13 +104,12 @@ function UpdateSection() {
       hasPackage,
   )
 
+  const releaseUrl = safeText(updateInfo?.htmlUrl)
   let hint: string
-  if (!token) {
-    hint = '登录后可检查新版本。'
-  } else if (!updateInfo) {
-    hint = '点击“检查更新”后，会从当前服务器读取发布信息。'
+  if (!updateInfo) {
+    hint = '点击“检查更新”从 GitHub 读取最新发布。'
   } else if (!hasPackage) {
-    hint = '当前服务器还没有配置本平台的安装包。'
+    hint = 'GitHub 最新发布暂无本平台 (.exe / .dmg) 安装包，可前往发布页查看。'
   } else if (hasNewVersion) {
     hint = `发现新版本 ${latestVersion}，下载后会保留账号、聊天记录、配置和网页登录状态。`
   } else {
@@ -107,28 +117,16 @@ function UpdateSection() {
   }
   const hintTone = hasNewVersion || (!!updateInfo && hasPackage && !hasNewVersion) ? 'success' : 'muted'
 
-  // 检查更新: 用当前已记忆的 server_url/token 重新拉取 bootstrap。
-  // (旧 checkAppUpdate -> fetchClientBootstrap; 这里直接调 /api/client/bootstrap 刷新 updateInfo。)
+  // 检查更新: 从 GitHub Releases 查询最新版 (自动更新源, 不经任何自建服务器)。
   async function handleCheck() {
-    const serverUrl = safeText(useAppStore.getState().settings?.collab?.server_url)
-    const authToken = useAuthStore.getState().token
-    if (!serverUrl || !authToken) {
-      toast.error('请先登录账号后再检查更新')
-      return
-    }
     setDownloading(true)
     try {
-      const response = await fetch(`${serverUrl.replace(/\/+$/, '')}/api/client/bootstrap`, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${authToken}` },
-      })
-      if (!response.ok) {
-        const text = await response.text().catch(() => '')
-        throw new Error(text || `读取更新信息失败（${response.status}）`)
+      const update = await checkGithubUpdate()
+      if (!update) {
+        throw new Error('无法连接 GitHub 获取更新信息，请检查网络后重试')
       }
-      const payload = normalizeBootstrapPayload(await response.json().catch(() => null))
-      useAuthStore.getState().setUpdateInfo(payload.update)
-      toast.success('已刷新更新信息')
+      useAuthStore.getState().setUpdateInfo(update)
+      toast.success('已从 GitHub 刷新更新信息')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '检查更新失败')
     } finally {
@@ -227,7 +225,7 @@ function UpdateSection() {
             variant="outline"
             size="sm"
             onClick={handleCheck}
-            disabled={!token || downloading}
+            disabled={downloading}
           >
             <RefreshCw />
             检查更新
@@ -236,6 +234,16 @@ function UpdateSection() {
             <Download />
             {downloading ? '下载中…' : hasNewVersion ? '下载并安装更新' : '重新下载安装包'}
           </Button>
+          {releaseUrl && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void api.openExternal(releaseUrl)}
+              disabled={downloading}
+            >
+              前往 GitHub 发布页
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

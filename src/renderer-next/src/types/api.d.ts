@@ -44,6 +44,7 @@ export interface ShareGptApi {
   getAppMeta: () => Promise<Record<string, unknown>>
   getDeviceInfo: () => Promise<unknown>
   getMode: () => Promise<'sender' | 'receiver' | 'all' | string>
+  checkAppUpdate: () => Promise<unknown>
   downloadAppUpdate: (payload: unknown) => Promise<unknown>
   openAppUpdate: (payload: unknown) => Promise<unknown>
   showSystemNotification: (payload: unknown) => Promise<unknown>

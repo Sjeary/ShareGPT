@@ -18,6 +18,7 @@ const fallback = {
   getAppMeta: async () => ({}),
   getDeviceInfo: async () => ({}),
   getMode: async () => 'all',
+  checkAppUpdate: async () => null,
   downloadAppUpdate: async () => undefined,
   openAppUpdate: async () => undefined,
   showSystemNotification: async () => undefined,

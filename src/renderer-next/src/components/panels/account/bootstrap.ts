@@ -32,6 +32,29 @@ export interface BootstrapUpdate {
   publishedAt: string
   url: string
   fileName: string
+  htmlUrl?: string
+}
+
+// 自动更新源 = GitHub Releases (参考 cc-switch)。由主进程 (app:update-check) 查询
+// 当前平台的最新安装包, 完全不经过任何自建服务器; 目标仓库由 package.json 决定。
+// 任意失败 (无网络 / GitHub 不可达 / 无 release) 都安静返回 null。
+export async function checkGithubUpdate(): Promise<BootstrapUpdate | null> {
+  try {
+    const raw = (await api.checkAppUpdate()) as Record<string, unknown> | null
+    if (!raw || typeof raw !== 'object') return null
+    const version = safeText(raw.version)
+    if (!version) return null
+    return {
+      version,
+      notes: safeText(raw.notes),
+      publishedAt: safeText(raw.publishedAt),
+      url: safeText(raw.url),
+      fileName: safeText(raw.fileName),
+      htmlUrl: safeText(raw.htmlUrl),
+    }
+  } catch {
+    return null
+  }
 }
 
 // 服务器下发的机场节点 (管理端从 Clash 节点转换成 sing-box outbound)。

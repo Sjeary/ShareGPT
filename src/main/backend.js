@@ -6,6 +6,22 @@ const { spawn } = require("node:child_process");
 const os = require("node:os");
 const { URL } = require("node:url");
 
+// 自动更新源 = GitHub Releases (参考 cc-switch 的做法)。仓库地址从 package.json 推导,
+// fork 的人只要改 package.json 的 homepage/repository 就指向自己的仓库, 不写死任何自建服务器。
+function deriveUpdateRepo() {
+  try {
+    const pkg = require("../../package.json");
+    const src = String(
+      pkg.homepage || (pkg.repository && (pkg.repository.url || pkg.repository)) || "",
+    );
+    const m = src.match(/github\.com[/:]+([^/]+\/[^/.\s]+)/i);
+    return m ? m[1] : "";
+  } catch (_err) {
+    return "";
+  }
+}
+const UPDATE_REPO = deriveUpdateRepo();
+
 const DEFAULT_TARGET_DOMAINS = [
   "chatgpt.com",
   "openai.com",
@@ -842,6 +858,75 @@ class Backend {
     return {
       url: parsed,
       filePath: path.join(this.updatesDir, versionDir, fileName),
+    };
+  }
+
+  // GET 一个 JSON (用于 GitHub Releases API)。失败一律返回 null, 不抛错。
+  fetchReleaseJson(apiUrl) {
+    return new Promise((resolve) => {
+      try {
+        const req = https.get(
+          apiUrl,
+          {
+            headers: {
+              "User-Agent": "ShareGPT-Updater",
+              Accept: "application/vnd.github+json",
+            },
+            timeout: 8000,
+          },
+          (res) => {
+            const status = Number(res.statusCode || 0);
+            if (status < 200 || status >= 300) {
+              res.resume();
+              resolve(null);
+              return;
+            }
+            let data = "";
+            res.setEncoding("utf-8");
+            res.on("data", (chunk) => {
+              data += chunk;
+            });
+            res.on("end", () => {
+              try {
+                resolve(JSON.parse(data));
+              } catch (_err) {
+                resolve(null);
+              }
+            });
+          },
+        );
+        req.on("error", () => resolve(null));
+        req.on("timeout", () => {
+          req.destroy();
+          resolve(null);
+        });
+      } catch (_err) {
+        resolve(null);
+      }
+    });
+  }
+
+  // 查询 GitHub Releases 最新版 (自动更新源)。返回当前平台 (.exe / .dmg) 的安装包信息或 null。
+  // 完全不经过自建服务器; 目标仓库由 package.json 决定 (UPDATE_REPO)。
+  async checkLatestRelease() {
+    if (!UPDATE_REPO) return null;
+    const release = await this.fetchReleaseJson(
+      `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`,
+    );
+    if (!release || !release.tag_name) return null;
+    const version = String(release.tag_name).replace(/^v/i, "").trim();
+    const assets = Array.isArray(release.assets) ? release.assets : [];
+    const wantExt = process.platform === "darwin" ? ".dmg" : ".exe";
+    const asset =
+      assets.find((item) => String(item?.name || "").toLowerCase().endsWith(wantExt)) || null;
+    return {
+      version,
+      notes: String(release.body || "").trim(),
+      publishedAt: String(release.published_at || ""),
+      url: asset ? String(asset.browser_download_url || "") : "",
+      fileName: asset ? String(asset.name || "") : "",
+      htmlUrl: String(release.html_url || ""),
+      repo: UPDATE_REPO,
     };
   }
 
