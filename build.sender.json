@@ -1,6 +1,6 @@
 {
   "appId": "com.sjeary.sharegpt.desktop.sender",
-  "productName": "ShareGPT Sender",
+  "productName": "ShareGPT",
   "asar": true,
   "files": [
     "src/**/*",
@@ -38,7 +38,7 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
-    "shortcutName": "ShareGPT Sender"
+    "shortcutName": "ShareGPT"
   },
   "mac": {
     "target": ["zip", "dmg"],

@@ -1,6 +1,6 @@
 {
   "appId": "com.sjeary.sharegpt.desktop.receiver",
-  "productName": "ShareGPT Receiver",
+  "productName": "ShareGPT 出口",
   "asar": true,
   "files": ["src/**/*", "package.json"],
   "extraResources": [
