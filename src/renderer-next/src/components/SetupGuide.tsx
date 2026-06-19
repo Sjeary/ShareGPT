@@ -76,7 +76,7 @@ export function SetupGuide() {
               dismiss()
             }}
           >
-            {needsLogin ? '前往登录账户' : '前往代理转发'}
+            {needsLogin ? '前往登录账户' : '前往网络 / 代理'}
           </Button>
           <Button variant="ghost" onClick={dismiss}>
             知道了

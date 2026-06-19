@@ -968,6 +968,36 @@ class Backend {
   }
 
   // GET 文本 (读 release 的 latest.yml), 跟随重定向 (releases/latest/download -> CDN)。失败返回 null。
+  // 读 Windows 系统代理(注册表)。clash/v2ray 的"系统代理"模式设在这里, 但不一定有 HTTP_PROXY env。
+  // 非 Windows 或未开启则返回空串。
+  windowsSystemProxy() {
+    if (process.platform !== "win32") return "";
+    try {
+      const base = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
+      const enabled = spawnSync("reg", ["query", base, "/v", "ProxyEnable"], {
+        encoding: "utf-8",
+        windowsHide: true,
+      });
+      if (!/ProxyEnable\s+REG_DWORD\s+0x1/i.test(enabled.stdout || "")) return "";
+      const server = spawnSync("reg", ["query", base, "/v", "ProxyServer"], {
+        encoding: "utf-8",
+        windowsHide: true,
+      });
+      const m = (server.stdout || "").match(/ProxyServer\s+REG_SZ\s+(.+)/i);
+      if (!m) return "";
+      let val = m[1].trim();
+      // 可能是 "host:port" 或 "http=host:port;https=host:port;socks=host:port"
+      if (val.includes("=")) {
+        const parts = val.split(";").map((s) => s.trim());
+        const pick = parts.find((s) => /^https=/i.test(s)) || parts.find((s) => /^http=/i.test(s));
+        val = pick ? pick.split("=")[1] : "";
+      }
+      return val ? `http://${val.trim()}` : "";
+    } catch (_e) {
+      return "";
+    }
+  }
+
   // 给"更新检查/下载"挑一个代理 agent: 优先本机 sing-box SOCKS(代理运行中, 已把 github 加入路由),
   // 否则用系统代理 env(HTTPS_PROXY 等); 都没有则 null(直连)。国内直连 GitHub CDN 常失败, 故走代理。
   updateProxyAgent() {
@@ -976,19 +1006,21 @@ class Backend {
       if (this.senderProcess && this.activeSocksPort) {
         return new SocksProxyAgent(`socks5h://127.0.0.1:${this.activeSocksPort}`);
       }
-      const envProxy =
+      // sing-box 未开时也能更新: 兜底走 环境代理(env) -> Windows 系统代理(注册表)。
+      const proxyUrl =
         process.env.HTTPS_PROXY ||
         process.env.https_proxy ||
         process.env.HTTP_PROXY ||
         process.env.http_proxy ||
         process.env.ALL_PROXY ||
-        process.env.all_proxy;
-      if (envProxy) {
-        if (/^socks/i.test(envProxy)) {
-          return new SocksProxyAgent(envProxy);
+        process.env.all_proxy ||
+        this.windowsSystemProxy();
+      if (proxyUrl) {
+        if (/^socks/i.test(proxyUrl)) {
+          return new SocksProxyAgent(proxyUrl);
         }
         const { HttpsProxyAgent } = require("https-proxy-agent");
-        return new HttpsProxyAgent(envProxy);
+        return new HttpsProxyAgent(proxyUrl);
       }
     } catch (_err) {
       /* 构造失败则直连 */
