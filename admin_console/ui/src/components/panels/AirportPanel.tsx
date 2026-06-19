@@ -132,7 +132,7 @@ export function AirportPanel() {
         {nodes.length > 0 && (
           <div className="grid gap-1.5">
             <div className="text-sm font-medium">选择一个节点（{nodes.length}）</div>
-            <div className="max-h-64 overflow-auto rounded-md border border-border">
+            <div className="max-h-52 overflow-auto rounded-md border border-border">
               {nodes.map((n, i) => (
                 <button
                   key={`${n.name}-${i}`}
@@ -158,19 +158,26 @@ export function AirportPanel() {
           </div>
         )}
 
-        {/* 预览 + 保存 */}
+        {/* 保存(主操作) + 预览。保存按钮放在预览上方, 避免被长预览顶到看不见/点不到。 */}
         {preview && (
           <div className="grid gap-2">
-            <div className="text-sm font-medium">转换后的 sing-box 出站（预览）</div>
-            <pre className="max-h-56 overflow-auto rounded-md border border-border bg-muted/40 p-3 font-mono text-[11px]">
-              {JSON.stringify(preview, null, 2)}
-            </pre>
-            <div>
+            <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" onClick={handleSave} disabled={saving}>
                 <Plane />
                 {saving ? '下发中…' : '保存并下发给本群'}
               </Button>
+              <span className="min-w-0 truncate text-xs text-muted-foreground">
+                已选：{nodes[selected]?.name}
+              </span>
             </div>
+            <details className="rounded-md border border-border bg-muted/40">
+              <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+                转换后的 sing-box 出站（预览，点击展开）
+              </summary>
+              <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all border-t border-border px-3 py-2 font-mono text-[11px]">
+                {JSON.stringify(preview, null, 2)}
+              </pre>
+            </details>
           </div>
         )}
         {selected >= 0 && !preview && (
