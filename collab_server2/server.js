@@ -19,6 +19,12 @@ const GPT_USAGE_MAX = Number.parseInt(process.env.GPT_USAGE_MAX || "50000", 10);
 const MAX_ATTACHMENTS_PER_MESSAGE = Number.parseInt(process.env.MAX_ATTACHMENTS_PER_MESSAGE || "4", 10);
 const MAX_ATTACHMENT_BYTES = Number.parseInt(process.env.MAX_ATTACHMENT_BYTES || `${30 * 1024 * 1024}`, 10);
 const RECALL_EDITABLE_WINDOW_MS = Number.parseInt(process.env.RECALL_EDITABLE_WINDOW_MS || `${7 * 24 * 60 * 60 * 1000}`, 10);
+// CORS 来源: 默认 "*"。内嵌 Electron 客户端 origin 不固定, 且鉴权用 header 里的 Bearer token (不依赖 cookie),
+// 通配 origin 的实际风险有限; 部署到受控环境时可用 CORS_ORIGIN 收紧到具体来源。
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
+// 登录限流: 同一 IP 连续失败 LOGIN_MAX_FAILS 次后锁定 LOGIN_LOCK_MS 毫秒, 防暴力撞库。
+const LOGIN_MAX_FAILS = Number.parseInt(process.env.LOGIN_MAX_FAILS || "10", 10);
+const LOGIN_LOCK_MS = Number.parseInt(process.env.LOGIN_LOCK_MS || `${15 * 60 * 1000}`, 10);
 const SERVER_SENDER_BOOTSTRAP = {
   proxy_server: process.env.SHAREGPT_SENDER_PROXY_SERVER || process.env.SENDER_PROXY_SERVER || process.env.PROXY_SERVER || "",
   proxy_port: process.env.SHAREGPT_SENDER_PROXY_PORT || process.env.SENDER_PROXY_PORT || process.env.PROXY_PORT || "",
@@ -50,6 +56,7 @@ const sessions = new Map();
 const adminSessions = new Map();
 const wsClients = new Set();
 const wsByToken = new Map();
+const loginAttempts = new Map(); // ip -> { fails, lockUntil } 登录失败限流状态
 
 function safeEnvText(value) {
   return String(value || "").trim();
@@ -123,6 +130,14 @@ function normalizeUserRecord(record) {
   };
 }
 
+// 原子写 JSON: 先写同目录临时文件再 rename, 避免写一半被 kill 导致主数据文件 (users/chat 等) 损坏。
+function writeJsonAtomic(file, obj) {
+  const data = JSON.stringify(obj, null, 2);
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmp, data, "utf-8");
+  fs.renameSync(tmp, file);
+}
+
 function ensureUsersFile() {
   fs.mkdirSync(path.dirname(USERS_FILE), { recursive: true });
   if (!fs.existsSync(USERS_FILE)) {
@@ -142,7 +157,7 @@ function loadUserStore() {
 }
 
 function saveUserStore(store) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(store, null, 2), "utf-8");
+  writeJsonAtomic(USERS_FILE, store);
 }
 
 function ensureGptUsageFile() {
@@ -300,7 +315,7 @@ function loadClientBootstrap(req = null) {
 
 function saveClientBootstrap(payload) {
   const normalized = normalizeBootstrapPayload(payload);
-  fs.writeFileSync(CLIENT_BOOTSTRAP_FILE, JSON.stringify(normalized, null, 2), "utf-8");
+  writeJsonAtomic(CLIENT_BOOTSTRAP_FILE, normalized);
   return normalized;
 }
 
@@ -445,7 +460,7 @@ function saveChatHistoryStore(items) {
   if (history.length > HISTORY_MAX) {
     history.splice(0, history.length - HISTORY_MAX);
   }
-  fs.writeFileSync(CHAT_HISTORY_FILE, JSON.stringify({ history }, null, 2), "utf-8");
+  writeJsonAtomic(CHAT_HISTORY_FILE, { history });
 }
 
 const history = loadChatHistoryStore();
@@ -466,7 +481,7 @@ function saveGptUsageStore(store) {
   if (events.length > GPT_USAGE_MAX) {
     events.splice(0, events.length - GPT_USAGE_MAX);
   }
-  fs.writeFileSync(GPT_USAGE_FILE, JSON.stringify({ events }, null, 2), "utf-8");
+  writeJsonAtomic(GPT_USAGE_FILE, { events });
 }
 
 function recordGptUsage(username, count = 1) {
@@ -520,6 +535,27 @@ function normalizeIp(rawIp) {
   return raw;
 }
 
+// 登录限流辅助: 按 IP 记失败次数, 达到阈值后锁定一段时间。
+function loginLockState(ip) {
+  const rec = loginAttempts.get(ip);
+  if (rec && rec.lockUntil && rec.lockUntil > Date.now()) {
+    return { locked: true, retryAfterMs: rec.lockUntil - Date.now() };
+  }
+  return { locked: false, retryAfterMs: 0 };
+}
+function recordLoginFail(ip) {
+  const rec = loginAttempts.get(ip) || { fails: 0, lockUntil: 0 };
+  rec.fails += 1;
+  if (rec.fails >= LOGIN_MAX_FAILS) {
+    rec.lockUntil = Date.now() + LOGIN_LOCK_MS;
+    rec.fails = 0;
+  }
+  loginAttempts.set(ip, rec);
+}
+function clearLoginFails(ip) {
+  loginAttempts.delete(ip);
+}
+
 function subnetKeyFromIp(ip) {
   // 移除网段隔离机制，使得房间消息跨网段互通
   return "global";
@@ -533,7 +569,7 @@ function sendJson(res, code, payload) {
   const body = JSON.stringify(payload);
   res.writeHead(code, {
     "Content-Type": "application/json; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": CORS_ORIGIN,
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, OPTIONS",
   });
@@ -543,7 +579,7 @@ function sendJson(res, code, payload) {
 function sendText(res, code, text) {
   res.writeHead(code, {
     "Content-Type": "text/plain; charset=utf-8",
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": CORS_ORIGIN,
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, OPTIONS",
   });
@@ -832,7 +868,7 @@ function serveReleaseDownload(req, res, pathname) {
     "Content-Type": "application/octet-stream",
     "Content-Length": fs.statSync(filePath).size,
     "Content-Disposition": `attachment; filename="${safeName}"`,
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": CORS_ORIGIN,
   });
   fs.createReadStream(filePath).pipe(res);
   return true;
@@ -1087,7 +1123,7 @@ function buildGptUsageStats(fromRaw, toRaw) {
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
-      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Origin": CORS_ORIGIN,
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
       "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, OPTIONS",
     });
@@ -1132,11 +1168,20 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      const remoteIp = normalizeIp(req.socket?.remoteAddress);
+      const lock = loginLockState(remoteIp);
+      if (lock.locked) {
+        sendText(res, 429, `登录失败次数过多，请 ${Math.ceil(lock.retryAfterMs / 1000)} 秒后再试`);
+        return;
+      }
+
       const { store, user } = findUser(username);
       if (!user || !verifyPassword(user, password)) {
+        recordLoginFail(remoteIp);
         sendText(res, 401, "账号或密码错误");
         return;
       }
+      clearLoginFails(remoteIp);
 
       for (const [oldToken, session] of sessions.entries()) {
         if (session.username === username) {
@@ -1151,7 +1196,6 @@ const server = http.createServer(async (req, res) => {
 
       const token = makeToken();
       const now = Date.now();
-      const remoteIp = normalizeIp(req.socket?.remoteAddress);
       const subnetKey = subnetKeyFromIp(remoteIp);
       const subnetLabel = subnetLabelFromIp(remoteIp);
 
@@ -1243,12 +1287,20 @@ const server = http.createServer(async (req, res) => {
       const payload = safeParseJson(body);
       const username = safeText(payload?.username);
       const password = String(payload?.password || "");
+      const remoteIp = normalizeIp(req.socket?.remoteAddress);
+      const lock = loginLockState(remoteIp);
+      if (lock.locked) {
+        sendText(res, 429, `登录失败次数过多，请 ${Math.ceil(lock.retryAfterMs / 1000)} 秒后再试`);
+        return;
+      }
       const { user } = findUser(username);
 
       if (!user || !user.isAdmin || user.disabled || !verifyPassword(user, password)) {
+        recordLoginFail(remoteIp);
         sendText(res, 401, "管理员账号或密码错误");
         return;
       }
+      clearLoginFails(remoteIp);
 
       const token = makeToken();
       const now = Date.now();
@@ -2031,9 +2083,30 @@ wss.on("connection", (ws) => {
   });
 });
 
-setInterval(cleanupExpiredSessions, 60 * 1000);
-
-server.listen(PORT, HOST, () => {
-  console.log(`[collab] server listening on http://${HOST}:${PORT}`);
-  console.log(`[collab] users file: ${USERS_FILE}`);
+process.on("uncaughtException", (err) => {
+  console.error(`[collab] ${nowIso()} uncaughtException:`, (err && err.stack) || err);
 });
+process.on("unhandledRejection", (reason) => {
+  console.error(`[collab] ${nowIso()} unhandledRejection:`, (reason && reason.stack) || reason);
+});
+
+// 仅作为主入口运行时才监听端口并起定时器; 被 require (如单元测试) 时只导出可测函数, 不起服务。
+if (require.main === module) {
+  setInterval(cleanupExpiredSessions, 60 * 1000);
+  server.listen(PORT, HOST, () => {
+    console.log(`[collab] server listening on http://${HOST}:${PORT}`);
+    console.log(`[collab] users file: ${USERS_FILE}`);
+  });
+}
+
+module.exports = {
+  hashPassword,
+  verifyPassword,
+  writeJsonAtomic,
+  normalizeIp,
+  loginLockState,
+  recordLoginFail,
+  clearLoginFails,
+  safeParseJson,
+  normalizeUserRecord,
+};

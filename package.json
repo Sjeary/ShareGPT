@@ -23,6 +23,7 @@
     "sing-box"
   ],
   "scripts": {
+    "test": "node --test \"collab_server2/test/**/*.test.js\"",
     "prepare:assets": "node scripts/prepare-assets.mjs all",
     "build:next": "npm --prefix src/renderer-next install && npm --prefix src/renderer-next run build",
     "dev": "node scripts/prepare-assets.mjs all && npm exec -- electron .",

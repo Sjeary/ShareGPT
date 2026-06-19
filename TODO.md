@@ -7,17 +7,17 @@
 - [x] **许可证定位**：已改为 **AGPL-3.0**（用户拍板）。`LICENSE`=AGPL-3.0 全文、`package.json` `license`=`AGPL-3.0-or-later`、README badge/措辞/许可证章节同步；ToS 风险仍靠免责声明承担。
 - [x] **SECURITY.md**：已加（含代理相关风险范围 + 私密披露渠道占位）。
 - [ ] **最小 CI**：`.github/workflows/ci.yml` —— 渲染层 + admin `tsc -b`、主进程 `node --check` / lint、一次构建冒烟；PR 必过。
-- [ ] **第一批测试**：先覆盖 `collab_server2/server.js` 的 `hashPassword`/`verifyPassword`、session 过期、聊天读写、配置下发。加 `test` 脚本与测试运行器。
+- [~] **第一批测试**：已加 `npm test`（Node 内置 runner，无新依赖）+ `collab_server2/test/server.test.js`（6 用例：hashPassword/verifyPassword/原子写/normalizeIp/登录限流/safeParseJson）。待补：session 过期、聊天读写、配置下发。
 
 ## P1 — 让它经得起协作
 - [x] **社区文件**：已加 CONTRIBUTING.md、CODE_OF_CONDUCT.md、CHANGELOG.md（Keep a Changelog）、`.github/ISSUE_TEMPLATE/*`、PULL_REQUEST_TEMPLATE.md。
 - [ ] **统一 lint/format**：根目录 ESLint + Prettier + `.editorconfig`，覆盖主进程与服务端，纳入 CI。
 - [ ] **主进程类型化**：`src/main/*.js` 上 `// @ts-check` + JSDoc（低风险，先做），再谨慎拆分巨石 `appFactory.js`/`backend.js`（高风险，逐步且实测）。
-- [ ] **服务端加固**（`collab_server2/server.js`，逐项实测）：
-  - [ ] `process.on('uncaughtException')` / `unhandledRejection` 兜底，避免单异常拖垮全服务。
-  - [ ] 原子写持久化（写 temp + rename），避免写一半损坏 `users.json`/`chat_history.json`；可加备份。
-  - [ ] 登录接口限流 / 失败锁定，防暴力撞库。
-  - [ ] 收紧 CORS（按需白名单，替代一律 `*`）。
+- [x] **服务端加固**（`collab_server2/server.js`，已逐项实测：启动/健康/登录成功+失败+限流/原子写）：
+  - [x] `process.on('uncaughtException')` / `unhandledRejection` 兜底（记录日志、不拖垮全服务）。
+  - [x] 原子写持久化 `writeJsonAtomic`（temp + rename），替换 users/chat/usage/bootstrap 四处热写。
+  - [x] 登录限流：同 IP 失败 `LOGIN_MAX_FAILS`(默认10) 次锁定 `LOGIN_LOCK_MS`(默认15min)，普通+管理员登录均覆盖，可 env 调。
+  - [x] CORS 改为 `CORS_ORIGIN` 可配（默认 `*`，附说明：Bearer-token 鉴权不依赖 cookie，通配风险有限）。
 - [ ] **第三方二进制供应链**：`scripts/prepare-assets.mjs` pin 版本 + SHA256 校验 sing-box / frpc。
 
 ## P2 — 锦上添花
