@@ -23,8 +23,8 @@
 ## P2 — 锦上添花
 - [ ] 崩溃上报 / 结构化日志（替代散落的 `console.warn`）。
 - [ ] i18n（UI 与服务端日志去中文硬编码）。
-- [ ] 架构图（client / collab_server2 / admin_console 交互 + IPC/WS 协议）。
-- [ ] 仓库卫生：清理根目录内部草稿（`ANDROID_CHAT_ONLY_SPEC.md`、`REFACTOR_GOALS.md`、`CROSSPLATFORM.md` 等）与历史命名目录。
+- [x] 架构图：新增 `docs/ARCHITECTURE.md`（mermaid 三端交互 + IPC/WS/代理/更新链路 + 协议表），README 已链接。
+- [x] 仓库卫生：内部草稿（`ANDROID_CHAT_ONLY_SPEC.md`/`REFACTOR_GOALS.md`/`CROSSPLATFORM.md`）移到 `docs/dev/`；`release_sender*` 历史目录本就 gitignore。
 - [ ] **【最后做】macOS 代码签名 + 公证**（需 Apple Developer ID）→ 解锁 mac 原地无感更新。
 
 ## 验证基线（每次改完跑）

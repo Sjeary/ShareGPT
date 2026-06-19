@@ -131,6 +131,8 @@ build/                打包资源（图标、bin/ 放第三方二进制）
 
 **技术栈**：Electron 31（Chromium 126）· electron-vite · React 19 · TypeScript · Tailwind v4 · shadcn/ui · Zustand；代理基于 sing-box；服务端为纯 Node http/ws。
 
+> 架构图与端间协议详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+
 ## 🤝 欢迎参与
 
 - 觉得有用就点个 ⭐，欢迎在 **AGPL-3.0** 下使用与二次开发（衍生作品需保持同等开源）。
