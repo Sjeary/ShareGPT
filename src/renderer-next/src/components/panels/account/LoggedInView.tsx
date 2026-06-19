@@ -195,7 +195,7 @@ function UpdateSection() {
     try {
       const update = await checkGithubUpdate()
       if (!update) {
-        throw new Error('无法连接 GitHub 获取更新信息，请检查网络后重试')
+        throw new Error('无法连接 GitHub 获取更新信息（请先开启代理，或检查网络）后重试')
       }
       useAuthStore.getState().setUpdateInfo(update)
       toast.success('已从 GitHub 刷新更新信息')

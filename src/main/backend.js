@@ -61,6 +61,9 @@ const DEFAULT_TARGET_DOMAINS = [
   // Claude artifacts / 代码运行加载的 CDN (jsDelivr / esm.sh)。
   "jsdelivr.net",
   "esm.sh",
+  // 自动更新(GitHub Releases)的检查/下载也经代理出口, 避免国内直连 GitHub CDN 失败。
+  "github.com",
+  "githubusercontent.com",
 ];
 
 const PUBLIC_DEFAULT_SETTINGS = {
@@ -965,13 +968,49 @@ class Backend {
   }
 
   // GET 文本 (读 release 的 latest.yml), 跟随重定向 (releases/latest/download -> CDN)。失败返回 null。
-  fetchText(url, redirectsLeft = 5) {
+  // 给"更新检查/下载"挑一个代理 agent: 优先本机 sing-box SOCKS(代理运行中, 已把 github 加入路由),
+  // 否则用系统代理 env(HTTPS_PROXY 等); 都没有则 null(直连)。国内直连 GitHub CDN 常失败, 故走代理。
+  updateProxyAgent() {
+    try {
+      if (this.senderProcess && this.activeSocksPort) {
+        const { SocksProxyAgent } = require("socks-proxy-agent");
+        return new SocksProxyAgent(`socks5h://127.0.0.1:${this.activeSocksPort}`);
+      }
+      const envProxy =
+        process.env.HTTPS_PROXY ||
+        process.env.https_proxy ||
+        process.env.HTTP_PROXY ||
+        process.env.http_proxy ||
+        process.env.ALL_PROXY ||
+        process.env.all_proxy;
+      if (envProxy) {
+        if (/^socks/i.test(envProxy)) {
+          const { SocksProxyAgent } = require("socks-proxy-agent");
+          return new SocksProxyAgent(envProxy);
+        }
+        const { HttpsProxyAgent } = require("https-proxy-agent");
+        return new HttpsProxyAgent(envProxy);
+      }
+    } catch (_err) {
+      /* 构造失败则直连 */
+    }
+    return null;
+  }
+
+  fetchText(url, redirectsLeft = 5, agent) {
+    if (agent === undefined) {
+      agent = (this.updateProxyAgent && this.updateProxyAgent()) || null;
+    }
     return new Promise((resolve) => {
       try {
         const protocol = new URL(url).protocol === "http:" ? http : https;
         const req = protocol.get(
           url,
-          { headers: { "User-Agent": "ShareGPT-Updater" }, timeout: 8000 },
+          {
+            headers: { "User-Agent": "ShareGPT-Updater" },
+            timeout: 8000,
+            agent: agent || undefined,
+          },
           (res) => {
             const status = Number(res.statusCode || 0);
             if (
@@ -980,9 +1019,11 @@ class Backend {
               redirectsLeft > 0
             ) {
               res.resume();
-              this.fetchText(new URL(res.headers.location, url).toString(), redirectsLeft - 1).then(
-                resolve,
-              );
+              this.fetchText(
+                new URL(res.headers.location, url).toString(),
+                redirectsLeft - 1,
+                agent,
+              ).then(resolve);
               return;
             }
             if (status < 200 || status >= 300) {
@@ -1265,6 +1306,7 @@ class Backend {
   stopSender() {
     this.stopChild(this.senderProcess, "sender");
     this.senderProcess = null;
+    this.activeSocksPort = null;
     this.emitStatus();
   }
 
@@ -1492,6 +1534,8 @@ class Backend {
     this.checkSingboxConfig(singboxPath, configPath, "sender");
 
     this.senderProcess = this.spawnProcess("sender", singboxPath, ["run", "-c", configPath]);
+    // 记下本机 SOCKS 端口, 供"更新检查"经代理走出口 (github 已在路由清单里)。
+    this.activeSocksPort = Number(settings.socks_listen_port) || null;
     // 运行日志标明当前代理方式, 便于观察走的是统一梯子还是下发的机场节点。
     const useAirportLog =
       settings.proxy_mode === "airport" &&
