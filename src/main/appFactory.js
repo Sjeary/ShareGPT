@@ -426,6 +426,12 @@ function createElectronApp(baseMode = "all") {
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
   app.commandLine.appendSwitch("disable-background-timer-throttling");
 
+  // (3) 禁用 HTTP/3(QUIC), 强制走 TCP/HTTP2。
+  // 机场(shadowsocks)节点的 UDP 中继常不稳/被限, 浏览器对 Cloudflare 走 QUIC(UDP) 会卡死又
+  // 不干净回落 -> 验证页白屏 (本机直连机场尤甚; Mac 的 Chromium 更激进用 QUIC, 故白屏更严重)。
+  // 统一梯子是中转服务器重新发起干净 TCP, 不受影响; 这里禁 QUIC 对两种模式都安全。
+  app.commandLine.appendSwitch("disable-quic");
+
   // 关键: 用 app.userAgentFallback 去掉 UA 里的 Electron/应用 标识, 用引擎真实的 Chrome 版本号。
   // 这是唯一能覆盖 Service Worker 的 UA 设置方式 —— setUserAgent / loadURL({userAgent}) /
   // onBeforeSendHeaders 都不影响 service worker, 而 Turnstile 的检测逻辑跑在 service worker 里,

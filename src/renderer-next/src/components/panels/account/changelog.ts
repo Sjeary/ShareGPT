@@ -9,6 +9,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '5.3.1',
+    date: '2026-06-19',
+    highlights: [
+      '内嵌页禁用 HTTP/3(QUIC)、强制走 TCP：修复机场模式下访问 GPT/Claude 经 Cloudflare 验证白屏（机场节点的 UDP 中继不稳导致 QUIC 卡死，Mac 上尤甚）。',
+    ],
+  },
+  {
     version: '5.3.0',
     date: '2026-06-19',
     highlights: [
