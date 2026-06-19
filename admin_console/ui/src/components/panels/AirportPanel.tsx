@@ -170,14 +170,13 @@ export function AirportPanel() {
                 已选：{nodes[selected]?.name}
               </span>
             </div>
-            <details className="rounded-md border border-border bg-muted/40">
-              <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
-                转换后的 sing-box 出站（预览，点击展开）
-              </summary>
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all border-t border-border px-3 py-2 font-mono text-[11px]">
-                {JSON.stringify(preview, null, 2)}
-              </pre>
-            </details>
+            <div className="text-sm font-medium text-muted-foreground">
+              转换后的 sing-box 出站（预览）
+            </div>
+            {/* 不设独立滚动/高度上限: 直接平铺, 由整页(PanelScaffold)统一滚动, 避免嵌套滚动看不全。 */}
+            <pre className="whitespace-pre-wrap break-all rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-[11px]">
+              {JSON.stringify(preview, null, 2)}
+            </pre>
           </div>
         )}
         {selected >= 0 && !preview && (

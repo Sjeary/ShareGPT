@@ -1248,6 +1248,18 @@ class Backend {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
 
     this.senderProcess = this.spawnProcess("sender", singboxPath, ["run", "-c", configPath]);
+    // 运行日志标明当前代理方式, 便于观察走的是统一梯子还是下发的机场节点。
+    const useAirportLog =
+      settings.proxy_mode === "airport" && settings.airport_outbound && typeof settings.airport_outbound === "object";
+    if (useAirportLog) {
+      const ob = settings.airport_outbound;
+      this.log(
+        "sender",
+        `代理方式: 机场节点${settings.airport_name ? " · " + settings.airport_name : ""}（${ob.type || "?"} ${ob.server || ""}:${ob.server_port || ""}）`,
+      );
+    } else {
+      this.log("sender", `代理方式: 统一梯子（${settings.proxy_server || ""}:${settings.proxy_port || ""}）`);
+    }
     this.log("sender", `使用配置: ${configPath}`);
     this.emitStatus();
 

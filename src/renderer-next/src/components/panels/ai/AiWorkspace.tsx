@@ -215,6 +215,13 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       ? 'bad'
       : 'ok'
 
+  // 当前发送代理方式标识: 统一梯子 / 机场节点(下发)。
+  const airportMode =
+    settings?.sender?.proxy_mode === 'airport' && Boolean(settings?.sender?.airport_outbound)
+  const proxyModeLabel = airportMode
+    ? `机场${settings?.sender?.airport_name ? ' · ' + safeText(settings.sender.airport_name) : ''}`
+    : '统一代理'
+
   // 视图运行态 (供遮罩/导航按钮判断)。
   const view = {
     initialized: Boolean(activeTab?.webviewInitialized),
@@ -431,6 +438,16 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           />
 
           <div className="ml-auto flex shrink-0 items-center gap-1">
+            <Badge
+              variant="outline"
+              title="当前发送代理方式（统一梯子 / 服务器下发的机场节点）"
+              className={cn(
+                'h-7 gap-1 px-2 font-normal',
+                airportMode ? 'border-primary/50 text-primary' : 'text-muted-foreground',
+              )}
+            >
+              {proxyModeLabel}
+            </Badge>
             <Button
               variant="ghost"
               size="sm"
