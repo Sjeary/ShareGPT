@@ -1,0 +1,9 @@
+node_modules
+**/node_modules
+dist
+build/bin/*
+release*
+**/*.min.*
+LICENSE
+**/package-lock.json
+docs/dev

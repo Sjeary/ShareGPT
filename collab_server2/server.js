@@ -9,16 +9,27 @@ const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number.parseInt(process.env.PORT || "8088", 10);
 const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, "data", "users.json");
 const GPT_USAGE_FILE = process.env.GPT_USAGE_FILE || path.join(__dirname, "data", "gpt_usage.json");
-const CHAT_HISTORY_FILE = process.env.CHAT_HISTORY_FILE || path.join(__dirname, "data", "chat_history.json");
-const CLIENT_BOOTSTRAP_FILE = process.env.CLIENT_BOOTSTRAP_FILE || path.join(__dirname, "data", "client_bootstrap.json");
+const CHAT_HISTORY_FILE =
+  process.env.CHAT_HISTORY_FILE || path.join(__dirname, "data", "chat_history.json");
+const CLIENT_BOOTSTRAP_FILE =
+  process.env.CLIENT_BOOTSTRAP_FILE || path.join(__dirname, "data", "client_bootstrap.json");
 const RELEASES_DIR = process.env.RELEASES_DIR || path.join(__dirname, "data", "releases");
 const SESSION_TTL_MS = Number.parseInt(process.env.SESSION_TTL_MS || `${24 * 60 * 60 * 1000}`, 10);
 const HISTORY_MAX = Number.parseInt(process.env.HISTORY_MAX || "2000", 10);
 const MAX_AVATAR_LENGTH = Number.parseInt(process.env.MAX_AVATAR_LENGTH || `${150 * 1024}`, 10);
 const GPT_USAGE_MAX = Number.parseInt(process.env.GPT_USAGE_MAX || "50000", 10);
-const MAX_ATTACHMENTS_PER_MESSAGE = Number.parseInt(process.env.MAX_ATTACHMENTS_PER_MESSAGE || "4", 10);
-const MAX_ATTACHMENT_BYTES = Number.parseInt(process.env.MAX_ATTACHMENT_BYTES || `${30 * 1024 * 1024}`, 10);
-const RECALL_EDITABLE_WINDOW_MS = Number.parseInt(process.env.RECALL_EDITABLE_WINDOW_MS || `${7 * 24 * 60 * 60 * 1000}`, 10);
+const MAX_ATTACHMENTS_PER_MESSAGE = Number.parseInt(
+  process.env.MAX_ATTACHMENTS_PER_MESSAGE || "4",
+  10,
+);
+const MAX_ATTACHMENT_BYTES = Number.parseInt(
+  process.env.MAX_ATTACHMENT_BYTES || `${30 * 1024 * 1024}`,
+  10,
+);
+const RECALL_EDITABLE_WINDOW_MS = Number.parseInt(
+  process.env.RECALL_EDITABLE_WINDOW_MS || `${7 * 24 * 60 * 60 * 1000}`,
+  10,
+);
 // CORS 来源: 默认 "*"。内嵌 Electron 客户端 origin 不固定, 且鉴权用 header 里的 Bearer token (不依赖 cookie),
 // 通配 origin 的实际风险有限; 部署到受控环境时可用 CORS_ORIGIN 收紧到具体来源。
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
@@ -26,13 +37,29 @@ const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
 const LOGIN_MAX_FAILS = Number.parseInt(process.env.LOGIN_MAX_FAILS || "10", 10);
 const LOGIN_LOCK_MS = Number.parseInt(process.env.LOGIN_LOCK_MS || `${15 * 60 * 1000}`, 10);
 const SERVER_SENDER_BOOTSTRAP = {
-  proxy_server: process.env.SHAREGPT_SENDER_PROXY_SERVER || process.env.SENDER_PROXY_SERVER || process.env.PROXY_SERVER || "",
-  proxy_port: process.env.SHAREGPT_SENDER_PROXY_PORT || process.env.SENDER_PROXY_PORT || process.env.PROXY_PORT || "",
-  proxy_uuid: process.env.SHAREGPT_SENDER_PROXY_UUID || process.env.SENDER_PROXY_UUID || process.env.PROXY_UUID || "",
-  socks_listen_port: process.env.SHAREGPT_SENDER_SOCKS_PORT || process.env.SENDER_SOCKS_PORT || "1080",
-  fallback_mode: process.env.SHAREGPT_SENDER_FALLBACK_MODE || process.env.SENDER_FALLBACK_MODE || "system_proxy",
-  fallback_local_port: process.env.SHAREGPT_SENDER_FALLBACK_LOCAL_PORT || process.env.SENDER_FALLBACK_LOCAL_PORT || "",
-  target_domains: process.env.SHAREGPT_SENDER_TARGET_DOMAINS || process.env.SENDER_TARGET_DOMAINS || "",
+  proxy_server:
+    process.env.SHAREGPT_SENDER_PROXY_SERVER ||
+    process.env.SENDER_PROXY_SERVER ||
+    process.env.PROXY_SERVER ||
+    "",
+  proxy_port:
+    process.env.SHAREGPT_SENDER_PROXY_PORT ||
+    process.env.SENDER_PROXY_PORT ||
+    process.env.PROXY_PORT ||
+    "",
+  proxy_uuid:
+    process.env.SHAREGPT_SENDER_PROXY_UUID ||
+    process.env.SENDER_PROXY_UUID ||
+    process.env.PROXY_UUID ||
+    "",
+  socks_listen_port:
+    process.env.SHAREGPT_SENDER_SOCKS_PORT || process.env.SENDER_SOCKS_PORT || "1080",
+  fallback_mode:
+    process.env.SHAREGPT_SENDER_FALLBACK_MODE || process.env.SENDER_FALLBACK_MODE || "system_proxy",
+  fallback_local_port:
+    process.env.SHAREGPT_SENDER_FALLBACK_LOCAL_PORT || process.env.SENDER_FALLBACK_LOCAL_PORT || "",
+  target_domains:
+    process.env.SHAREGPT_SENDER_TARGET_DOMAINS || process.env.SENDER_TARGET_DOMAINS || "",
 };
 
 const DEFAULT_TARGET_DOMAINS = [
@@ -114,7 +141,9 @@ function normalizeUserRecord(record) {
   const username = safeText(record?.username);
   const displayName = safeText(record?.displayName) || username;
   const avatar = safeText(record?.avatar).slice(0, MAX_AVATAR_LENGTH);
-  const avatarKind = ["emoji", "url", "image"].includes(record?.avatarKind) ? record.avatarKind : inferAvatarKind(avatar);
+  const avatarKind = ["emoji", "url", "image"].includes(record?.avatarKind)
+    ? record.avatarKind
+    : inferAvatarKind(avatar);
   const bio = safeText(record?.bio).slice(0, 200);
 
   return {
@@ -190,31 +219,39 @@ function ensureChatHistoryFile() {
 function ensureClientBootstrapFile() {
   fs.mkdirSync(path.dirname(CLIENT_BOOTSTRAP_FILE), { recursive: true });
   if (!fs.existsSync(CLIENT_BOOTSTRAP_FILE)) {
-    fs.writeFileSync(CLIENT_BOOTSTRAP_FILE, JSON.stringify({
-      sender: {
-        proxy_server: "",
-        proxy_port: "",
-        proxy_uuid: "",
-        socks_listen_port: "1080",
-        fallback_mode: "system_proxy",
-        fallback_local_port: "",
-        target_domains: DEFAULT_TARGET_DOMAINS,
-      },
-      update: {
-        version: "",
-        notes: "",
-        publishedAt: "",
-        windows: {
-          url: "",
-          fileName: "",
+    fs.writeFileSync(
+      CLIENT_BOOTSTRAP_FILE,
+      JSON.stringify(
+        {
+          sender: {
+            proxy_server: "",
+            proxy_port: "",
+            proxy_uuid: "",
+            socks_listen_port: "1080",
+            fallback_mode: "system_proxy",
+            fallback_local_port: "",
+            target_domains: DEFAULT_TARGET_DOMAINS,
+          },
+          update: {
+            version: "",
+            notes: "",
+            publishedAt: "",
+            windows: {
+              url: "",
+              fileName: "",
+            },
+            macos: {
+              url: "",
+              fileName: "",
+            },
+          },
+          extra: {},
         },
-        macos: {
-          url: "",
-          fileName: "",
-        },
-      },
-      extra: {},
-    }, null, 2), "utf-8");
+        null,
+        2,
+      ),
+      "utf-8",
+    );
   }
 }
 
@@ -297,7 +334,8 @@ function mergeServerBootstrapFallback(stored, req) {
       proxy_uuid: normalized.sender.proxy_uuid || suggested.sender.proxy_uuid,
       socks_listen_port: normalized.sender.socks_listen_port || suggested.sender.socks_listen_port,
       fallback_mode: normalized.sender.fallback_mode || suggested.sender.fallback_mode,
-      fallback_local_port: normalized.sender.fallback_local_port || suggested.sender.fallback_local_port,
+      fallback_local_port:
+        normalized.sender.fallback_local_port || suggested.sender.fallback_local_port,
       target_domains: normalized.sender.target_domains || suggested.sender.target_domains,
     },
   };
@@ -393,9 +431,12 @@ function normalizeHistoryMessage(record) {
   const text = recalled ? "" : String(record?.text || "").slice(0, 8000);
   const attachments = recalled
     ? []
-    : (Array.isArray(record?.attachments)
-      ? record.attachments.map(normalizeAttachment).filter(Boolean).slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
-      : []);
+    : Array.isArray(record?.attachments)
+      ? record.attachments
+          .map(normalizeAttachment)
+          .filter(Boolean)
+          .slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
+      : [];
   const replyTo = normalizeReplyTarget(record?.replyTo);
   const forwardedFrom = normalizeForwardedFrom(record?.forwardedFrom);
 
@@ -420,32 +461,39 @@ function normalizeHistoryMessage(record) {
     subnetLabel: safeText(record?.subnetLabel || record?.roomScope),
     timestamp: safeText(record?.timestamp) || nowIso(),
     readAt: scope === "private" ? safeText(record?.readAt) : "",
-    readBy: scope === "subnet"
-      ? (Array.isArray(record?.readBy) ? record.readBy.map(normalizeReadByEntry).filter(Boolean) : [])
-      : [],
+    readBy:
+      scope === "subnet"
+        ? Array.isArray(record?.readBy)
+          ? record.readBy.map(normalizeReadByEntry).filter(Boolean)
+          : []
+        : [],
     edited: Boolean(record?.edited),
-    editedAt: Boolean(record?.edited) ? (safeText(record?.editedAt) || nowIso()) : "",
+    editedAt: Boolean(record?.edited) ? safeText(record?.editedAt) || nowIso() : "",
     recalled,
-    recalledAt: recalled ? (safeText(record?.recalledAt) || nowIso()) : "",
+    recalledAt: recalled ? safeText(record?.recalledAt) || nowIso() : "",
   };
 }
 
 function messageActivityTimestamp(record) {
   const readByLatest = Array.isArray(record?.readBy)
     ? record.readBy
-      .map((item) => safeText(item?.readAt))
-      .filter(Boolean)
-      .sort()
-      .at(-1)
+        .map((item) => safeText(item?.readAt))
+        .filter(Boolean)
+        .sort()
+        .at(-1)
     : "";
-  return safeText(readByLatest || record?.readAt || record?.editedAt || record?.recalledAt || record?.timestamp);
+  return safeText(
+    readByLatest || record?.readAt || record?.editedAt || record?.recalledAt || record?.timestamp,
+  );
 }
 
 function loadChatHistoryStore() {
   ensureChatHistoryFile();
   try {
     const raw = JSON.parse(fs.readFileSync(CHAT_HISTORY_FILE, "utf-8"));
-    const items = Array.isArray(raw.history) ? raw.history.map(normalizeHistoryMessage).filter(Boolean) : [];
+    const items = Array.isArray(raw.history)
+      ? raw.history.map(normalizeHistoryMessage).filter(Boolean)
+      : [];
     if (items.length > HISTORY_MAX) {
       items.splice(0, items.length - HISTORY_MAX);
     }
@@ -469,7 +517,9 @@ function loadGptUsageStore() {
   ensureGptUsageFile();
   try {
     const raw = JSON.parse(fs.readFileSync(GPT_USAGE_FILE, "utf-8"));
-    const events = Array.isArray(raw.events) ? raw.events.map(normalizeUsageEvent).filter((item) => item.username) : [];
+    const events = Array.isArray(raw.events)
+      ? raw.events.map(normalizeUsageEvent).filter((item) => item.username)
+      : [];
     return { events };
   } catch {
     return { events: [] };
@@ -477,7 +527,9 @@ function loadGptUsageStore() {
 }
 
 function saveGptUsageStore(store) {
-  const events = Array.isArray(store?.events) ? store.events.map(normalizeUsageEvent).filter((item) => item.username) : [];
+  const events = Array.isArray(store?.events)
+    ? store.events.map(normalizeUsageEvent).filter((item) => item.username)
+    : [];
   if (events.length > GPT_USAGE_MAX) {
     events.splice(0, events.length - GPT_USAGE_MAX);
   }
@@ -679,7 +731,9 @@ function buildUserDirectory() {
         online: Boolean(onlineClient),
         subnetKey: safeText(onlineClient?.subnetKey),
         subnetLabel: safeText(onlineClient?.subnetLabel),
-        client: onlineClient ? normalizeClientInfo(onlineClient.clientInfo) : normalizeClientInfo(user.lastClient),
+        client: onlineClient
+          ? normalizeClientInfo(onlineClient.clientInfo)
+          : normalizeClientInfo(user.lastClient),
       };
     });
 
@@ -829,7 +883,9 @@ function adminUserSummary(user) {
     isAdmin: Boolean(user.isAdmin),
     disabled: Boolean(user.disabled),
     online: Boolean(onlineClient),
-    client: onlineClient ? normalizeClientInfo(onlineClient.clientInfo) : normalizeClientInfo(user.lastClient),
+    client: onlineClient
+      ? normalizeClientInfo(onlineClient.clientInfo)
+      : normalizeClientInfo(user.lastClient),
     createdAt: safeText(user.createdAt),
     updatedAt: safeText(user.updatedAt),
   };
@@ -842,7 +898,9 @@ function getBaseUrl(req) {
 }
 
 function safeDownloadName(rawName) {
-  const base = path.basename(String(rawName || "").trim()).replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-");
+  const base = path
+    .basename(String(rawName || "").trim())
+    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-");
   return base || "";
 }
 
@@ -893,9 +951,9 @@ function buildHistorySyncPayload(client, sinceTimestamp = "") {
   const sinceMs = safeText(sinceTimestamp) ? new Date(sinceTimestamp).getTime() : Number.NaN;
   const filtered = Number.isFinite(sinceMs)
     ? visible.filter((item) => {
-      const ts = new Date(messageActivityTimestamp(item)).getTime();
-      return Number.isFinite(ts) && ts > sinceMs;
-    })
+        const ts = new Date(messageActivityTimestamp(item)).getTime();
+        return Number.isFinite(ts) && ts > sinceMs;
+      })
     : visible;
 
   return {
@@ -1004,7 +1062,11 @@ function markSubnetMessagesRead(client, messageIds) {
 
 function closeDuplicateConnections(username, exceptClient) {
   for (const client of wsClients) {
-    if (client !== exceptClient && client.username === username && client.readyState === client.OPEN) {
+    if (
+      client !== exceptClient &&
+      client.username === username &&
+      client.readyState === client.OPEN
+    ) {
       client.close(4003, "duplicate_login");
     }
   }
@@ -1419,7 +1481,10 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if ((req.method === "PATCH" || req.method === "PUT") && pathname.startsWith("/api/admin/users/")) {
+  if (
+    (req.method === "PATCH" || req.method === "PUT") &&
+    pathname.startsWith("/api/admin/users/")
+  ) {
     const adminSession = requireAdminSession(req, res);
     if (!adminSession) return;
     try {
@@ -1435,7 +1500,8 @@ const server = http.createServer(async (req, res) => {
       const payload = safeParseJson(body) || {};
       const nextPassword = String(payload.password || "");
 
-      if (typeof payload.displayName !== "undefined") user.displayName = safeText(payload.displayName).slice(0, 30) || user.username;
+      if (typeof payload.displayName !== "undefined")
+        user.displayName = safeText(payload.displayName).slice(0, 30) || user.username;
       if (typeof payload.bio !== "undefined") user.bio = safeText(payload.bio).slice(0, 200);
       if (typeof payload.avatar !== "undefined") {
         user.avatar = safeText(payload.avatar).slice(0, MAX_AVATAR_LENGTH);
@@ -1491,12 +1557,16 @@ const server = http.createServer(async (req, res) => {
     if (!adminSession) return;
     try {
       ensureReleasesDir();
-      const platformKey = safeText(reqUrl.searchParams.get("platform") || req.headers["x-update-platform"]);
+      const platformKey = safeText(
+        reqUrl.searchParams.get("platform") || req.headers["x-update-platform"],
+      );
       if (!["windows", "macos"].includes(platformKey)) {
         sendText(res, 400, "缺少合法的平台标识");
         return;
       }
-      const requestedName = safeDownloadName(reqUrl.searchParams.get("fileName") || req.headers["x-file-name"]);
+      const requestedName = safeDownloadName(
+        reqUrl.searchParams.get("fileName") || req.headers["x-file-name"],
+      );
       if (!requestedName) {
         sendText(res, 400, "缺少文件名");
         return;
@@ -1506,8 +1576,12 @@ const server = http.createServer(async (req, res) => {
       fs.writeFileSync(filePath, body);
 
       const bootstrap = loadClientBootstrap();
-      bootstrap.update.version = safeText(reqUrl.searchParams.get("version") || req.headers["x-update-version"]) || bootstrap.update.version;
-      bootstrap.update.notes = safeText(reqUrl.searchParams.get("notes") || req.headers["x-update-notes"]) || bootstrap.update.notes;
+      bootstrap.update.version =
+        safeText(reqUrl.searchParams.get("version") || req.headers["x-update-version"]) ||
+        bootstrap.update.version;
+      bootstrap.update.notes =
+        safeText(reqUrl.searchParams.get("notes") || req.headers["x-update-notes"]) ||
+        bootstrap.update.notes;
       bootstrap.update.publishedAt = nowIso();
       bootstrap.update[platformKey] = {
         url: releasePublicUrl(req, requestedName),
@@ -1632,7 +1706,10 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readBody(req, 32 * 1024);
       const payload = safeParseJson(body) || {};
-      const count = Math.max(1, Math.min(20, Number.parseInt(String(payload?.count || "1"), 10) || 1));
+      const count = Math.max(
+        1,
+        Math.min(20, Number.parseInt(String(payload?.count || "1"), 10) || 1),
+      );
       recordGptUsage(session.username, count);
 
       sendJson(res, 200, {
@@ -1656,7 +1733,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     try {
-      const stats = buildGptUsageStats(reqUrl.searchParams.get("from"), reqUrl.searchParams.get("to"));
+      const stats = buildGptUsageStats(
+        reqUrl.searchParams.get("from"),
+        reqUrl.searchParams.get("to"),
+      );
       sendJson(res, 200, stats);
     } catch (err) {
       sendText(res, 400, err.message || "查询 GPT 使用统计失败");
@@ -1979,7 +2059,10 @@ wss.on("connection", (ws) => {
 
     const text = String(payload?.text || "").slice(0, 8000);
     const attachments = Array.isArray(payload?.attachments)
-      ? payload.attachments.map(normalizeAttachment).filter(Boolean).slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
+      ? payload.attachments
+          .map(normalizeAttachment)
+          .filter(Boolean)
+          .slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
       : [];
     const replyTo = normalizeReplyTarget(payload?.replyTo);
     const forwardedFrom = normalizeForwardedFrom(payload?.forwardedFrom);
@@ -2016,9 +2099,9 @@ wss.on("connection", (ws) => {
         }
       }
 
-    const message = {
-      id: crypto.randomUUID(),
-      type: "chat",
+      const message = {
+        id: crypto.randomUUID(),
+        type: "chat",
         scope: "private",
         from: ws.username,
         to,
@@ -2043,7 +2126,7 @@ wss.on("connection", (ws) => {
       return;
     }
 
-      const message = {
+    const message = {
       id: crypto.randomUUID(),
       type: "chat",
       scope: "subnet",

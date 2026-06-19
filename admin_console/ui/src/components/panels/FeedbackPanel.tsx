@@ -29,12 +29,7 @@ export function FeedbackPanel() {
       title="反馈建议"
       hint="用户从客户端提交的反馈，最新在前"
       toolbar={
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => void loadFeedback()}
-          disabled={loading}
-        >
+        <Button variant="outline" size="sm" onClick={() => void loadFeedback()} disabled={loading}>
           <RotateCw className={loading ? 'animate-spin' : ''} />
           {loading ? '刷新中…' : '刷新'}
         </Button>

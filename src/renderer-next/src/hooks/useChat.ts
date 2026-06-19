@@ -15,11 +15,7 @@ import {
   type ChatScope,
 } from '@/store/useChatStore'
 import type { CollabSettings } from '@/types/settings'
-import {
-  playNotificationTone,
-  showNotificationToast,
-  showSystemNotification,
-} from '@/lib/notify'
+import { playNotificationTone, showNotificationToast, showSystemNotification } from '@/lib/notify'
 import {
   hydrateConversations,
   normalizeChatMessage,
@@ -82,11 +78,7 @@ function latestHistoryCursor(): string {
 }
 
 // 计算某条入站消息归属的会话存储 key (与 store.keyForMessage 对齐, 用于通知/已读判定)。
-function incomingConversationKey(
-  message: ChatMessage,
-  self: string,
-  roomScope: string,
-): string {
+function incomingConversationKey(message: ChatMessage, self: string, roomScope: string): string {
   if (message.scope === 'private') {
     const other = message.system
       ? message.to
@@ -223,10 +215,7 @@ export function useChat() {
       void showSystemNotification(title, preview, {
         scope: message.scope,
         targetUsername: message.scope === 'private' ? message.from : '',
-        roomScope:
-          message.scope === 'subnet'
-            ? message.subnetLabel || message.subnetKey
-            : '',
+        roomScope: message.scope === 'subnet' ? message.subnetLabel || message.subnetKey : '',
         messageId: message.id,
       })
     }
@@ -298,8 +287,7 @@ export function useChat() {
   // 对端 typing (移植自旧 chat_typing 分支 ~4427 + setConversationTyping ~488)。
   const handleTyping = useCallback(
     (payload: Record<string, unknown>) => {
-      const scope: ChatScope =
-        String(payload.scope) === 'private' ? 'private' : 'subnet'
+      const scope: ChatScope = String(payload.scope) === 'private' ? 'private' : 'subnet'
       const from = String(payload.from ?? '').trim()
       const self = useChatStore.getState().identity.username
       if (!from || from === self) return
@@ -408,10 +396,7 @@ export function useChat() {
       silentReloginInFlight.current = true
       setConnection('connecting')
       const controller = new AbortController()
-      const timer = window.setTimeout(
-        () => controller.abort(),
-        SILENT_LOGIN_TIMEOUT_MS,
-      )
+      const timer = window.setTimeout(() => controller.abort(), SILENT_LOGIN_TIMEOUT_MS)
       try {
         const res = await fetch(`${serverUrl}/api/login`, {
           method: 'POST',
@@ -428,8 +413,7 @@ export function useChat() {
           profile?: { avatar?: string; displayName?: string }
         } | null
         if (!payload?.token) throw new Error('登录未成功')
-        const displayName =
-          (payload.profile?.displayName ?? '').trim() || username
+        const displayName = (payload.profile?.displayName ?? '').trim() || username
         const avatar = (payload.profile?.avatar ?? '').trim()
         // 写回运行期会话 (不动 setAuthed/持久化设置, 仅刷新 token)。
         setSession({
@@ -487,9 +471,7 @@ export function useChat() {
         setConnection('online')
         void refreshDirectory()
         try {
-          ws.send(
-            JSON.stringify({ type: 'history_sync', since: latestHistoryCursor() }),
-          )
+          ws.send(JSON.stringify({ type: 'history_sync', since: latestHistoryCursor() }))
         } catch {
           /* ignore */
         }
@@ -514,8 +496,7 @@ export function useChat() {
           case 'session': {
             const me = String(payload.username || '')
             if (me) setIdentity({ username: me })
-            if (payload.displayName)
-              setIdentity({ displayName: String(payload.displayName) })
+            if (payload.displayName) setIdentity({ displayName: String(payload.displayName) })
             if (payload.avatar) setIdentity({ avatar: String(payload.avatar) })
             if (payload.roomScope) setRoomScope(String(payload.roomScope))
             break
@@ -555,8 +536,7 @@ export function useChat() {
           }
           case 'chat_recall':
           case 'chat_edit': {
-            if (payload.message)
-              upsertMessage(normalizeChatMessage(payload.message))
+            if (payload.message) upsertMessage(normalizeChatMessage(payload.message))
             break
           }
           case 'system':
@@ -594,8 +574,8 @@ export function useChat() {
         const password = useAuthStore.getState().runtimePassword
         const hasResume = Boolean(
           useChatStore.getState().identity.serverUrl &&
-            useChatStore.getState().identity.username &&
-            password,
+          useChatStore.getState().identity.username &&
+          password,
         )
         if (event?.code === 4003) {
           manualReloginRef.current = '当前账号已在其他地方登录，请重新登录。'
@@ -676,37 +656,31 @@ export function useChat() {
     if (!cfg.notify_user_online || !newlyOnline.length) return
     for (const username of newlyOnline) {
       const user = directory.find((u) => u.username === username)
-      showNotificationToast(
-        '联系人已上线',
-        `${user?.displayName || username} 现在在线。`,
-      )
+      showNotificationToast('联系人已上线', `${user?.displayName || username} 现在在线。`)
     }
   }, [directory, advancePresence])
 
   // 发送消息 (移植自旧 renderer.js sendChatMessage ~5180 的 chat payload)。
-  const sendMessage = useCallback(
-    (input: SendMessageInput) => {
-      const text = (input.text || '').trim()
-      const attachments = input.attachments ?? []
-      if (!text && !attachments.length) return false
-      const ws = wsRef.current
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        throw new Error('消息服务尚未连接，请先登录账户。')
-      }
-      ws.send(
-        JSON.stringify({
-          type: 'chat',
-          scope: input.scope,
-          to: input.scope === 'private' ? input.to : '',
-          text,
-          replyTo: input.replyTo ?? null,
-          attachments,
-        }),
-      )
-      return true
-    },
-    [],
-  )
+  const sendMessage = useCallback((input: SendMessageInput) => {
+    const text = (input.text || '').trim()
+    const attachments = input.attachments ?? []
+    if (!text && !attachments.length) return false
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      throw new Error('消息服务尚未连接，请先登录账户。')
+    }
+    ws.send(
+      JSON.stringify({
+        type: 'chat',
+        scope: input.scope,
+        to: input.scope === 'private' ? input.to : '',
+        text,
+        replyTo: input.replyTo ?? null,
+        attachments,
+      }),
+    )
+    return true
+  }, [])
 
   // 批量已读: 当前会话可见时, 对会话中所有未读对端消息发已读回执
   // (移植自旧 markVisiblePrivateConversationRead/markVisibleRoomConversationRead ~2021/2046,
@@ -721,12 +695,7 @@ export function useChat() {
           messages
             .filter(
               (m) =>
-                !m.system &&
-                !m.recalled &&
-                m.id &&
-                m.from &&
-                m.from !== self &&
-                m.scope === scope,
+                !m.system && !m.recalled && m.id && m.from && m.from !== self && m.scope === scope,
             )
             .map((m) => m.id),
         ),
@@ -735,13 +704,9 @@ export function useChat() {
       try {
         if (scope === 'private') {
           if (!partner) return
-          ws.send(
-            JSON.stringify({ type: 'chat_read', with: partner, messageIds: ids }),
-          )
+          ws.send(JSON.stringify({ type: 'chat_read', with: partner, messageIds: ids }))
         } else {
-          ws.send(
-            JSON.stringify({ type: 'chat_read', scope: 'subnet', messageIds: ids }),
-          )
+          ws.send(JSON.stringify({ type: 'chat_read', scope: 'subnet', messageIds: ids }))
         }
       } catch {
         /* ignore */
@@ -750,25 +715,22 @@ export function useChat() {
     [],
   )
 
-  const sendTyping = useCallback(
-    (active: boolean, scope: 'subnet' | 'private', to: string) => {
-      const ws = wsRef.current
-      if (!ws || ws.readyState !== WebSocket.OPEN) return
-      try {
-        ws.send(
-          JSON.stringify({
-            type: 'chat_typing',
-            scope,
-            to: scope === 'private' ? to : '',
-            active,
-          }),
-        )
-      } catch {
-        /* ignore */
-      }
-    },
-    [],
-  )
+  const sendTyping = useCallback((active: boolean, scope: 'subnet' | 'private', to: string) => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    try {
+      ws.send(
+        JSON.stringify({
+          type: 'chat_typing',
+          scope,
+          to: scope === 'private' ? to : '',
+          active,
+        }),
+      )
+    } catch {
+      /* ignore */
+    }
+  }, [])
 
   function requireOpenSocket(): WebSocket {
     const ws = wsRef.current
@@ -782,9 +744,7 @@ export function useChat() {
   const sendRecall = useCallback((messageId: string) => {
     const id = (messageId || '').trim()
     if (!id) return
-    requireOpenSocket().send(
-      JSON.stringify({ type: 'chat_recall', messageId: id }),
-    )
+    requireOpenSocket().send(JSON.stringify({ type: 'chat_recall', messageId: id }))
   }, [])
 
   // 编辑 (移植自旧 sendChatMessage 的 chat_edit 分支 ~5200)。
@@ -793,18 +753,12 @@ export function useChat() {
     const body = (text || '').trim()
     if (!id) return
     if (!body) throw new Error('编辑后的消息内容不能为空。')
-    requireOpenSocket().send(
-      JSON.stringify({ type: 'chat_edit', messageId: id, text: body }),
-    )
+    requireOpenSocket().send(JSON.stringify({ type: 'chat_edit', messageId: id, text: body }))
   }, [])
 
   // 转发 (移植自旧 sendChatMessage 的 forwardDraft 分支 ~5226)。
   const sendForward = useCallback(
-    (
-      draft: ChatForwardDraft,
-      scope: 'subnet' | 'private',
-      to: string,
-    ) => {
+    (draft: ChatForwardDraft, scope: 'subnet' | 'private', to: string) => {
       requireOpenSocket().send(
         JSON.stringify({
           type: 'chat',

@@ -37,10 +37,7 @@ export function LogsPanel() {
   }, [sources, activeSource])
 
   const visible = useMemo(
-    () =>
-      activeSource === null
-        ? entries
-        : entries.filter((e) => e.source === activeSource),
+    () => (activeSource === null ? entries : entries.filter((e) => e.source === activeSource)),
     [entries, activeSource],
   )
 
@@ -48,9 +45,7 @@ export function LogsPanel() {
   // store 仍缓存最多 MAX_LOG_ENTRIES 行, 「复制」可获取全部缓存。
   const shown = useMemo(
     () =>
-      visible.length > DISPLAY_LIMIT
-        ? visible.slice(visible.length - DISPLAY_LIMIT)
-        : visible,
+      visible.length > DISPLAY_LIMIT ? visible.slice(visible.length - DISPLAY_LIMIT) : visible,
     [visible],
   )
   const truncated = visible.length - shown.length
@@ -80,11 +75,7 @@ export function LogsPanel() {
   }
 
   return (
-    <PanelScaffold
-      icon={ScrollText}
-      title="运行日志"
-      hint="显示启动、停止和异常信息，方便排查问题"
-    >
+    <PanelScaffold icon={ScrollText} title="运行日志" hint="显示启动、停止和异常信息，方便排查问题">
       <div className="flex h-full min-h-0 flex-col">
         <LogToolbar
           sources={sources}
@@ -131,9 +122,7 @@ function formatLine(e: LogEntry): string {
 function LogRow({ entry }: { entry: LogEntry }) {
   return (
     <div className="flex gap-2 whitespace-pre-wrap break-all">
-      <span className="shrink-0 text-muted-foreground tabular-nums">
-        [{entry.ts}]
-      </span>
+      <span className="shrink-0 text-muted-foreground tabular-nums">[{entry.ts}]</span>
       <span className="shrink-0 text-primary">[{entry.sourceLabel}]</span>
       <span className="text-foreground">{entry.line}</span>
     </div>

@@ -170,9 +170,7 @@ function binaryName(stem) {
 }
 
 function envBinaryVariable(stem) {
-  return stem === "sing-box"
-    ? ["SHAREGPT_SINGBOX_PATH"]
-    : ["SHAREGPT_FRPC_PATH"];
+  return stem === "sing-box" ? ["SHAREGPT_SINGBOX_PATH"] : ["SHAREGPT_FRPC_PATH"];
 }
 
 function toInt(value, name) {
@@ -198,9 +196,13 @@ function clampPositiveInt(value, fallback) {
 }
 
 function normalizeStoredAttachment(record) {
-  const name = String(record?.name || "").trim().slice(0, 200);
+  const name = String(record?.name || "")
+    .trim()
+    .slice(0, 200);
   const kind = String(record?.kind || "").trim() === "image" ? "image" : "file";
-  const mime = String(record?.mime || "").trim().slice(0, 200);
+  const mime = String(record?.mime || "")
+    .trim()
+    .slice(0, 200);
   const dataUrl = String(record?.dataUrl || "").trim();
   const size = clampPositiveInt(record?.size, 0);
 
@@ -219,11 +221,14 @@ function normalizeStoredReplyTarget(record) {
   const id = String(record?.id || "").trim();
   if (!id) return null;
 
-  const preview = String(record?.preview || "").trim().slice(0, 240);
+  const preview = String(record?.preview || "")
+    .trim()
+    .slice(0, 240);
   return {
     id,
     from: String(record?.from || record?.username || "").trim(),
-    displayName: String(record?.displayName || record?.username || record?.from || "消息").trim() || "消息",
+    displayName:
+      String(record?.displayName || record?.username || record?.from || "消息").trim() || "消息",
     preview: preview || "原消息",
     timestamp: String(record?.timestamp || "").trim(),
   };
@@ -247,7 +252,12 @@ function copyImportantPath(sourcePath, targetPath, errors, options = {}) {
       fs.mkdirSync(targetPath, { recursive: true });
       for (const name of fs.readdirSync(sourcePath)) {
         if (UPDATE_BACKUP_SKIP_NAMES.has(name)) continue;
-        copyImportantPath(path.join(sourcePath, name), path.join(targetPath, name), errors, options);
+        copyImportantPath(
+          path.join(sourcePath, name),
+          path.join(targetPath, name),
+          errors,
+          options,
+        );
       }
       return;
     }
@@ -269,7 +279,10 @@ function filesDiffer(sourcePath, targetPath) {
   try {
     const sourceStat = fs.statSync(sourcePath);
     const targetStat = fs.statSync(targetPath);
-    return sourceStat.size !== targetStat.size || Math.trunc(sourceStat.mtimeMs) !== Math.trunc(targetStat.mtimeMs);
+    return (
+      sourceStat.size !== targetStat.size ||
+      Math.trunc(sourceStat.mtimeMs) !== Math.trunc(targetStat.mtimeMs)
+    );
   } catch {
     return true;
   }
@@ -278,7 +291,8 @@ function filesDiffer(sourcePath, targetPath) {
 function pruneOldUpdateBackups(backupRoot) {
   let entries;
   try {
-    entries = fs.readdirSync(backupRoot, { withFileTypes: true })
+    entries = fs
+      .readdirSync(backupRoot, { withFileTypes: true })
       .filter((item) => item.isDirectory() && item.name.startsWith("update-"))
       .map((item) => {
         const fullPath = path.join(backupRoot, item.name);
@@ -302,7 +316,8 @@ function pruneOldUpdateBackups(backupRoot) {
 
 function latestUpdateBackupDir(backupRoot) {
   try {
-    const entries = fs.readdirSync(backupRoot, { withFileTypes: true })
+    const entries = fs
+      .readdirSync(backupRoot, { withFileTypes: true })
       .filter((item) => item.isDirectory() && item.name.startsWith("update-"))
       .map((item) => {
         const fullPath = path.join(backupRoot, item.name);
@@ -325,7 +340,9 @@ function normalizeStoredForwardedFrom(record) {
 
   return {
     from,
-    displayName: String(record?.displayName || record?.username || record?.from || "转发消息").trim() || "转发消息",
+    displayName:
+      String(record?.displayName || record?.username || record?.from || "转发消息").trim() ||
+      "转发消息",
   };
 }
 
@@ -350,44 +367,54 @@ function normalizeStoredMessage(record) {
     from: String(record?.from || record?.username || "").trim(),
     to: String(record?.to || "").trim(),
     username: String(record?.username || record?.from || "").trim() || "系统通知",
-    displayName: String(record?.displayName || record?.username || record?.from || "").trim() || "系统通知",
+    displayName:
+      String(record?.displayName || record?.username || record?.from || "").trim() || "系统通知",
     avatar: String(record?.avatar || "").trim(),
     text,
     attachments,
-    timestamp: String(record?.timestamp || new Date().toISOString()).trim() || new Date().toISOString(),
+    timestamp:
+      String(record?.timestamp || new Date().toISOString()).trim() || new Date().toISOString(),
     readAt: scope === "private" ? String(record?.readAt || "").trim() : "",
-    readBy: scope === "subnet"
-      ? (Array.isArray(record?.readBy)
+    readBy:
+      scope === "subnet"
+        ? Array.isArray(record?.readBy)
           ? record.readBy
               .map((item) => {
                 const username = String(item?.username || item?.from || "").trim();
                 if (!username) return null;
                 return {
                   username,
-                  displayName: String(item?.displayName || item?.username || item?.from || "").trim() || username,
-                  readAt: String(item?.readAt || item?.timestamp || "").trim() || new Date().toISOString(),
+                  displayName:
+                    String(item?.displayName || item?.username || item?.from || "").trim() ||
+                    username,
+                  readAt:
+                    String(item?.readAt || item?.timestamp || "").trim() ||
+                    new Date().toISOString(),
                 };
               })
               .filter(Boolean)
-          : [])
-      : [],
+          : []
+        : [],
     edited: Boolean(record?.edited),
-    editedAt: Boolean(record?.edited) ? (String(record?.editedAt || "").trim() || new Date().toISOString()) : "",
+    editedAt: Boolean(record?.edited)
+      ? String(record?.editedAt || "").trim() || new Date().toISOString()
+      : "",
     subnetKey: String(record?.subnetKey || "").trim(),
     subnetLabel: String(record?.subnetLabel || record?.roomScope || "").trim(),
     system: Boolean(record?.system),
     replyTo,
     forwardedFrom,
     recalled,
-    recalledAt: recalled ? (String(record?.recalledAt || new Date().toISOString()).trim() || new Date().toISOString()) : "",
+    recalledAt: recalled
+      ? String(record?.recalledAt || new Date().toISOString()).trim() || new Date().toISOString()
+      : "",
   };
 }
 
 function normalizeChatHistoryStore(store) {
   const input = store && typeof store === "object" ? store : {};
-  const conversations = input.conversations && typeof input.conversations === "object"
-    ? input.conversations
-    : {};
+  const conversations =
+    input.conversations && typeof input.conversations === "object" ? input.conversations : {};
 
   const normalizedConversations = {};
   let total = 0;
@@ -459,16 +486,10 @@ class Backend {
     const userDataFile = path.join(this.app.getPath("userData"), "private.defaults.local.json");
 
     if (this.app.isPackaged) {
-      return [
-        path.join(appDir, "private.defaults.local.json"),
-        userDataFile,
-      ];
+      return [path.join(appDir, "private.defaults.local.json"), userDataFile];
     }
 
-    return [
-      path.join(repoRoot, "private.defaults.local.json"),
-      userDataFile,
-    ];
+    return [path.join(repoRoot, "private.defaults.local.json"), userDataFile];
   }
 
   loadPrivateDefaults() {
@@ -498,7 +519,9 @@ class Backend {
   }
 
   ensureLocalDefaultsFile() {
-    const existing = this.resolvePrivateDefaultsCandidates().find((candidate) => fs.existsSync(candidate));
+    const existing = this.resolvePrivateDefaultsCandidates().find((candidate) =>
+      fs.existsSync(candidate),
+    );
     if (existing) return;
 
     const userDataFile = path.join(this.app.getPath("userData"), "private.defaults.local.json");
@@ -557,7 +580,11 @@ class Backend {
         errors,
       };
       try {
-        fs.writeFileSync(path.join(userDataDir, "update_restore_report.json"), JSON.stringify(report, null, 2), "utf-8");
+        fs.writeFileSync(
+          path.join(userDataDir, "update_restore_report.json"),
+          JSON.stringify(report, null, 2),
+          "utf-8",
+        );
       } catch {}
       return report;
     }
@@ -577,7 +604,8 @@ class Backend {
     const repoRoot = path.resolve(__dirname, "../..");
     const platformDir = currentPlatformDir();
     const envVars = envBinaryVariable(stem);
-    const configuredPath = envVars.map((name) => String(process.env[name] || "").trim()).find(Boolean) || "";
+    const configuredPath =
+      envVars.map((name) => String(process.env[name] || "").trim()).find(Boolean) || "";
     const configuredDir = String(process.env.SHAREGPT_BIN_DIR || "").trim();
     const appDir = path.dirname(this.app.getPath("exe"));
     const appPath = this.app.getAppPath();
@@ -614,7 +642,10 @@ class Backend {
         if (!fs.existsSync(bundledCandidate)) continue;
         try {
           fs.mkdirSync(persistedBinDir, { recursive: true });
-          if (!fs.existsSync(persistedCandidate) || filesDiffer(bundledCandidate, persistedCandidate)) {
+          if (
+            !fs.existsSync(persistedCandidate) ||
+            filesDiffer(bundledCandidate, persistedCandidate)
+          ) {
             fs.copyFileSync(bundledCandidate, persistedCandidate);
             if (!isWindows()) {
               fs.chmodSync(persistedCandidate, 0o755);
@@ -629,11 +660,7 @@ class Backend {
     }
 
     const candidates = this.app.isPackaged
-      ? [
-          ...configuredCandidates,
-          persistedCandidate,
-          ...bundledPackagedCandidates,
-        ]
+      ? [...configuredCandidates, persistedCandidate, ...bundledPackagedCandidates]
       : [
           ...configuredCandidates,
           path.join(repoRoot, "build", "bin", platformDir, filename),
@@ -676,11 +703,19 @@ class Backend {
 
   ensureChatHistoryFile() {
     if (!fs.existsSync(this.chatHistoryFile)) {
-      fs.writeFileSync(this.chatHistoryFile, JSON.stringify({
-        version: 1,
-        updatedAt: new Date().toISOString(),
-        conversations: {},
-      }, null, 2), "utf-8");
+      fs.writeFileSync(
+        this.chatHistoryFile,
+        JSON.stringify(
+          {
+            version: 1,
+            updatedAt: new Date().toISOString(),
+            conversations: {},
+          },
+          null,
+          2,
+        ),
+        "utf-8",
+      );
     }
   }
 
@@ -707,7 +742,10 @@ class Backend {
 
     const result = await dialog.showSaveDialog(window, {
       title: "导出本机资料包",
-      defaultPath: path.join(this.app.getPath("documents"), `sharegpt-data-${new Date().toISOString().slice(0, 10)}.json`),
+      defaultPath: path.join(
+        this.app.getPath("documents"),
+        `sharegpt-data-${new Date().toISOString().slice(0, 10)}.json`,
+      ),
       filters: [{ name: "ShareGPT 数据包", extensions: ["json"] }],
     });
 
@@ -775,7 +813,11 @@ class Backend {
       skippedNames: Array.from(UPDATE_BACKUP_SKIP_NAMES),
       errors,
     };
-    fs.writeFileSync(path.join(backupDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf-8");
+    fs.writeFileSync(
+      path.join(backupDir, "manifest.json"),
+      JSON.stringify(manifest, null, 2),
+      "utf-8",
+    );
     pruneOldUpdateBackups(backupRoot);
 
     if (errors.length) {
@@ -792,11 +834,11 @@ class Backend {
     const { dialog } = require("electron");
     const window = this.getWindow();
     if (!window) return null;
-    
+
     const result = await dialog.showOpenDialog(window, {
       title: "导入本地配置文件",
       filters: [{ name: "JSON 配置", extensions: ["json"] }],
-      properties: ["openFile"]
+      properties: ["openFile"],
     });
 
     if (result.canceled || !result.filePaths.length) return null;
@@ -837,7 +879,10 @@ class Backend {
 
   sanitizeUpdateFileName(rawName, fallbackExt = "") {
     const source = String(rawName || "").trim();
-    const cleaned = path.basename(source).replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-").trim();
+    const cleaned = path
+      .basename(source)
+      .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-")
+      .trim();
     if (cleaned) return cleaned;
     return `ShareGPT-update${fallbackExt}`;
   }
@@ -855,15 +900,19 @@ class Backend {
     }
 
     const ext = path.extname(parsed.pathname || "");
-    const originalName = this.sanitizeUpdateFileName(preferredName || path.basename(parsed.pathname || ""), ext);
+    const originalName = this.sanitizeUpdateFileName(
+      preferredName || path.basename(parsed.pathname || ""),
+      ext,
+    );
     const originalExt = path.extname(originalName) || ext;
     const originalBase = path.basename(originalName, originalExt);
     const stamp = new Date().toISOString().replace(/[^\d]/g, "").slice(0, 14);
-    const fileName = this.sanitizeUpdateFileName(`${originalBase}-${stamp}${originalExt}`, originalExt);
+    const fileName = this.sanitizeUpdateFileName(
+      `${originalBase}-${stamp}${originalExt}`,
+      originalExt,
+    );
     const versionText = String(version || "").trim();
-    const versionDir = versionText
-      ? this.sanitizeUpdateFileName(`v${versionText}`, "")
-      : "manual";
+    const versionDir = versionText ? this.sanitizeUpdateFileName(`v${versionText}`, "") : "manual";
     return {
       url: parsed,
       filePath: path.join(this.updatesDir, versionDir, fileName),
@@ -927,7 +976,11 @@ class Backend {
     const assets = Array.isArray(release.assets) ? release.assets : [];
     const wantExt = process.platform === "darwin" ? ".dmg" : ".exe";
     const asset =
-      assets.find((item) => String(item?.name || "").toLowerCase().endsWith(wantExt)) || null;
+      assets.find((item) =>
+        String(item?.name || "")
+          .toLowerCase()
+          .endsWith(wantExt),
+      ) || null;
     return {
       version,
       notes: String(release.body || "").trim(),
@@ -941,7 +994,11 @@ class Backend {
 
   async downloadUpdatePackage(payload = {}, onProgress = null) {
     fs.mkdirSync(this.updatesDir, { recursive: true });
-    const { url, filePath } = this.resolveUpdateDownloadTarget(payload?.url, payload?.fileName, payload?.version);
+    const { url, filePath } = this.resolveUpdateDownloadTarget(
+      payload?.url,
+      payload?.fileName,
+      payload?.version,
+    );
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const protocol = url.protocol === "https:" ? https : http;
     const emitProgress = typeof onProgress === "function" ? onProgress : () => {};
@@ -952,10 +1009,13 @@ class Backend {
 
         if ([301, 302, 303, 307, 308].includes(status) && response.headers.location) {
           response.resume();
-          this.downloadUpdatePackage({
-            ...payload,
-            url: new URL(response.headers.location, url).toString(),
-          }, onProgress).then(resolve, reject);
+          this.downloadUpdatePackage(
+            {
+              ...payload,
+              url: new URL(response.headers.location, url).toString(),
+            },
+            onProgress,
+          ).then(resolve, reject);
           return;
         }
 
@@ -979,7 +1039,9 @@ class Backend {
 
         output.on("error", (err) => {
           response.destroy();
-          try { fs.unlinkSync(tempPath); } catch {}
+          try {
+            fs.unlinkSync(tempPath);
+          } catch {}
           reject(err);
         });
 
@@ -1019,7 +1081,9 @@ class Backend {
                 size: fs.statSync(filePath).size,
               });
             } catch (err) {
-              try { fs.unlinkSync(tempPath); } catch {}
+              try {
+                fs.unlinkSync(tempPath);
+              } catch {}
               reject(err);
             }
           });
@@ -1366,7 +1430,9 @@ class Backend {
 
     const singboxPath = this.resolveBinary("sing-box");
     if (!fs.existsSync(singboxPath)) {
-        throw new Error(`未找到 sing-box: ${singboxPath}。请先按 build/bin/README.md 准备二进制，或通过 SHAREGPT_BIN_DIR / SHAREGPT_SINGBOX_PATH 指定。`);
+      throw new Error(
+        `未找到 sing-box: ${singboxPath}。请先按 build/bin/README.md 准备二进制，或通过 SHAREGPT_BIN_DIR / SHAREGPT_SINGBOX_PATH 指定。`,
+      );
     }
 
     const config = this.buildSenderConfig(settings);
@@ -1377,7 +1443,9 @@ class Backend {
     this.senderProcess = this.spawnProcess("sender", singboxPath, ["run", "-c", configPath]);
     // 运行日志标明当前代理方式, 便于观察走的是统一梯子还是下发的机场节点。
     const useAirportLog =
-      settings.proxy_mode === "airport" && settings.airport_outbound && typeof settings.airport_outbound === "object";
+      settings.proxy_mode === "airport" &&
+      settings.airport_outbound &&
+      typeof settings.airport_outbound === "object";
     if (useAirportLog) {
       const ob = settings.airport_outbound;
       this.log(
@@ -1385,7 +1453,10 @@ class Backend {
         `代理方式: 机场节点${settings.airport_name ? " · " + settings.airport_name : ""}（${ob.type || "?"} ${ob.server || ""}:${ob.server_port || ""}）`,
       );
     } else {
-      this.log("sender", `代理方式: 统一梯子（${settings.proxy_server || ""}:${settings.proxy_port || ""}）`);
+      this.log(
+        "sender",
+        `代理方式: 统一梯子（${settings.proxy_server || ""}:${settings.proxy_port || ""}）`,
+      );
     }
     this.log("sender", `使用配置: ${configPath}`);
     this.emitStatus();
@@ -1400,10 +1471,14 @@ class Backend {
     const frpcPath = this.resolveBinary("frpc");
 
     if (!fs.existsSync(singboxPath)) {
-      throw new Error(`未找到 sing-box: ${singboxPath}。请先按 build/bin/README.md 准备二进制，或通过 SHAREGPT_BIN_DIR / SHAREGPT_SINGBOX_PATH 指定。`);
+      throw new Error(
+        `未找到 sing-box: ${singboxPath}。请先按 build/bin/README.md 准备二进制，或通过 SHAREGPT_BIN_DIR / SHAREGPT_SINGBOX_PATH 指定。`,
+      );
     }
     if (!fs.existsSync(frpcPath)) {
-      throw new Error(`未找到 frpc: ${frpcPath}。请先按 build/bin/README.md 准备二进制，或通过 SHAREGPT_BIN_DIR / SHAREGPT_FRPC_PATH 指定。`);
+      throw new Error(
+        `未找到 frpc: ${frpcPath}。请先按 build/bin/README.md 准备二进制，或通过 SHAREGPT_BIN_DIR / SHAREGPT_FRPC_PATH 指定。`,
+      );
     }
 
     const { singbox, frpcIni } = this.buildReceiverFiles(settings);
@@ -1413,7 +1488,11 @@ class Backend {
     fs.writeFileSync(singboxCfgPath, JSON.stringify(singbox, null, 2), "utf-8");
     fs.writeFileSync(frpcCfgPath, frpcIni, "utf-8");
 
-    this.receiverSingbox = this.spawnProcess("receiver-singbox", singboxPath, ["run", "-c", singboxCfgPath]);
+    this.receiverSingbox = this.spawnProcess("receiver-singbox", singboxPath, [
+      "run",
+      "-c",
+      singboxCfgPath,
+    ]);
     this.receiverFrpc = this.spawnProcess("receiver-frpc", frpcPath, ["-c", frpcCfgPath]);
 
     this.log("receiver", `sing-box 配置: ${singboxCfgPath}`);

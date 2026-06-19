@@ -24,6 +24,9 @@
   ],
   "scripts": {
     "test": "node --test collab_server2/test/server.test.js",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
     "prepare:assets": "node scripts/prepare-assets.mjs all",
     "build:next": "npm --prefix src/renderer-next install && npm --prefix src/renderer-next run build",
     "dev": "node scripts/prepare-assets.mjs all && npm exec -- electron .",
@@ -43,8 +46,12 @@
     "dist:admin:mac": "npm --prefix admin_console run dist:mac"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "electron": "^31.7.7",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "eslint": "^10.5.0",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.4"
   },
   "build": {
     "appId": "com.sjeary.sharegpt.desktop",

@@ -3,6 +3,7 @@
 这个目录提供 ShareGPT 所需的服务端能力，用于处理登录认证、在线状态、聊天同步、客户端默认配置下发和版本更新信息分发。
 
 ## 功能
+
 - 账号密码登录
 - 在线成员同步
 - WebSocket 实时聊天
@@ -14,14 +15,17 @@
 - 管理员接口
 
 ## 环境要求
+
 - Node.js 20+
 
 ## 安装
+
 ```bash
 npm install
 ```
 
 ## 启动
+
 ```bash
 npm start
 ```
@@ -33,16 +37,19 @@ npm start
 ```
 
 ## 创建账号
+
 ```bash
 node add_user.js <username> <password>
 ```
 
 创建管理员账号：
+
 ```bash
 node add_user.js admin MyStrongPass123 --admin
 ```
 
 ## 关键环境变量
+
 - `PORT`
 - `HOST`
 - `USERS_FILE`
@@ -83,7 +90,9 @@ data/client_bootstrap.json
 - `SENDER_TARGET_DOMAINS`
 
 ## 与客户端对接
+
 在 ShareGPT 中填写：
+
 - 服务地址：`http://server.example.com:8088`
 - 账号：通过 `add_user.js` 创建
 - 密码：创建时设置
@@ -91,6 +100,7 @@ data/client_bootstrap.json
 登录成功后，客户端会自动建立消息连接并拉取默认配置与历史消息。
 
 ## Ubuntu 部署
+
 一键部署：
 
 ```bash
@@ -112,7 +122,9 @@ sudo -u sharegpt node add_user.js <user> <password>
 ```
 
 ## 数据目录
+
 运行时会使用：
+
 - `data/users.json`
 - `data/gpt_usage.json`
 - `data/chat_history.json`
@@ -122,7 +134,9 @@ sudo -u sharegpt node add_user.js <user> <password>
 这些内容都不纳入 Git 版本控制。
 
 ## 管理端
+
 配合 `../admin_console/` 使用时，可以直接完成：
+
 - 用户管理
 - Sender 默认配置维护
 - 安装包上传
@@ -133,4 +147,3 @@ sudo -u sharegpt node add_user.js <user> <password>
 ```text
 data/releases/
 ```
-

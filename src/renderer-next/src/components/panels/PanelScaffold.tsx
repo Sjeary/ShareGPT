@@ -33,7 +33,9 @@ export function PanelScaffold({
           {toolbar}
         </div>
       )}
-      <div className={scrollable ? 'min-h-0 flex-1 overflow-auto' : 'min-h-0 flex-1 overflow-hidden'}>
+      <div
+        className={scrollable ? 'min-h-0 flex-1 overflow-auto' : 'min-h-0 flex-1 overflow-hidden'}
+      >
         {children}
       </div>
     </section>

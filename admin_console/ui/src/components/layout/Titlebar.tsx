@@ -24,9 +24,7 @@ function CtlButton({
       className={cn(
         'grid size-9 place-items-center rounded-md text-muted-foreground transition hover:text-foreground',
         'outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring',
-        danger
-          ? 'hover:bg-destructive hover:text-destructive-foreground'
-          : 'hover:bg-secondary',
+        danger ? 'hover:bg-destructive hover:text-destructive-foreground' : 'hover:bg-secondary',
       )}
     >
       {children}

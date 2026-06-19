@@ -123,7 +123,9 @@ const GEMINI_ALLOWED_HOSTS = [
   "gstatic.com",
   "gvt1.com",
 ];
-const DEFAULT_TARGET_DOMAINS = [...new Set([...GPT_ALLOWED_HOSTS, ...GEMINI_ALLOWED_HOSTS])].join(",");
+const DEFAULT_TARGET_DOMAINS = [...new Set([...GPT_ALLOWED_HOSTS, ...GEMINI_ALLOWED_HOSTS])].join(
+  ",",
+);
 const GPT_QUERY_MARKER = "__GPT_QUERY__";
 const GPT_PROXY_HOST = "127.0.0.1";
 const GPT_PROXY_PORT = "1080";
@@ -210,8 +212,12 @@ function formatBytes(value) {
 }
 
 function compareVersions(left, right) {
-  const leftParts = String(left || "").split(".").map((item) => Number.parseInt(item, 10) || 0);
-  const rightParts = String(right || "").split(".").map((item) => Number.parseInt(item, 10) || 0);
+  const leftParts = String(left || "")
+    .split(".")
+    .map((item) => Number.parseInt(item, 10) || 0);
+  const rightParts = String(right || "")
+    .split(".")
+    .map((item) => Number.parseInt(item, 10) || 0);
   const length = Math.max(leftParts.length, rightParts.length);
   for (let index = 0; index < length; index += 1) {
     const a = leftParts[index] || 0;
@@ -296,7 +302,11 @@ function normalizeForwardedFrom(record) {
 }
 
 function hasMessageContent(message) {
-  return Boolean(message?.recalled || safeText(message?.text) || normalizeMessageAttachments(message?.attachments).length);
+  return Boolean(
+    message?.recalled ||
+    safeText(message?.text) ||
+    normalizeMessageAttachments(message?.attachments).length,
+  );
 }
 
 function messageFingerprint(message) {
@@ -326,13 +336,13 @@ function serializeConversationStore() {
   const conversations = {};
   for (const [key, items] of state.collab.messagesByConversation.entries()) {
     if (!items?.length) continue;
-      conversations[key] = items.map((item) => ({
-        ...normalizeChatMessage(item),
-        attachments: normalizeMessageAttachments(item.attachments),
-        replyTo: normalizeReplyTarget(item.replyTo),
-        forwardedFrom: normalizeForwardedFrom(item.forwardedFrom),
-        readBy: normalizeReadBy(item.readBy),
-      }));
+    conversations[key] = items.map((item) => ({
+      ...normalizeChatMessage(item),
+      attachments: normalizeMessageAttachments(item.attachments),
+      replyTo: normalizeReplyTarget(item.replyTo),
+      forwardedFrom: normalizeForwardedFrom(item.forwardedFrom),
+      readBy: normalizeReadBy(item.readBy),
+    }));
   }
   return {
     version: 1,
@@ -384,7 +394,8 @@ function scheduleChatHistoryPersist() {
 function messagePreviewText(message) {
   const normalized = normalizeChatMessage(message);
   if (normalized.recalled) return "[已撤回]";
-  if (normalized.forwardedFrom && !safeText(normalized.text) && !normalized.attachments.length) return "[转发消息]";
+  if (normalized.forwardedFrom && !safeText(normalized.text) && !normalized.attachments.length)
+    return "[转发消息]";
   if (safeText(normalized.text)) return normalized.text;
   if (normalized.attachments.some((item) => item.kind === "image")) return "[图片]";
   if (normalized.attachments.length) return `[文件] ${normalized.attachments[0].name}`;
@@ -482,7 +493,7 @@ function typingConversationKey(scope, username = "") {
 
 function getConversationTypingMeta(conversationKey) {
   const key = safeText(conversationKey);
-  return key ? (state.collab.typingByConversation.get(key) || null) : null;
+  return key ? state.collab.typingByConversation.get(key) || null : null;
 }
 
 function setConversationTyping(conversationKey, payload = {}) {
@@ -497,9 +508,12 @@ function setConversationTyping(conversationKey, payload = {}) {
   });
 
   clearTypingExpiryTimer(key);
-  typingExpiryTimers.set(key, window.setTimeout(() => {
-    clearConversationTyping(key);
-  }, 3200));
+  typingExpiryTimers.set(
+    key,
+    window.setTimeout(() => {
+      clearConversationTyping(key);
+    }, 3200),
+  );
 
   renderRecentConversations();
   if (currentConversationKey() === key) {
@@ -517,8 +531,9 @@ function conversationTypingSummary(scope, targetUsername = "") {
   }
 
   const roomKey = roomConversationKey();
-  const roomTypers = [...state.collab.typingByConversation.entries()]
-    .filter(([entryKey, meta]) => entryKey === roomKey && meta?.scope === "subnet");
+  const roomTypers = [...state.collab.typingByConversation.entries()].filter(
+    ([entryKey, meta]) => entryKey === roomKey && meta?.scope === "subnet",
+  );
 
   if (!roomTypers.length) return "";
   if (roomTypers.length === 1) {
@@ -557,10 +572,13 @@ function renderMessageRichText(text) {
     return token;
   });
 
-  html = html.replace(/`([^`\n]+)`/g, "<code class=\"chat-inline-code\">$1</code>");
+  html = html.replace(/`([^`\n]+)`/g, '<code class="chat-inline-code">$1</code>');
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   html = html.replace(/__([^_]+)__/g, "<em>$1</em>");
-  html = html.replace(/(https?:\/\/[^\s<]+)/g, "<a class=\"chat-inline-link\" href=\"$1\" target=\"_blank\" rel=\"noreferrer\">$1</a>");
+  html = html.replace(
+    /(https?:\/\/[^\s<]+)/g,
+    '<a class="chat-inline-link" href="$1" target="_blank" rel="noreferrer">$1</a>',
+  );
   html = html.replace(/\n/g, "<br>");
 
   codeBlocks.forEach((block, index) => {
@@ -672,11 +690,11 @@ function isPlaceholderValue(value) {
   if (!text) return true;
   const lower = text.toLowerCase();
   return (
-    lower.includes("your-server.example.com")
-    || lower.includes("example.com")
-    || lower.includes("your-uuid")
-    || lower.includes("your-token")
-    || lower === "your-account"
+    lower.includes("your-server.example.com") ||
+    lower.includes("example.com") ||
+    lower.includes("your-uuid") ||
+    lower.includes("your-token") ||
+    lower === "your-account"
   );
 }
 
@@ -693,9 +711,11 @@ function hasCollabServiceReady() {
 }
 
 function shouldShowSetupGuide() {
-  return state.mode === "sender"
-    && !state.ui.setupGuideDismissed
-    && (!hasCollabServiceReady() || !hasSenderConnectionReady());
+  return (
+    state.mode === "sender" &&
+    !state.ui.setupGuideDismissed &&
+    (!hasCollabServiceReady() || !hasSenderConnectionReady())
+  );
 }
 
 function buildSetupGuideItems() {
@@ -773,9 +793,16 @@ function syncAccountOverview() {
     return;
   }
 
-  const nameText = displayName && displayName !== username ? `${displayName} (${username})` : (displayName || username || "已登录");
-  const statusText = safeText(el("c_conn_state")?.textContent) || (state.collab.connected ? "在线" : "连接中");
-  const roomText = safeText(state.collab.roomScope) && state.collab.roomScope !== "-" ? `房间：${state.collab.roomScope}` : "房间：等待同步";
+  const nameText =
+    displayName && displayName !== username
+      ? `${displayName} (${username})`
+      : displayName || username || "已登录";
+  const statusText =
+    safeText(el("c_conn_state")?.textContent) || (state.collab.connected ? "在线" : "连接中");
+  const roomText =
+    safeText(state.collab.roomScope) && state.collab.roomScope !== "-"
+      ? `房间：${state.collab.roomScope}`
+      : "房间：等待同步";
 
   if (nameNode) nameNode.textContent = nameText;
   if (metaNode) metaNode.textContent = `${statusText} · ${roomText}`;
@@ -807,9 +834,16 @@ function refreshTopIdentity() {
 
   if (identityWrap) identityWrap.classList.add("active");
 
-  const nameText = displayName && displayName !== username ? `${displayName} (${username})` : (displayName || username || "已登录");
-  const connText = safeText(el("c_conn_state")?.textContent) || (state.collab.connected ? "在线" : "连接中");
-  const roomText = safeText(state.collab.roomScope) && state.collab.roomScope !== "-" ? ` · ${state.collab.roomScope}` : "";
+  const nameText =
+    displayName && displayName !== username
+      ? `${displayName} (${username})`
+      : displayName || username || "已登录";
+  const connText =
+    safeText(el("c_conn_state")?.textContent) || (state.collab.connected ? "在线" : "连接中");
+  const roomText =
+    safeText(state.collab.roomScope) && state.collab.roomScope !== "-"
+      ? ` · ${state.collab.roomScope}`
+      : "";
 
   if (nameNode) nameNode.textContent = nameText;
   if (subNode) subNode.textContent = `${connText}${roomText}`;
@@ -836,9 +870,10 @@ function formatConversationTime(ts) {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "";
   const now = new Date();
-  const sameDay = d.getFullYear() === now.getFullYear()
-    && d.getMonth() === now.getMonth()
-    && d.getDate() === now.getDate();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
   if (sameDay) {
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
@@ -870,9 +905,11 @@ function isSameCalendarDay(leftTs, rightTs) {
   const left = new Date(leftTs);
   const right = new Date(rightTs);
   if (Number.isNaN(left.getTime()) || Number.isNaN(right.getTime())) return false;
-  return left.getFullYear() === right.getFullYear()
-    && left.getMonth() === right.getMonth()
-    && left.getDate() === right.getDate();
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
 }
 
 function shouldGroupMessages(previous, current) {
@@ -881,7 +918,10 @@ function shouldGroupMessages(previous, current) {
   const currentMessage = normalizeChatMessage(current);
   if (prevMessage.system || currentMessage.system) return false;
   if (prevMessage.scope !== currentMessage.scope) return false;
-  if (safeText(prevMessage.from || prevMessage.username) !== safeText(currentMessage.from || currentMessage.username)) {
+  if (
+    safeText(prevMessage.from || prevMessage.username) !==
+    safeText(currentMessage.from || currentMessage.username)
+  ) {
     return false;
   }
   if (!isSameCalendarDay(prevMessage.timestamp, currentMessage.timestamp)) return false;
@@ -896,7 +936,10 @@ function currentGptUser() {
 }
 
 function gptTotalQueries() {
-  const derived = Object.values(state.gpt.queryUsers || {}).reduce((sum, value) => sum + (Number(value) || 0), 0);
+  const derived = Object.values(state.gpt.queryUsers || {}).reduce(
+    (sum, value) => sum + (Number(value) || 0),
+    0,
+  );
   return Math.max(Number(state.gpt.totalQueries) || 0, derived);
 }
 
@@ -963,7 +1006,12 @@ function readGptStatsRangeFromInputs() {
 }
 
 function resolveGptProxyPort() {
-  const value = safeText(el("s_socks_listen_port")?.value || state.settings?.sender?.socks_listen_port || state.gpt.proxyPort || GPT_PROXY_PORT);
+  const value = safeText(
+    el("s_socks_listen_port")?.value ||
+      state.settings?.sender?.socks_listen_port ||
+      state.gpt.proxyPort ||
+      GPT_PROXY_PORT,
+  );
   return /^\d+$/.test(value) ? value : GPT_PROXY_PORT;
 }
 
@@ -1032,7 +1080,9 @@ function syncActiveGptTabState() {
 
 function applyGptTabsPayload(payload = {}) {
   const rawTabs = Array.isArray(payload?.tabs) ? payload.tabs : [];
-  state.gpt.tabs = rawTabs.map((item, index) => normalizeGptTab(item, index)).filter((item) => item.id);
+  state.gpt.tabs = rawTabs
+    .map((item, index) => normalizeGptTab(item, index))
+    .filter((item) => item.id);
 
   const requestedActive = safeText(payload?.activeTabId);
   state.gpt.activeTabId = state.gpt.tabs.some((item) => item.id === requestedActive)
@@ -1064,9 +1114,9 @@ function normalizeGeminiUrl(rawUrl) {
 
 function gptUserAgent() {
   return String(window.navigator.userAgent || "")
-    .replace(/\s*Electron\/[^\s]+/ig, "")
-    .replace(/\s*ShareGPT\/[^\s]+/ig, "")
-    .replace(/\s*ChatPortal(?:\s+X1)?(?:\s+V\d+)?\/[^\s]+/ig, "")
+    .replace(/\s*Electron\/[^\s]+/gi, "")
+    .replace(/\s*ShareGPT\/[^\s]+/gi, "")
+    .replace(/\s*ChatPortal(?:\s+X1)?(?:\s+V\d+)?\/[^\s]+/gi, "")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
@@ -1100,7 +1150,7 @@ function formatGptStatsRangeText() {
 }
 
 function getAiState(kind) {
-  return kind === "gpt" ? state.gpt : (kind === "gemini" ? state.gemini : null);
+  return kind === "gpt" ? state.gpt : kind === "gemini" ? state.gemini : null;
 }
 
 function getAiHostElement(kind) {
@@ -1108,10 +1158,12 @@ function getAiHostElement(kind) {
 }
 
 function shouldShowAiWorkspace(kind) {
-  return state.mode === "sender"
-    && state.view === kind
-    && Boolean(state.status?.senderRunning)
-    && Boolean(getAiHostElement(kind));
+  return (
+    state.mode === "sender" &&
+    state.view === kind &&
+    Boolean(state.status?.senderRunning) &&
+    Boolean(getAiHostElement(kind))
+  );
 }
 
 function syncSingleAiHost(kind) {
@@ -1132,11 +1184,13 @@ function syncSingleAiHost(kind) {
     height: rect.height,
   };
 
-  window.api.syncAiViewHost({
-    kind,
-    visible: rect.width > 1 && rect.height > 1,
-    bounds,
-  }).catch(() => {});
+  window.api
+    .syncAiViewHost({
+      kind,
+      visible: rect.width > 1 && rect.height > 1,
+      bounds,
+    })
+    .catch(() => {});
 }
 
 function syncAiHostsLayout() {
@@ -1256,7 +1310,10 @@ function bindAiWorkspaceEvents() {
     }
 
     if (payload?.type === "raw-document-detected" && kind === "gpt") {
-      setGptFeedback("检测到 GPT 登录页返回异常文本，程序已自动重试。若仍异常，请刷新一次页面。", "warning");
+      setGptFeedback(
+        "检测到 GPT 登录页返回异常文本，程序已自动重试。若仍异常，请刷新一次页面。",
+        "warning",
+      );
     }
 
     if (payload?.type === "external-open-failed") {
@@ -1413,9 +1470,13 @@ function renderGptStats() {
   const center = el("gptPieCenter");
   const legend = el("gptStatsLegend");
   const rangeNode = el("gptStatsRangeNote");
-  const rawEntries = Array.isArray(state.gpt.statsEntries) && state.gpt.statsEntries.length
-    ? state.gpt.statsEntries
-    : Object.entries(state.gpt.statsUsers || {}).map(([username, count]) => ({ username, count }));
+  const rawEntries =
+    Array.isArray(state.gpt.statsEntries) && state.gpt.statsEntries.length
+      ? state.gpt.statsEntries
+      : Object.entries(state.gpt.statsUsers || {}).map(([username, count]) => ({
+          username,
+          count,
+        }));
   const entries = rawEntries
     .map((item) => ({
       username: safeText(item?.username),
@@ -1447,7 +1508,16 @@ function renderGptStats() {
     return;
   }
 
-  const colors = ["#0a84ff", "#f59e0b", "#fb7185", "#22c55e", "#a855f7", "#14b8a6", "#f97316", "#eab308"];
+  const colors = [
+    "#0a84ff",
+    "#f59e0b",
+    "#fb7185",
+    "#22c55e",
+    "#a855f7",
+    "#14b8a6",
+    "#f97316",
+    "#eab308",
+  ];
   let start = 0;
   const segments = [];
 
@@ -1465,9 +1535,10 @@ function renderGptStats() {
   entries.forEach((item, index) => {
     const username = item.username;
     const count = item.count;
-    const displayName = item.displayName && item.displayName !== username
-      ? `${item.displayName} (${username})`
-      : (item.displayName || username);
+    const displayName =
+      item.displayName && item.displayName !== username
+        ? `${item.displayName} (${username})`
+        : item.displayName || username;
     const row = document.createElement("div");
     row.className = "gpt-legend-item";
 
@@ -1511,9 +1582,9 @@ function registerGptQuery(text = "") {
   if (!normalizedText) return;
 
   if (
-    normalizedText
-    && normalizedText === state.gpt.lastTrackedQueryText
-    && now - state.gpt.lastTrackedQueryAt < 1800
+    normalizedText &&
+    normalizedText === state.gpt.lastTrackedQueryText &&
+    now - state.gpt.lastTrackedQueryAt < 1800
   ) {
     return;
   }
@@ -1537,12 +1608,16 @@ async function loadGptSummaryStats() {
     return;
   }
 
-  const response = await fetchWithFriendlyError(`${state.collab.serverUrl}/api/gpt/stats`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${state.collab.token}`,
+  const response = await fetchWithFriendlyError(
+    `${state.collab.serverUrl}/api/gpt/stats`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${state.collab.token}`,
+      },
     },
-  }, 8000);
+    8000,
+  );
 
   if (!response.ok) {
     const text = await response.text();
@@ -1552,7 +1627,9 @@ async function loadGptSummaryStats() {
   const payload = await response.json();
   state.gpt.totalQueries = Number(payload.totalQueries) || 0;
   state.gpt.queryUsers = Object.fromEntries(
-    (payload.users || []).map((item) => [safeText(item.username), Number(item.count) || 0]).filter(([username]) => username),
+    (payload.users || [])
+      .map((item) => [safeText(item.username), Number(item.count) || 0])
+      .filter(([username]) => username),
   );
   updateGptCounters();
   await persistGptState();
@@ -1574,12 +1651,16 @@ async function loadGptRangeStats(options = {}) {
   if (state.gpt.statsTo) params.set("to", state.gpt.statsTo);
 
   const query = params.toString();
-  const response = await fetchWithFriendlyError(`${state.collab.serverUrl}/api/gpt/stats${query ? `?${query}` : ""}`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${state.collab.token}`,
+  const response = await fetchWithFriendlyError(
+    `${state.collab.serverUrl}/api/gpt/stats${query ? `?${query}` : ""}`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${state.collab.token}`,
+      },
     },
-  }, 8000);
+    8000,
+  );
 
   if (!response.ok) {
     const text = await response.text();
@@ -1589,12 +1670,14 @@ async function loadGptRangeStats(options = {}) {
   const payload = await response.json();
   state.gpt.statsTotalQueries = Number(payload.totalQueries) || 0;
   state.gpt.statsUserCount = Number(payload.userCount) || 0;
-  state.gpt.statsEntries = (payload.users || []).map((item) => ({
-    username: safeText(item?.username),
-    displayName: safeText(item?.displayName),
-    count: Number(item?.count) || 0,
-    ratio: Number(item?.ratio) || 0,
-  })).filter((item) => item.username && item.count > 0);
+  state.gpt.statsEntries = (payload.users || [])
+    .map((item) => ({
+      username: safeText(item?.username),
+      displayName: safeText(item?.displayName),
+      count: Number(item?.count) || 0,
+      ratio: Number(item?.ratio) || 0,
+    }))
+    .filter((item) => item.username && item.count > 0);
   state.gpt.statsUsers = Object.fromEntries(
     state.gpt.statsEntries.map((item) => [item.username, item.count]),
   );
@@ -1611,14 +1694,18 @@ async function loadGptRangeStats(options = {}) {
 async function reportGptUsage() {
   if (!state.collab.serverUrl || !state.collab.token) return;
 
-  const response = await fetchWithFriendlyError(`${state.collab.serverUrl}/api/gpt/usage`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${state.collab.token}`,
+  const response = await fetchWithFriendlyError(
+    `${state.collab.serverUrl}/api/gpt/usage`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${state.collab.token}`,
+      },
+      body: JSON.stringify({ count: 1 }),
     },
-    body: JSON.stringify({ count: 1 }),
-  }, 8000);
+    8000,
+  );
 
   if (!response.ok) {
     const text = await response.text();
@@ -1669,10 +1756,11 @@ function installGptQueryTracker(tabId = state.gpt.activeTabId) {
   if (!window.api?.executeAiJavaScript || !activeTab || !isGptAllowedUrl(activeTab.url)) return;
 
   const marker = JSON.stringify(GPT_QUERY_MARKER);
-  window.api.executeAiJavaScript({
-    kind: "gpt",
-    tabId: targetId,
-    code: `
+  window.api
+    .executeAiJavaScript({
+      kind: "gpt",
+      tabId: targetId,
+      code: `
     (() => {
       if (window.__gptQueryTrackerInstalled) return;
       window.__gptQueryTrackerInstalled = true;
@@ -1705,9 +1793,10 @@ function installGptQueryTracker(tabId = state.gpt.activeTabId) {
       }, true);
     })();
   `,
-  }).catch(() => {
-    // ignore tracker injection failures
-  });
+    })
+    .catch(() => {
+      // ignore tracker injection failures
+    });
 }
 
 async function createGptTab() {
@@ -1799,7 +1888,8 @@ function updateGeminiNavState() {
 function updateGeminiProxyInfo() {
   state.gemini.proxyPort = resolveGptProxyPort();
   if (el("geminiProxyInfo")) {
-    el("geminiProxyInfo").textContent = `SOCKS5 ${state.gemini.proxyHost}:${state.gemini.proxyPort}`;
+    el("geminiProxyInfo").textContent =
+      `SOCKS5 ${state.gemini.proxyHost}:${state.gemini.proxyPort}`;
   }
 }
 
@@ -1840,7 +1930,8 @@ function updateGeminiRuntimeState() {
   if (!state.gemini.webviewInitialized) {
     overlay.hidden = false;
     overlayTitle.textContent = "准备打开 Gemini";
-    overlayText.textContent = "正在初始化内置页面并连接本地代理。Google 登录可能会跳转到账号验证页面。";
+    overlayText.textContent =
+      "正在初始化内置页面并连接本地代理。Google 登录可能会跳转到账号验证页面。";
     scheduleAiHostsLayoutSync();
     return;
   }
@@ -1979,12 +2070,14 @@ function collectUnreadPrivateIncomingMessageIds(username) {
   return items
     .filter((item) => {
       const message = normalizeChatMessage(item);
-      return message.scope === "private"
-        && safeText(message.from) === partner
-        && safeText(message.to) === state.collab.username
-        && !safeText(message.readAt)
-        && !message.recalled
-        && safeText(message.id);
+      return (
+        message.scope === "private" &&
+        safeText(message.from) === partner &&
+        safeText(message.to) === state.collab.username &&
+        !safeText(message.readAt) &&
+        !message.recalled &&
+        safeText(message.id)
+      );
     })
     .map((item) => safeText(item.id));
 }
@@ -1995,13 +2088,16 @@ function sendPrivateReadReceipt(username, messageIds) {
     ? [...new Set(messageIds.map((item) => safeText(item)).filter(Boolean))]
     : [];
   if (!partner || !ids.length) return;
-  if (!state.collab.connected || !state.collab.ws || state.collab.ws.readyState !== WebSocket.OPEN) return;
+  if (!state.collab.connected || !state.collab.ws || state.collab.ws.readyState !== WebSocket.OPEN)
+    return;
 
-  state.collab.ws.send(JSON.stringify({
-    type: "chat_read",
-    with: partner,
-    messageIds: ids,
-  }));
+  state.collab.ws.send(
+    JSON.stringify({
+      type: "chat_read",
+      with: partner,
+      messageIds: ids,
+    }),
+  );
 }
 
 function sendRoomReadReceipt(messageIds) {
@@ -2009,13 +2105,16 @@ function sendRoomReadReceipt(messageIds) {
     ? [...new Set(messageIds.map((item) => safeText(item)).filter(Boolean))]
     : [];
   if (!ids.length) return;
-  if (!state.collab.connected || !state.collab.ws || state.collab.ws.readyState !== WebSocket.OPEN) return;
+  if (!state.collab.connected || !state.collab.ws || state.collab.ws.readyState !== WebSocket.OPEN)
+    return;
 
-  state.collab.ws.send(JSON.stringify({
-    type: "chat_read",
-    scope: "subnet",
-    messageIds: ids,
-  }));
+  state.collab.ws.send(
+    JSON.stringify({
+      type: "chat_read",
+      scope: "subnet",
+      messageIds: ids,
+    }),
+  );
 }
 
 function markVisiblePrivateConversationRead() {
@@ -2054,7 +2153,8 @@ function sendChatTyping(active) {
   const scope = currentChatScope();
   const target = safeText(el("c_chat_target")?.value);
   if (scope === "private" && !target) return;
-  if (!state.collab.connected || !state.collab.ws || state.collab.ws.readyState !== WebSocket.OPEN) return;
+  if (!state.collab.connected || !state.collab.ws || state.collab.ws.readyState !== WebSocket.OPEN)
+    return;
 
   const key = typingConversationKey(scope, target);
   const previous = state.collab.lastTypingSentAt.get(key) || { active: false, at: 0 };
@@ -2069,12 +2169,14 @@ function sendChatTyping(active) {
   }
 
   state.collab.lastTypingSentAt.set(key, { active, at: now });
-  state.collab.ws.send(JSON.stringify({
-    type: "chat_typing",
-    scope,
-    to: scope === "private" ? target : "",
-    active: Boolean(active),
-  }));
+  state.collab.ws.send(
+    JSON.stringify({
+      type: "chat_typing",
+      scope,
+      to: scope === "private" ? target : "",
+      active: Boolean(active),
+    }),
+  );
 }
 
 function resetConversationState() {
@@ -2202,7 +2304,8 @@ function getViewMeta(view) {
     },
     receiver: {
       title: "接收端设置",
-      subtitle: "填写接收端信息后，可在当前设备开启接收服务，让另一台设备的连接通过这里完成接收和转发。",
+      subtitle:
+        "填写接收端信息后，可在当前设备开启接收服务，让另一台设备的连接通过这里完成接收和转发。",
     },
     logs: {
       title: "运行记录",
@@ -2217,7 +2320,7 @@ function getViewMeta(view) {
         }
       : {
           title: "账号与信息",
-      subtitle: "在这里登录账号、查看状态，并管理账号资料。",
+          subtitle: "在这里登录账号、查看状态，并管理账号资料。",
         },
     chat: {
       title: "联系人与聊天",
@@ -2264,7 +2367,9 @@ function setActiveView(view) {
   const nextView = availableViews.includes(view) ? view : availableViews[0];
   const activeNavView = ["message-settings", "chat"].includes(nextView)
     ? "chat"
-    : (nextView === "gpt-stats" ? "gpt-stats" : nextView);
+    : nextView === "gpt-stats"
+      ? "gpt-stats"
+      : nextView;
   state.view = nextView;
   document.body.dataset.view = nextView;
 
@@ -2306,7 +2411,11 @@ function syncAuthLayout() {
 
   const preferredView = guest
     ? "account"
-    : (getAvailableViews().includes(state.view) ? state.view : (state.mode === "receiver" ? "receiver" : "sender"));
+    : getAvailableViews().includes(state.view)
+      ? state.view
+      : state.mode === "receiver"
+        ? "receiver"
+        : "sender";
 
   setActiveView(preferredView);
 }
@@ -2342,7 +2451,9 @@ function refreshSenderAccess() {
 }
 
 function syncReceiverOverview() {
-  const receiverRunning = Boolean(state.status?.receiverFrpcRunning || state.status?.receiverSingboxRunning);
+  const receiverRunning = Boolean(
+    state.status?.receiverFrpcRunning || state.status?.receiverSingboxRunning,
+  );
   const remotePort = safeText(el("r_remote_port")?.value);
   const forwardPort = safeText(el("r_forward_proxy_port")?.value);
 
@@ -2364,8 +2475,10 @@ function setStatus(status) {
   const senderRunning = Boolean(status?.senderRunning);
   const receiverRunning = Boolean(status?.receiverFrpcRunning || status?.receiverSingboxRunning);
 
-  if (el("senderState")) el("senderState").textContent = `发送服务：${senderRunning ? "运行中" : "未开启"}`;
-  if (el("receiverState")) el("receiverState").textContent = `接收服务：${receiverRunning ? "运行中" : "未开启"}`;
+  if (el("senderState"))
+    el("senderState").textContent = `发送服务：${senderRunning ? "运行中" : "未开启"}`;
+  if (el("receiverState"))
+    el("receiverState").textContent = `接收服务：${receiverRunning ? "运行中" : "未开启"}`;
 
   if (el("senderDot")) el("senderDot").classList.toggle("running", senderRunning);
   if (el("receiverDot")) el("receiverDot").classList.toggle("running", receiverRunning);
@@ -2484,7 +2597,8 @@ function fillForm(settings) {
   if (el("s_proxy_uuid")) el("s_proxy_uuid").value = sender.proxy_uuid || "";
   if (el("s_socks_listen_port")) el("s_socks_listen_port").value = sender.socks_listen_port || "";
   if (el("s_fallback_mode")) el("s_fallback_mode").value = sender.fallback_mode || "system_proxy";
-  if (el("s_fallback_local_port")) el("s_fallback_local_port").value = sender.fallback_local_port || "";
+  if (el("s_fallback_local_port"))
+    el("s_fallback_local_port").value = sender.fallback_local_port || "";
   if (el("s_target_domains")) {
     el("s_target_domains").value = sender.target_domains || DEFAULT_TARGET_DOMAINS;
     el("s_target_domains").readOnly = true;
@@ -2496,7 +2610,8 @@ function fillForm(settings) {
   if (el("r_remote_port")) el("r_remote_port").value = receiver.remote_port || "";
   if (el("r_vmess_listen_port")) el("r_vmess_listen_port").value = receiver.vmess_listen_port || "";
   if (el("r_vmess_uuid")) el("r_vmess_uuid").value = receiver.vmess_uuid || "";
-  if (el("r_forward_proxy_port")) el("r_forward_proxy_port").value = receiver.forward_proxy_port || "";
+  if (el("r_forward_proxy_port"))
+    el("r_forward_proxy_port").value = receiver.forward_proxy_port || "";
   if (el("r_tls_enable")) el("r_tls_enable").checked = Boolean(receiver.tls_enable);
   if (el("r_use_compression")) el("r_use_compression").checked = Boolean(receiver.use_compression);
   if (el("r_use_encryption")) el("r_use_encryption").checked = Boolean(receiver.use_encryption);
@@ -2504,20 +2619,29 @@ function fillForm(settings) {
   if (el("c_server_url")) el("c_server_url").value = collab.server_url || "";
   if (el("c_username")) el("c_username").value = collab.last_username || "";
   state.collab.rememberPassword = Boolean(collab.remember_password);
-  state.collab.savedPassword = state.collab.rememberPassword ? String(collab.saved_password || "") : "";
+  state.collab.savedPassword = state.collab.rememberPassword
+    ? String(collab.saved_password || "")
+    : "";
   state.collab.notifyMessagePopup = collab.notify_message_popup !== false;
   state.collab.notifySystemNotification = collab.notify_system_notification !== false;
   state.collab.notifySoundPlay = collab.notify_sound_play !== false;
   state.collab.notifyUserOnline = Boolean(collab.notify_user_online);
   if (el("c_password")) el("c_password").value = state.collab.savedPassword;
   if (el("c_remember_password")) el("c_remember_password").checked = state.collab.rememberPassword;
-  if (el("c_notify_message_popup")) el("c_notify_message_popup").checked = state.collab.notifyMessagePopup;
-  if (el("c_notify_system_notification")) el("c_notify_system_notification").checked = state.collab.notifySystemNotification;
+  if (el("c_notify_message_popup"))
+    el("c_notify_message_popup").checked = state.collab.notifyMessagePopup;
+  if (el("c_notify_system_notification"))
+    el("c_notify_system_notification").checked = state.collab.notifySystemNotification;
   if (el("c_notify_sound_play")) el("c_notify_sound_play").checked = state.collab.notifySoundPlay;
-  if (el("c_notify_user_online")) el("c_notify_user_online").checked = state.collab.notifyUserOnline;
+  if (el("c_notify_user_online"))
+    el("c_notify_user_online").checked = state.collab.notifyUserOnline;
 
   state.collab.avatar = safeText(collab.last_avatar);
-  state.collab.pinnedUsers = new Set(Array.isArray(collab.pinned_users) ? collab.pinned_users.map((item) => safeText(item)).filter(Boolean) : []);
+  state.collab.pinnedUsers = new Set(
+    Array.isArray(collab.pinned_users)
+      ? collab.pinned_users.map((item) => safeText(item)).filter(Boolean)
+      : [],
+  );
   state.gpt.partition = safeText(gpt.partition) || state.gpt.partition;
   state.gpt.homeUrl = normalizeGptUrl(gpt.home_url || state.gpt.homeUrl);
   state.gpt.lastUrl = normalizeGptUrl(gpt.last_url || state.gpt.homeUrl);
@@ -2634,7 +2758,6 @@ async function applySuggestedServerUrl() {
       }
     }
   }
-
 }
 
 async function syncWindowMaxButton() {
@@ -2735,9 +2858,11 @@ function updateAppUpdateProgress(progress = null) {
 
 function normalizeBootstrapPayload(payload = {}) {
   const sender = payload?.sender && typeof payload.sender === "object" ? payload.sender : {};
-  const platformUpdate = payload?.update?.[currentUpdatePlatformKey()] && typeof payload.update[currentUpdatePlatformKey()] === "object"
-    ? payload.update[currentUpdatePlatformKey()]
-    : {};
+  const platformUpdate =
+    payload?.update?.[currentUpdatePlatformKey()] &&
+    typeof payload.update[currentUpdatePlatformKey()] === "object"
+      ? payload.update[currentUpdatePlatformKey()]
+      : {};
 
   return {
     sender: {
@@ -2761,9 +2886,7 @@ function normalizeBootstrapPayload(payload = {}) {
 
 function hasCompleteSenderBootstrap(sender = getSenderForm()) {
   return Boolean(
-    safeText(sender?.proxy_server)
-    && safeText(sender?.proxy_port)
-    && safeText(sender?.proxy_uuid),
+    safeText(sender?.proxy_server) && safeText(sender?.proxy_port) && safeText(sender?.proxy_uuid),
   );
 }
 
@@ -2819,10 +2942,10 @@ function syncUpdateControls() {
   const latestVersion = safeText(update?.version);
   const hasPackage = Boolean(update?.url);
   const hasNewVersion = Boolean(
-    latestVersion
-    && currentVersion
-    && compareVersions(latestVersion, currentVersion) > 0
-    && hasPackage,
+    latestVersion &&
+    currentVersion &&
+    compareVersions(latestVersion, currentVersion) > 0 &&
+    hasPackage,
   );
 
   if (versionNode) {
@@ -2841,7 +2964,9 @@ function syncUpdateControls() {
     installButton.disabled = !hasPackage || state.app.downloading;
     installButton.textContent = state.app.downloading
       ? "下载中…"
-      : (hasNewVersion ? "下载并安装更新" : "重新下载安装包");
+      : hasNewVersion
+        ? "下载并安装更新"
+        : "重新下载安装包";
   }
 
   if (!state.collab.token) {
@@ -2860,7 +2985,10 @@ function syncUpdateControls() {
   }
 
   if (hasNewVersion) {
-    setAppUpdateFeedback(`发现新版本 ${latestVersion}，下载后会保留账号、聊天记录、配置和网页登录状态。`, "success");
+    setAppUpdateFeedback(
+      `发现新版本 ${latestVersion}，下载后会保留账号、聊天记录、配置和网页登录状态。`,
+      "success",
+    );
     return;
   }
 
@@ -2873,12 +3001,16 @@ async function fetchClientBootstrap(options = {}) {
     return null;
   }
 
-  const response = await fetchWithFriendlyError(`${state.collab.serverUrl.replace(/\/+$/, "")}/api/client/bootstrap`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${state.collab.token}`,
+  const response = await fetchWithFriendlyError(
+    `${state.collab.serverUrl.replace(/\/+$/, "")}/api/client/bootstrap`,
+    {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${state.collab.token}`,
+      },
     },
-  }, 10000);
+    10000,
+  );
 
   if (!response.ok) {
     const text = await response.text();
@@ -2916,7 +3048,12 @@ async function installAppUpdate() {
   }
 
   state.app.downloading = true;
-  state.app.updateProgress = { transferred: 0, total: 0, percent: 0, fileName: safeText(update.fileName) || "更新包" };
+  state.app.updateProgress = {
+    transferred: 0,
+    total: 0,
+    percent: 0,
+    fileName: safeText(update.fileName) || "更新包",
+  };
   syncUpdateControls();
   updateAppUpdateProgress(state.app.updateProgress);
   setAppUpdateFeedback("正在下载更新包…");
@@ -2986,7 +3123,14 @@ function focusCollabField(id, select = false) {
 
 function focusAnyField(id, select = false) {
   const node = el(id);
-  if (!(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement)) return;
+  if (
+    !(
+      node instanceof HTMLInputElement ||
+      node instanceof HTMLTextAreaElement ||
+      node instanceof HTMLSelectElement
+    )
+  )
+    return;
 
   window.setTimeout(() => {
     node.focus();
@@ -3219,7 +3363,8 @@ function listRecentConversationKeys() {
     }
   }
 
-  const currentPrivateUser = currentChatScope() === "private" ? safeText(el("c_chat_target")?.value) : "";
+  const currentPrivateUser =
+    currentChatScope() === "private" ? safeText(el("c_chat_target")?.value) : "";
   if (currentPrivateUser) {
     keys.add(privateConversationKey(currentPrivateUser));
   }
@@ -3321,7 +3466,9 @@ function renderRecentConversations() {
     preview.className = `recent-preview${typing ? " typing" : ""}`;
     preview.textContent = typing
       ? `${typing.displayName || typing.from || "对方"} 正在输入…`
-      : (last ? recentPreviewText(last, username) : "还没有消息，点击后开始聊天");
+      : last
+        ? recentPreviewText(last, username)
+        : "还没有消息，点击后开始聊天";
 
     line.appendChild(title);
     line.appendChild(time);
@@ -3356,12 +3503,9 @@ function renderUserDirectory(users) {
   if (!list) return;
 
   list.textContent = "";
-  const sorted = sortUsers(users).filter((user) => conversationMatchesFilter(
-    user.username,
-    user.displayName,
-    user.subnetLabel,
-    user.subnetKey,
-  ));
+  const sorted = sortUsers(users).filter((user) =>
+    conversationMatchesFilter(user.username, user.displayName, user.subnetLabel, user.subnetKey),
+  );
   const onlineCount = sorted.filter((item) => item.online).length;
 
   if (el("c_online_count")) {
@@ -3382,7 +3526,8 @@ function renderUserDirectory(users) {
     const online = Boolean(user.online);
     const pinned = state.collab.pinnedUsers.has(username);
     const self = username === state.collab.username;
-    const selected = currentChatScope() === "private" && safeText(el("c_chat_target")?.value) === username;
+    const selected =
+      currentChatScope() === "private" && safeText(el("c_chat_target")?.value) === username;
     const unread = getUnreadCount(privateConversationKey(username));
     const subnet = safeText(user.subnetLabel || user.subnetKey);
     const subtitleBits = [self ? "当前账号" : username];
@@ -3415,7 +3560,7 @@ function renderUserDirectory(users) {
 
     const badge = document.createElement("span");
     badge.className = `user-badge ${online ? "" : "off"}`;
-    badge.textContent = self ? "自己" : (online ? "在线" : "离线");
+    badge.textContent = self ? "自己" : online ? "在线" : "离线";
 
     const side = document.createElement("div");
     side.className = "contact-side";
@@ -3457,16 +3602,22 @@ function renderUserDirectory(users) {
 
 function setUserDirectory(users, options = {}) {
   const items = Array.isArray(users) ? users : [];
-  const normalized = items.map((item) => ({
-    username: safeText(item?.username),
-    displayName: safeText(item?.displayName) || safeText(item?.username),
-    avatar: safeText(item?.avatar),
-    online: Boolean(item?.online),
-    subnetKey: safeText(item?.subnetKey),
-    subnetLabel: safeText(item?.subnetLabel),
-  })).filter((item) => item.username);
+  const normalized = items
+    .map((item) => ({
+      username: safeText(item?.username),
+      displayName: safeText(item?.displayName) || safeText(item?.username),
+      avatar: safeText(item?.avatar),
+      online: Boolean(item?.online),
+      subnetKey: safeText(item?.subnetKey),
+      subnetLabel: safeText(item?.subnetLabel),
+    }))
+    .filter((item) => item.username);
 
-  const nextOnlineUsers = new Set(normalized.filter((item) => item.online && item.username !== state.collab.username).map((item) => item.username));
+  const nextOnlineUsers = new Set(
+    normalized
+      .filter((item) => item.online && item.username !== state.collab.username)
+      .map((item) => item.username),
+  );
   if (!options.silent && state.collab.presenceReady && state.collab.notifyUserOnline) {
     for (const user of normalized) {
       if (!user.online || user.username === state.collab.username) continue;
@@ -3533,7 +3684,9 @@ function refreshPrivateTargets() {
 
   const oldValue = target.value;
   const scope = currentChatScope();
-  const contacts = sortUsers(state.collab.userDirectory || []).filter((item) => item.username !== state.collab.username);
+  const contacts = sortUsers(state.collab.userDirectory || []).filter(
+    (item) => item.username !== state.collab.username,
+  );
 
   target.textContent = "";
 
@@ -3600,12 +3753,14 @@ function normalizeChatMessage(payload) {
     readAt: scope === "private" ? safeText(payload?.readAt) : "",
     readBy: scope === "subnet" ? normalizeReadBy(payload?.readBy) : [],
     edited: Boolean(payload?.edited),
-    editedAt: Boolean(payload?.edited) ? (safeText(payload?.editedAt) || new Date().toISOString()) : "",
+    editedAt: Boolean(payload?.edited)
+      ? safeText(payload?.editedAt) || new Date().toISOString()
+      : "",
     subnetKey: safeText(payload?.subnetKey),
     subnetLabel: safeText(payload?.subnetLabel || payload?.roomScope),
     system,
     recalled,
-    recalledAt: recalled ? (safeText(payload?.recalledAt) || new Date().toISOString()) : "",
+    recalledAt: recalled ? safeText(payload?.recalledAt) || new Date().toISOString() : "",
   };
 }
 
@@ -3616,7 +3771,9 @@ function conversationKeyForMessage(payload) {
     const toUser = safeText(message.to);
     const otherUser = message.system
       ? toUser
-      : (fromUser === state.collab.username ? toUser : safeText(fromUser || message.username));
+      : fromUser === state.collab.username
+        ? toUser
+        : safeText(fromUser || message.username);
     return privateConversationKey(otherUser);
   }
 
@@ -3681,15 +3838,18 @@ function renderActiveConversation() {
   if (!box) return;
 
   const conversationKey = currentConversationKey();
-  const messages = conversationKey ? (state.collab.messagesByConversation.get(conversationKey) || []) : [];
+  const messages = conversationKey
+    ? state.collab.messagesByConversation.get(conversationKey) || []
+    : [];
   box.textContent = "";
 
   if (!messages.length) {
     const empty = document.createElement("div");
     empty.className = "chat-empty";
-    empty.textContent = currentChatScope() === "private"
-      ? "这里暂时还没有私聊记录。选择联系人后，新消息会显示在这里。"
-      : "这个房间还没有消息记录。";
+    empty.textContent =
+      currentChatScope() === "private"
+        ? "这里暂时还没有私聊记录。选择联系人后，新消息会显示在这里。"
+        : "这个房间还没有消息记录。";
     box.appendChild(empty);
     return;
   }
@@ -3734,8 +3894,10 @@ function handleIncomingConversationMessage(payload) {
   if (!fromSelf) {
     clearConversationTyping(conversationKey, { render: false });
   }
-  const conversationVisible = state.view === "chat" && conversationKey === activeKey && state.windowFocused;
-  const shouldNotify = !fromSelf && !message.system && state.collab.notifyMessagePopup && !conversationVisible;
+  const conversationVisible =
+    state.view === "chat" && conversationKey === activeKey && state.windowFocused;
+  const shouldNotify =
+    !fromSelf && !message.system && state.collab.notifyMessagePopup && !conversationVisible;
 
   if (!fromSelf && !message.system && !conversationVisible) {
     increaseUnreadCount(conversationKey);
@@ -3747,7 +3909,8 @@ function handleIncomingConversationMessage(payload) {
     void showSystemNotification(message.displayName || message.username, preview, {
       scope: message.scope,
       targetUsername: message.scope === "private" ? safeText(message.from || message.username) : "",
-      roomScope: message.scope === "subnet" ? safeText(message.subnetLabel || message.subnetKey) : "",
+      roomScope:
+        message.scope === "subnet" ? safeText(message.subnetLabel || message.subnetKey) : "",
       messageId: safeText(message.id),
     });
     playNotificationTone();
@@ -3772,7 +3935,9 @@ function handleIncomingConversationMessage(payload) {
 function syncChatConversation() {
   const scope = currentChatScope();
   const targetUsername = safeText(el("c_chat_target")?.value);
-  const selectedUser = (state.collab.userDirectory || []).find((item) => item.username === targetUsername);
+  const selectedUser = (state.collab.userDirectory || []).find(
+    (item) => item.username === targetUsername,
+  );
   const titleNode = el("c_chat_title");
   const subNode = el("c_chat_subtitle");
   const roomButton = el("c_room_channel");
@@ -3783,7 +3948,10 @@ function syncChatConversation() {
   }
 
   document.querySelectorAll("#c_online_list li[data-username]").forEach((item) => {
-    item.classList.toggle("active", !inRoom && item.getAttribute("data-username") === targetUsername);
+    item.classList.toggle(
+      "active",
+      !inRoom && item.getAttribute("data-username") === targetUsername,
+    );
   });
 
   const typingSummary = conversationTypingSummary(scope, targetUsername);
@@ -3792,27 +3960,30 @@ function syncChatConversation() {
     const roomScope = safeText(state.collab.roomScope);
     if (titleNode) titleNode.textContent = "房间消息";
     if (subNode) {
-      subNode.textContent = typingSummary || (roomScope && roomScope !== "-"
-        ? `发送给房间 ${roomScope} 内的所有在线联系人`
-        : "发送给房间内的所有在线联系人");
+      subNode.textContent =
+        typingSummary ||
+        (roomScope && roomScope !== "-"
+          ? `发送给房间 ${roomScope} 内的所有在线联系人`
+          : "发送给房间内的所有在线联系人");
     }
   } else if (!targetUsername) {
     if (titleNode) titleNode.textContent = "请选择联系人";
-    if (subNode) subNode.textContent = "从左侧联系人列表中选择联系人后，就可以查看私聊记录并继续发送消息。";
+    if (subNode)
+      subNode.textContent = "从左侧联系人列表中选择联系人后，就可以查看私聊记录并继续发送消息。";
   } else if (!selectedUser) {
     if (titleNode) titleNode.textContent = targetUsername;
-    if (subNode) subNode.textContent = typingSummary || "暂未获取到该联系人的在线状态，历史消息仍会显示在这里。";
+    if (subNode)
+      subNode.textContent =
+        typingSummary || "暂未获取到该联系人的在线状态，历史消息仍会显示在这里。";
   } else {
     const subnet = safeText(selectedUser.subnetLabel || selectedUser.subnetKey);
-    const detailBits = [
-      selectedUser.online ? "在线" : "离线",
-      selectedUser.username,
-    ];
+    const detailBits = [selectedUser.online ? "在线" : "离线", selectedUser.username];
     if (subnet) {
       detailBits.push(subnet);
     }
 
-    if (titleNode) titleNode.textContent = safeText(selectedUser.displayName) || selectedUser.username;
+    if (titleNode)
+      titleNode.textContent = safeText(selectedUser.displayName) || selectedUser.username;
     if (subNode) subNode.textContent = typingSummary || detailBits.join(" · ");
   }
 
@@ -3867,8 +4038,11 @@ function appendChatMessage(payload, options = {}) {
   const bubble = document.createElement("div");
   bubble.className = "chat-bubble";
   const showReadState = isSelf && message.scope === "private" && !isSystem && !message.recalled;
-  const readByUsers = normalizeReadBy(message.readBy).filter((item) => item.username !== state.collab.username);
-  const showSubnetReadState = isSelf && message.scope === "subnet" && !isSystem && !message.recalled;
+  const readByUsers = normalizeReadBy(message.readBy).filter(
+    (item) => item.username !== state.collab.username,
+  );
+  const showSubnetReadState =
+    isSelf && message.scope === "subnet" && !isSystem && !message.recalled;
   const compactMeta = !message.recalled && message.attachments.length === 0 && !showSubnetReadState;
   if (compactMeta) {
     bubble.classList.add("compact-meta");
@@ -3982,7 +4156,8 @@ function appendChatMessage(payload, options = {}) {
     const readStateNode = document.createElement("span");
     readStateNode.className = "chat-status group-read";
     const names = readByUsers.map((item) => item.displayName || item.username);
-    const summary = names.length <= 3 ? names.join("、") : `${names.slice(0, 3).join("、")} 等${names.length}人`;
+    const summary =
+      names.length <= 3 ? names.join("、") : `${names.slice(0, 3).join("、")} 等${names.length}人`;
     readStateNode.textContent = `${readByUsers.length}人已读`;
     readStateNode.title = `已读：${summary}`;
     footer.appendChild(readStateNode);
@@ -4081,7 +4256,10 @@ function latestHistoryCursor() {
 
 function updateHistoryCursorFromMessage(message) {
   const candidate = messageActivityCursor(message);
-  if (candidate && (!state.collab.lastHistorySyncAt || candidate > state.collab.lastHistorySyncAt)) {
+  if (
+    candidate &&
+    (!state.collab.lastHistorySyncAt || candidate > state.collab.lastHistorySyncAt)
+  ) {
     state.collab.lastHistorySyncAt = candidate;
   }
 }
@@ -4092,18 +4270,18 @@ function getCollabResumePassword() {
 
 function hasCollabResumeCredentials() {
   return Boolean(
-    safeText(state.collab.serverUrl)
-    && safeText(state.collab.username)
-    && safeText(getCollabResumePassword()),
+    safeText(state.collab.serverUrl) &&
+    safeText(state.collab.username) &&
+    safeText(getCollabResumePassword()),
   );
 }
 
 function scheduleCollabReconnect(strategy = state.collab.reconnectStrategy || "socket") {
   if (
-    state.collab.intentionalSocketClose
-    || state.collab.reconnectTimer
-    || (strategy === "socket" && !state.collab.token)
-    || (strategy === "relogin" && state.collab.silentReloginInFlight)
+    state.collab.intentionalSocketClose ||
+    state.collab.reconnectTimer ||
+    (strategy === "socket" && !state.collab.token) ||
+    (strategy === "relogin" && state.collab.silentReloginInFlight)
   ) {
     return;
   }
@@ -4232,9 +4410,13 @@ async function fetchWithFriendlyError(url, options = {}, timeoutMs = 8000) {
     const message = String(err?.message || err || "");
     if (/failed to fetch/i.test(message)) {
       if (/127\.0\.0\.1|localhost/i.test(url)) {
-        throw new Error(`无法连接到服务地址：${url}。如果这里填的是本机地址，请先确认本机服务已经启动；如果服务在其他电脑上，请改成那台电脑的地址和端口。`);
+        throw new Error(
+          `无法连接到服务地址：${url}。如果这里填的是本机地址，请先确认本机服务已经启动；如果服务在其他电脑上，请改成那台电脑的地址和端口。`,
+        );
       }
-      throw new Error(`无法连接到服务地址：${url}。请确认服务已经启动，地址和端口填写正确，并且网络可以访问。`);
+      throw new Error(
+        `无法连接到服务地址：${url}。请确认服务已经启动，地址和端口填写正确，并且网络可以访问。`,
+      );
     }
 
     throw err;
@@ -4246,12 +4428,16 @@ async function fetchWithFriendlyError(url, options = {}, timeoutMs = 8000) {
 async function refreshUserDirectory() {
   if (!state.collab.serverUrl || !state.collab.token) return;
   try {
-    const response = await fetchWithFriendlyError(`${state.collab.serverUrl}/api/users`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${state.collab.token}`,
+    const response = await fetchWithFriendlyError(
+      `${state.collab.serverUrl}/api/users`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${state.collab.token}`,
+        },
       },
-    }, 6000);
+      6000,
+    );
 
     if (!response.ok) return;
     const payload = await response.json();
@@ -4274,13 +4460,17 @@ async function collabLogout(notifyServer) {
 
   if (notifyServer && serverUrl && token) {
     try {
-      await fetchWithFriendlyError(`${serverUrl}/api/logout`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+      await fetchWithFriendlyError(
+        `${serverUrl}/api/logout`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
         },
-      }, 5000);
+        5000,
+      );
     } catch {
       // ignore
     }
@@ -4360,10 +4550,12 @@ function connectCollabWebSocket() {
     refreshTopIdentity();
     refreshUserDirectory();
     const since = latestHistoryCursor();
-    ws.send(JSON.stringify({
-      type: "history_sync",
-      since,
-    }));
+    ws.send(
+      JSON.stringify({
+        type: "history_sync",
+        since,
+      }),
+    );
     logLine("collab", "账号连接已建立");
   };
 
@@ -4466,23 +4658,27 @@ function connectCollabWebSocket() {
     }
 
     if (payload.type === "system") {
-      handleIncomingConversationMessage(buildSystemMessage(payload.text, {
-        timestamp: payload.timestamp,
-        scope: payload.scope || "subnet",
-        subnetKey: payload.subnetKey,
-        subnetLabel: payload.subnetLabel,
-        roomScope: payload.roomScope || state.collab.roomScope,
-      }));
+      handleIncomingConversationMessage(
+        buildSystemMessage(payload.text, {
+          timestamp: payload.timestamp,
+          scope: payload.scope || "subnet",
+          subnetKey: payload.subnetKey,
+          subnetLabel: payload.subnetLabel,
+          roomScope: payload.roomScope || state.collab.roomScope,
+        }),
+      );
       return;
     }
 
     if (payload.type === "error") {
-      handleIncomingConversationMessage(buildSystemMessage(payload.text, {
-        timestamp: payload.timestamp,
-        scope: currentChatScope() === "private" ? "private" : "subnet",
-        to: safeText(el("c_chat_target")?.value),
-        roomScope: state.collab.roomScope,
-      }));
+      handleIncomingConversationMessage(
+        buildSystemMessage(payload.text, {
+          timestamp: payload.timestamp,
+          scope: currentChatScope() === "private" ? "private" : "subnet",
+          to: safeText(el("c_chat_target")?.value),
+          roomScope: state.collab.roomScope,
+        }),
+      );
     }
   };
 
@@ -4549,15 +4745,19 @@ async function performCollabLogin({
     setCollabState("登录中");
   }
 
-  const response = await fetchWithFriendlyError(`${serverUrl}/api/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      username,
-      password,
-      client: getClientVersionPayload(),
-    }),
-  }, 10000);
+  const response = await fetchWithFriendlyError(
+    `${serverUrl}/api/login`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username,
+        password,
+        client: getClientVersionPayload(),
+      }),
+    },
+    10000,
+  );
 
   if (!response.ok) {
     const text = await response.text();
@@ -4697,15 +4897,21 @@ function recallOwnMessage(messageId) {
   const id = safeText(messageId);
   if (!id) return;
 
-  if (!state.collab.connected || !state.collab.ws || state.collab.ws.readyState !== WebSocket.OPEN) {
+  if (
+    !state.collab.connected ||
+    !state.collab.ws ||
+    state.collab.ws.readyState !== WebSocket.OPEN
+  ) {
     setPanelFeedback("chat_feedback", "当前未连接消息服务，暂时无法撤回。", "error");
     return;
   }
 
-  state.collab.ws.send(JSON.stringify({
-    type: "chat_recall",
-    messageId: id,
-  }));
+  state.collab.ws.send(
+    JSON.stringify({
+      type: "chat_recall",
+      messageId: id,
+    }),
+  );
 }
 
 function renderReplyDraft() {
@@ -4816,7 +5022,10 @@ function setEditDraftFromMessage(message) {
     el("c_chat_input").value = normalized.text || "";
     resizeChatComposer();
     el("c_chat_input").focus();
-    el("c_chat_input").setSelectionRange(el("c_chat_input").value.length, el("c_chat_input").value.length);
+    el("c_chat_input").setSelectionRange(
+      el("c_chat_input").value.length,
+      el("c_chat_input").value.length,
+    );
   }
   renderEditDraft();
 }
@@ -4856,7 +5065,9 @@ function cancelComposerIntent() {
 
 function findLastOwnEditableMessage() {
   const conversationKey = currentConversationKey();
-  const items = conversationKey ? (state.collab.messagesByConversation.get(conversationKey) || []) : [];
+  const items = conversationKey
+    ? state.collab.messagesByConversation.get(conversationKey) || []
+    : [];
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const message = normalizeChatMessage(items[index]);
     if (message.system || message.recalled) continue;
@@ -4902,7 +5113,8 @@ function renderPendingAttachment() {
   nameNode.textContent = attachment.name || (attachment.kind === "image" ? "图片" : "文件");
   metaNode.textContent = `${attachment.kind === "image" ? "图片" : "文件"}${attachment.size ? ` · ${formatBytes(attachment.size)}` : ""}`;
   thumbNode.textContent = attachment.kind === "image" ? "" : "文";
-  thumbNode.style.backgroundImage = attachment.kind === "image" ? `url("${attachment.dataUrl}")` : "";
+  thumbNode.style.backgroundImage =
+    attachment.kind === "image" ? `url("${attachment.dataUrl}")` : "";
 }
 
 function renderPendingInlineImage() {
@@ -5045,8 +5257,10 @@ function beginChatImageDrag(event) {
 
 function moveChatImageDrag(event) {
   if (!state.ui.chatImageDragging || state.ui.chatImagePointerId !== event.pointerId) return;
-  state.ui.chatImagePanX = state.ui.chatImageDragOriginX + (event.clientX - state.ui.chatImageDragStartX);
-  state.ui.chatImagePanY = state.ui.chatImageDragOriginY + (event.clientY - state.ui.chatImageDragStartY);
+  state.ui.chatImagePanX =
+    state.ui.chatImageDragOriginX + (event.clientX - state.ui.chatImageDragStartX);
+  state.ui.chatImagePanY =
+    state.ui.chatImageDragOriginY + (event.clientY - state.ui.chatImageDragStartY);
   syncChatImageZoom();
 }
 
@@ -5067,7 +5281,11 @@ function clearPendingInlineImage() {
 }
 
 function sendChatPayload(payload) {
-  if (!state.collab.connected || !state.collab.ws || state.collab.ws.readyState !== WebSocket.OPEN) {
+  if (
+    !state.collab.connected ||
+    !state.collab.ws ||
+    state.collab.ws.readyState !== WebSocket.OPEN
+  ) {
     throw new Error("消息服务尚未连接，请稍后再试。");
   }
   state.collab.ws.send(JSON.stringify(payload));
@@ -5109,7 +5327,11 @@ function readFileAsDataUrl(file) {
 function applyPendingAttachmentDescriptor(descriptor) {
   if (!descriptor?.dataUrl) return;
   if ((Number(descriptor.size) || 0) > CHAT_ATTACHMENT_MAX_BYTES) {
-    setPanelFeedback("chat_feedback", `文件不能超过 ${formatBytes(CHAT_ATTACHMENT_MAX_BYTES)}。`, "error");
+    setPanelFeedback(
+      "chat_feedback",
+      `文件不能超过 ${formatBytes(CHAT_ATTACHMENT_MAX_BYTES)}。`,
+      "error",
+    );
     return;
   }
   state.collab.pendingAttachment = {
@@ -5126,7 +5348,11 @@ function applyPendingAttachmentDescriptor(descriptor) {
 function applyPendingInlineImageDescriptor(descriptor) {
   if (!descriptor?.dataUrl) return;
   if ((Number(descriptor.size) || 0) > CHAT_ATTACHMENT_MAX_BYTES) {
-    setPanelFeedback("chat_feedback", `图片不能超过 ${formatBytes(CHAT_ATTACHMENT_MAX_BYTES)}。`, "error");
+    setPanelFeedback(
+      "chat_feedback",
+      `图片不能超过 ${formatBytes(CHAT_ATTACHMENT_MAX_BYTES)}。`,
+      "error",
+    );
     return;
   }
   state.collab.pendingInlineImage = {
@@ -5143,7 +5369,11 @@ function applyPendingInlineImageDescriptor(descriptor) {
 async function handleChatAttachmentFile(file) {
   if (!file) return;
   if (file.size > CHAT_ATTACHMENT_MAX_BYTES) {
-    setPanelFeedback("chat_feedback", `文件不能超过 ${formatBytes(CHAT_ATTACHMENT_MAX_BYTES)}。`, "error");
+    setPanelFeedback(
+      "chat_feedback",
+      `文件不能超过 ${formatBytes(CHAT_ATTACHMENT_MAX_BYTES)}。`,
+      "error",
+    );
     if (el("c_chat_file")) {
       el("c_chat_file").value = "";
     }
@@ -5163,7 +5393,11 @@ async function handleChatAttachmentFile(file) {
 async function handleChatInlineImageFile(file) {
   if (!file) return;
   if (file.size > CHAT_ATTACHMENT_MAX_BYTES) {
-    setPanelFeedback("chat_feedback", `图片不能超过 ${formatBytes(CHAT_ATTACHMENT_MAX_BYTES)}。`, "error");
+    setPanelFeedback(
+      "chat_feedback",
+      `图片不能超过 ${formatBytes(CHAT_ATTACHMENT_MAX_BYTES)}。`,
+      "error",
+    );
     return;
   }
 
@@ -5322,41 +5556,45 @@ async function main() {
   }
 
   if (el("senderPanel")) {
-    el("senderPanel").querySelectorAll("input, select, textarea").forEach((node) => {
-      node.addEventListener("input", () => {
-        clearServiceFeedback("sender");
-        renderSetupGuide();
-        if (node.id === "s_socks_listen_port") {
-          updateGptProxyInfo();
-          updateGptRuntimeState();
-          updateGeminiProxyInfo();
-          updateGeminiRuntimeState();
-        }
+    el("senderPanel")
+      .querySelectorAll("input, select, textarea")
+      .forEach((node) => {
+        node.addEventListener("input", () => {
+          clearServiceFeedback("sender");
+          renderSetupGuide();
+          if (node.id === "s_socks_listen_port") {
+            updateGptProxyInfo();
+            updateGptRuntimeState();
+            updateGeminiProxyInfo();
+            updateGeminiRuntimeState();
+          }
+        });
+        node.addEventListener("change", () => {
+          clearServiceFeedback("sender");
+          renderSetupGuide();
+          if (node.id === "s_socks_listen_port") {
+            updateGptProxyInfo();
+            updateGptRuntimeState();
+            updateGeminiProxyInfo();
+            updateGeminiRuntimeState();
+          }
+        });
       });
-      node.addEventListener("change", () => {
-        clearServiceFeedback("sender");
-        renderSetupGuide();
-        if (node.id === "s_socks_listen_port") {
-          updateGptProxyInfo();
-          updateGptRuntimeState();
-          updateGeminiProxyInfo();
-          updateGeminiRuntimeState();
-        }
-      });
-    });
   }
 
   if (el("receiverPanel")) {
-    el("receiverPanel").querySelectorAll("input, select, textarea").forEach((node) => {
-      node.addEventListener("input", () => {
-        clearServiceFeedback("receiver");
-        syncReceiverOverview();
+    el("receiverPanel")
+      .querySelectorAll("input, select, textarea")
+      .forEach((node) => {
+        node.addEventListener("input", () => {
+          clearServiceFeedback("receiver");
+          syncReceiverOverview();
+        });
+        node.addEventListener("change", () => {
+          clearServiceFeedback("receiver");
+          syncReceiverOverview();
+        });
       });
-      node.addEventListener("change", () => {
-        clearServiceFeedback("receiver");
-        syncReceiverOverview();
-      });
-    });
   }
 
   if (el("btnSaveSender")) {
@@ -5506,11 +5744,14 @@ async function main() {
     }
   };
 
-  if (el("btnSetupGuideImport")) el("btnSetupGuideImport").addEventListener("click", handleImportConfig);
+  if (el("btnSetupGuideImport"))
+    el("btnSetupGuideImport").addEventListener("click", handleImportConfig);
   if (el("btnCollabImport")) el("btnCollabImport").addEventListener("click", handleImportConfig);
   if (el("btnImportSender")) el("btnImportSender").addEventListener("click", handleImportConfig);
-  if (el("btnImportUserData")) el("btnImportUserData").addEventListener("click", handleImportUserData);
-  if (el("btnExportUserData")) el("btnExportUserData").addEventListener("click", handleExportUserData);
+  if (el("btnImportUserData"))
+    el("btnImportUserData").addEventListener("click", handleImportUserData);
+  if (el("btnExportUserData"))
+    el("btnExportUserData").addEventListener("click", handleExportUserData);
 
   ["c_server_url", "c_username", "c_password"].forEach((id) => {
     const input = el(id);
@@ -5666,16 +5907,22 @@ async function main() {
     const target = event.target;
     const insideMenu = target instanceof Element && Boolean(target.closest("#appContextMenu"));
     const fromUserItem = target instanceof Element && Boolean(target.closest("#c_online_list li"));
-    const fromChatItem = target instanceof Element && Boolean(target.closest("#c_chat_box .chat-item"));
-    const fromTopIdentity = target instanceof Element && Boolean(target.closest("#topCollabIdentity"));
+    const fromChatItem =
+      target instanceof Element && Boolean(target.closest("#c_chat_box .chat-item"));
+    const fromTopIdentity =
+      target instanceof Element && Boolean(target.closest("#topCollabIdentity"));
     if (!insideMenu && !fromUserItem && !fromChatItem && !fromTopIdentity) {
       hideContextMenu();
     }
   });
 
-  document.addEventListener("scroll", () => {
-    if (state.contextMenuOpen) hideContextMenu();
-  }, true);
+  document.addEventListener(
+    "scroll",
+    () => {
+      if (state.contextMenuOpen) hideContextMenu();
+    },
+    true,
+  );
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && state.contextMenuOpen) {
@@ -5783,12 +6030,16 @@ async function main() {
   }
 
   if (el("chatImageLightboxStage")) {
-    el("chatImageLightboxStage").addEventListener("wheel", (event) => {
-      if (el("chatImageLightbox")?.hidden) return;
-      event.preventDefault();
-      const direction = event.deltaY < 0 ? 1 : -1;
-      adjustChatImageZoom(direction * CHAT_IMAGE_ZOOM_STEP);
-    }, { passive: false });
+    el("chatImageLightboxStage").addEventListener(
+      "wheel",
+      (event) => {
+        if (el("chatImageLightbox")?.hidden) return;
+        event.preventDefault();
+        const direction = event.deltaY < 0 ? 1 : -1;
+        adjustChatImageZoom(direction * CHAT_IMAGE_ZOOM_STEP);
+      },
+      { passive: false },
+    );
     el("chatImageLightboxStage").addEventListener("pointerdown", (event) => {
       if (el("chatImageLightbox")?.hidden) return;
       beginChatImageDrag(event);
@@ -5833,9 +6084,11 @@ async function main() {
   if (el("btnGptBack")) {
     el("btnGptBack").addEventListener("click", () => {
       if (!state.gpt.canGoBack) return;
-      window.api.navigateAiWorkspace({ kind: "gpt", tabId: state.gpt.activeTabId, action: "back" }).catch((err) => {
-        setGptFeedback(err.message || String(err), "error");
-      });
+      window.api
+        .navigateAiWorkspace({ kind: "gpt", tabId: state.gpt.activeTabId, action: "back" })
+        .catch((err) => {
+          setGptFeedback(err.message || String(err), "error");
+        });
     });
   }
 
@@ -5851,9 +6104,11 @@ async function main() {
   if (el("btnGptForward")) {
     el("btnGptForward").addEventListener("click", () => {
       if (!state.gpt.canGoForward) return;
-      window.api.navigateAiWorkspace({ kind: "gpt", tabId: state.gpt.activeTabId, action: "forward" }).catch((err) => {
-        setGptFeedback(err.message || String(err), "error");
-      });
+      window.api
+        .navigateAiWorkspace({ kind: "gpt", tabId: state.gpt.activeTabId, action: "forward" })
+        .catch((err) => {
+          setGptFeedback(err.message || String(err), "error");
+        });
     });
   }
 
@@ -6075,16 +6330,16 @@ async function main() {
       }
 
       if (
-        event.key === "ArrowUp"
-        && !event.shiftKey
-        && !event.altKey
-        && !event.ctrlKey
-        && !event.metaKey
-        && !event.isComposing
-        && !safeText(el("c_chat_input")?.value)
-        && !state.collab.pendingAttachment
-        && !state.collab.pendingInlineImage
-        && !state.collab.editDraft?.id
+        event.key === "ArrowUp" &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.isComposing &&
+        !safeText(el("c_chat_input")?.value) &&
+        !state.collab.pendingAttachment &&
+        !state.collab.pendingInlineImage &&
+        !state.collab.editDraft?.id
       ) {
         const lastOwnMessage = findLastOwnEditableMessage();
         if (lastOwnMessage) {
@@ -6145,7 +6400,8 @@ async function main() {
   });
   document.addEventListener("drop", (event) => {
     if (!dragEventHasFiles(event)) return;
-    const insideChatStage = event.target instanceof Element && Boolean(event.target.closest(".chat-stage"));
+    const insideChatStage =
+      event.target instanceof Element && Boolean(event.target.closest(".chat-stage"));
     if (!insideChatStage) {
       event.preventDefault();
       resetChatDropOverlay();
@@ -6233,4 +6489,3 @@ async function main() {
 main().catch((err) => {
   logLine("app", `程序启动失败：${err.message || err}`);
 });
-

@@ -42,7 +42,9 @@ function buildUploadHeaders(meta, size) {
 }
 
 async function uploadReleaseFile(payload = {}, onProgress = null) {
-  const serverUrl = String(payload.serverUrl || "").trim().replace(/\/+$/, "");
+  const serverUrl = String(payload.serverUrl || "")
+    .trim()
+    .replace(/\/+$/, "");
   const token = String(payload.token || "").trim();
   const filePath = String(payload.filePath || "").trim();
   const emitProgress = typeof onProgress === "function" ? onProgress : () => {};
@@ -55,7 +57,9 @@ async function uploadReleaseFile(payload = {}, onProgress = null) {
     throw new Error("请选择有效的安装包文件");
   }
 
-  const uploadPath = String(payload.uploadPath || "/api/admin/releases/upload").trim() || "/api/admin/releases/upload";
+  const uploadPath =
+    String(payload.uploadPath || "/api/admin/releases/upload").trim() ||
+    "/api/admin/releases/upload";
   const target = new URL(`${serverUrl}${uploadPath}`);
   target.searchParams.set("platform", String(payload.platformKey || "").trim());
   target.searchParams.set("fileName", path.basename(filePath));
@@ -74,40 +78,46 @@ async function uploadReleaseFile(payload = {}, onProgress = null) {
       percent: 0,
     });
 
-    const request = transport.request({
-      protocol: target.protocol,
-      hostname: target.hostname,
-      port: target.port,
-      path: `${target.pathname}${target.search}`,
-      method: "POST",
-      headers: buildUploadHeaders({
-        ...payload,
-        fileName: path.basename(filePath),
-      }, stat.size),
-    }, (response) => {
-      const chunks = [];
-      response.on("data", (chunk) => chunks.push(chunk));
-      response.on("end", () => {
-        const text = Buffer.concat(chunks).toString("utf-8");
-        if ((response.statusCode || 500) < 200 || (response.statusCode || 500) >= 300) {
-          reject(new Error(text || `上传失败（${response.statusCode}）`));
-          return;
-        }
-        emitProgress({
-          platformKey: String(payload.platformKey || "").trim(),
-          fileName: path.basename(filePath),
-          transferred: stat.size,
-          total: stat.size,
-          percent: 100,
-          done: true,
+    const request = transport.request(
+      {
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port,
+        path: `${target.pathname}${target.search}`,
+        method: "POST",
+        headers: buildUploadHeaders(
+          {
+            ...payload,
+            fileName: path.basename(filePath),
+          },
+          stat.size,
+        ),
+      },
+      (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () => {
+          const text = Buffer.concat(chunks).toString("utf-8");
+          if ((response.statusCode || 500) < 200 || (response.statusCode || 500) >= 300) {
+            reject(new Error(text || `上传失败（${response.statusCode}）`));
+            return;
+          }
+          emitProgress({
+            platformKey: String(payload.platformKey || "").trim(),
+            fileName: path.basename(filePath),
+            transferred: stat.size,
+            total: stat.size,
+            percent: 100,
+            done: true,
+          });
+          try {
+            resolve(JSON.parse(text || "{}"));
+          } catch {
+            resolve({ ok: true });
+          }
         });
-        try {
-          resolve(JSON.parse(text || "{}"));
-        } catch {
-          resolve({ ok: true });
-        }
-      });
-    });
+      },
+    );
 
     request.on("error", reject);
     request.setTimeout(300000, () => {
@@ -225,9 +235,11 @@ app.whenReady().then(() => {
       size: stat.size,
     };
   });
-  ipcMain.handle("release:upload", (event, payload) => uploadReleaseFile(payload || {}, (progress) => {
-    event.sender.send("release:upload-progress", progress);
-  }));
+  ipcMain.handle("release:upload", (event, payload) =>
+    uploadReleaseFile(payload || {}, (progress) => {
+      event.sender.send("release:upload-progress", progress);
+    }),
+  );
 
   createWindow();
   app.on("activate", () => {

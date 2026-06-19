@@ -316,7 +316,8 @@ async function loadUsers() {
   if (!state.selectedUsername && state.users.length) {
     state.selectedUsername = state.users[0].username;
   }
-  const selected = state.users.find((item) => item.username === state.selectedUsername) || state.users[0] || null;
+  const selected =
+    state.users.find((item) => item.username === state.selectedUsername) || state.users[0] || null;
   fillEditUserForm(selected);
   renderUserList();
 }
@@ -336,7 +337,11 @@ async function createUser() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    setFeedback("userCreateFeedback", `已创建用户 ${result.user?.username || payload.username}`, "success");
+    setFeedback(
+      "userCreateFeedback",
+      `已创建用户 ${result.user?.username || payload.username}`,
+      "success",
+    );
     el("newUserUsername").value = "";
     el("newUserDisplayName").value = "";
     el("newUserPassword").value = "";
@@ -383,7 +388,11 @@ async function useServerSuggestedSenderConfig() {
   try {
     const payload = await fetchJson("/api/admin/bootstrap");
     loadBootstrapForm(payload);
-    setFeedback("bootstrapFeedback", "已读取服务器端准备分发的 Sender 配置。点击保存后会写入服务器配置文件。", "success");
+    setFeedback(
+      "bootstrapFeedback",
+      "已读取服务器端准备分发的 Sender 配置。点击保存后会写入服务器配置文件。",
+      "success",
+    );
   } catch (err) {
     setFeedback("bootstrapFeedback", err.message || String(err), "error");
   }
@@ -446,7 +455,11 @@ async function uploadRelease(platformKey) {
       notes: safeText(el("releaseNotes").value),
     });
     loadBootstrapForm(result.bootstrap);
-    setFeedback("releaseFeedback", `${platformKey === "windows" ? "Windows" : "macOS"} 安装包已上传。`, "success");
+    setFeedback(
+      "releaseFeedback",
+      `${platformKey === "windows" ? "Windows" : "macOS"} 安装包已上传。`,
+      "success",
+    );
   } catch (err) {
     setFeedback("releaseFeedback", err.message || String(err), "error");
   }
@@ -476,13 +489,25 @@ async function main() {
   });
   el("btnAdminLogout").addEventListener("click", logout);
 
-  el("btnRefreshUsers").addEventListener("click", () => loadUsers().catch((err) => setFeedback("userEditFeedback", err.message || String(err), "error")));
+  el("btnRefreshUsers").addEventListener("click", () =>
+    loadUsers().catch((err) =>
+      setFeedback("userEditFeedback", err.message || String(err), "error"),
+    ),
+  );
   el("btnCreateUser").addEventListener("click", createUser);
   el("btnSaveUser").addEventListener("click", saveUser);
-  el("btnReloadBootstrap").addEventListener("click", () => loadBootstrap().catch((err) => setFeedback("bootstrapFeedback", err.message || String(err), "error")));
+  el("btnReloadBootstrap").addEventListener("click", () =>
+    loadBootstrap().catch((err) =>
+      setFeedback("bootstrapFeedback", err.message || String(err), "error"),
+    ),
+  );
   el("btnUseServerSuggestedSender").addEventListener("click", useServerSuggestedSenderConfig);
   el("btnSaveBootstrap").addEventListener("click", saveBootstrap);
-  el("btnReloadReleaseInfo").addEventListener("click", () => loadBootstrap().catch((err) => setFeedback("releaseFeedback", err.message || String(err), "error")));
+  el("btnReloadReleaseInfo").addEventListener("click", () =>
+    loadBootstrap().catch((err) =>
+      setFeedback("releaseFeedback", err.message || String(err), "error"),
+    ),
+  );
   el("btnSaveExtras").addEventListener("click", saveExtrasOnly);
   el("btnPickWindowsRelease").addEventListener("click", () => pickRelease("windows"));
   el("btnUploadWindowsRelease").addEventListener("click", () => uploadRelease("windows"));

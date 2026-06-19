@@ -2,26 +2,19 @@
   "appId": "com.sjeary.sharegpt.desktop.receiver",
   "productName": "ShareGPT Receiver",
   "asar": true,
-  "files": [
-    "src/**/*",
-    "package.json"
-  ],
+  "files": ["src/**/*", "package.json"],
   "extraResources": [
     {
       "from": "build/bin",
       "to": "bin",
-      "filter": [
-        "**/*"
-      ]
+      "filter": ["**/*"]
     }
   ],
   "directories": {
     "output": "release_receiver"
   },
   "win": {
-    "target": [
-      "portable"
-    ],
+    "target": ["portable"],
     "artifactName": "sharegpt-receiver-${version}.${ext}",
     "executableName": "sharegpt_receiver",
     "signAndEditExecutable": false
@@ -31,4 +24,3 @@
     "name": "sharegpt-receiver-desktop"
   }
 }
-

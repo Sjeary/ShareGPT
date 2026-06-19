@@ -7,7 +7,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..");
 
-const platform = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
+const platform =
+  process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
 const isWindows = platform === "windows";
 
 const names = {
@@ -17,11 +18,18 @@ const names = {
 
 const outputDir = path.join(projectRoot, "build", "bin");
 const argv = process.argv.slice(2);
-const cliMode = argv
-  .map((item) => String(item || "").trim().toLowerCase())
-  .find((item) => item === "sender" || item === "receiver" || item === "all") || "all";
+const cliMode =
+  argv
+    .map((item) =>
+      String(item || "")
+        .trim()
+        .toLowerCase(),
+    )
+    .find((item) => item === "sender" || item === "receiver" || item === "all") || "all";
 const required = argv.some((item) => {
-  const value = String(item || "").trim().toLowerCase();
+  const value = String(item || "")
+    .trim()
+    .toLowerCase();
   return value === "required" || value === "--required" || value === "--strict";
 });
 
@@ -39,10 +47,11 @@ async function exists(filePath) {
 }
 
 function configuredCandidates(fileName) {
-  const explicitNames = fileName === names.singbox
-    ? ["SHAREGPT_SINGBOX_PATH"]
-    : ["SHAREGPT_FRPC_PATH"];
-  const explicit = explicitNames.map((name) => process.env[name]).find((value) => String(value || "").trim());
+  const explicitNames =
+    fileName === names.singbox ? ["SHAREGPT_SINGBOX_PATH"] : ["SHAREGPT_FRPC_PATH"];
+  const explicit = explicitNames
+    .map((name) => process.env[name])
+    .find((value) => String(value || "").trim());
   const binDir = process.env.SHAREGPT_BIN_DIR;
   const result = [];
 
@@ -89,7 +98,9 @@ async function verifyAsset(label, dest) {
   const checksums = await loadChecksums();
   const entry = checksums && checksums[label] && checksums[label][platform];
   if (!entry || !entry.sha256) {
-    console.warn(`[assets] ${label}: 未固定 ${platform} 校验和 (build/bin/checksums.json), 跳过校验`);
+    console.warn(
+      `[assets] ${label}: 未固定 ${platform} 校验和 (build/bin/checksums.json), 跳过校验`,
+    );
     return;
   }
   const actual = await sha256File(dest);

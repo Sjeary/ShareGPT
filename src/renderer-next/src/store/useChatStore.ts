@@ -236,8 +236,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   filter: '',
   unreadByKey: {},
 
-  setIdentity: (identity) =>
-    set((s) => ({ identity: { ...s.identity, ...identity } })),
+  setIdentity: (identity) => set((s) => ({ identity: { ...s.identity, ...identity } })),
   setConnection: (connection) => set({ connection }),
   setRoomScope: (roomScope) => set({ roomScope: roomScope || '-' }),
   setDirectory: (directory) => set({ directory }),
@@ -258,9 +257,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }),
 
   setTyping: (key, meta) =>
-    set((s) =>
-      key ? { typingByConversation: { ...s.typingByConversation, [key]: meta } } : s,
-    ),
+    set((s) => (key ? { typingByConversation: { ...s.typingByConversation, [key]: meta } } : s)),
   clearTyping: (key) =>
     set((s) => {
       if (!key || !(key in s.typingByConversation)) return s
@@ -275,19 +272,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const ready = get().presenceReady
     const self = get().identity.username
     const nextOnline = online.filter((u) => u && u !== self)
-    const newlyOnline = ready
-      ? nextOnline.filter((u) => !known.has(u))
-      : []
+    const newlyOnline = ready ? nextOnline.filter((u) => !known.has(u)) : []
     set({ knownOnlineUsers: nextOnline, presenceReady: true })
     return { newlyOnline, ready }
   },
 
-  setReplyDraft: (replyDraft) =>
-    set({ replyDraft, editDraft: null, forwardDraft: null }),
-  setEditDraft: (editDraft) =>
-    set({ editDraft, replyDraft: null, forwardDraft: null }),
-  setForwardDraft: (forwardDraft) =>
-    set({ forwardDraft, replyDraft: null, editDraft: null }),
+  setReplyDraft: (replyDraft) => set({ replyDraft, editDraft: null, forwardDraft: null }),
+  setEditDraft: (editDraft) => set({ editDraft, replyDraft: null, forwardDraft: null }),
+  setForwardDraft: (forwardDraft) => set({ forwardDraft, replyDraft: null, editDraft: null }),
   clearDrafts: () => set({ replyDraft: null, editDraft: null, forwardDraft: null }),
 
   hydrate: (conversations) => {
@@ -316,9 +308,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         if (idx >= 0) {
           // 合并 readBy: 新消息已读非空则覆盖, 否则保留旧值 (旧 mergeMessageIntoConversation)。
           const mergedReadBy =
-            message.readBy && message.readBy.length
-              ? message.readBy
-              : next[idx].readBy
+            message.readBy && message.readBy.length ? message.readBy : next[idx].readBy
           next[idx] = { ...next[idx], ...message, readBy: mergedReadBy }
           return {
             messagesByConversation: { ...s.messagesByConversation, [key]: next },
@@ -359,7 +349,5 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
 // 当前 activeKey 对应的「会话存储 key」(房间会话 activeKey === "" 映射到 room:<scope>)。
 export function storeKeyForActive(activeKey: string, roomScope: string): string {
-  return activeKey === '' || isRoomKey(activeKey)
-    ? roomConversationKey(roomScope)
-    : activeKey
+  return activeKey === '' || isRoomKey(activeKey) ? roomConversationKey(roomScope) : activeKey
 }

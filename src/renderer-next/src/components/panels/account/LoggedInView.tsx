@@ -31,8 +31,18 @@ const NOTIFY_FIELDS: ReadonlyArray<{
   // 旧版默认: 前三项默认开 (!== false), user_online 默认关。
   defaultOn: boolean
 }> = [
-  { key: 'notify_message_popup', label: '消息弹窗', desc: '收到新消息时在应用内提示', defaultOn: true },
-  { key: 'notify_system_notification', label: '系统通知', desc: '通过操作系统通知中心提醒', defaultOn: true },
+  {
+    key: 'notify_message_popup',
+    label: '消息弹窗',
+    desc: '收到新消息时在应用内提示',
+    defaultOn: true,
+  },
+  {
+    key: 'notify_system_notification',
+    label: '系统通知',
+    desc: '通过操作系统通知中心提醒',
+    defaultOn: true,
+  },
   { key: 'notify_sound_play', label: '提示音', desc: '收到新消息时播放提示音', defaultOn: true },
   { key: 'notify_user_online', label: '上线提醒', desc: '有成员上线时提醒', defaultOn: false },
 ]
@@ -78,7 +88,7 @@ function UpdateSection() {
 
   useEffect(() => {
     const off = api.onAppUpdateProgress((raw) => {
-      setProgress((raw && typeof raw === 'object' ? (raw as UpdateProgress) : null))
+      setProgress(raw && typeof raw === 'object' ? (raw as UpdateProgress) : null)
     })
     return off
   }, [])
@@ -111,9 +121,9 @@ function UpdateSection() {
   const hasPackage = Boolean(safeText(updateInfo?.url))
   const hasNewVersion = Boolean(
     latestVersion &&
-      currentVersion &&
-      compareVersions(latestVersion, currentVersion) > 0 &&
-      hasPackage,
+    currentVersion &&
+    compareVersions(latestVersion, currentVersion) > 0 &&
+    hasPackage,
   )
 
   const releaseUrl = safeText(updateInfo?.htmlUrl)
@@ -129,7 +139,8 @@ function UpdateSection() {
   } else {
     hint = '当前已经是最新版本。'
   }
-  const hintTone = hasNewVersion || (!!updateInfo && hasPackage && !hasNewVersion) ? 'success' : 'muted'
+  const hintTone =
+    hasNewVersion || (!!updateInfo && hasPackage && !hasNewVersion) ? 'success' : 'muted'
 
   // 检查更新: 从 GitHub Releases 查询最新版 (自动更新源, 不经任何自建服务器)。
   async function handleCheck() {
@@ -253,12 +264,7 @@ function UpdateSection() {
         )}
 
         <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleCheck}
-            disabled={downloading}
-          >
+          <Button variant="outline" size="sm" onClick={handleCheck} disabled={downloading}>
             <RefreshCw />
             检查更新
           </Button>
@@ -319,9 +325,7 @@ function ChangelogSection() {
                       当前版本
                     </span>
                   )}
-                  <span className="selectable text-[11px] text-muted-foreground">
-                    {entry.date}
-                  </span>
+                  <span className="selectable text-[11px] text-muted-foreground">{entry.date}</span>
                 </div>
                 <ul className="mt-1.5 grid gap-1">
                   {entry.highlights.map((h, i) => (
@@ -527,16 +531,16 @@ export function LoggedInView() {
           <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 py-1.5">
             <div className="min-w-0 flex-1">
               <Label className="cursor-default">侧栏位置</Label>
-              <p className="truncate text-xs text-muted-foreground">
-                导航栏显示在窗口左侧或右侧。
-              </p>
+              <p className="truncate text-xs text-muted-foreground">导航栏显示在窗口左侧或右侧。</p>
             </div>
             {/* 左/右分段选择: 即时生效并持久化 (settings.ui.sidebarSide)。 */}
             <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-1">
-              {([
-                { side: 'left', label: '左侧', icon: PanelLeft },
-                { side: 'right', label: '右侧', icon: PanelRight },
-              ] as const).map(({ side, label, icon: Icon }) => {
+              {(
+                [
+                  { side: 'left', label: '左侧', icon: PanelLeft },
+                  { side: 'right', label: '右侧', icon: PanelRight },
+                ] as const
+              ).map(({ side, label, icon: Icon }) => {
                 const on = sidebarSide === side
                 return (
                   <button
@@ -569,14 +573,11 @@ export function LoggedInView() {
                 显示 Gemini
               </Label>
               <p className="text-xs text-muted-foreground">
-                默认隐藏。Gemini 需要 Google 登录，而内嵌客户端无法完成 Google 登录——我们尝试集成过，但实际用不了。如仍需要可在此开启。
+                默认隐藏。Gemini 需要 Google 登录，而内嵌客户端无法完成 Google
+                登录——我们尝试集成过，但实际用不了。如仍需要可在此开启。
               </p>
             </div>
-            <Switch
-              id="ui-show-gemini"
-              checked={showGemini}
-              onCheckedChange={setShowGemini}
-            />
+            <Switch id="ui-show-gemini" checked={showGemini} onCheckedChange={setShowGemini} />
           </div>
 
           <Separator className="my-1" />
@@ -591,11 +592,7 @@ export function LoggedInView() {
                 控制主页导航栏是否显示 Claude 切换按钮。
               </p>
             </div>
-            <Switch
-              id="ui-show-claude"
-              checked={showClaude}
-              onCheckedChange={setShowClaude}
-            />
+            <Switch id="ui-show-claude" checked={showClaude} onCheckedChange={setShowClaude} />
           </div>
         </CardContent>
       </Card>

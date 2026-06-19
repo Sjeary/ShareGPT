@@ -224,17 +224,20 @@ export function useAiEvents() {
       }
 
       if (payload?.type === 'did-fail-load') {
-        const errorText = safeText(payload.errorDescription) || String(payload.errorCode || '未知错误')
+        const errorText =
+          safeText(payload.errorDescription) || String(payload.errorCode || '未知错误')
         const label = kind === 'gpt' ? 'GPT' : kind === 'claude' ? 'Claude' : 'Gemini'
         useAiStore.getState().setFeedback(kind, `${label} 页面加载失败：${errorText}`, 'error')
       }
 
       if (payload?.type === 'raw-document-detected' && kind === 'gpt') {
-        useAiStore.getState().setFeedback(
-          kind,
-          '检测到 GPT 登录页返回异常文本，程序已自动重试。若仍异常，请刷新一次页面。',
-          'warning',
-        )
+        useAiStore
+          .getState()
+          .setFeedback(
+            kind,
+            '检测到 GPT 登录页返回异常文本，程序已自动重试。若仍异常，请刷新一次页面。',
+            'warning',
+          )
       }
 
       if (payload?.type === 'external-open-failed') {

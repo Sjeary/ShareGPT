@@ -26,8 +26,10 @@ contextBridge.exposeInMainWorld("api", {
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
   // AI 标签 (GPT / Gemini 通用, 传 kind)。
   listAiViews: (kind) => ipcRenderer.invoke("ai-tabs:list", { kind }),
-  createAiView: (kind, payload) => ipcRenderer.invoke("ai-tabs:create", { ...(payload || {}), kind }),
-  switchAiView: (kind, payload) => ipcRenderer.invoke("ai-tabs:switch", { ...(payload || {}), kind }),
+  createAiView: (kind, payload) =>
+    ipcRenderer.invoke("ai-tabs:create", { ...(payload || {}), kind }),
+  switchAiView: (kind, payload) =>
+    ipcRenderer.invoke("ai-tabs:switch", { ...(payload || {}), kind }),
   closeAiView: (kind, payload) => ipcRenderer.invoke("ai-tabs:close", { ...(payload || {}), kind }),
   ensureAiWorkspace: (payload) => ipcRenderer.invoke("ai:ensure", payload),
   syncAiViewHost: (payload) => ipcRenderer.invoke("ai:sync-host", payload),

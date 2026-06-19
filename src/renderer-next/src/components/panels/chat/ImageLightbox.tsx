@@ -30,10 +30,7 @@ function LightboxView({ target }: { target: LightboxTarget }) {
 
   const applyZoom = useCallback((delta: number) => {
     setZoom((prev) => {
-      const next = Math.min(
-        ZOOM_MAX,
-        Math.max(ZOOM_MIN, Number((prev + delta).toFixed(2))),
-      )
+      const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Number((prev + delta).toFixed(2))))
       if (next <= 1) setPan({ x: 0, y: 0 })
       return next
     })

@@ -3,10 +3,7 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore, type AuthProfile } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
-import {
-  normalizeChatMessage,
-  normalizeDirectory,
-} from '@/components/panels/chat/normalize'
+import { normalizeChatMessage, normalizeDirectory } from '@/components/panels/chat/normalize'
 import {
   hasCompleteSenderBootstrap,
   normalizeBootstrapPayload,
@@ -123,7 +120,10 @@ async function applySenderBootstrapConfig(serverSender: BootstrapSender): Promis
 
 // 登录后拉取客户端 bootstrap (更新信息 + 发送端配置同步)。
 // 移植自旧 renderer.js fetchClientBootstrap(~2870): best-effort, 失败不阻塞登录。
-async function fetchClientBootstrap(serverUrl: string, token: string): Promise<BootstrapPayload | null> {
+async function fetchClientBootstrap(
+  serverUrl: string,
+  token: string,
+): Promise<BootstrapPayload | null> {
   const cleaned = trimTrailingSlash(serverUrl.trim())
   if (!cleaned || !token) return null
 

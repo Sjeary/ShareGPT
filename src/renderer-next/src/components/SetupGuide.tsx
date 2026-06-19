@@ -27,14 +27,12 @@ export function SetupGuide() {
     safe(sender.proxy_server) && safe(sender.proxy_port) && safe(sender.proxy_uuid),
   )
 
-  const shouldShow =
-    !hidden && !dismissed && mode !== 'receiver' && (!collabReady || !senderReady)
+  const shouldShow = !hidden && !dismissed && mode !== 'receiver' && (!collabReady || !senderReady)
   if (!shouldShow) return null
 
   const items: string[] = []
   if (!collabReady) items.push('先填写账号服务地址，后续才能登录、同步联系人和加载统计。')
-  if (!senderReady)
-    items.push('补全发送端的服务器地址、连接端口和连接身份码，才能正常启动。')
+  if (!senderReady) items.push('补全发送端的服务器地址、连接端口和连接身份码，才能正常启动。')
   items.push('发送服务启动后，ChatGPT 和 Gemini 页面都会复用当前 SOCKS5 代理。')
 
   const needsLogin = !collabReady

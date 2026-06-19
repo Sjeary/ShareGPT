@@ -20,7 +20,9 @@ export const adminApi: AdminApi =
   typeof window !== 'undefined' && window.adminApi ? window.adminApi : fallback
 
 export function normalizeServerUrl(raw: string): string {
-  return String(raw || '').trim().replace(/\/+$/, '')
+  return String(raw || '')
+    .trim()
+    .replace(/\/+$/, '')
 }
 
 // 统一服务端请求: 带鉴权头, 非 2xx 抛错; 401/403 抛 AuthExpiredError 供 store 自动登出。

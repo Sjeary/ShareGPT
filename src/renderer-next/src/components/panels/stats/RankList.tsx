@@ -2,13 +2,7 @@ import { PIE_COLORS, entryLabel, percentOf, type StatsEntry } from './helpers'
 
 // 用户查询排行 (进度条 + 列表)。对应旧版 #gptStatsLegend 图例。
 // 颜色与 PieChart 一一对应 (同一 index 同色)。
-export function RankList({
-  entries,
-  total,
-}: {
-  entries: StatsEntry[]
-  total: number
-}) {
+export function RankList({ entries, total }: { entries: StatsEntry[]; total: number }) {
   if (!entries.length || total <= 0) {
     return (
       <div className="grid place-items-center rounded-lg border border-dashed border-border py-10 text-sm text-muted-foreground">

@@ -1,6 +1,16 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { app, BrowserWindow, Notification, WebContentsView, clipboard, ipcMain, nativeTheme, session, shell } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  Notification,
+  WebContentsView,
+  clipboard,
+  ipcMain,
+  nativeTheme,
+  session,
+  shell,
+} = require("electron");
 const { Backend, DEFAULT_TARGET_DOMAINS } = require("./backend");
 const appLog = require("./logger");
 
@@ -150,13 +160,15 @@ function applyStableUserDataPath(appInstance) {
 
 async function flushAiSessionStorage() {
   const partitions = Object.values(AI_WORKSPACE_POLICIES).map((policy) => policy.partition);
-  await Promise.all(partitions.map(async (partition) => {
-    try {
-      await session.fromPartition(partition).flushStorageData();
-    } catch (err) {
-      console.warn(`Unable to flush ${partition}:`, err.message || err);
-    }
-  }));
+  await Promise.all(
+    partitions.map(async (partition) => {
+      try {
+        await session.fromPartition(partition).flushStorageData();
+      } catch (err) {
+        console.warn(`Unable to flush ${partition}:`, err.message || err);
+      }
+    }),
+  );
 }
 
 function safeText(value) {
@@ -213,7 +225,9 @@ function normalizeClipboardFilePath(raw) {
 }
 
 function decodeWindowsClipboardPaths(buffer) {
-  const text = Buffer.from(buffer || []).toString("utf16le").replace(/\u0000+$/, "");
+  const text = Buffer.from(buffer || [])
+    .toString("utf16le")
+    .replace(/\u0000+$/, "");
   return text
     .split(/\u0000+/)
     .map(normalizeClipboardFilePath)
@@ -221,25 +235,30 @@ function decodeWindowsClipboardPaths(buffer) {
 }
 
 function decodeUtf8ClipboardPaths(buffer) {
-  const text = Buffer.from(buffer || []).toString("utf8").replace(/\u0000/g, "").trim();
+  const text = Buffer.from(buffer || [])
+    .toString("utf8")
+    .replace(/\u0000/g, "")
+    .trim();
   if (!text) return [];
-  return text
-    .split(/\r?\n/)
-    .map(normalizeClipboardFilePath)
-    .filter(Boolean);
+  return text.split(/\r?\n/).map(normalizeClipboardFilePath).filter(Boolean);
 }
 
 function readClipboardFilePaths() {
-  const formats = typeof clipboard.availableFormats === "function" ? clipboard.availableFormats() : [];
+  const formats =
+    typeof clipboard.availableFormats === "function" ? clipboard.availableFormats() : [];
   const lowerToActual = new Map(formats.map((item) => [String(item).toLowerCase(), item]));
 
   if (lowerToActual.has("filenamew")) {
-    const values = decodeWindowsClipboardPaths(clipboard.readBuffer(lowerToActual.get("filenamew")));
+    const values = decodeWindowsClipboardPaths(
+      clipboard.readBuffer(lowerToActual.get("filenamew")),
+    );
     if (values.length) return values;
   }
 
   if (lowerToActual.has("public.file-url")) {
-    const values = decodeUtf8ClipboardPaths(clipboard.readBuffer(lowerToActual.get("public.file-url")));
+    const values = decodeUtf8ClipboardPaths(
+      clipboard.readBuffer(lowerToActual.get("public.file-url")),
+    );
     if (values.length) return values;
   }
 
@@ -339,9 +358,9 @@ function chromeifyClientHintBrands(rawValue) {
 // navigator.userAgentData 不一致, 触发 Cloudflare Turnstile(Claude 用)的"特征不一致"拒绝 -> 卡验证。
 function sanitizeEmbeddedUserAgent(rawUserAgent) {
   return String(rawUserAgent || "")
-    .replace(/\s*Electron\/[^\s]+/ig, "")
-    .replace(/\s*ShareGPT\/[^\s]+/ig, "")
-    .replace(/\s*ChatPortal(?:\s+X1)?(?:\s+V\d+)?\/[^\s]+/ig, "")
+    .replace(/\s*Electron\/[^\s]+/gi, "")
+    .replace(/\s*ShareGPT\/[^\s]+/gi, "")
+    .replace(/\s*ChatPortal(?:\s+X1)?(?:\s+V\d+)?\/[^\s]+/gi, "")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
@@ -349,22 +368,23 @@ function sanitizeEmbeddedUserAgent(rawUserAgent) {
 async function detectRawChatGptDocument(webContents) {
   if (!webContents || webContents.isDestroyed()) return false;
   try {
-    const payload = await webContents.executeJavaScript(`
+    const payload = await webContents.executeJavaScript(
+      `
       (() => ({
         contentType: String(document.contentType || ""),
         text: String(document.body?.innerText || "").slice(0, 1200),
       }))();
-    `, true);
+    `,
+      true,
+    );
     const contentType = safeText(payload?.contentType).toLowerCase();
     const text = String(payload?.text || "");
     // 回退到 4.2.0 的窄判定: 必须同时命中前缀与 __reactRouterContext,
     // 避免误判 Cloudflare 挑战页/正常页为"裸文档"而触发自愈跳转。
     return (
-      contentType.startsWith("text/plain")
-      || (
-        text.startsWith('ChatGPT{"@context":"https://schema.org"')
-        && text.includes("window.__reactRouterContext")
-      )
+      contentType.startsWith("text/plain") ||
+      (text.startsWith('ChatGPT{"@context":"https://schema.org"') &&
+        text.includes("window.__reactRouterContext"))
     );
   } catch {
     return false;
@@ -602,13 +622,18 @@ function createElectronApp(baseMode = "all") {
 
     targetSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
       const requestingUrl = safeText(details?.requestingUrl || webContents?.getURL?.());
-      const allow = AI_ALLOWED_PERMISSIONS.has(permission) && isAllowedUrlForHosts(requestingUrl, policy.allowedHosts);
+      const allow =
+        AI_ALLOWED_PERMISSIONS.has(permission) &&
+        isAllowedUrlForHosts(requestingUrl, policy.allowedHosts);
       callback(allow);
     });
 
     if (typeof targetSession.setPermissionCheckHandler === "function") {
       targetSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
-        return AI_ALLOWED_PERMISSIONS.has(permission) && isAllowedUrlForHosts(requestingOrigin, policy.allowedHosts);
+        return (
+          AI_ALLOWED_PERMISSIONS.has(permission) &&
+          isAllowedUrlForHosts(requestingOrigin, policy.allowedHosts)
+        );
       });
     }
   }
@@ -902,29 +927,29 @@ function createElectronApp(baseMode = "all") {
 
     wc.on("did-finish-load", () => {
       if (workspace.kind !== "gpt") return;
-      void detectRawChatGptDocument(wc).then((isRawDocument) => {
-        if (!isRawDocument) {
-          workspace.rawDocumentRecoveryAttempted = false;
-          return;
-        }
-        if (workspace.rawDocumentRecoveryAttempted) {
-          emitAiEvent(workspace.kind, "raw-document-detected", {
-            ...getAiStatePayload(workspace),
-            url: safeText(wc.getURL()) || workspace.lastUrl || workspace.policy.homeUrl,
-          });
-          return;
-        }
-        workspace.rawDocumentRecoveryAttempted = true;
-        workspace.loading = true;
-        workspace.initialized = true;
-        workspace.lastUrl = workspace.policy.homeUrl;
-        if (workspace.userAgent) {
-          wc.setUserAgent(workspace.userAgent);
-        }
-        emitAiState(workspace, "did-start-loading", { url: workspace.policy.homeUrl });
-        // 回退到 4.2.0: 仅重载, 不 clearCache (清缓存会一并清掉 Cloudflare 验证中间态)。
-        void loadAiWorkspaceUrl(workspace, workspace.policy.homeUrl)
-          .catch((err) => {
+      void detectRawChatGptDocument(wc)
+        .then((isRawDocument) => {
+          if (!isRawDocument) {
+            workspace.rawDocumentRecoveryAttempted = false;
+            return;
+          }
+          if (workspace.rawDocumentRecoveryAttempted) {
+            emitAiEvent(workspace.kind, "raw-document-detected", {
+              ...getAiStatePayload(workspace),
+              url: safeText(wc.getURL()) || workspace.lastUrl || workspace.policy.homeUrl,
+            });
+            return;
+          }
+          workspace.rawDocumentRecoveryAttempted = true;
+          workspace.loading = true;
+          workspace.initialized = true;
+          workspace.lastUrl = workspace.policy.homeUrl;
+          if (workspace.userAgent) {
+            wc.setUserAgent(workspace.userAgent);
+          }
+          emitAiState(workspace, "did-start-loading", { url: workspace.policy.homeUrl });
+          // 回退到 4.2.0: 仅重载, 不 clearCache (清缓存会一并清掉 Cloudflare 验证中间态)。
+          void loadAiWorkspaceUrl(workspace, workspace.policy.homeUrl).catch((err) => {
             workspace.loading = false;
             emitAiEvent(workspace.kind, "did-fail-load", {
               ...getAiStatePayload(workspace),
@@ -932,7 +957,8 @@ function createElectronApp(baseMode = "all") {
               errorDescription: err.message || String(err),
             });
           });
-      }).catch(() => {});
+        })
+        .catch(() => {});
     });
 
     wc.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
@@ -973,7 +999,14 @@ function createElectronApp(baseMode = "all") {
 
     // F11: 嵌入的 AI 网页获得焦点时, 渲染层收不到键盘事件; 在此拦截 F11 切换窗口全屏。
     wc.on("before-input-event", (event, input) => {
-      if (input.type === "keyDown" && input.key === "F11" && !input.alt && !input.control && !input.meta && !input.shift) {
+      if (
+        input.type === "keyDown" &&
+        input.key === "F11" &&
+        !input.alt &&
+        !input.control &&
+        !input.meta &&
+        !input.shift
+      ) {
         event.preventDefault();
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.setFullScreen(!mainWindow.isFullScreen());
@@ -1134,7 +1167,14 @@ function createElectronApp(baseMode = "all") {
     attachWindowGuards(mainWindow);
     // F11 切换全屏 (主窗口 chrome 获得焦点时; AI 网页获得焦点时由各 view 的 before-input-event 处理)。
     mainWindow.webContents.on("before-input-event", (event, input) => {
-      if (input.type === "keyDown" && input.key === "F11" && !input.alt && !input.control && !input.meta && !input.shift) {
+      if (
+        input.type === "keyDown" &&
+        input.key === "F11" &&
+        !input.alt &&
+        !input.control &&
+        !input.meta &&
+        !input.shift
+      ) {
         event.preventDefault();
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.setFullScreen(!mainWindow.isFullScreen());
@@ -1382,12 +1422,15 @@ function createElectronApp(baseMode = "all") {
         workspace.view.webContents.setUserAgent(userAgent);
       }
 
-      const targetUrl = normalizeAiWorkspaceUrl(
-        workspace,
-        isAllowedUrlForHosts(lastUrl, workspace.policy.allowedHosts)
-          ? lastUrl
-          : (isAllowedUrlForHosts(homeUrl, workspace.policy.allowedHosts) ? homeUrl : workspace.policy.homeUrl),
-      ) || workspace.policy.homeUrl;
+      const targetUrl =
+        normalizeAiWorkspaceUrl(
+          workspace,
+          isAllowedUrlForHosts(lastUrl, workspace.policy.allowedHosts)
+            ? lastUrl
+            : isAllowedUrlForHosts(homeUrl, workspace.policy.allowedHosts)
+              ? homeUrl
+              : workspace.policy.homeUrl,
+        ) || workspace.policy.homeUrl;
 
       if (!workspace.initialized || !safeText(workspace.view.webContents.getURL())) {
         workspace.initialized = true;
@@ -1439,8 +1482,7 @@ function createElectronApp(baseMode = "all") {
 
       const targetSession = session.fromPartition(workspace.policy.partition);
       const wc = workspace.view.webContents;
-      const currentUrl =
-        safeText(wc.getURL()) || workspace.lastUrl || workspace.policy.homeUrl;
+      const currentUrl = safeText(wc.getURL()) || workspace.lastUrl || workspace.policy.homeUrl;
 
       let sessionProxy = "";
       try {
@@ -1456,8 +1498,7 @@ function createElectronApp(baseMode = "all") {
       } catch {}
 
       const suffixes = Array.isArray(DEFAULT_TARGET_DOMAINS) ? DEFAULT_TARGET_DOMAINS : [];
-      const viaProxy = (host) =>
-        suffixes.some((s) => host === s || host.endsWith(`.${s}`));
+      const viaProxy = (host) => suffixes.some((s) => host === s || host.endsWith(`.${s}`));
 
       const hosts = [...hostSet]
         .filter(Boolean)

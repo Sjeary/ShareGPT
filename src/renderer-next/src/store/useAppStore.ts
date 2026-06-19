@@ -120,9 +120,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   sidebarSide: (() => {
     try {
-      return localStorage.getItem('sharegpt-sidebar-side') === 'right'
-        ? 'right'
-        : 'left'
+      return localStorage.getItem('sharegpt-sidebar-side') === 'right' ? 'right' : 'left'
     } catch {
       return 'left'
     }

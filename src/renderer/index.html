@@ -32,7 +32,13 @@
           </div>
         </div>
 
-        <button class="top-theme-toggle no-drag" id="btnThemeQuickToggle" type="button" title="切换主题" aria-label="切换主题">
+        <button
+          class="top-theme-toggle no-drag"
+          id="btnThemeQuickToggle"
+          type="button"
+          title="切换主题"
+          aria-label="切换主题"
+        >
           切到日间
         </button>
 
@@ -45,16 +51,35 @@
         </div>
 
         <div class="window-controls no-drag">
-          <button class="win-btn win-btn-min" id="btnWinMin" title="最小化" aria-label="最小化"></button>
-          <button class="win-btn win-btn-max" id="btnWinMax" title="最大化" aria-label="最大化"></button>
-          <button class="win-btn win-btn-close danger" id="btnWinClose" title="关闭" aria-label="关闭"></button>
+          <button
+            class="win-btn win-btn-min"
+            id="btnWinMin"
+            title="最小化"
+            aria-label="最小化"
+          ></button>
+          <button
+            class="win-btn win-btn-max"
+            id="btnWinMax"
+            title="最大化"
+            aria-label="最大化"
+          ></button>
+          <button
+            class="win-btn win-btn-close danger"
+            id="btnWinClose"
+            title="关闭"
+            aria-label="关闭"
+          ></button>
         </div>
       </header>
 
       <main class="workspace">
         <div class="workspace-shell">
           <div class="content-stack">
-            <section class="panel glass view-panel service-panel" id="senderPanel" data-view-panel="sender">
+            <section
+              class="panel glass view-panel service-panel"
+              id="senderPanel"
+              data-view-panel="sender"
+            >
               <div class="panel-header">
                 <p>填写连接信息后，可开启发送端，让需要的网站通过这台设备访问。</p>
               </div>
@@ -103,18 +128,24 @@
                 <p class="auth-hint" id="senderAuthHint">请先登录账号，登录后才能开启发送服务。</p>
 
                 <div class="actions">
-                    <button id="btnImportSender" class="outline">导入本地配置</button>
-                    <button class="primary" id="btnStartSender">开启发送服务</button>
-                    <button id="btnStopSender">停止发送服务</button>
+                  <button id="btnImportSender" class="outline">导入本地配置</button>
+                  <button class="primary" id="btnStartSender">开启发送服务</button>
+                  <button id="btnStopSender">停止发送服务</button>
                 </div>
 
                 <p class="panel-feedback" id="s_feedback" hidden></p>
               </div>
             </section>
 
-            <section class="panel glass view-panel service-panel" id="receiverPanel" data-view-panel="receiver">
+            <section
+              class="panel glass view-panel service-panel"
+              id="receiverPanel"
+              data-view-panel="receiver"
+            >
               <div class="panel-header">
-                <p>填写接收端信息后，可在当前设备开启接收服务，让另一台设备的连接通过这里完成接收和转发。</p>
+                <p>
+                  填写接收端信息后，可在当前设备开启接收服务，让另一台设备的连接通过这里完成接收和转发。
+                </p>
               </div>
 
               <div class="service-summary-grid receiver-overview">
@@ -172,9 +203,15 @@
               </div>
 
               <div class="checks">
-                <label class="toggle-chip"><input type="checkbox" id="r_tls_enable" /> 使用安全连接</label>
-                <label class="toggle-chip"><input type="checkbox" id="r_use_compression" /> 传输时压缩数据</label>
-                <label class="toggle-chip"><input type="checkbox" id="r_use_encryption" /> 传输时加密数据</label>
+                <label class="toggle-chip"
+                  ><input type="checkbox" id="r_tls_enable" /> 使用安全连接</label
+                >
+                <label class="toggle-chip"
+                  ><input type="checkbox" id="r_use_compression" /> 传输时压缩数据</label
+                >
+                <label class="toggle-chip"
+                  ><input type="checkbox" id="r_use_encryption" /> 传输时加密数据</label
+                >
               </div>
 
               <div class="panel-footer">
@@ -212,7 +249,11 @@
               </div>
             </section>
 
-            <section class="panel glass view-panel account-panel" id="accountPanel" data-view-panel="account">
+            <section
+              class="panel glass view-panel account-panel"
+              id="accountPanel"
+              data-view-panel="account"
+            >
               <div class="panel-header">
                 <p>在这里登录账号、查看状态，并管理账号资料。</p>
               </div>
@@ -268,8 +309,8 @@
                 </label>
 
                 <div class="actions collab-actions">
-                    <button id="btnCollabImport" class="outline">导入配置文件</button>
-                    <button class="primary" id="btnCollabLogin">登录</button>
+                  <button id="btnCollabImport" class="outline">导入配置文件</button>
+                  <button class="primary" id="btnCollabLogin">登录</button>
                 </div>
 
                 <p class="collab-feedback" id="c_feedback" hidden></p>
@@ -286,7 +327,9 @@
                       </div>
                     </div>
 
-                    <p class="account-note" id="c_account_note">可设置昵称、头像和简介，便于联系人识别。</p>
+                    <p class="account-note" id="c_account_note">
+                      可设置昵称、头像和简介，便于联系人识别。
+                    </p>
 
                     <div class="actions account-actions">
                       <button id="btnAccountProfile">编辑个人资料</button>
@@ -298,7 +341,9 @@
                     <h3>账号说明</h3>
                     <div class="account-tip-list">
                       <div class="tip-item">登录后，右上角会显示账号和在线状态。</div>
-                      <div class="tip-item">个人资料保存后，会同步显示在联系人列表和聊天消息中。</div>
+                      <div class="tip-item">
+                        个人资料保存后，会同步显示在联系人列表和聊天消息中。
+                      </div>
                       <div class="tip-item">房间消息和私聊都在“联系人与聊天”页面查看。</div>
                     </div>
                   </article>
@@ -306,8 +351,13 @@
                   <article class="account-tip-card">
                     <h3>本机资料</h3>
                     <div class="account-tip-list">
-                      <div class="tip-item">Sender 设置、账号信息和本地聊天记录会保存在系统用户目录中，覆盖安装新版本后会继续保留。</div>
-                      <div class="tip-item">如果需要换电脑或手动备份，可导出整套本机资料包，再在新版本中直接导入。</div>
+                      <div class="tip-item">
+                        Sender
+                        设置、账号信息和本地聊天记录会保存在系统用户目录中，覆盖安装新版本后会继续保留。
+                      </div>
+                      <div class="tip-item">
+                        如果需要换电脑或手动备份，可导出整套本机资料包，再在新版本中直接导入。
+                      </div>
                     </div>
                     <div class="actions account-actions">
                       <button id="btnExportUserData">导出本机资料包</button>
@@ -321,7 +371,11 @@
                       <div class="tip-item">可根据当前环境在日间和夜间模式之间切换。</div>
                       <div class="tip-item">主题会自动保存，个人资料窗口也会跟随同一套设置。</div>
                     </div>
-                    <div class="theme-choice-group account-theme-choice-group" role="group" aria-label="界面主题">
+                    <div
+                      class="theme-choice-group account-theme-choice-group"
+                      role="group"
+                      aria-label="界面主题"
+                    >
                       <button
                         class="theme-choice-btn"
                         type="button"
@@ -347,8 +401,12 @@
                     <h3>软件更新</h3>
                     <div class="account-tip-list">
                       <div class="tip-item">当前版本：<strong id="appVersionText">-</strong></div>
-                      <div class="tip-item">最新版本：<strong id="appLatestVersion">未检查</strong></div>
-                      <div class="tip-item" id="appUpdateNotes">登录后可从当前服务器读取新版本信息。</div>
+                      <div class="tip-item">
+                        最新版本：<strong id="appLatestVersion">未检查</strong>
+                      </div>
+                      <div class="tip-item" id="appUpdateNotes">
+                        登录后可从当前服务器读取新版本信息。
+                      </div>
                     </div>
                     <div class="actions account-actions">
                       <button id="btnCheckAppUpdate">检查更新</button>
@@ -369,7 +427,11 @@
               </div>
             </section>
 
-            <section class="panel glass view-panel chat-panel" id="chatPanel" data-view-panel="chat">
+            <section
+              class="panel glass view-panel chat-panel"
+              id="chatPanel"
+              data-view-panel="chat"
+            >
               <div class="panel-header">
                 <p>左侧选择房间或联系人，右侧查看消息并继续聊天。</p>
               </div>
@@ -385,7 +447,9 @@
                     <span class="unread-badge room-unread-badge" id="c_room_unread" hidden>0</span>
                   </button>
 
-                  <button class="chat-settings-trigger" id="btnOpenMessageSettings" type="button">消息设置</button>
+                  <button class="chat-settings-trigger" id="btnOpenMessageSettings" type="button">
+                    消息设置
+                  </button>
 
                   <input
                     id="c_chat_filter"
@@ -421,10 +485,21 @@
                   </div>
 
                   <div class="chat-sidebar-panels">
-                    <div class="chat-sidebar-panel active" id="c_sidebar_panel_recent" data-chat-sidebar-panel="recent" role="tabpanel">
+                    <div
+                      class="chat-sidebar-panel active"
+                      id="c_sidebar_panel_recent"
+                      data-chat-sidebar-panel="recent"
+                      role="tabpanel"
+                    >
                       <ul id="c_recent_list"></ul>
                     </div>
-                    <div class="chat-sidebar-panel" id="c_sidebar_panel_contacts" data-chat-sidebar-panel="contacts" role="tabpanel" hidden>
+                    <div
+                      class="chat-sidebar-panel"
+                      id="c_sidebar_panel_contacts"
+                      data-chat-sidebar-panel="contacts"
+                      role="tabpanel"
+                      hidden
+                    >
                       <ul id="c_online_list"></ul>
                     </div>
                   </div>
@@ -453,7 +528,9 @@
                         <strong id="c_reply_draft_name"></strong>
                         <span id="c_reply_draft_text"></span>
                       </div>
-                      <button type="button" class="attachment-remove-btn" id="btnReplyDraftClear">取消</button>
+                      <button type="button" class="attachment-remove-btn" id="btnReplyDraftClear">
+                        取消
+                      </button>
                     </div>
 
                     <div class="chat-reply-draft edit-draft" id="c_edit_draft" hidden>
@@ -461,7 +538,9 @@
                         <strong id="c_edit_draft_name"></strong>
                         <span id="c_edit_draft_text"></span>
                       </div>
-                      <button type="button" class="attachment-remove-btn" id="btnEditDraftClear">取消</button>
+                      <button type="button" class="attachment-remove-btn" id="btnEditDraftClear">
+                        取消
+                      </button>
                     </div>
 
                     <div class="chat-reply-draft forward-draft" id="c_forward_draft" hidden>
@@ -469,7 +548,9 @@
                         <strong id="c_forward_draft_name"></strong>
                         <span id="c_forward_draft_text"></span>
                       </div>
-                      <button type="button" class="attachment-remove-btn" id="btnForwardDraftClear">取消</button>
+                      <button type="button" class="attachment-remove-btn" id="btnForwardDraftClear">
+                        取消
+                      </button>
                     </div>
 
                     <div class="chat-attachment-preview" id="c_attachment_preview" hidden>
@@ -478,7 +559,9 @@
                         <strong id="c_attachment_name"></strong>
                         <span id="c_attachment_meta"></span>
                       </div>
-                      <button type="button" class="attachment-remove-btn" id="btnAttachmentRemove">移除</button>
+                      <button type="button" class="attachment-remove-btn" id="btnAttachmentRemove">
+                        移除
+                      </button>
                     </div>
 
                     <div class="chat-hidden-controls">
@@ -497,7 +580,13 @@
                     <div class="chat-input-row">
                       <input id="c_chat_file" type="file" hidden />
                       <div class="chat-input-shell" id="c_chat_input_shell">
-                        <button id="btnChatAttach" class="chat-attach-trigger" type="button" aria-label="添加附件" title="添加附件">
+                        <button
+                          id="btnChatAttach"
+                          class="chat-attach-trigger"
+                          type="button"
+                          aria-label="添加附件"
+                          title="添加附件"
+                        >
                           <span class="chat-attach-trigger-icon">+</span>
                         </button>
                         <div class="chat-inline-preview" id="c_inline_preview" hidden>
@@ -506,7 +595,13 @@
                             <strong id="c_inline_preview_name"></strong>
                             <span id="c_inline_preview_meta"></span>
                           </div>
-                          <button type="button" class="attachment-remove-btn inline-remove-btn" id="btnInlineAttachmentRemove">移除</button>
+                          <button
+                            type="button"
+                            class="attachment-remove-btn inline-remove-btn"
+                            id="btnInlineAttachmentRemove"
+                          >
+                            移除
+                          </button>
                         </div>
                         <textarea
                           id="c_chat_input"
@@ -521,7 +616,11 @@
               </div>
             </section>
 
-            <section class="panel glass view-panel settings-panel" id="messageSettingsPanel" data-view-panel="message-settings">
+            <section
+              class="panel glass view-panel settings-panel"
+              id="messageSettingsPanel"
+              data-view-panel="message-settings"
+            >
               <div class="panel-header">
                 <p>在这里设置消息提醒方式。</p>
                 <button id="btnBackToChat">返回聊天</button>
@@ -575,7 +674,9 @@
 
                   <div class="settings-note-list">
                     <div class="tip-item">打开正在查看的会话时，新消息不会重复提醒。</div>
-                    <div class="tip-item">切到其他联系人、其他房间，或程序不在前台时，新消息会计入未读并按设置提醒。</div>
+                    <div class="tip-item">
+                      切到其他联系人、其他房间，或程序不在前台时，新消息会计入未读并按设置提醒。
+                    </div>
                     <div class="tip-item">未读数量会显示在房间或联系人右侧，最多显示为 99+。</div>
                   </div>
                 </article>
@@ -586,7 +687,14 @@
               <div class="gpt-browser-shell" id="gptBrowserShell">
                 <div class="gpt-tabbar">
                   <div class="gpt-tablist" id="gptTabList" aria-label="ChatGPT 会话标签栏"></div>
-                  <button class="gpt-tab-add" id="btnGptNewTab" type="button" title="新建 ChatGPT 会话">+</button>
+                  <button
+                    class="gpt-tab-add"
+                    id="btnGptNewTab"
+                    type="button"
+                    title="新建 ChatGPT 会话"
+                  >
+                    +
+                  </button>
                 </div>
 
                 <div class="gpt-browser-toolbar">
@@ -633,7 +741,11 @@
               <p class="panel-feedback" id="gpt_feedback" hidden></p>
             </section>
 
-            <section class="panel glass view-panel gpt-panel" id="geminiPanel" data-view-panel="gemini">
+            <section
+              class="panel glass view-panel gpt-panel"
+              id="geminiPanel"
+              data-view-panel="gemini"
+            >
               <div class="gpt-browser-shell" id="geminiBrowserShell">
                 <div class="gpt-browser-toolbar">
                   <div class="gpt-toolbar-group">
@@ -678,7 +790,11 @@
               <p class="panel-feedback" id="gemini_feedback" hidden></p>
             </section>
 
-            <section class="panel glass view-panel gpt-stats-panel" id="gptStatsPanel" data-view-panel="gpt-stats">
+            <section
+              class="panel glass view-panel gpt-stats-panel"
+              id="gptStatsPanel"
+              data-view-panel="gpt-stats"
+            >
               <div class="panel-header">
                 <p>按时间范围查看账号提问次数分布、总提问量和各账号占比。</p>
                 <button id="btnBackToGpt">返回 ChatGPT 网页</button>
@@ -798,7 +914,14 @@
     <div id="toastStack" class="toast-stack" aria-live="polite"></div>
     <div id="appContextMenu" class="app-context-menu" hidden></div>
     <div id="chatImageLightbox" class="chat-image-lightbox" hidden>
-      <button id="btnChatImageLightboxClose" class="chat-image-lightbox-close" type="button" aria-label="关闭图片预览">关闭</button>
+      <button
+        id="btnChatImageLightboxClose"
+        class="chat-image-lightbox-close"
+        type="button"
+        aria-label="关闭图片预览"
+      >
+        关闭
+      </button>
       <div class="chat-image-lightbox-meta">
         <span id="chatImageLightboxZoom">100%</span>
         <small>滚轮缩放 · 拖动查看</small>
@@ -814,7 +937,9 @@
           <h2 id="setupGuideTitle">首次启动先完成基础配置</h2>
         </div>
 
-        <p class="setup-guide-intro" id="setupGuideIntro">系统已经准备好本地配置模板。先补全账号服务地址并登录，随后再填写发送端连接信息。</p>
+        <p class="setup-guide-intro" id="setupGuideIntro">
+          系统已经准备好本地配置模板。先补全账号服务地址并登录，随后再填写发送端连接信息。
+        </p>
 
         <ul class="setup-guide-checklist" id="setupGuideChecklist"></ul>
 
@@ -823,7 +948,9 @@
         </div>
 
         <div class="actions setup-guide-actions">
-          <button id="btnSetupGuideDismiss">不再提醒</button>            <button id="btnSetupGuideImport">导入本地配置文件</button>          <button class="primary" id="btnSetupGuideAction">去填写登录信息</button>
+          <button id="btnSetupGuideDismiss">不再提醒</button>
+          <button id="btnSetupGuideImport">导入本地配置文件</button>
+          <button class="primary" id="btnSetupGuideAction">去填写登录信息</button>
         </div>
       </section>
     </div>

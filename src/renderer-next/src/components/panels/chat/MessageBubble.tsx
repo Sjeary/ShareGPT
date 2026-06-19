@@ -1,12 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import {
-  CornerUpLeft,
-  FileText,
-  MoreHorizontal,
-  Pencil,
-  Share2,
-  Trash2,
-} from 'lucide-react'
+import { CornerUpLeft, FileText, MoreHorizontal, Pencil, Share2, Trash2 } from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import type { ChatAttachment, ChatMessage } from '@/store/useChatStore'
@@ -49,9 +42,7 @@ function AttachmentView({
     >
       <FileText className="size-4 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 truncate">{att.name}</span>
-      <span className="shrink-0 text-xs text-muted-foreground">
-        {formatBytes(att.size)}
-      </span>
+      <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(att.size)}</span>
     </a>
   )
 }
@@ -120,8 +111,7 @@ export function MessageBubble({
   }
 
   const canAct = Boolean(message.id) && !message.recalled
-  const canEdit =
-    canAct && mine && Boolean(message.text) && message.attachments.length === 0
+  const canEdit = canAct && mine && Boolean(message.text) && message.attachments.length === 0
 
   const menuItems: {
     label: string
@@ -176,9 +166,7 @@ export function MessageBubble({
 
   // 正文富文本 + 首个 URL 链接预览卡。
   const richBody = message.text ? renderMessageRichText(message.text) : null
-  const linkPreview = message.text
-    ? buildMessageLinkPreview(extractFirstUrl(message.text))
-    : null
+  const linkPreview = message.text ? buildMessageLinkPreview(extractFirstUrl(message.text)) : null
 
   return (
     <div
@@ -198,20 +186,13 @@ export function MessageBubble({
               {message.avatar && /^https?:|^data:/.test(message.avatar) && (
                 <AvatarImage src={message.avatar} alt={message.displayName} />
               )}
-              <AvatarFallback>
-                {avatarMark(message.avatar, message.displayName)}
-              </AvatarFallback>
+              <AvatarFallback>{avatarMark(message.avatar, message.displayName)}</AvatarFallback>
             </Avatar>
           )}
         </div>
       ) : null}
 
-      <div
-        className={cn(
-          'flex max-w-[72%] flex-col gap-0.5',
-          mine ? 'items-end' : 'items-start',
-        )}
-      >
+      <div className={cn('flex max-w-[72%] flex-col gap-0.5', mine ? 'items-end' : 'items-start')}>
         {!mine && showAvatar && (
           <span className="px-1 text-xs font-medium text-muted-foreground">
             {message.displayName}
@@ -241,9 +222,7 @@ export function MessageBubble({
                 <span className="max-w-full truncate font-medium">
                   {message.replyTo.displayName || message.replyTo.from || '消息'}
                 </span>
-                <span className="max-w-full truncate opacity-80">
-                  {message.replyTo.preview}
-                </span>
+                <span className="max-w-full truncate opacity-80">{message.replyTo.preview}</span>
               </button>
             )}
 
@@ -255,9 +234,7 @@ export function MessageBubble({
 
             {message.recalled ? (
               <span className="italic opacity-70">
-                {mine
-                  ? '你撤回了一条消息'
-                  : `${message.displayName} 撤回了一条消息`}
+                {mine ? '你撤回了一条消息' : `${message.displayName} 撤回了一条消息`}
               </span>
             ) : (
               <>
@@ -276,20 +253,14 @@ export function MessageBubble({
                     }}
                     className="mt-1.5 flex w-full min-w-0 flex-col items-start gap-0.5 rounded-lg border border-border/60 bg-background/40 px-3 py-2 text-left text-xs transition-colors hover:bg-background/70"
                   >
-                    <strong className="max-w-full truncate font-medium">
-                      {linkPreview.host}
-                    </strong>
+                    <strong className="max-w-full truncate font-medium">{linkPreview.host}</strong>
                     <span className="max-w-full truncate text-muted-foreground [overflow-wrap:anywhere]">
                       {linkPreview.url}
                     </span>
                   </button>
                 )}
                 {message.attachments.map((att, i) => (
-                  <AttachmentView
-                    key={i}
-                    att={att}
-                    onOpenImage={actions.onOpenImage}
-                  />
+                  <AttachmentView key={i} att={att} onOpenImage={actions.onOpenImage} />
                 ))}
               </>
             )}
@@ -397,10 +368,7 @@ export function MessageBubble({
                     已读 · {readByOthers.length} 人
                   </div>
                   {readByOthers.map((r) => (
-                    <div
-                      key={r.username}
-                      className="flex items-center gap-2 rounded-md px-2 py-1"
-                    >
+                    <div key={r.username} className="flex items-center gap-2 rounded-md px-2 py-1">
                       <span className="grid size-5 shrink-0 place-items-center rounded-full bg-secondary text-[10px] text-muted-foreground">
                         {avatarMark('', r.displayName || r.username)}
                       </span>

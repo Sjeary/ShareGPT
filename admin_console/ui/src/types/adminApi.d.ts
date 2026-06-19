@@ -42,9 +42,7 @@ export interface AdminApi {
   closeWindow: () => Promise<unknown>
   selectReleaseFile: () => Promise<ReleaseFilePick | null>
   uploadRelease: (payload: ReleaseUploadPayload) => Promise<{ bootstrap?: unknown }>
-  onReleaseUploadProgress: (
-    handler: (payload: ReleaseUploadProgress) => void,
-  ) => () => void
+  onReleaseUploadProgress: (handler: (payload: ReleaseUploadProgress) => void) => () => void
 }
 
 declare global {

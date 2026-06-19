@@ -39,10 +39,7 @@ function lastMessage(items: ChatMessage[] | undefined): ChatMessage | null {
 }
 
 // 预览行已读态 (移植自旧 recentMessageState ~427): 最后一条须自己发出且未撤回。
-function lastReadStateOf(
-  last: ChatMessage | null,
-  self: string,
-): LastReadState {
+function lastReadStateOf(last: ChatMessage | null, self: string): LastReadState {
   if (!last || last.system || last.recalled) return { kind: 'none' }
   const from = last.from || last.username
   if (!self || from !== self) return { kind: 'none' }
@@ -93,9 +90,7 @@ export function buildConversations(params: {
   // 房间会话 (默认 activeKey === "" 指向它)
   const roomKey = roomConversationKey(roomScope)
   const roomMsgs =
-    messagesByConversation[roomKey] ??
-    messagesByConversation[activeKey === '' ? roomKey : ''] ??
-    []
+    messagesByConversation[roomKey] ?? messagesByConversation[activeKey === '' ? roomKey : ''] ?? []
   const roomLast = lastMessage(roomMsgs)
   items.push({
     key: '',

@@ -21,25 +21,19 @@ function openUrl(url: string) {
 function renderInline(text: string, keyPrefix: string): ReactNode[] {
   const nodes: ReactNode[] = []
   // 优先级与旧版一致: 行内代码 > 粗体 > 斜体 > 链接。
-  const pattern =
-    /(`[^`\n]+`)|(\*\*[^*]+\*\*)|(__[^_]+__)|(https?:\/\/[^\s<]+)/g
+  const pattern = /(`[^`\n]+`)|(\*\*[^*]+\*\*)|(__[^_]+__)|(https?:\/\/[^\s<]+)/g
   let last = 0
   let m: RegExpExecArray | null
   let i = 0
   while ((m = pattern.exec(text)) !== null) {
     if (m.index > last) {
-      nodes.push(
-        <Fragment key={`${keyPrefix}-t${i}`}>{text.slice(last, m.index)}</Fragment>,
-      )
+      nodes.push(<Fragment key={`${keyPrefix}-t${i}`}>{text.slice(last, m.index)}</Fragment>)
     }
     const token = m[0]
     const key = `${keyPrefix}-m${i}`
     if (m[1]) {
       nodes.push(
-        <code
-          key={key}
-          className="rounded bg-foreground/10 px-1 py-0.5 font-mono text-[0.85em]"
-        >
+        <code key={key} className="rounded bg-foreground/10 px-1 py-0.5 font-mono text-[0.85em]">
           {token.slice(1, -1)}
         </code>,
       )
@@ -97,9 +91,7 @@ export function renderMessageRichText(text: string): ReactNode {
   let i = 0
   while ((m = blockRe.exec(source)) !== null) {
     if (m.index > last) {
-      nodes.push(
-        ...renderWithBreaks(source.slice(last, m.index), `seg${i}`),
-      )
+      nodes.push(...renderWithBreaks(source.slice(last, m.index), `seg${i}`))
     }
     nodes.push(
       <pre

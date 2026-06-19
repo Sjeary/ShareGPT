@@ -42,7 +42,9 @@ const lastTrackedText: Record<AiKind, string> = { gpt: '', gemini: '', claude: '
 const lastTrackedAt: Record<AiKind, number> = { gpt: 0, gemini: 0, claude: 0 }
 
 export function registerAiQuery(kind: AiKind, text: string): void {
-  const normalized = String(text || '').trim().slice(0, 160)
+  const normalized = String(text || '')
+    .trim()
+    .slice(0, 160)
   if (!normalized) return
 
   const now = Date.now()

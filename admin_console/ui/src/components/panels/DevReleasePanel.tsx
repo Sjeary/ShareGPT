@@ -152,9 +152,7 @@ export function DevReleasePanel() {
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <Badge variant="outline">版本 {release?.version || '未发布'}</Badge>
               {release?.publishedAt && (
-                <span className="text-xs text-muted-foreground">
-                  发布于 {release.publishedAt}
-                </span>
+                <span className="text-xs text-muted-foreground">发布于 {release.publishedAt}</span>
               )}
               <Badge variant={release?.windows?.fileName ? 'default' : 'outline'}>
                 Windows {release?.windows?.fileName ? '已配置' : '未配置'}
@@ -173,11 +171,7 @@ export function DevReleasePanel() {
                 />
               </div>
               <div className="flex items-end">
-                <Button
-                  variant="outline"
-                  disabled={savingInfo}
-                  onClick={() => void saveInfo()}
-                >
+                <Button variant="outline" disabled={savingInfo} onClick={() => void saveInfo()}>
                   {savingInfo ? (
                     <Loader2 className="size-4 animate-spin" />
                   ) : (
@@ -268,7 +262,11 @@ function DevReleaseCard({
         <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
           <div className="truncate font-medium">{draft?.fileName || '未选择文件'}</div>
           <div className="text-xs text-muted-foreground">
-            {draft ? formatBytes(draft.size) : currentName ? `当前：${currentName}` : '选择本地安装包后发布'}
+            {draft
+              ? formatBytes(draft.size)
+              : currentName
+                ? `当前：${currentName}`
+                : '选择本地安装包后发布'}
           </div>
         </div>
 

@@ -72,9 +72,7 @@ export function isAllowedUrlForHosts(rawUrl: string, allowedHosts: string[]): bo
   try {
     const url = new URL(String(rawUrl || ''))
     if (!/^https?:$/i.test(url.protocol)) return false
-    return allowedHosts.some(
-      (host) => url.hostname === host || url.hostname.endsWith(`.${host}`),
-    )
+    return allowedHosts.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`))
   } catch {
     return false
   }

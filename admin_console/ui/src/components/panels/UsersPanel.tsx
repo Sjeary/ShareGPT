@@ -62,10 +62,7 @@ export function UsersPanel() {
       if (filter === 'admin' && !u.isAdmin) return false
       if (filter === 'disabled' && !u.disabled) return false
       if (!q) return true
-      return (
-        u.username.toLowerCase().includes(q) ||
-        (u.displayName || '').toLowerCase().includes(q)
-      )
+      return u.username.toLowerCase().includes(q) || (u.displayName || '').toLowerCase().includes(q)
     })
   }, [users, search, filter])
 
@@ -175,9 +172,7 @@ export function UsersPanel() {
                   }}
                   className={cn(
                     'cursor-pointer rounded-lg border p-3 text-left transition-colors',
-                    on
-                      ? 'border-primary/40 bg-accent/40'
-                      : 'border-border hover:bg-accent/30',
+                    on ? 'border-primary/40 bg-accent/40' : 'border-border hover:bg-accent/30',
                   )}
                 >
                   <div className="flex items-center gap-2">
@@ -268,7 +263,15 @@ function EditUserCard({
     if (!user) return
     setBusy(true)
     try {
-      await onSave(user.username, { displayName, password, avatar, bio, isAdmin, disabled, chatDisabled })
+      await onSave(user.username, {
+        displayName,
+        password,
+        avatar,
+        bio,
+        isAdmin,
+        disabled,
+        chatDisabled,
+      })
       setPassword('')
       toast.success(`已保存用户 ${user.username}`)
     } catch (err) {
@@ -330,7 +333,9 @@ function EditUserCard({
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <Label className="cursor-default">禁止协作聊天</Label>
-            <p className="truncate text-xs text-muted-foreground">无聊天入口、不收消息、别人发他也不弹窗</p>
+            <p className="truncate text-xs text-muted-foreground">
+              无聊天入口、不收消息、别人发他也不弹窗
+            </p>
           </div>
           <Switch checked={chatDisabled} onCheckedChange={setChatDisabled} />
         </div>
@@ -372,7 +377,15 @@ function CreateUserCard({
     }
     setBusy(true)
     try {
-      const created = await onCreate({ username, displayName, password, avatar, bio, isAdmin, chatDisabled })
+      const created = await onCreate({
+        username,
+        displayName,
+        password,
+        avatar,
+        bio,
+        isAdmin,
+        chatDisabled,
+      })
       toast.success(`已创建用户 ${created?.username || username}`)
       setUsername('')
       setDisplayName('')
@@ -404,11 +417,7 @@ function CreateUserCard({
           <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
         </Field>
         <Field label="密码">
-          <Input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
         </Field>
         <Field label="头像 (可选, 单字符或 emoji)">
           <Input value={avatar} onChange={(e) => setAvatar(e.target.value)} />

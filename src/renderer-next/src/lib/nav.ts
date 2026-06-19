@@ -10,15 +10,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 
-export type NavKey =
-  | 'service'
-  | 'chat'
-  | 'gpt'
-  | 'gemini'
-  | 'claude'
-  | 'stats'
-  | 'account'
-  | 'logs'
+export type NavKey = 'service' | 'chat' | 'gpt' | 'gemini' | 'claude' | 'stats' | 'account' | 'logs'
 
 export interface NavItem {
   key: NavKey

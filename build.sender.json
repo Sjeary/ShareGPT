@@ -20,18 +20,14 @@
     {
       "from": "build/bin",
       "to": "bin",
-      "filter": [
-        "**/*"
-      ]
+      "filter": ["**/*"]
     }
   ],
   "directories": {
     "output": "release_sender"
   },
   "win": {
-    "target": [
-      "nsis"
-    ],
+    "target": ["nsis"],
     "artifactName": "sharegpt-sender-${version}.${ext}",
     "executableName": "sharegpt_sender",
     "signAndEditExecutable": false
@@ -45,10 +41,7 @@
     "shortcutName": "ShareGPT Sender"
   },
   "mac": {
-    "target": [
-      "zip",
-      "dmg"
-    ],
+    "target": ["zip", "dmg"],
     "artifactName": "sharegpt-sender-${version}-${arch}.${ext}"
   },
   "extraMetadata": {
@@ -63,4 +56,3 @@
     }
   ]
 }
-

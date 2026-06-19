@@ -19,8 +19,18 @@ import { StatsSkeleton } from './stats/StatsSkeleton'
 // 数据直连协作服务器 GET /api/gpt/stats[?from&to], 带 Bearer useAuthStore.token。
 // 逻辑对照旧版 renderer.js loadGptRangeStats / renderGptStats / setGptStatsPreset。
 export function StatsPanel() {
-  const { authed, range, kind, setKind, stats, loading, error, applyPreset, setCustomRange, apply } =
-    useStats()
+  const {
+    authed,
+    range,
+    kind,
+    setKind,
+    stats,
+    loading,
+    error,
+    applyPreset,
+    setCustomRange,
+    apply,
+  } = useStats()
   // 维度可见性跟随导航开关: Gemini 默认隐藏(集成未成功), Claude 跟随其开关; ChatGPT 始终有。
   const showGemini = useAppStore((s) => s.showGemini)
   const showClaude = useAppStore((s) => s.showClaude)
@@ -77,24 +87,24 @@ export function StatsPanel() {
       <div className="selectable mx-auto flex max-w-3xl flex-col gap-4 p-6">
         {/* AI 维度切换: 仅显示已启用的入口 (Gemini 默认隐藏)。单一维度时不显示切换。 */}
         {kinds.length > 1 && (
-        <div className="inline-flex w-fit items-center gap-1 rounded-lg border border-border bg-muted/40 p-1">
-          {kinds.map((k) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => setKind(k)}
-              disabled={loading && kind === k}
-              className={cn(
-                'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
-                kind === k
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {STATS_KIND_LABELS[k]}
-            </button>
-          ))}
-        </div>
+          <div className="inline-flex w-fit items-center gap-1 rounded-lg border border-border bg-muted/40 p-1">
+            {kinds.map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setKind(k)}
+                disabled={loading && kind === k}
+                className={cn(
+                  'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                  kind === k
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {STATS_KIND_LABELS[k]}
+              </button>
+            ))}
+          </div>
         )}
 
         {/* 区间筛选 */}
@@ -128,50 +138,50 @@ export function StatsPanel() {
                 : 'flex flex-col gap-4 transition-opacity'
             }
           >
-        {/* 概览数字 */}
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
-                总查询数
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <span className="text-4xl font-semibold tabular-nums leading-none text-foreground">
-                {total.toLocaleString('zh-CN')}
-              </span>
-              <span className="ml-2 text-sm text-muted-foreground">次提问</span>
-            </CardContent>
-          </Card>
+            {/* 概览数字 */}
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">
+                    总查询数
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <span className="text-4xl font-semibold tabular-nums leading-none text-foreground">
+                    {total.toLocaleString('zh-CN')}
+                  </span>
+                  <span className="ml-2 text-sm text-muted-foreground">次提问</span>
+                </CardContent>
+              </Card>
 
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
-                <Users className="size-4" />
-                参与人数
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <span className="text-4xl font-semibold tabular-nums leading-none text-foreground">
-                {userCount.toLocaleString('zh-CN')}
-              </span>
-              <span className="ml-2 text-sm text-muted-foreground">位成员</span>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* 占比环形图 + 排行 */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">查询占比与排行</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
-            <PieChart entries={stats.entries} total={total} />
-            <div className="min-w-0 flex-1 self-stretch">
-              <RankList entries={stats.entries} total={total} />
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                    <Users className="size-4" />
+                    参与人数
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <span className="text-4xl font-semibold tabular-nums leading-none text-foreground">
+                    {userCount.toLocaleString('zh-CN')}
+                  </span>
+                  <span className="ml-2 text-sm text-muted-foreground">位成员</span>
+                </CardContent>
+              </Card>
             </div>
-          </CardContent>
-        </Card>
+
+            {/* 占比环形图 + 排行 */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">查询占比与排行</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
+                <PieChart entries={stats.entries} total={total} />
+                <div className="min-w-0 flex-1 self-stretch">
+                  <RankList entries={stats.entries} total={total} />
+                </div>
+              </CardContent>
+            </Card>
           </div>
         )}
       </div>

@@ -177,14 +177,10 @@ export function Composer({
       setError(`文件不能超过 ${formatBytes(MAX_BYTES)}。`)
       return
     }
-    const isImage =
-      descriptor.kind === 'image' ||
-      descriptor.preferredMode === 'inline-image'
+    const isImage = descriptor.kind === 'image' || descriptor.preferredMode === 'inline-image'
     setAttachment({
       kind: isImage ? 'image' : 'file',
-      name:
-        (descriptor.name || '').trim() ||
-        (isImage ? 'pasted-image.png' : 'file'),
+      name: (descriptor.name || '').trim() || (isImage ? 'pasted-image.png' : 'file'),
       mime: (descriptor.mime || '').trim() || (isImage ? 'image/png' : ''),
       size,
       dataUrl,
@@ -213,9 +209,7 @@ export function Composer({
       e.preventDefault()
       applyDescriptor(descriptor)
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : '读取剪贴板内容失败',
-      )
+      setError(err instanceof Error ? err.message : '读取剪贴板内容失败')
     }
   }
 
@@ -260,16 +254,9 @@ export function Composer({
           </span>
         </div>
       )}
-      {error && (
-        <div className="mb-2 text-xs text-destructive">{error}</div>
-      )}
+      {error && <div className="mb-2 text-xs text-destructive">{error}</div>}
 
-      <DraftBar
-        reply={reply}
-        edit={edit}
-        forward={forward}
-        onCancel={cancelDraft}
-      />
+      <DraftBar reply={reply} edit={edit} forward={forward} onCancel={cancelDraft} />
 
       {attachment && !inEdit && (
         <div className="mb-2 flex items-center gap-2 rounded-lg border border-border bg-secondary px-3 py-2 text-sm">
@@ -286,12 +273,7 @@ export function Composer({
           <span className="shrink-0 text-xs text-muted-foreground">
             {formatBytes(attachment.size)}
           </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => setAttachment(null)}
-          >
+          <Button type="button" variant="ghost" size="icon-sm" onClick={() => setAttachment(null)}>
             <X className="size-4" />
           </Button>
         </div>
@@ -368,13 +350,7 @@ export function Composer({
           )}
         />
 
-        <Button
-          type="button"
-          size="icon"
-          disabled={!canSend}
-          onClick={submit}
-          title="发送 (Enter)"
-        >
+        <Button type="button" size="icon" disabled={!canSend} onClick={submit} title="发送 (Enter)">
           <SendHorizontal className="size-5" />
         </Button>
       </div>

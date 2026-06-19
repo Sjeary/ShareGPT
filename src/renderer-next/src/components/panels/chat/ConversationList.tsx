@@ -64,23 +64,16 @@ export function ConversationList({
                   onClick={() => onSelect(it.key)}
                   className={cn(
                     'flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors',
-                    selected
-                      ? 'bg-sidebar-accent'
-                      : 'hover:bg-sidebar-accent/60',
+                    selected ? 'bg-sidebar-accent' : 'hover:bg-sidebar-accent/60',
                   )}
                 >
                   <Avatar size="lg">
                     <AvatarFallback
-                      className={cn(
-                        it.kind === 'room' &&
-                          'bg-primary/15 text-primary',
-                      )}
+                      className={cn(it.kind === 'room' && 'bg-primary/15 text-primary')}
                     >
                       {avatarMark(it.avatar, it.title)}
                     </AvatarFallback>
-                    {it.kind === 'private' && it.online && (
-                      <AvatarBadge className="bg-success" />
-                    )}
+                    {it.kind === 'private' && it.online && <AvatarBadge className="bg-success" />}
                   </Avatar>
 
                   <div className="min-w-0 flex-1">
@@ -103,9 +96,7 @@ export function ConversationList({
                           <span className="mr-1 text-primary">✓✓</span>
                         )}
                         {it.lastReadState.kind === 'count' && (
-                          <span className="mr-1 text-primary">
-                            {it.lastReadState.count} 已读
-                          </span>
+                          <span className="mr-1 text-primary">{it.lastReadState.count} 已读</span>
                         )}
                         {it.preview}
                       </span>
@@ -168,9 +159,7 @@ export function ConversationList({
                         <span
                           className={cn(
                             'shrink-0 text-[11px]',
-                            user.online
-                              ? 'text-success'
-                              : 'text-muted-foreground/70',
+                            user.online ? 'text-success' : 'text-muted-foreground/70',
                           )}
                         >
                           {user.online ? '在线' : '离线'}

@@ -53,8 +53,6 @@ const fallback = {
   onAppUpdateProgress: () => noop,
 } as unknown as ShareGptApi
 
-export const api: ShareGptApi =
-  typeof window !== 'undefined' && window.api ? window.api : fallback
+export const api: ShareGptApi = typeof window !== 'undefined' && window.api ? window.api : fallback
 
-export const hasNativeBridge =
-  typeof window !== 'undefined' && Boolean(window.api)
+export const hasNativeBridge = typeof window !== 'undefined' && Boolean(window.api)

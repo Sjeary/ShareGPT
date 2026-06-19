@@ -82,9 +82,14 @@
                     <label><span>用户名</span><input id="newUserUsername" /></label>
                     <label><span>显示名</span><input id="newUserDisplayName" /></label>
                     <label><span>密码</span><input id="newUserPassword" type="password" /></label>
-                    <label><span>头像</span><input id="newUserAvatar" placeholder="可选，单个字符或 emoji" /></label>
+                    <label
+                      ><span>头像</span
+                      ><input id="newUserAvatar" placeholder="可选，单个字符或 emoji"
+                    /></label>
                   </div>
-                  <label class="check-row"><input id="newUserIsAdmin" type="checkbox" /> 赋予管理员权限</label>
+                  <label class="check-row"
+                    ><input id="newUserIsAdmin" type="checkbox" /> 赋予管理员权限</label
+                  >
                   <label><span>简介</span><textarea id="newUserBio" rows="3"></textarea></label>
                   <div class="actions">
                     <button class="primary" id="btnCreateUser">创建用户</button>
@@ -102,13 +107,20 @@
                   <div class="form-grid">
                     <label><span>用户名</span><input id="editUserUsername" disabled /></label>
                     <label><span>显示名</span><input id="editUserDisplayName" /></label>
-                    <label><span>重设密码</span><input id="editUserPassword" type="password" placeholder="留空则不修改" /></label>
+                    <label
+                      ><span>重设密码</span
+                      ><input id="editUserPassword" type="password" placeholder="留空则不修改"
+                    /></label>
                     <label><span>头像</span><input id="editUserAvatar" /></label>
                   </div>
                   <label><span>简介</span><textarea id="editUserBio" rows="3"></textarea></label>
                   <div class="form-grid two-checks">
-                    <label class="check-row"><input id="editUserIsAdmin" type="checkbox" /> 管理员</label>
-                    <label class="check-row"><input id="editUserDisabled" type="checkbox" /> 禁用账号</label>
+                    <label class="check-row"
+                      ><input id="editUserIsAdmin" type="checkbox" /> 管理员</label
+                    >
+                    <label class="check-row"
+                      ><input id="editUserDisabled" type="checkbox" /> 禁用账号</label
+                    >
                   </div>
                   <div class="actions">
                     <button class="primary" id="btnSaveUser">保存用户</button>
@@ -138,9 +150,14 @@
                     <label><span>连接身份码</span><input id="bootstrapProxyUuid" /></label>
                     <label><span>本地代理端口</span><input id="bootstrapSocksPort" /></label>
                     <label><span>其他网站访问方式</span><input id="bootstrapFallbackMode" /></label>
-                    <label><span>已有代理端口</span><input id="bootstrapFallbackLocalPort" /></label>
+                    <label
+                      ><span>已有代理端口</span><input id="bootstrapFallbackLocalPort"
+                    /></label>
                   </div>
-                  <label><span>固定目标域名</span><textarea id="bootstrapTargetDomains" rows="6"></textarea></label>
+                  <label
+                    ><span>固定目标域名</span
+                    ><textarea id="bootstrapTargetDomains" rows="6"></textarea>
+                  </label>
                   <div class="actions">
                     <button class="primary" id="btnSaveBootstrap">保存 Sender 默认配置</button>
                   </div>
@@ -162,10 +179,14 @@
                 <article class="card">
                   <h3>发布信息</h3>
                   <div class="form-grid">
-                    <label><span>版本号</span><input id="releaseVersion" placeholder="例如 4.1.0" /></label>
+                    <label
+                      ><span>版本号</span><input id="releaseVersion" placeholder="例如 4.1.0"
+                    /></label>
                     <label><span>发布时间</span><input id="releasePublishedAt" disabled /></label>
                   </div>
-                  <label><span>更新说明</span><textarea id="releaseNotes" rows="5"></textarea></label>
+                  <label
+                    ><span>更新说明</span><textarea id="releaseNotes" rows="5"></textarea>
+                  </label>
                 </article>
 
                 <article class="card">
@@ -224,12 +245,17 @@
               <div class="panel-header">
                 <div>
                   <h2>备用配置</h2>
-                  <p>预留给后续功能扩展。这里保存的是服务端 `client_bootstrap.json` 里的 `extra` 对象。</p>
+                  <p>
+                    预留给后续功能扩展。这里保存的是服务端 `client_bootstrap.json` 里的 `extra`
+                    对象。
+                  </p>
                 </div>
               </div>
 
               <article class="card">
-                <label><span>额外 JSON</span><textarea id="extraJsonInput" rows="18"></textarea></label>
+                <label
+                  ><span>额外 JSON</span><textarea id="extraJsonInput" rows="18"></textarea>
+                </label>
                 <div class="actions">
                   <button class="primary" id="btnSaveExtras">保存备用配置</button>
                 </div>

@@ -2,13 +2,7 @@ import { buildPieSegments, conicGradient, type StatsEntry } from './helpers'
 
 // 环形图: 用内联 conic-gradient 画饼, 中间挖空成环 (不引第三方图表库)。
 // 对应旧版 renderGptStats 的 #gptPieChart / #gptPieCenter。
-export function PieChart({
-  entries,
-  total,
-}: {
-  entries: StatsEntry[]
-  total: number
-}) {
+export function PieChart({ entries, total }: { entries: StatsEntry[]; total: number }) {
   const segments = buildPieSegments(entries, total)
   const hasData = segments.length > 0 && total > 0
   const centerText = hasData ? `${total}` : '—'

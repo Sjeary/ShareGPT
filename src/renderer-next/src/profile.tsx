@@ -83,10 +83,13 @@ function ProfileApp() {
 
   // 头像取首字; 与主窗 settings.ui.theme 对齐主题。
   useEffect(() => {
-    api?.loadSettings?.().then((s) => {
-      const theme = (s as { ui?: { theme?: string } })?.ui?.theme
-      document.documentElement.classList.toggle('dark', safeText(theme).toLowerCase() !== 'light')
-    }).catch(() => {})
+    api
+      ?.loadSettings?.()
+      .then((s) => {
+        const theme = (s as { ui?: { theme?: string } })?.ui?.theme
+        document.documentElement.classList.toggle('dark', safeText(theme).toLowerCase() !== 'light')
+      })
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -131,7 +134,13 @@ function ProfileApp() {
       })
       if (!resp.ok) throw new Error((await resp.text()) || `保存失败（${resp.status}）`)
       const payload = await resp.json()
-      const profile = payload?.profile ?? { username, displayName: dn, bio: b, avatar: av, avatarKind: 'emoji' }
+      const profile = payload?.profile ?? {
+        username,
+        displayName: dn,
+        bio: b,
+        avatar: av,
+        avatarKind: 'emoji',
+      }
       api?.emitProfileUpdated?.({ profile })
       toast.success('资料已保存')
     } catch (e) {
@@ -248,7 +257,11 @@ function ProfileApp() {
           <Button variant="ghost" onClick={() => api?.closeWindow?.()}>
             关闭
           </Button>
-          <Button onClick={() => void handleSave()} disabled={!loaded || saving} className={cn(saving && 'opacity-80')}>
+          <Button
+            onClick={() => void handleSave()}
+            disabled={!loaded || saving}
+            className={cn(saving && 'opacity-80')}
+          >
             <Save className="size-4" />
             {saving ? '保存中…' : '保存更改'}
           </Button>

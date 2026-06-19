@@ -13,7 +13,9 @@ export function ComingSoonPanel({ navKey }: { navKey: NavKey }) {
             <Icon className="size-6" />
           </div>
           <h2 className="text-lg font-semibold">{item.label}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">此面板将于后续迭代按 Telegram 式重建。</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            此面板将于后续迭代按 Telegram 式重建。
+          </p>
         </div>
       </div>
     </PanelScaffold>

@@ -34,16 +34,8 @@ export function formatSmartTime(ts: string): string {
   const d = new Date(ts)
   if (Number.isNaN(d.getTime())) return ''
   const now = new Date()
-  const startOfToday = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  ).getTime()
-  const startOfTarget = new Date(
-    d.getFullYear(),
-    d.getMonth(),
-    d.getDate(),
-  ).getTime()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const startOfTarget = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
   const diffDays = Math.round((startOfToday - startOfTarget) / 86400000)
   const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   if (diffDays === 0) return time
@@ -59,16 +51,8 @@ export function formatDateLabel(ts: string): string {
   const d = new Date(ts)
   if (Number.isNaN(d.getTime())) return '今天'
   const now = new Date()
-  const startOfToday = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  ).getTime()
-  const startOfTarget = new Date(
-    d.getFullYear(),
-    d.getMonth(),
-    d.getDate(),
-  ).getTime()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const startOfTarget = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
   const diffDays = Math.round((startOfToday - startOfTarget) / 86400000)
   if (diffDays === 0) return '今天'
   if (diffDays === 1) return '昨天'
@@ -113,7 +97,6 @@ export function messagePreview(message: ChatMessage): string {
 export function formatBytes(value: number): string {
   const size = Math.max(0, Number(value) || 0)
   if (size < 1024) return `${size} B`
-  if (size < 1024 * 1024)
-    return `${(size / 1024).toFixed(size >= 10 * 1024 ? 0 : 1)} KB`
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size >= 10 * 1024 ? 0 : 1)} KB`
   return `${(size / (1024 * 1024)).toFixed(size >= 10 * 1024 * 1024 ? 0 : 1)} MB`
 }

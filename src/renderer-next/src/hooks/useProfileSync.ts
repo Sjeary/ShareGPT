@@ -26,9 +26,7 @@ export function useProfileSync() {
       const incoming = payload.profile ?? {}
 
       const currentUsername =
-        useAuthStore.getState().profile?.username ||
-        useChatStore.getState().identity.username ||
-        ''
+        useAuthStore.getState().profile?.username || useChatStore.getState().identity.username || ''
       const username = safeText(incoming.username) || currentUsername
       // 仅同步当前账号的资料 (旧 handleProfileUpdated: username === state.collab.username)。
       if (!username || username !== currentUsername) return

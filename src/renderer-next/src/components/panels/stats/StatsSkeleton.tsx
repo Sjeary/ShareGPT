@@ -10,9 +10,7 @@ export function StatsSkeleton() {
       <div className="grid gap-4 sm:grid-cols-2">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              总查询数
-            </CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">总查询数</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="h-9 w-24 rounded bg-muted" />
@@ -20,9 +18,7 @@ export function StatsSkeleton() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">
-              参与人数
-            </CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">参与人数</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="h-9 w-20 rounded bg-muted" />
@@ -47,10 +43,7 @@ export function StatsSkeleton() {
               <li key={index} className="flex flex-col gap-1.5">
                 <div className="flex items-center gap-2.5">
                   <span className="size-2.5 shrink-0 rounded-full bg-muted" />
-                  <span
-                    className="h-3.5 rounded bg-muted"
-                    style={{ width: `${width}%` }}
-                  />
+                  <span className="h-3.5 rounded bg-muted" style={{ width: `${width}%` }} />
                 </div>
                 <div className="ml-5 h-1.5 overflow-hidden rounded-full bg-muted">
                   <div

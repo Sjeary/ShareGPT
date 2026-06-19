@@ -3,10 +3,7 @@ import { Titlebar } from './Titlebar'
 import { Sidebar } from './Sidebar'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
-import {
-  privateConversationKey,
-  useChatStore,
-} from '@/store/useChatStore'
+import { privateConversationKey, useChatStore } from '@/store/useChatStore'
 import { useLogStream } from '@/components/panels/logs/useLogStream'
 import { ServicePanel } from '@/components/panels/ServicePanel'
 import { ChatPanel } from '@/components/panels/ChatPanel'
@@ -38,9 +35,7 @@ function safeText(value: unknown): string {
 function focusMessageById(messageId: string): void {
   const id = safeText(messageId)
   if (!id) return
-  const row = document.querySelector<HTMLElement>(
-    `[data-message-id="${CSS.escape(id)}"]`,
-  )
+  const row = document.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`)
   if (!row) return
   row.scrollIntoView({ block: 'center', behavior: 'smooth' })
   row.classList.add('chat-item-targeted')
@@ -93,8 +88,7 @@ export function Shell() {
       <Titlebar />
       <div
         className={
-          'flex min-h-0 flex-1 ' +
-          (sidebarSide === 'right' ? 'flex-row-reverse' : 'flex-row')
+          'flex min-h-0 flex-1 ' + (sidebarSide === 'right' ? 'flex-row-reverse' : 'flex-row')
         }
       >
         <Sidebar hidden={hideSidebar} />

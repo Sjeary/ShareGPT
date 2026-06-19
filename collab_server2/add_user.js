@@ -37,7 +37,9 @@ function upsertUser(username, password, avatar, isAdmin = false) {
   const store = loadUsers();
   const normalized = String(username || "").trim();
   const pwd = String(password || "");
-  const avatarText = String(avatar || "").trim().slice(0, 64);
+  const avatarText = String(avatar || "")
+    .trim()
+    .slice(0, 64);
 
   if (!normalized) {
     throw new Error("用户名不能为空");

@@ -68,7 +68,9 @@ export function ProxyMissingPanel() {
                 <Badge variant="outline">{item.count} 次</Badge>
                 <Badge variant="outline">{item.reporters?.length || 0} 人</Badge>
                 {item.versions?.length > 0 && (
-                  <span className="text-xs text-muted-foreground">v{item.versions.join(' / ')}</span>
+                  <span className="text-xs text-muted-foreground">
+                    v{item.versions.join(' / ')}
+                  </span>
                 )}
                 <span className="ml-auto text-xs text-muted-foreground">
                   最近 {formatTime(item.lastSeen)}

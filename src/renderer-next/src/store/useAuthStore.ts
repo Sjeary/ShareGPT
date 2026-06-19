@@ -39,8 +39,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   runtimePassword: '',
   updateInfo: null,
 
-  setSession: ({ token, profile, password }) =>
-    set({ token, profile, runtimePassword: password }),
+  setSession: ({ token, profile, password }) => set({ token, profile, runtimePassword: password }),
 
   setUpdateInfo: (update) => set({ updateInfo: update }),
 

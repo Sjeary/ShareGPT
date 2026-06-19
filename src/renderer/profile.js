@@ -110,7 +110,9 @@ async function loadProfile() {
   };
 
   if (q("p_server_scope")) {
-    q("p_server_scope").textContent = safeText(payload?.roomScope) ? `当前房间：${safeText(payload.roomScope)}` : "当前房间：-";
+    q("p_server_scope").textContent = safeText(payload?.roomScope)
+      ? `当前房间：${safeText(payload.roomScope)}`
+      : "当前房间：-";
   }
 
   if (q("p_username")) q("p_username").value = pageState.profile.username;
@@ -257,5 +259,3 @@ async function init() {
 init().catch((err) => {
   setStateText(`页面打开失败：${err.message || err}`);
 });
-
-

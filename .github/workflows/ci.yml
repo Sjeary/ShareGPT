@@ -50,3 +50,9 @@ jobs:
 
       - name: 单元测试 (collab_server2)
         run: npm test
+
+      - name: 格式检查 (prettier)
+        run: npm run format:check
+
+      - name: 代码规范检查 (eslint — Node 端)
+        run: npm run lint

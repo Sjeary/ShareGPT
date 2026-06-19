@@ -1,10 +1,5 @@
 import { ChevronLeft } from 'lucide-react'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { NAV } from '@/lib/nav'
 import { useAppStore } from '@/store/useAppStore'
@@ -123,9 +118,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
           <span
             className={cn(
               'overflow-hidden whitespace-nowrap text-left text-sm transition-all duration-200',
-              collapsed
-                ? 'w-0 flex-none pointer-events-none opacity-0'
-                : 'flex-1 opacity-100',
+              collapsed ? 'w-0 flex-none pointer-events-none opacity-0' : 'flex-1 opacity-100',
             )}
           >
             收起侧栏
@@ -141,9 +134,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
           <div className="whitespace-nowrap font-medium text-foreground">
             {(meta?.productName as string) || 'ShareGPT'}
           </div>
-          <div className="whitespace-nowrap">
-            v{(meta?.version as string) || '5.4.1'} · 新界面
-          </div>
+          <div className="whitespace-nowrap">v{(meta?.version as string) || '5.4.1'} · 新界面</div>
         </div>
       </aside>
     </TooltipProvider>

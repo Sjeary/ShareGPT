@@ -31,18 +31,11 @@ export function LogToolbar({
       {/* 来源过滤: 仅当出现过多个来源时显示 */}
       {sources.length > 1 && (
         <div className="flex flex-wrap items-center gap-1">
-          <FilterChip
-            active={activeSource === null}
-            onClick={() => onSourceChange(null)}
-          >
+          <FilterChip active={activeSource === null} onClick={() => onSourceChange(null)}>
             全部
           </FilterChip>
           {sources.map((src) => (
-            <FilterChip
-              key={src}
-              active={activeSource === src}
-              onClick={() => onSourceChange(src)}
-            >
+            <FilterChip key={src} active={activeSource === src} onClick={() => onSourceChange(src)}>
               {sourceLabelOf(src)}
             </FilterChip>
           ))}
@@ -50,9 +43,7 @@ export function LogToolbar({
       )}
 
       <span className="ml-auto text-xs text-muted-foreground tabular-nums">
-        {activeSource === null
-          ? `${count} 行`
-          : `${filteredCount} / ${count} 行`}
+        {activeSource === null ? `${count} 行` : `${filteredCount} / ${count} 行`}
       </span>
 
       <Button

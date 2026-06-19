@@ -25,9 +25,7 @@ function CtlButton({
         // 紧凑标题栏: 用 ring-1 ring-inset 焦点环, 命中区 size-9 略加宽降误触。
         'grid size-9 place-items-center rounded-md text-muted-foreground transition hover:text-foreground',
         'outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring',
-        danger
-          ? 'hover:bg-destructive hover:text-destructive-foreground'
-          : 'hover:bg-secondary',
+        danger ? 'hover:bg-destructive hover:text-destructive-foreground' : 'hover:bg-secondary',
       )}
     >
       {children}

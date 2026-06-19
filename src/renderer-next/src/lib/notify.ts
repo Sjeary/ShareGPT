@@ -26,8 +26,7 @@ export function playNotificationTone(): void {
   try {
     const Ctor =
       window.AudioContext ||
-      (window as unknown as { webkitAudioContext?: typeof AudioContext })
-        .webkitAudioContext
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     if (!Ctor) return
     const context = new Ctor()
     const oscillator = context.createOscillator()

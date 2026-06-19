@@ -1,9 +1,5 @@
 import { create } from 'zustand'
-import {
-  MAX_LOG_ENTRIES,
-  sourceLabelOf,
-  type LogEntry,
-} from '@/components/panels/logs/types'
+import { MAX_LOG_ENTRIES, sourceLabelOf, type LogEntry } from '@/components/panels/logs/types'
 
 // 全局运行日志 store。
 // 动机 (修复指令 [MEDIUM]): 日志采集需全局化, 早期/后台产生的日志不能因为
@@ -28,10 +24,7 @@ export const useLogStore = create<LogState>((set) => ({
       const next = state.entries.concat(rows)
       // 容量裁剪: 仅保留最近 MAX_LOG_ENTRIES 行。
       return {
-        entries:
-          next.length > MAX_LOG_ENTRIES
-            ? next.slice(next.length - MAX_LOG_ENTRIES)
-            : next,
+        entries: next.length > MAX_LOG_ENTRIES ? next.slice(next.length - MAX_LOG_ENTRIES) : next,
       }
     })
   },

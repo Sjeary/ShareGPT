@@ -35,9 +35,7 @@ function LoginUpdateBanner() {
   const current = String(meta.version || '')
   const latest = info?.version || ''
   const downloadUrl = info?.url || info?.htmlUrl || ''
-  const hasNew = Boolean(
-    latest && current && downloadUrl && compareVersions(latest, current) > 0,
-  )
+  const hasNew = Boolean(latest && current && downloadUrl && compareVersions(latest, current) > 0)
   const isDismissed = Array.isArray(dismissed) && dismissed.includes(latest)
   if (!hasNew || isDismissed) return null
 
@@ -106,8 +104,7 @@ export function LoginForm() {
   const passwordRef = useRef<HTMLInputElement>(null)
 
   function focusField(field: ErrorField, select = false) {
-    const ref =
-      field === 'server' ? serverRef : field === 'username' ? usernameRef : passwordRef
+    const ref = field === 'server' ? serverRef : field === 'username' ? usernameRef : passwordRef
     window.setTimeout(() => {
       ref.current?.focus()
       if (select) ref.current?.select()
@@ -251,9 +248,7 @@ export function LoginForm() {
           <Separator className="my-4" />
 
           <div className="grid gap-2">
-            <p className="text-xs text-muted-foreground">
-              从备份文件恢复本机配置或资料包
-            </p>
+            <p className="text-xs text-muted-foreground">从备份文件恢复本机配置或资料包</p>
             <ImportActions />
           </div>
         </CardContent>

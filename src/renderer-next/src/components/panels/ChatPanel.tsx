@@ -2,16 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAppStore } from '@/store/useAppStore'
-import {
-  privateConversationKey,
-  storeKeyForActive,
-  useChatStore,
-} from '@/store/useChatStore'
-import type {
-  ChatAttachment,
-  ChatForwardDraft,
-  ChatMessage,
-} from '@/store/useChatStore'
+import { privateConversationKey, storeKeyForActive, useChatStore } from '@/store/useChatStore'
+import type { ChatAttachment, ChatForwardDraft, ChatMessage } from '@/store/useChatStore'
 import type { CollabSettings } from '@/types/settings'
 import { useChat } from '@/hooks/useChat'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -20,16 +12,8 @@ import { ConversationList } from './chat/ConversationList'
 import { MessageBubble, type MessageActions } from './chat/MessageBubble'
 import { Composer } from './chat/Composer'
 import { ImageLightbox, type LightboxTarget } from './chat/ImageLightbox'
-import {
-  activeConversationMessages,
-  buildConversations,
-} from './chat/conversations'
-import {
-  avatarMark,
-  formatDateLabel,
-  isSameDay,
-  messagePreview,
-} from './chat/format'
+import { activeConversationMessages, buildConversations } from './chat/conversations'
+import { avatarMark, formatDateLabel, isSameDay, messagePreview } from './chat/format'
 
 // 由消息派生回复草稿 (旧 createReplyDraftFromMessage ~394)。
 function replyDraftFromMessage(m: ChatMessage) {
@@ -57,10 +41,7 @@ function forwardDraftFromMessage(m: ChatMessage): ChatForwardDraft | null {
 }
 
 // 找当前会话内自己最后一条可编辑消息 (旧 findLastOwnEditableMessage ~4857)。
-function findLastOwnEditableMessage(
-  messages: ChatMessage[],
-  self: string,
-): ChatMessage | null {
+function findLastOwnEditableMessage(messages: ChatMessage[], self: string): ChatMessage | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const m = messages[i]
     if (m.system || m.recalled) continue
@@ -103,10 +84,7 @@ export function ChatPanel() {
   const clearUnread = useChatStore((s) => s.clearUnread)
 
   const collab = (settings?.collab ?? {}) as Partial<CollabSettings>
-  const pinned = useMemo(
-    () => new Set(collab.pinned_users ?? []),
-    [collab.pinned_users],
-  )
+  const pinned = useMemo(() => new Set(collab.pinned_users ?? []), [collab.pinned_users])
 
   // 图片灯箱 (旧 openChatImageLightbox ~4975)。
   const [lightbox, setLightbox] = useState<LightboxTarget | null>(null)
@@ -191,8 +169,7 @@ export function ChatPanel() {
   }, [messages])
 
   const online = connection === 'online'
-  const scope: 'subnet' | 'private' =
-    activeConversation?.kind === 'private' ? 'private' : 'subnet'
+  const scope: 'subnet' | 'private' = activeConversation?.kind === 'private' ? 'private' : 'subnet'
 
   // 切换会话时清空草稿 (旧逻辑: 切换联系人会重置输入意图)。
   useEffect(() => {
@@ -246,10 +223,7 @@ export function ChatPanel() {
     [memberDirectory],
   )
   const chattedUsernames = useMemo(
-    () =>
-      new Set(
-        conversations.filter((c) => c.kind === 'private').map((c) => c.username),
-      ),
+    () => new Set(conversations.filter((c) => c.kind === 'private').map((c) => c.username)),
     [conversations],
   )
   const contacts = useMemo(() => {
@@ -384,24 +358,14 @@ export function ChatPanel() {
             <>
               <Avatar size="default">
                 <AvatarFallback
-                  className={cn(
-                    activeConversation.kind === 'room' &&
-                      'bg-primary/15 text-primary',
-                  )}
+                  className={cn(activeConversation.kind === 'room' && 'bg-primary/15 text-primary')}
                 >
-                  {avatarMark(
-                    activeConversation.avatar,
-                    activeConversation.title,
-                  )}
+                  {avatarMark(activeConversation.avatar, activeConversation.title)}
                 </AvatarFallback>
               </Avatar>
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold">
-                  {activeConversation.title}
-                </div>
-                <div className="truncate text-xs text-muted-foreground">
-                  {subtitle}
-                </div>
+                <div className="truncate text-sm font-semibold">{activeConversation.title}</div>
+                <div className="truncate text-xs text-muted-foreground">{subtitle}</div>
               </div>
               {/* 右上仅在「与协作服务器的连接」异常时提示; 正常连接不显示, 避免被误解为对方在线。
                   对话方/房间的真实在线状态见标题下方副标题。 */}
@@ -433,10 +397,7 @@ export function ChatPanel() {
         </div>
 
         {/* 消息滚动区 */}
-        <div
-          ref={scrollRef}
-          className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
-        >
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
           {messages.length === 0 ? (
             <div className="grid h-full place-items-center text-center text-sm text-muted-foreground">
               <div className="flex flex-col items-center gap-2">
@@ -450,16 +411,10 @@ export function ChatPanel() {
             <div className="selectable flex flex-col gap-1.5">
               {messages.map((message, i) => {
                 const prev = i > 0 ? messages[i - 1] : null
-                const showDate =
-                  !prev || !isSameDay(prev.timestamp, message.timestamp)
-                const mine =
-                  !message.system && message.from === selfUsername
+                const showDate = !prev || !isSameDay(prev.timestamp, message.timestamp)
+                const mine = !message.system && message.from === selfUsername
                 const showAvatar =
-                  !mine &&
-                  (!prev ||
-                    prev.system ||
-                    prev.from !== message.from ||
-                    showDate)
+                  !mine && (!prev || prev.system || prev.from !== message.from || showDate)
                 return (
                   <div key={message.id || `${message.timestamp}-${i}`}>
                     {showDate && (
@@ -513,9 +468,7 @@ export function ChatPanel() {
   )
 }
 
-function connectionLabel(
-  state: ReturnType<typeof useChatStore.getState>['connection'],
-): string {
+function connectionLabel(state: ReturnType<typeof useChatStore.getState>['connection']): string {
   switch (state) {
     case 'online':
       return '在线'

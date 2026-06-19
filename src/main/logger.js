@@ -50,7 +50,8 @@ function write(level, scope, args) {
   if ((LEVELS[level] ?? LEVELS.info) > currentLevel) return;
   const ts = new Date().toISOString();
   const line = `${ts} [${level.toUpperCase()}] [${scope}] ${args.map(format).join(" ")}`;
-  const consoleFn = level === "error" ? console.error : level === "warn" ? console.warn : console.log;
+  const consoleFn =
+    level === "error" ? console.error : level === "warn" ? console.warn : console.log;
   consoleFn(line);
   if (logFilePath) {
     try {

@@ -1,0 +1,14 @@
+{
+  "printWidth": 100,
+  "singleQuote": false,
+  "semi": true,
+  "overrides": [
+    {
+      "files": ["src/renderer-next/**", "admin_console/ui/**"],
+      "options": {
+        "singleQuote": true,
+        "semi": false
+      }
+    }
+  ]
+}

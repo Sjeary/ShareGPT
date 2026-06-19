@@ -139,9 +139,7 @@ export function hasMessageContent(m: ChatMessage): boolean {
 
 // 从本地历史 payload (window.api.loadChatHistory) 提取并规范会话表。
 // payload 结构: { version, conversations: { [key]: rawMessage[] } }
-export function hydrateConversations(
-  payload: unknown,
-): Record<string, ChatMessage[]> {
+export function hydrateConversations(payload: unknown): Record<string, ChatMessage[]> {
   const out: Record<string, ChatMessage[]> = {}
   const conversations =
     payload && typeof payload === 'object'
@@ -149,23 +147,20 @@ export function hydrateConversations(
       : null
   if (!conversations || typeof conversations !== 'object') return out
 
-  for (const [key, rawItems] of Object.entries(
-    conversations as Record<string, unknown>,
-  )) {
+  for (const [key, rawItems] of Object.entries(conversations as Record<string, unknown>)) {
     const k = s(key)
     if (!k || !Array.isArray(rawItems)) continue
-    const items = rawItems
-      .map((x) => normalizeChatMessage(x))
-      .filter(hasMessageContent)
+    const items = rawItems.map((x) => normalizeChatMessage(x)).filter(hasMessageContent)
     if (items.length) out[k] = items.slice(-300)
   }
   return out
 }
 
 // 序列化回本地持久化格式 (window.api.saveChatHistory)。
-export function serializeConversations(
-  conversations: Record<string, ChatMessage[]>,
-): { version: number; conversations: Record<string, ChatMessage[]> } {
+export function serializeConversations(conversations: Record<string, ChatMessage[]>): {
+  version: number
+  conversations: Record<string, ChatMessage[]>
+} {
   const out: Record<string, ChatMessage[]> = {}
   for (const [key, items] of Object.entries(conversations)) {
     if (items?.length) out[key] = items

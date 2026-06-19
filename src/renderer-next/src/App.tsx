@@ -25,7 +25,9 @@ export default function App() {
     if (!version || settings.ui?.last_version === version) return
     const patch = useAppStore.getState().patchSection
     const auto = settings.sender?.auto_domains ?? []
-    const defaults = DEFAULT_TARGET_DOMAINS.split(',').map((s) => s.trim()).filter(Boolean)
+    const defaults = DEFAULT_TARGET_DOMAINS.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
     const covered = (d: string) => defaults.some((s) => d === s || d.endsWith('.' + s))
     const pruned = auto.filter((d) => !covered(d))
     void patch('ui', { last_version: version })

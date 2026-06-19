@@ -87,9 +87,7 @@ export function normalizeBootstrapPayload(raw: unknown): BootstrapPayload {
       : {}
   const platformRaw = update[currentUpdatePlatformKey()]
   const platformUpdate =
-    platformRaw && typeof platformRaw === 'object'
-      ? (platformRaw as Record<string, unknown>)
-      : {}
+    platformRaw && typeof platformRaw === 'object' ? (platformRaw as Record<string, unknown>) : {}
 
   const airportRaw =
     payload.airport && typeof payload.airport === 'object'
@@ -101,7 +99,9 @@ export function normalizeBootstrapPayload(raw: unknown): BootstrapPayload {
       : null
 
   return {
-    airport: airportOutbound ? { name: safeText(airportRaw?.name), outbound: airportOutbound } : null,
+    airport: airportOutbound
+      ? { name: safeText(airportRaw?.name), outbound: airportOutbound }
+      : null,
     sender: {
       proxy_server: safeText(sender.proxy_server),
       proxy_port: safeText(sender.proxy_port),
@@ -122,7 +122,9 @@ export function normalizeBootstrapPayload(raw: unknown): BootstrapPayload {
 }
 
 // 旧 hasCompleteSenderBootstrap(~2762): proxy_server/port/uuid 三者齐全才算"已配置发送端"。
-export function hasCompleteSenderBootstrap(sender: Partial<BootstrapSender> | undefined | null): boolean {
+export function hasCompleteSenderBootstrap(
+  sender: Partial<BootstrapSender> | undefined | null,
+): boolean {
   return Boolean(
     safeText(sender?.proxy_server) && safeText(sender?.proxy_port) && safeText(sender?.proxy_uuid),
   )
@@ -130,8 +132,12 @@ export function hasCompleteSenderBootstrap(sender: Partial<BootstrapSender> | un
 
 // 旧 compareVersions(~212): 逐段比较点分版本号, 返回 1 / -1 / 0。
 export function compareVersions(left: string, right: string): number {
-  const leftParts = String(left || '').split('.').map((item) => Number.parseInt(item, 10) || 0)
-  const rightParts = String(right || '').split('.').map((item) => Number.parseInt(item, 10) || 0)
+  const leftParts = String(left || '')
+    .split('.')
+    .map((item) => Number.parseInt(item, 10) || 0)
+  const rightParts = String(right || '')
+    .split('.')
+    .map((item) => Number.parseInt(item, 10) || 0)
   const length = Math.max(leftParts.length, rightParts.length)
   for (let index = 0; index < length; index += 1) {
     const a = leftParts[index] || 0

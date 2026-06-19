@@ -76,11 +76,7 @@ interface AdminState {
   // 动作
   init: () => Promise<void>
   login: (serverUrl: string, username: string, password: string) => Promise<void>
-  setupFirstAdmin: (
-    serverUrl: string,
-    username: string,
-    password: string,
-  ) => Promise<void>
+  setupFirstAdmin: (serverUrl: string, username: string, password: string) => Promise<void>
   logout: () => Promise<void>
   loadUsers: (opts?: { silent?: boolean }) => Promise<void>
   createUser: (input: CreateUserInput) => Promise<AdminUser | null>
@@ -223,7 +219,10 @@ export const useAdminStore = create<AdminState>((set, get) => {
           role: 'admin',
         })
         await adminApi.savePrefs({ serverUrl: base, username })
-        await Promise.all([get().loadUsers({ silent: true }), get().loadBootstrap({ silent: true })])
+        await Promise.all([
+          get().loadUsers({ silent: true }),
+          get().loadBootstrap({ silent: true }),
+        ])
       } finally {
         set({ busy: false })
       }
@@ -256,7 +255,10 @@ export const useAdminStore = create<AdminState>((set, get) => {
           role: 'admin',
         })
         await adminApi.savePrefs({ serverUrl: base, username })
-        await Promise.all([get().loadUsers({ silent: true }), get().loadBootstrap({ silent: true })])
+        await Promise.all([
+          get().loadUsers({ silent: true }),
+          get().loadBootstrap({ silent: true }),
+        ])
         toast.success('管理员已初始化，可以直接开始管理服务器。')
       } finally {
         set({ busy: false })

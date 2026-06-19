@@ -246,9 +246,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     async (forceReload = false) => {
       if (!senderRunning) return
       const store = useAiStore.getState()
-      const tab = store.tabsByKind[kind].find(
-        (item) => item.id === store.activeTabIdByKind[kind],
-      )
+      const tab = store.tabsByKind[kind].find((item) => item.id === store.activeTabIdByKind[kind])
       if (!tab) return
       const userAgent = embeddedUserAgent()
       const lastUrl = normalizeUrlFor(kind, tab.url || homeUrlFor(kind))
@@ -266,9 +264,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       if (payload && safeText(payload.tabId)) {
         useAiStore.getState().patchTab(kind, safeText(payload.tabId), {
           webviewInitialized:
-            typeof payload.initialized === 'boolean'
-              ? payload.initialized
-              : tab.webviewInitialized,
+            typeof payload.initialized === 'boolean' ? payload.initialized : tab.webviewInitialized,
           webviewLoading:
             typeof payload.loading === 'boolean' ? payload.loading : tab.webviewLoading,
         })
@@ -404,7 +400,13 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       scrollable={false}
       toolbar={
         <Badge variant="outline" className="gap-1.5">
-          <span className={view.loading ? 'size-1.5 animate-pulse rounded-full bg-primary' : 'size-1.5 rounded-full bg-muted-foreground'} />
+          <span
+            className={
+              view.loading
+                ? 'size-1.5 animate-pulse rounded-full bg-primary'
+                : 'size-1.5 rounded-full bg-muted-foreground'
+            }
+          />
           {runtimeLabel}
         </Badge>
       }
@@ -413,16 +415,44 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         {/* 控制条 */}
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="size-8" title="主页" disabled={!senderRunning} onClick={() => void goHome()}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              title="主页"
+              disabled={!senderRunning}
+              onClick={() => void goHome()}
+            >
               <Home className="size-4" />
             </Button>
-            <Button variant="ghost" size="icon" className="size-8" title="后退" disabled={!view.canGoBack} onClick={() => void navigate('back')}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              title="后退"
+              disabled={!view.canGoBack}
+              onClick={() => void navigate('back')}
+            >
               <ArrowLeft className="size-4" />
             </Button>
-            <Button variant="ghost" size="icon" className="size-8" title="前进" disabled={!view.canGoForward} onClick={() => void navigate('forward')}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              title="前进"
+              disabled={!view.canGoForward}
+              onClick={() => void navigate('forward')}
+            >
               <ArrowRight className="size-4" />
             </Button>
-            <Button variant="ghost" size="icon" className="size-8" title="刷新" disabled={!senderRunning} onClick={() => void navigate('reload')}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              title="刷新"
+              disabled={!senderRunning}
+              onClick={() => void navigate('reload')}
+            >
               <RotateCw className="size-4" />
             </Button>
           </div>
@@ -487,7 +517,11 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               title={sidebarHidden ? '显示侧栏' : '隐藏侧栏 (只看网页, 按 Esc 恢复)'}
               onClick={toggleSidebarHidden}
             >
-              {sidebarHidden ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+              {sidebarHidden ? (
+                <PanelLeftOpen className="size-4" />
+              ) : (
+                <PanelLeftClose className="size-4" />
+              )}
             </Button>
             <Button
               variant="ghost"
@@ -505,12 +539,15 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         {kind === 'claude' && !settings?.ui?.claude_notice_dismissed && (
           <div className="flex shrink-0 items-start gap-2 border-b border-amber-500/40 bg-amber-500/10 px-4 py-1.5 text-xs text-amber-700 dark:text-amber-300">
             <span className="min-w-0 flex-1">
-              如果不使用 Claude，建议不要打开/停留在此页面，以免触发潜在的网络问题。需要时再打开即可。
+              如果不使用
+              Claude，建议不要打开/停留在此页面，以免触发潜在的网络问题。需要时再打开即可。
             </span>
             <button
               type="button"
               title="关闭提示"
-              onClick={() => void useAppStore.getState().patchSection('ui', { claude_notice_dismissed: true })}
+              onClick={() =>
+                void useAppStore.getState().patchSection('ui', { claude_notice_dismissed: true })
+              }
               className="shrink-0 rounded p-0.5 text-amber-700/70 transition-colors hover:text-amber-700 dark:text-amber-300/70 dark:hover:text-amber-300"
             >
               <X className="size-3.5" />
@@ -599,7 +636,13 @@ function ProxyReportPanel({
           : `此页面流量已全部经发送代理（梯子）访问，共 ${hosts.length} 个域名。`
 
   const SummaryIcon =
-    tone === 'ok' ? ShieldCheck : tone === 'warn' ? ShieldAlert : tone === 'bad' ? ShieldX : ShieldCheck
+    tone === 'ok'
+      ? ShieldCheck
+      : tone === 'warn'
+        ? ShieldAlert
+        : tone === 'bad'
+          ? ShieldX
+          : ShieldCheck
   const summaryColor =
     tone === 'ok'
       ? 'text-emerald-600 dark:text-emerald-400'
@@ -620,8 +663,19 @@ function ProxyReportPanel({
           </Badge>
         )}
         <div className="ml-auto flex items-center gap-1">
-          <Button variant="ghost" size="icon" className="size-7" title="重新检测" disabled={checking} onClick={onRefresh}>
-            {checking ? <Loader2 className="size-4 animate-spin" /> : <RotateCw className="size-4" />}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            title="重新检测"
+            disabled={checking}
+            onClick={onRefresh}
+          >
+            {checking ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <RotateCw className="size-4" />
+            )}
           </Button>
           <Button variant="ghost" size="icon" className="size-7" title="收起" onClick={onClose}>
             <X className="size-4" />
@@ -641,13 +695,12 @@ function ProxyReportPanel({
               点下方按钮重启发送代理即可生效。
             </span>
           </div>
-          <Button
-            size="sm"
-            className="mt-2 h-7 gap-1.5"
-            disabled={applying}
-            onClick={onApply}
-          >
-            {applying ? <Loader2 className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />}
+          <Button size="sm" className="mt-2 h-7 gap-1.5" disabled={applying} onClick={onApply}>
+            {applying ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <ShieldCheck className="size-3.5" />
+            )}
             {applying ? '重启中…' : `一键加入并重启 singbox（${fallbackHosts.length}）`}
           </Button>
         </div>
@@ -704,7 +757,13 @@ function ProxyReportPanel({
 // 遮罩状态决策, 对齐旧 updateGptRuntimeState / updateGeminiRuntimeState 的 overlay 分支。
 function resolveOverlay(
   kind: AiKind,
-  args: { senderRunning: boolean; hasTab: boolean; initialized: boolean; proxyHost: string; proxyPort: string },
+  args: {
+    senderRunning: boolean
+    hasTab: boolean
+    initialized: boolean
+    proxyHost: string
+    proxyPort: string
+  },
 ): { title: string; text: string } | null {
   const { senderRunning, hasTab, initialized, proxyHost, proxyPort } = args
   const label = kind === 'gpt' ? 'ChatGPT' : kind === 'claude' ? 'Claude' : 'Gemini'
