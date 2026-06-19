@@ -11,7 +11,17 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
-import { Download, LogOut, PanelLeft, PanelRight, RefreshCw, UserCog, History } from 'lucide-react'
+import {
+  Download,
+  LogOut,
+  PanelLeft,
+  PanelRight,
+  RefreshCw,
+  UserCog,
+  History,
+  Star,
+  Github,
+} from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { compareVersions, checkGithubUpdate } from './bootstrap'
 import { CHANGELOG } from './changelog'
@@ -46,6 +56,43 @@ const NOTIFY_FIELDS: ReadonlyArray<{
   { key: 'notify_sound_play', label: '提示音', desc: '收到新消息时播放提示音', defaultOn: true },
   { key: 'notify_user_online', label: '上线提醒', desc: '有成员上线时提醒', defaultOn: false },
 ]
+
+// 仓库地址 (Star / 源码 / Issue 入口)。fork 后改这里即可。
+const REPO_URL = 'https://github.com/Sjeary/ShareGPT'
+
+// 「支持项目」区: 引导去 GitHub Star。无法替用户 star (需其本人 GitHub 授权),
+// 只能打开仓库主页由其自行点击 Star; 另给源码 / Issue 入口。
+function AboutSection() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">支持项目</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <p className="text-sm text-muted-foreground">
+          ShareGPT 是开源项目。如果它对你有帮助，欢迎到 GitHub 给个 ⭐ Star
+          支持一下，也欢迎反馈问题、参与改进。
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" onClick={() => void api.openExternal(REPO_URL)}>
+            <Star />去 GitHub 点个 Star
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => void api.openExternal(REPO_URL)}>
+            <Github />
+            源码仓库
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => void api.openExternal(`${REPO_URL}/issues`)}
+          >
+            提 Issue
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 function initialsOf(name: string): string {
   const trimmed = name.trim()
@@ -489,6 +536,7 @@ export function LoggedInView() {
       {/* 更新区 + 更新日志放最上面; 账户与其它设置放日志下面 (按需求重排)。 */}
       <UpdateSection />
       <ChangelogSection />
+      <AboutSection />
 
       {/* 账户: 改为与其它设置一致的卡片样式, 便于查找。 */}
       <Card>
