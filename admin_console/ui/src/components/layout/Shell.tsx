@@ -9,6 +9,7 @@ import { ReleasesPanel } from '@/components/panels/ReleasesPanel'
 import { ExtrasPanel } from '@/components/panels/ExtrasPanel'
 import { FeedbackPanel } from '@/components/panels/FeedbackPanel'
 import { ProxyMissingPanel } from '@/components/panels/ProxyMissingPanel'
+import { AirportPanel } from '@/components/panels/AirportPanel'
 
 const REFRESH_INTERVAL = 15000
 
@@ -31,10 +32,11 @@ export function Shell() {
       <Titlebar />
       <div className="flex min-h-0 flex-1">
         <Sidebar />
-        <main className="flex min-w-0 flex-1 flex-col">
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col">
           {active === 'overview' && <OverviewPanel />}
           {active === 'users' && <UsersPanel />}
           {active === 'bootstrap' && <BootstrapPanel />}
+          {active === 'airport' && <AirportPanel />}
           {active === 'releases' && <ReleasesPanel />}
           {active === 'feedback' && <FeedbackPanel />}
           {active === 'proxy-missing' && <ProxyMissingPanel />}

@@ -34,9 +34,16 @@ export interface BootstrapUpdate {
   fileName: string
 }
 
+// 服务器下发的机场节点 (管理端从 Clash 节点转换成 sing-box outbound)。
+export interface BootstrapAirport {
+  name: string
+  outbound: Record<string, unknown> | null
+}
+
 export interface BootstrapPayload {
   sender: BootstrapSender
   update: BootstrapUpdate
+  airport: BootstrapAirport | null
 }
 
 // 旧 currentUpdatePlatformKey(~225): darwin -> macos, 其余 -> windows。
@@ -61,7 +68,17 @@ export function normalizeBootstrapPayload(raw: unknown): BootstrapPayload {
       ? (platformRaw as Record<string, unknown>)
       : {}
 
+  const airportRaw =
+    payload.airport && typeof payload.airport === 'object'
+      ? (payload.airport as Record<string, unknown>)
+      : null
+  const airportOutbound =
+    airportRaw && airportRaw.outbound && typeof airportRaw.outbound === 'object'
+      ? (airportRaw.outbound as Record<string, unknown>)
+      : null
+
   return {
+    airport: airportOutbound ? { name: safeText(airportRaw?.name), outbound: airportOutbound } : null,
     sender: {
       proxy_server: safeText(sender.proxy_server),
       proxy_port: safeText(sender.proxy_port),

@@ -1041,9 +1041,16 @@ class Backend {
   }
 
   buildSenderConfig(sender) {
-    const proxyPort = toInt(sender.proxy_port, "公网端口");
     const listenPort = toInt(sender.socks_listen_port, "本地SOCKS监听端口");
     const fallbackMode = sender.fallback_mode === "direct" ? "direct" : "system_proxy";
+    // 代理出站方式 (可选): "unified" = 内置统一 VMess 梯子(默认); "airport" = 服务器下发的机场节点。
+    // 机场模式下 sender.airport_outbound 已是一份 sing-box outbound (由管理端从 Clash 节点转换)。
+    const proxyMode = sender.proxy_mode === "airport" ? "airport" : "unified";
+    const airportOutbound =
+      sender.airport_outbound && typeof sender.airport_outbound === "object"
+        ? sender.airport_outbound
+        : null;
+    const useAirport = proxyMode === "airport" && airportOutbound;
     // 测试用「全部流量走代理」: 除私有 IP 直连外, 所有流量(含 DNS)都走 proxy(梯子),
     // 不再只走 target_domains 清单。用于抓取页面到底访问了哪些域名 (仅管理员可开)。
     const routeAll =
@@ -1065,21 +1072,27 @@ class Backend {
     const uniqueDomains = [...new Set(domains)];
     const domainSuffix = uniqueDomains.map((d) => d.replace(/^\./, ""));
 
+    // "proxy" 出站: 机场模式用下发节点(强制 tag=proxy); 否则用统一 VMess 梯子。
+    // 两种方式都挂在 tag="proxy" 上, 路由/DNS 规则不变, 所有命中流量统一从此出站。
+    const proxyOutbound = useAirport
+      ? { ...airportOutbound, tag: "proxy" }
+      : {
+          type: "vmess",
+          tag: "proxy",
+          server: String(sender.proxy_server || "").trim(),
+          server_port: toInt(sender.proxy_port, "公网端口"),
+          uuid: String(sender.proxy_uuid || "").trim(),
+          packet_encoding: "packetaddr",
+          transport: {
+            type: "ws",
+            path: "",
+            max_early_data: 2048,
+            early_data_header_name: "Sec-WebSocket-Protocol",
+          },
+        };
+
     const outbounds = [
-      {
-        type: "vmess",
-        tag: "proxy",
-        server: String(sender.proxy_server || "").trim(),
-        server_port: proxyPort,
-        uuid: String(sender.proxy_uuid || "").trim(),
-        packet_encoding: "packetaddr",
-        transport: {
-          type: "ws",
-          path: "",
-          max_early_data: 2048,
-          early_data_header_name: "Sec-WebSocket-Protocol",
-        },
-      },
+      proxyOutbound,
       { type: "direct", tag: "direct" },
       { type: "block", tag: "block" },
       { type: "dns", tag: "dns_out" },
@@ -1093,6 +1106,15 @@ class Backend {
         server_port: toInt(sender.fallback_local_port, "本机代理端口"),
       });
     }
+
+    // 机场节点的 server 常是只在系统/本地 DNS 才能解析的特殊域名(如机场 GTM 域名),
+    // 公共 DoH(Aliyun/1.1.1.1)解析不了。这里强制用 dns_local(系统 DNS, 同 Clash 行为)解析它,
+    // 否则会出现 "DNS query loopback" 或解析失败导致整条机场链路连不上。
+    const airportServer = useAirport ? String(airportOutbound.server || "").trim() : "";
+    const airportDnsRule =
+      airportServer && /[a-zA-Z]/.test(airportServer) && !airportServer.includes(":")
+        ? [{ domain: [airportServer], server: "dns_local" }]
+        : [];
 
     const config = {
       log: { level: "info", timestamp: true },
@@ -1122,6 +1144,7 @@ class Backend {
         ],
         rules: [
           { outbound: "dns_resolver", server: "dns_resolver" },
+          ...airportDnsRule,
           { clash_mode: "direct", server: "dns_direct" },
           { clash_mode: "global", server: "dns_proxy" },
           ...(domainSuffix.length ? [{ domain_suffix: domainSuffix, server: "dns_proxy" }] : []),
@@ -1225,6 +1248,18 @@ class Backend {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
 
     this.senderProcess = this.spawnProcess("sender", singboxPath, ["run", "-c", configPath]);
+    // 运行日志标明当前代理方式, 便于观察走的是统一梯子还是下发的机场节点。
+    const useAirportLog =
+      settings.proxy_mode === "airport" && settings.airport_outbound && typeof settings.airport_outbound === "object";
+    if (useAirportLog) {
+      const ob = settings.airport_outbound;
+      this.log(
+        "sender",
+        `代理方式: 机场节点${settings.airport_name ? " · " + settings.airport_name : ""}（${ob.type || "?"} ${ob.server || ""}:${ob.server_port || ""}）`,
+      );
+    } else {
+      this.log("sender", `代理方式: 统一梯子（${settings.proxy_server || ""}:${settings.proxy_port || ""}）`);
+    }
     this.log("sender", `使用配置: ${configPath}`);
     this.emitStatus();
 

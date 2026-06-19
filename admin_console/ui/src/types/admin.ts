@@ -65,6 +65,14 @@ export type AdminTab =
   | 'extras'
   | 'feedback'
   | 'proxy-missing'
+  | 'airport'
+
+// 机场节点 (从 Clash 节点转换成 sing-box outbound, 按群下发给客户端作可选代理)。
+export interface Airport {
+  name: string
+  outbound: Record<string, unknown> | null
+  updatedAt?: string
+}
 
 // 客户端上报的"会用到但没走代理"的域名 (聚合)。供维护内置代理清单。
 export interface ProxyMissingItem {

@@ -6,6 +6,7 @@ import {
   type AdminProfile,
   type AdminTab,
   type AdminUser,
+  type Airport,
   type Bootstrap,
   type FeedbackItem,
   type ProxyMissingItem,
@@ -63,6 +64,8 @@ interface AdminState {
   feedbackLoading: boolean
   proxyMissing: ProxyMissingItem[]
   proxyMissingLoading: boolean
+  airport: Airport | null
+  airportLoading: boolean
 
   // 导航 / 偏好
   activeTab: AdminTab
@@ -87,6 +90,8 @@ interface AdminState {
   setBootstrap: (next: Bootstrap) => void
   loadFeedback: (opts?: { silent?: boolean }) => Promise<void>
   loadProxyMissing: (opts?: { silent?: boolean }) => Promise<void>
+  loadAirport: (opts?: { silent?: boolean }) => Promise<void>
+  saveAirport: (name: string, outbound: Record<string, unknown> | null) => Promise<void>
 
   // 开发者(全局发布)
   devLogin: (serverUrl: string, key: string) => Promise<void>
@@ -164,6 +169,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
     feedbackLoading: false,
     proxyMissing: [],
     proxyMissingLoading: false,
+    airport: null,
+    airportLoading: false,
 
     activeTab: 'overview',
     setActiveTab: (activeTab) => set({ activeTab }),
@@ -356,6 +363,30 @@ export const useAdminStore = create<AdminState>((set, get) => {
       } finally {
         set({ proxyMissingLoading: false })
       }
+    },
+
+    loadAirport: async (opts) => {
+      set({ airportLoading: true })
+      try {
+        const payload = await request<Airport>('/api/admin/airport')
+        set({ airport: payload && typeof payload === 'object' ? payload : null })
+      } catch (err) {
+        if (!opts?.silent && !(err instanceof AuthExpiredError)) {
+          toast.error(err instanceof Error ? err.message : String(err))
+        }
+      } finally {
+        set({ airportLoading: false })
+      }
+    },
+
+    saveAirport: async (name, outbound) => {
+      const res = await request<{ airport?: Airport }>('/api/admin/airport', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, outbound }),
+      })
+      if (res.airport) set({ airport: res.airport })
+      toast.success(outbound ? '机场节点已下发' : '机场节点已清除')
     },
 
     // ===== 开发者 (全局发布) =====
