@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { app, BrowserWindow, Notification, WebContentsView, clipboard, ipcMain, nativeTheme, session, shell } = require("electron");
 const { Backend, DEFAULT_TARGET_DOMAINS } = require("./backend");
+const appLog = require("./logger");
 
 // 记录每个 AI 会话(按 partition)实际访问过的主机名, 供「代理检测」展示页面流量去向。
 // 在 configureAiSession 内通过 webRequest 被动收集 (每个 partition 仅装一次)。
@@ -1657,6 +1658,11 @@ function createElectronApp(baseMode = "all") {
 
   app.whenReady().then(() => {
     applyStableUserDataPath(app);
+    appLog.init(app.getPath("userData"));
+    const log = appLog.scoped("main");
+    // 主进程未捕获异常兜底: 记录日志而非静默崩溃 (写入 userData/logs/main.log)。
+    process.on("uncaughtException", (err) => log.error("uncaughtException:", err));
+    process.on("unhandledRejection", (reason) => log.error("unhandledRejection:", reason));
     backend = new Backend(app, () => mainWindow, appMode);
     backend.init();
 

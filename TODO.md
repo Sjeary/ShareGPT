@@ -21,7 +21,7 @@
 - [x] **第三方二进制供应链**：新增 `build/bin/checksums.json`（固定版本 + SHA256）；`prepare-assets.mjs` 拷贝时核对，不匹配告警、构建 `--required` 时失败；`build/bin/README.md` 写明更新流程。（已实测校验通过，发现 Win/mac sing-box 版本不一致 1.11.8/1.12.17，已如实记录）
 
 ## P2 — 锦上添花
-- [ ] 崩溃上报 / 结构化日志（替代散落的 `console.warn`）。
+- [~] 崩溃上报 / 结构化日志：已加 `src/main/logger.js`（分级 + 同步落盘 `userData/logs/main.log` + 轮转，零外部上传）+ 主进程 `uncaughtException`/`unhandledRejection` 兜底（原先完全没有）。已实测。待办：把散落的 `console.warn/error` 逐步迁到 logger（大范围替换，分步做）。
 - [ ] i18n（UI 与服务端日志去中文硬编码）。
 - [x] 架构图：新增 `docs/ARCHITECTURE.md`（mermaid 三端交互 + IPC/WS/代理/更新链路 + 协议表），README 已链接。
 - [x] 仓库卫生：内部草稿（`ANDROID_CHAT_ONLY_SPEC.md`/`REFACTOR_GOALS.md`/`CROSSPLATFORM.md`）移到 `docs/dev/`；`release_sender*` 历史目录本就 gitignore。
