@@ -107,9 +107,10 @@ export function Titlebar() {
           <Cable className="size-3.5" />
         </div>
         <span className="text-sm font-semibold tracking-tight">ShareGPT</span>
-        {mode && (
+        {/* 客户端(sender)/dev(all) 不显示模式标; 仅接收端 GUI 显示「出口」以区分。 */}
+        {mode === 'receiver' && (
           <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-            {mode}
+            出口
           </span>
         )}
       </div>
