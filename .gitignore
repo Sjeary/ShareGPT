@@ -7,6 +7,7 @@ release_receiver/
 build/bin/*
 !build/bin/
 !build/bin/README.md
+!build/bin/checksums.json
 collab_server/node_modules/
 collab_server/data/
 collab_server.zip
@@ -28,3 +29,7 @@ build_mac_sender.sh
 debug-electron.js
 collab_server2/start_server_windows.bat
 build.sender.temp.json
+
+# 本地自用文档(不公开): 进度清单 + 维护/运维笔记
+TODO.md
+*.local.md

@@ -1,0 +1,24 @@
+{
+  "_note": "第三方二进制的固定版本与 SHA256 校验和。prepare-assets 在拷贝时会按当前平台核对; 不匹配会告警(构建 --required 时直接失败)。换版本/换文件时务必同步更新此处, 并从官方 release 重新核对 sha256。",
+  "sing-box": {
+    "source": "https://github.com/SagerNet/sing-box/releases",
+    "windows": {
+      "file": "sing-box.exe",
+      "version": "1.11.8",
+      "sha256": "d7df01f7640d4965a83c8d978b80f59739540ddde374404173df524cd6788ae3"
+    },
+    "macos": {
+      "file": "sing-box",
+      "version": "1.12.17",
+      "sha256": "0b3e7947b53c798adadd282e45748117a7820b21bfb10a7e1a43b46f02fac97a"
+    }
+  },
+  "frpc": {
+    "source": "https://github.com/fatedier/frp/releases",
+    "windows": {
+      "file": "frpc.exe",
+      "version": "0.65.0",
+      "sha256": "5b0846d4a5e9bcde0960b354fd819eb0011529ff23f41ad55a8717ba5c7004ac"
+    }
+  }
+}
