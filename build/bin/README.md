@@ -11,6 +11,15 @@ ShareGPT 运行代理能力时依赖以下第三方程序：
 - sing-box 官方发布页：`https://github.com/SagerNet/sing-box/releases`
 - frp 官方发布页：`https://github.com/fatedier/frp/releases`
 
+## 版本与校验和（供应链安全）
+
+固定版本与 SHA256 记录在 [`checksums.json`](checksums.json)。打包脚本 `prepare-assets.mjs` 会在拷贝时按当前平台核对：
+
+- 不匹配 → 普通运行告警；构建（`--required`）直接失败。
+- **更换二进制版本时**：从官方发布页下载、核对官方校验和后，更新 `checksums.json` 里对应平台的 `version` 与 `sha256`。
+
+当前固定版本：sing-box `windows 1.11.8` / `macos 1.12.17`，frpc `windows 0.65.0`。
+
 ## 放置方式
 
 可以把下载后的文件放到以下任一位置：

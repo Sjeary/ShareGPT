@@ -18,7 +18,7 @@
   - [x] 原子写持久化 `writeJsonAtomic`（temp + rename），替换 users/chat/usage/bootstrap 四处热写。
   - [x] 登录限流：同 IP 失败 `LOGIN_MAX_FAILS`(默认10) 次锁定 `LOGIN_LOCK_MS`(默认15min)，普通+管理员登录均覆盖，可 env 调。
   - [x] CORS 改为 `CORS_ORIGIN` 可配（默认 `*`，附说明：Bearer-token 鉴权不依赖 cookie，通配风险有限）。
-- [ ] **第三方二进制供应链**：`scripts/prepare-assets.mjs` pin 版本 + SHA256 校验 sing-box / frpc。
+- [x] **第三方二进制供应链**：新增 `build/bin/checksums.json`（固定版本 + SHA256）；`prepare-assets.mjs` 拷贝时核对，不匹配告警、构建 `--required` 时失败；`build/bin/README.md` 写明更新流程。（已实测校验通过，发现 Win/mac sing-box 版本不一致 1.11.8/1.12.17，已如实记录）
 
 ## P2 — 锦上添花
 - [ ] 崩溃上报 / 结构化日志（替代散落的 `console.warn`）。
