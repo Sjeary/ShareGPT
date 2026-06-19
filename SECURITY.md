@@ -8,11 +8,7 @@
 
 ## 如何上报
 
-请通过以下私密渠道之一报告：
-
-- **GitHub Security Advisories（推荐）**：在仓库 `Security` → `Report a vulnerability` 提交私密报告。
-- **邮件**：`security@example.com`
-  > 维护者请替换为真实邮箱；或直接启用 GitHub Security Advisories 作为唯一私密渠道。
+请通过 **GitHub 私密漏洞上报**提交：在本仓库 [`Security` → Report a vulnerability](https://github.com/Sjeary/ShareGPT/security/advisories/new) 私密提交报告。该报告**只有仓库维护者可见、不会公开**，与你日常使用的协作群无关（纯 GitHub 仓库层面的安全通道）。
 
 报告时请尽量包含：
 
