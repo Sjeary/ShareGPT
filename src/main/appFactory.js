@@ -1046,6 +1046,8 @@ function createElectronApp(baseMode = "all") {
         // 关闭后台限流 + 初始隐藏也绘制: 内嵌视图被切走/判遮挡时也不限流计时器、保持渲染,
         // 保证 Cloudflare 人机验证(Turnstile, 依赖 timer/rAF/可见性)能正常跑完, 不卡在验证页。
         backgroundThrottling: false,
+        // paintWhenInitiallyHidden 是有效的运行时 webPreferences 选项(默认 true), 但 WebContentsView 的类型未涵盖。
+        // @ts-ignore
         paintWhenInitiallyHidden: true,
       },
     });

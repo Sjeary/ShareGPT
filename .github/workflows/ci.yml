@@ -56,3 +56,6 @@ jobs:
 
       - name: 代码规范检查 (eslint — Node 端)
         run: npm run lint
+
+      - name: 主进程类型检查 (checkJs)
+        run: npm run typecheck:main

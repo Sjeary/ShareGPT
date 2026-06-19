@@ -14,7 +14,7 @@
 
 - [x] **社区文件**：已加 CONTRIBUTING.md、CODE_OF_CONDUCT.md、CHANGELOG.md（Keep a Changelog）、`.github/ISSUE_TEMPLATE/*`、PULL_REQUEST_TEMPLATE.md。
 - [x] **统一 lint/format**：`.editorconfig`+`.gitattributes` + 根 Prettier（按区匹配风格，107 文件全量格式化，纯空白/引号无语义变更）+ 根 ESLint（lint 主进程/服务端/scripts，0 error）+ `format`/`format:check`/`lint` 脚本 + 纳入 CI。已逐门槛复核（test 6/6 + 两端 tsc + node --check + format:check + lint 全绿）。
-- [ ] **主进程类型化**：`src/main/*.js` 上 `// @ts-check` + JSDoc（低风险，先做），再谨慎拆分巨石 `appFactory.js`/`backend.js`（高风险，逐步且实测）。
+- [~] **主进程类型化**：项目级 `src/main/jsconfig.json` 开启 `checkJs`（等效给全部主进程 JS 加 `@ts-check`）+ `@types/node`/electron 类型；修掉 2 个真实类型问题（`resolveJsonModule`、`paintWhenInitiallyHidden` 类型缺口以 `@ts-ignore` 保留运行时行为）；加 `typecheck:main` 脚本并纳入 CI（0 error，已实测）。巨石文件拆分（高风险）留后续专项。
 - [x] **服务端加固**（`collab_server2/server.js`，已逐项实测：启动/健康/登录成功+失败+限流/原子写）：
   - [x] `process.on('uncaughtException')` / `unhandledRejection` 兜底（记录日志、不拖垮全服务）。
   - [x] 原子写持久化 `writeJsonAtomic`（temp + rename），替换 users/chat/usage/bootstrap 四处热写。

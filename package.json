@@ -27,6 +27,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
+    "typecheck:main": "tsc -p src/main/jsconfig.json",
     "prepare:assets": "node scripts/prepare-assets.mjs all",
     "build:next": "npm --prefix src/renderer-next install && npm --prefix src/renderer-next run build",
     "dev": "node scripts/prepare-assets.mjs all && npm exec -- electron .",
@@ -47,11 +48,13 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/node": "^20.19.43",
     "electron": "^31.7.7",
     "electron-builder": "^24.13.3",
     "eslint": "^10.5.0",
     "globals": "^17.6.0",
-    "prettier": "^3.8.4"
+    "prettier": "^3.8.4",
+    "typescript": "^5.9.3"
   },
   "build": {
     "appId": "com.sjeary.sharegpt.desktop",
