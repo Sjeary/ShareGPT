@@ -57,6 +57,10 @@ export interface UiSettings {
   dismissed_update_versions: string[]
   // 上次运行的 app 版本; 版本变化时用于刷新代理自动域名 (剔除已并入内置清单的项)。
   last_version: string
+  // 「机场节点不稳定」提醒是否已点「不再提示」。
+  airport_notice_dismissed: boolean
+  // 「不用 Claude 就别打开」提醒是否已关闭。
+  claude_notice_dismissed: boolean
 }
 
 export interface AppSettings {

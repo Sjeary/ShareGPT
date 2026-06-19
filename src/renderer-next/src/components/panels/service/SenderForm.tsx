@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Play, Square, Loader2, TriangleAlert } from 'lucide-react'
+import { Play, Square, Loader2, TriangleAlert, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -179,6 +179,32 @@ export function SenderForm() {
             </div>
           </button>
         </div>
+
+        {/* 机场节点稳定性提醒: 可叉掉/不再提示 (持久化 ui.airport_notice_dismissed)。 */}
+        {!settings?.ui?.airport_notice_dismissed && (
+          <div className="relative rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 pr-8 text-xs text-amber-700 dark:text-amber-300">
+            <button
+              type="button"
+              title="不再提示"
+              onClick={() => void patchSection('ui', { airport_notice_dismissed: true })}
+              className="absolute right-1.5 top-1.5 rounded p-0.5 text-amber-700/70 transition-colors hover:text-amber-700 dark:text-amber-300/70 dark:hover:text-amber-300"
+            >
+              <X className="size-3.5" />
+            </button>
+            <p className="font-medium">「机场节点」目前还不太稳定</p>
+            <p className="mt-0.5 leading-relaxed">
+              用机场节点访问 ChatGPT / Claude 时，可能卡在 Cloudflare 人机验证（白屏）。
+              建议先用上面的「统一梯子」；机场节点更适合其他用途。我们仍在继续优化。
+            </p>
+            <button
+              type="button"
+              onClick={() => void patchSection('ui', { airport_notice_dismissed: true })}
+              className="mt-1 underline-offset-2 hover:underline"
+            >
+              不再提示
+            </button>
+          </div>
+        )}
       </div>
 
       {!running && !online ? (

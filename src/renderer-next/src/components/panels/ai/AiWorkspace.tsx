@@ -501,6 +501,23 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           </div>
         </div>
 
+        {/* Claude 提示: 不用就别打开此页, 防止潜在网络问题。可关闭(持久化 ui.claude_notice_dismissed)。 */}
+        {kind === 'claude' && !settings?.ui?.claude_notice_dismissed && (
+          <div className="flex shrink-0 items-start gap-2 border-b border-amber-500/40 bg-amber-500/10 px-4 py-1.5 text-xs text-amber-700 dark:text-amber-300">
+            <span className="min-w-0 flex-1">
+              如果不使用 Claude，建议不要打开/停留在此页面，以免触发潜在的网络问题。需要时再打开即可。
+            </span>
+            <button
+              type="button"
+              title="关闭提示"
+              onClick={() => void useAppStore.getState().patchSection('ui', { claude_notice_dismissed: true })}
+              className="shrink-0 rounded p-0.5 text-amber-700/70 transition-colors hover:text-amber-700 dark:text-amber-300/70 dark:hover:text-amber-300"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        )}
+
         {feedback.text && (
           <div
             className={
