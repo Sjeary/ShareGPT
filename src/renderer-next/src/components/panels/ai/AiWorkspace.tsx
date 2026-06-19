@@ -50,7 +50,7 @@ function safeText(value: unknown): string {
   return String(value).trim()
 }
 
-// 旧 resolveGptProxyPort: 优先用发送服务的本地 socks 监听端口, 否则回落默认。
+// 旧 resolveGptProxyPort: 优先用代理的本地 socks 监听端口, 否则回落默认。
 function resolveProxyPort(socksPort: unknown): string {
   const value = safeText(socksPort) || GPT_PROXY_PORT
   return /^\d+$/.test(value) ? value : GPT_PROXY_PORT
@@ -69,9 +69,9 @@ interface AiMeta {
 }
 
 const META: Record<AiKind, AiMeta> = {
-  gpt: { title: 'ChatGPT', hint: '内嵌 ChatGPT 网页 · 经发送服务代理访问', icon: Bot },
-  gemini: { title: 'Gemini', hint: '内嵌 Gemini 网页 · 经发送服务代理访问', icon: Sparkles },
-  claude: { title: 'Claude', hint: '内嵌 Claude 网页 · 经发送服务代理访问', icon: Asterisk },
+  gpt: { title: 'ChatGPT', hint: '内嵌 ChatGPT 网页 · 经代理访问', icon: Bot },
+  gemini: { title: 'Gemini', hint: '内嵌 Gemini 网页 · 经代理访问', icon: Sparkles },
+  claude: { title: 'Claude', hint: '内嵌 Claude 网页 · 经代理访问', icon: Asterisk },
 }
 
 // 共享 AI 网页工作区。GPT / Gemini 完全同构: 控制条 + 多标签 + 原生 view 宿主 + 遮罩。
@@ -100,7 +100,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
 
-  // 代理检测面板 (展示该页面流量是否全部经发送代理)。作为宿主上方的可折叠块渲染,
+  // 代理检测面板 (展示该页面流量是否全部经代理)。作为宿主上方的可折叠块渲染,
   // 这样不会被原生 webview 盖住 (centered Dialog 会被原生 view 覆盖)。
   const [proxyOpen, setProxyOpen] = useState(false)
   const [proxyChecking, setProxyChecking] = useState(false)
@@ -146,7 +146,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     })
   }, [runProxyCheck])
 
-  // 自动巡检: 发送服务运行 + 页面已初始化时, 周期性跑代理检测, 让"有域名没走代理"能自动爆红,
+  // 自动巡检: 代理运行 + 页面已初始化时, 周期性跑代理检测, 让"有域名没走代理"能自动爆红,
   // 不必每次手点。(检测只是被动读取已记录的主机, 开销很小。)
   // 注意: 不立即检测 —— 页面刚加载时流量尚未稳定, 马上检测容易误报爆红。前 20s 保持中性默认色,
   // 首次自动检测延后到 interval 第一次触发(约 20s)后, 之后每 20s 一次; 用户手点仍即时检测。
@@ -197,10 +197,10 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     setRestartingProxy(true)
     try {
       await api.startSender(sender)
-      toast.success('已加入并重启发送代理，正在重新检测…')
+      toast.success('已加入并重启代理，正在重新检测…')
       window.setTimeout(() => void runProxyCheck(), 1500)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '重启发送代理失败')
+      toast.error(err instanceof Error ? err.message : '重启代理失败')
     } finally {
       setRestartingProxy(false)
     }
@@ -215,7 +215,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       ? 'bad'
       : 'ok'
 
-  // 当前发送代理方式标识: 统一梯子 / 机场节点(下发)。
+  // 当前代理方式标识: 统一梯子 / 机场节点(下发)。
   const airportMode =
     settings?.sender?.proxy_mode === 'airport' && Boolean(settings?.sender?.airport_outbound)
   const proxyModeLabel = airportMode
@@ -234,7 +234,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const proxyHost = GPT_PROXY_HOST
   const proxyPort = resolveProxyPort(settings?.sender?.socks_listen_port)
 
-  // 宿主可见 = 发送服务运行中 (面板已激活由 Shell 的条件渲染保证)。
+  // 宿主可见 = 代理运行中 (面板已激活由 Shell 的条件渲染保证)。
   const hostVisible = senderRunning
   const { hostRef, schedule } = useAiHostSync(kind, hostVisible)
 
@@ -273,7 +273,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     [kind, senderRunning, proxyHost, proxyPort],
   )
 
-  // 面板激活 / 发送服务就绪时: 拉取标签列表并 ensure 工作区。
+  // 面板激活 / 代理就绪时: 拉取标签列表并 ensure 工作区。
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -375,7 +375,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   const Icon = meta.icon
   const runtimeLabel = !senderRunning
-    ? '等待发送服务'
+    ? '等待代理'
     : !activeTabId
       ? '暂无会话'
       : view.loading
@@ -470,7 +470,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           <div className="ml-auto flex shrink-0 items-center gap-1">
             <Badge
               variant="outline"
-              title="当前发送代理方式（统一梯子 / 服务器下发的机场节点）"
+              title="当前代理方式（统一梯子 / 服务器下发的机场节点）"
               className={cn(
                 'h-7 gap-1 px-2 font-normal',
                 airportMode ? 'border-primary/50 text-primary' : 'text-muted-foreground',
@@ -490,7 +490,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               title={
                 proxyTone === 'bad'
                   ? `警告: 有 ${fallbackCount} 个域名没走代理！点击查看`
-                  : '检测此页面流量是否全部经发送代理'
+                  : '检测此页面流量是否全部经代理'
               }
               disabled={!senderRunning}
               onClick={toggleProxyPanel}
@@ -600,7 +600,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 }
 
 // 代理检测结果面板 (宿主上方的可折叠块)。逐域展示页面流量去向:
-// 走发送代理(梯子) vs 回落(本机代理/直连)。回落域名即未走发送代理, 可补进路由清单。
+// 走代理(梯子) vs 回落(本机代理/直连)。回落域名即未走代理, 可补进路由清单。
 function ProxyReportPanel({
   report,
   checking,
@@ -630,10 +630,10 @@ function ProxyReportPanel({
           ? '请先打开一个网页标签，再进行检测。'
           : '暂时无法检测，请刷新页面后重试。'
       : !report.sessionProxied
-        ? '此页面未走代理（发送服务可能未开启，或代理未生效）。'
+        ? '此页面未走代理（代理可能未开启，或代理未生效）。'
         : fallbackHosts.length > 0
-          ? `共 ${hosts.length} 个域名：${proxyHosts.length} 个经发送代理（梯子），${fallbackHosts.length} 个回落（本机代理/直连，未走发送代理）。`
-          : `此页面流量已全部经发送代理（梯子）访问，共 ${hosts.length} 个域名。`
+          ? `共 ${hosts.length} 个域名：${proxyHosts.length} 个经代理（梯子），${fallbackHosts.length} 个回落（本机代理/直连，未走代理）。`
+          : `此页面流量已全部经代理（梯子）访问，共 ${hosts.length} 个域名。`
 
   const SummaryIcon =
     tone === 'ok'
@@ -692,7 +692,7 @@ function ProxyReportPanel({
             <span>
               <b>有 {fallbackHosts.length} 个域名没走代理！</b>
               这些流量从你的真实 IP 出网（未经梯子）。已自动加入本机代理清单并上报管理员，
-              点下方按钮重启发送代理即可生效。
+              点下方按钮重启代理即可生效。
             </span>
           </div>
           <Button size="sm" className="mt-2 h-7 gap-1.5" disabled={applying} onClick={onApply}>
@@ -712,7 +712,7 @@ function ProxyReportPanel({
             {fallbackHosts.length > 0 && (
               <div>
                 <div className="mb-1 px-1 text-[11px] font-bold text-destructive">
-                  未走发送代理 · 回落本机代理/直连（{fallbackHosts.length}）
+                  未走代理 · 回落本机代理/直连（{fallbackHosts.length}）
                 </div>
                 <div className="flex flex-wrap gap-1">
                   {fallbackHosts.map((h) => (
@@ -728,7 +728,7 @@ function ProxyReportPanel({
             )}
             <div>
               <div className="mb-1 px-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-                走发送代理 · 梯子（{proxyHosts.length}）
+                走代理 · 梯子（{proxyHosts.length}）
               </div>
               <div className="flex flex-wrap gap-1">
                 {proxyHosts.map((h) => (
@@ -747,7 +747,7 @@ function ProxyReportPanel({
 
       {report?.ok && fallbackHosts.length > 0 && (
         <p className="mt-2 text-[11px] text-muted-foreground">
-          提示：回落域名未经发送代理（梯子）出网。若希望它们也走梯子，需要把对应域名加入发送路由清单。
+          提示：回落域名未经代理（梯子）出网。若希望它们也走梯子，需要把对应域名加入发送路由清单。
         </p>
       )}
     </div>
@@ -770,8 +770,8 @@ function resolveOverlay(
 
   if (!senderRunning) {
     return {
-      title: '请先开启发送服务',
-      text: `内置 ${label} 网页会通过 ${proxyHost}:${proxyPort} 代理访问。请先在“代理转发”中开启发送服务。`,
+      title: '请先开启代理',
+      text: `内置 ${label} 网页会通过 ${proxyHost}:${proxyPort} 代理访问。请先在「网络 / 代理」中开启代理。`,
     }
   }
 

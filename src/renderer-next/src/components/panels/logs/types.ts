@@ -17,7 +17,7 @@ export interface RawLogPayload {
 // 来源 key -> 中文标签。对齐旧版 renderer.js SOURCE_LABELS。
 export const SOURCE_LABELS: Record<string, string> = {
   app: '系统',
-  sender: '发送服务',
+  sender: '代理',
   receiver: '接收服务',
   collab: '账号服务',
   'receiver-singbox': '接收端',

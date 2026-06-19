@@ -964,30 +964,81 @@ class Backend {
     });
   }
 
-  // 查询 GitHub Releases 最新版 (自动更新源)。返回当前平台 (.exe / .dmg) 的安装包信息或 null。
-  // 完全不经过自建服务器; 目标仓库由 package.json 决定 (UPDATE_REPO)。
+  // GET 文本 (读 release 的 latest.yml), 跟随重定向 (releases/latest/download -> CDN)。失败返回 null。
+  fetchText(url, redirectsLeft = 5) {
+    return new Promise((resolve) => {
+      try {
+        const protocol = new URL(url).protocol === "http:" ? http : https;
+        const req = protocol.get(
+          url,
+          { headers: { "User-Agent": "ShareGPT-Updater" }, timeout: 8000 },
+          (res) => {
+            const status = Number(res.statusCode || 0);
+            if (
+              [301, 302, 303, 307, 308].includes(status) &&
+              res.headers.location &&
+              redirectsLeft > 0
+            ) {
+              res.resume();
+              this.fetchText(new URL(res.headers.location, url).toString(), redirectsLeft - 1).then(
+                resolve,
+              );
+              return;
+            }
+            if (status < 200 || status >= 300) {
+              res.resume();
+              resolve(null);
+              return;
+            }
+            let data = "";
+            res.setEncoding("utf-8");
+            res.on("data", (chunk) => {
+              data += chunk;
+            });
+            res.on("end", () => resolve(data));
+          },
+        );
+        req.on("error", () => resolve(null));
+        req.on("timeout", () => {
+          req.destroy();
+          resolve(null);
+        });
+      } catch (_err) {
+        resolve(null);
+      }
+    });
+  }
+
+  // 查询最新版 (自动更新源)。读 release 的 latest.yml (electron-updater feed) 而非 api.github.com:
+  // 后者未登录限流 60 次/小时, 极易被打爆; latest.yml 是 release 资源、不限流。完全不经过自建服务器。
   async checkLatestRelease() {
     if (!UPDATE_REPO) return null;
-    const release = await this.fetchReleaseJson(
-      `https://api.github.com/repos/${UPDATE_REPO}/releases/latest`,
+    const ymlText = await this.fetchText(
+      `https://github.com/${UPDATE_REPO}/releases/latest/download/latest.yml`,
     );
-    if (!release || !release.tag_name) return null;
-    const version = String(release.tag_name).replace(/^v/i, "").trim();
-    const assets = Array.isArray(release.assets) ? release.assets : [];
-    const wantExt = process.platform === "darwin" ? ".dmg" : ".exe";
-    const asset =
-      assets.find((item) =>
-        String(item?.name || "")
-          .toLowerCase()
-          .endsWith(wantExt),
-      ) || null;
+    if (!ymlText) return null;
+    const vm = ymlText.match(/^version:\s*(.+)$/m);
+    if (!vm) return null;
+    const version = vm[1]
+      .trim()
+      .replace(/^['"]|['"]$/g, "")
+      .replace(/^v/i, "");
+    if (!version) return null;
+    const tag = `v${version}`;
+    let fileName;
+    if (process.platform === "darwin") {
+      fileName = `sharegpt-sender-${version}-arm64.dmg`;
+    } else {
+      const pm = ymlText.match(/^path:\s*(.+)$/m);
+      fileName = pm ? pm[1].trim().replace(/^['"]|['"]$/g, "") : `sharegpt-sender-${version}.exe`;
+    }
     return {
       version,
-      notes: String(release.body || "").trim(),
-      publishedAt: String(release.published_at || ""),
-      url: asset ? String(asset.browser_download_url || "") : "",
-      fileName: asset ? String(asset.name || "") : "",
-      htmlUrl: String(release.html_url || ""),
+      notes: "",
+      publishedAt: "",
+      url: `https://github.com/${UPDATE_REPO}/releases/download/${tag}/${fileName}`,
+      fileName,
+      htmlUrl: `https://github.com/${UPDATE_REPO}/releases/tag/${tag}`,
       repo: UPDATE_REPO,
     };
   }
