@@ -9,6 +9,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '5.3.0',
+    date: '2026-06-19',
+    highlights: [
+      '新增可选「机场代理」：管理员从管理端粘贴 Clash 订阅、选一个节点下发给本群；客户端在「发送端设置 - 代理方式」可选走统一梯子或机场节点（默认统一梯子，互不影响）。',
+      '内嵌 ChatGPT / Claude 顶栏显示当前代理方式（统一代理 / 机场·节点名）；运行日志也会标明，便于观察。',
+      '机场模式下流量直连机场节点出网，不经统一中转服务器。',
+    ],
+  },
+  {
     version: '5.2.1',
     date: '2026-06-19',
     highlights: [
