@@ -1,7 +1,7 @@
 {
   "sender": {
     "proxy_server": "your-server.example.com",
-    "proxy_port": "50000",
+    "proxy_port": "YOUR-PORT",
     "proxy_uuid": "YOUR-UUID",
     "socks_listen_port": "1080",
     "fallback_mode": "system_proxy",
@@ -11,7 +11,7 @@
     "frps_server": "your-server.example.com",
     "frps_port": "7000",
     "frps_token": "YOUR-TOKEN",
-    "remote_port": "50000",
+    "remote_port": "YOUR-PORT",
     "vmess_listen_port": "3001",
     "vmess_uuid": "YOUR-UUID",
     "forward_proxy_port": "7890",
