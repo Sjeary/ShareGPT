@@ -1,0 +1,80 @@
+name: Bug 报告
+description: 报告一个可复现的问题
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！提交前请先搜索是否已有相同问题。
+        ⚠️ **安全漏洞请勿在此公开提交**，请按 [SECURITY.md](../../blob/main/SECURITY.md) 私密上报。
+  - type: input
+    id: version
+    attributes:
+      label: 版本号
+      description: 在「关于」或安装包文件名中可见，例如 1.0.0
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: 涉及组件
+      options:
+        - 客户端
+        - 协作服务端 (collab_server2)
+        - 管理控制台 (admin_console)
+        - 不确定
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 请按 1、2、3 写清楚操作步骤
+      placeholder: |
+        1. 打开 ...
+        2. 点击 ...
+        3. 出现 ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望结果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志 / 截图
+      description: 粘贴运行日志、控制台报错或截图（请先删除其中的密钥、端口、节点等敏感信息）
+      render: text
+    validations:
+      required: false
+  - type: dropdown
+    id: proxy-related
+    attributes:
+      label: 是否涉及代理 / 网络
+      description: 问题是否与代理、机场节点、配置下发或网络连通性有关
+      options:
+        - 不确定
+        - 是
+        - 否
+    validations:
+      required: true

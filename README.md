@@ -10,7 +10,7 @@ _A cross-platform desktop app that embeds ChatGPT / Claude / Gemini, routes them
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue)
 ![electron](https://img.shields.io/badge/Electron-31-47848F)
 ![react](https://img.shields.io/badge/React-19-61DAFB)
-![license](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-green)
+![license](https://img.shields.io/badge/license-AGPL--3.0-green)
 
 </div>
 
@@ -24,7 +24,7 @@ _A cross-platform desktop app that embeds ChatGPT / Claude / Gemini, routes them
 - **合规使用**：本项目包含网络代理相关能力。**请仅在符合你所在国家/地区法律法规的前提下使用**，不得用于任何违法违规用途。
 - **风险自负**：因使用本项目而导致的账号封禁、服务中断、数据丢失、网络问题或任何直接/间接损失，**作者概不负责，亦不提供任何形式的可用性保证**。
 - **无隶属关系**：本项目与 OpenAI、Anthropic、Google 等任何第三方厂商**无任何隶属、合作或背书关系**；相关名称、商标归各自所有者。
-- **非商业**：本项目以 [PolyForm Noncommercial 1.0.0](LICENSE) 授权，**禁止任何商业用途**。
+- **开源（AGPL-3.0）**：本项目以 [AGPL-3.0](LICENSE) 授权——可自由使用、修改、分发，但**衍生作品（含作为网络服务对外提供）必须以相同许可证公开源码**。
 - **如不同意以上任一条款，请勿使用本项目。** 继续使用即视为已知悉并接受上述全部内容。
 
 ---
@@ -133,7 +133,7 @@ build/                打包资源（图标、bin/ 放第三方二进制）
 
 ## 🤝 欢迎参与
 
-- 觉得有用就点个 ⭐，也欢迎在**非商业**前提下尝试、二次开发。
+- 觉得有用就点个 ⭐，欢迎在 **AGPL-3.0** 下使用与二次开发（衍生作品需保持同等开源）。
 - 用着不顺、有想法、发现 Bug —— 欢迎提 [Issue](../../issues)。
 - 贡献代码：Fork → 改 → 提 PR，写清楚改了什么、为什么；提交前在渲染层与管理端目录跑 `npx tsc -b` 确保类型检查通过。
 
@@ -148,10 +148,10 @@ build/                打包资源（图标、bin/ 放第三方二进制）
 
 ## 📜 许可证
 
-[PolyForm Noncommercial License 1.0.0](LICENSE)：
+[GNU AGPL-3.0](LICENSE)（GNU Affero General Public License v3.0）：
 
-- ✅ 允许**个人 / 非商业**地使用、修改、转载与分发（需保留版权声明与许可证）。
-- ✅ 允许学习、研究、爱好项目、非营利组织等非商业用途。
-- ❌ **禁止任何商业用途**（含售卖、商用部署、商业增值服务）。
+- ✅ 可自由使用、修改、分发，**也可商用**。
+- ⚠️ **强 copyleft**：分发衍生作品、或**将修改版作为网络服务对外提供**时，必须以 **AGPL-3.0** 公开完整源码并保留版权与许可证声明。
+- ⚠️ 软件按「现状」提供，不含任何担保（见 [免责声明](#-免责声明再次强调)）。
 
-如需商业授权请联系作者另行约定。完整条款见 [LICENSE](LICENSE)。
+完整条款见 [LICENSE](LICENSE)。本许可证与上文「使用第三方 AI 服务的 ToS 风险」无关——后者由使用者依免责声明自行承担。

@@ -1,0 +1,38 @@
+name: 功能建议
+description: 提出一个新功能或改进想法
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你的建议！请尽量说明「为什么需要」，而不仅是「想要什么」，方便评估。
+  - type: textarea
+    id: background
+    attributes:
+      label: 需求背景
+      description: 你遇到了什么问题 / 痛点？在什么场景下需要这个功能？
+      placeholder: 例如：成员每次切换机场节点都要重启，希望能……
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+      description: 你希望它怎么实现 / 表现为什么样
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 替代方案
+      description: 你考虑过的其他做法，或现在的临时变通方式
+    validations:
+      required: false
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 其他有助于理解的上下文、截图或参考链接
+    validations:
+      required: false
