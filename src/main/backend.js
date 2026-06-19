@@ -972,8 +972,8 @@ class Backend {
   // 否则用系统代理 env(HTTPS_PROXY 等); 都没有则 null(直连)。国内直连 GitHub CDN 常失败, 故走代理。
   updateProxyAgent() {
     try {
+      const { SocksProxyAgent } = require("socks-proxy-agent");
       if (this.senderProcess && this.activeSocksPort) {
-        const { SocksProxyAgent } = require("socks-proxy-agent");
         return new SocksProxyAgent(`socks5h://127.0.0.1:${this.activeSocksPort}`);
       }
       const envProxy =
@@ -985,7 +985,6 @@ class Backend {
         process.env.all_proxy;
       if (envProxy) {
         if (/^socks/i.test(envProxy)) {
-          const { SocksProxyAgent } = require("socks-proxy-agent");
           return new SocksProxyAgent(envProxy);
         }
         const { HttpsProxyAgent } = require("https-proxy-agent");
