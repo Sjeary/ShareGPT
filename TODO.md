@@ -25,10 +25,10 @@
 ## P2 — 锦上添花
 
 - [~] 崩溃上报 / 结构化日志：已加 `src/main/logger.js`（分级 + 同步落盘 `userData/logs/main.log` + 轮转，零外部上传）+ 主进程 `uncaughtException`/`unhandledRejection` 兜底（原先完全没有）。已实测。待办：把散落的 `console.warn/error` 逐步迁到 logger（大范围替换，分步做）。
-- [ ] i18n（UI 与服务端日志去中文硬编码）。
+- [ ] **i18n（按决定暂缓 → 后续专项）**：UI 与服务端日志去中文硬编码。最大改动、对中文团队当下价值最低、最易碰功能；届时建议先搭 react-i18next + 单面板样板，再逐块扩展、每块实测。
 - [x] 架构图：新增 `docs/ARCHITECTURE.md`（mermaid 三端交互 + IPC/WS/代理/更新链路 + 协议表），README 已链接。
 - [x] 仓库卫生：内部草稿（`ANDROID_CHAT_ONLY_SPEC.md`/`REFACTOR_GOALS.md`/`CROSSPLATFORM.md`）移到 `docs/dev/`；`release_sender*` 历史目录本就 gitignore。
-- [ ] **【最后做】macOS 代码签名 + 公证**（需 Apple Developer ID）→ 解锁 mac 原地无感更新。
+- [ ] **macOS 代码签名 + 公证（按决定暂缓）**：需你的 Apple Developer ID（$99/年）。现状 mac 走下载安装包方式可用；届时配 electron-builder 签名/notarize 即解锁 mac 原地无感更新。
 
 ## 验证基线（每次改完跑）
 
