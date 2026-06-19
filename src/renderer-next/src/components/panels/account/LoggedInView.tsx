@@ -73,12 +73,24 @@ function UpdateSection() {
 
   const [downloading, setDownloading] = useState(false)
   const [progress, setProgress] = useState<UpdateProgress | null>(null)
+  // 是否支持「原地无感更新」(Windows 打包版 = true)。mac / dev 回退到下载安装包方式。
+  const [supported, setSupported] = useState(false)
 
   useEffect(() => {
     const off = api.onAppUpdateProgress((raw) => {
       setProgress((raw && typeof raw === 'object' ? (raw as UpdateProgress) : null))
     })
     return off
+  }, [])
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        setSupported(Boolean(await api.isUpdateSupported()))
+      } catch {
+        setSupported(false)
+      }
+    })()
   }, [])
 
   // 挂载时自动从 GitHub Releases 查询最新版 (自动更新源, 不经任何自建服务器)。
@@ -111,7 +123,9 @@ function UpdateSection() {
   } else if (!hasPackage) {
     hint = 'GitHub 最新发布暂无本平台 (.exe / .dmg) 安装包，可前往发布页查看。'
   } else if (hasNewVersion) {
-    hint = `发现新版本 ${latestVersion}，下载后会保留账号、聊天记录、配置和网页登录状态。`
+    hint = supported
+      ? `发现新版本 ${latestVersion}，点击「下载并安装」会自动更新并重启，账号 / 聊天记录 / 配置 / 网页登录态都会保留。`
+      : `发现新版本 ${latestVersion}，下载后会保留账号、聊天记录、配置和网页登录状态。`
   } else {
     hint = '当前已经是最新版本。'
   }
@@ -134,11 +148,29 @@ function UpdateSection() {
     }
   }
 
-  // 下载并安装: downloadAppUpdate 拿到本地路径后 openAppUpdate(quitAfterOpen)。
+  // 下载并安装。Windows 打包版走 electron-updater 原地无感更新 (下载完自动安装并重启);
+  // mac / dev 回退到「下载安装包 + 打开」。
   async function handleInstall() {
+    if (supported) {
+      setDownloading(true)
+      setProgress({ transferred: 0, total: 0, percent: 0, fileName: '更新包' })
+      try {
+        const res = (await api.installAppUpdate()) as { updated?: boolean } | null
+        if (res?.updated) {
+          toast.success('新版本已下载，正在原地安装并自动重启…')
+        } else {
+          toast.info('当前已经是最新版本')
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : '自动更新失败')
+      } finally {
+        setDownloading(false)
+      }
+      return
+    }
     const update = useAuthStore.getState().updateInfo
     if (!update?.url) {
-      toast.error('当前服务器还没有配置本平台的安装包。')
+      toast.error('当前发布暂无本平台的安装包。')
       return
     }
     setDownloading(true)

@@ -451,6 +451,10 @@ function createElectronApp(baseMode = "all") {
   let mainWindow = null;
   let profileWindow = null;
   let backend = null;
+  // electron-updater: 仅 Windows 打包版启用「原地无感更新」(NSIS)。
+  // mac 未签名无法走 Squirrel 自动更新, 仍用下载 dmg 的方式; dev/未打包也不启用。
+  let autoUpdater = null;
+  let autoUpdaterBusy = false;
   let appMode = normalizeMode(baseMode, process.argv);
   const configuredAiPartitions = new Set();
   const aiWorkspaces = new Map();
@@ -483,6 +487,32 @@ function createElectronApp(baseMode = "all") {
     };
     mainWindow.webContents.send("app:event", eventPayload);
     return eventPayload;
+  }
+
+  // 初始化 electron-updater (Windows 打包版)。更新源由 electron-builder 写入的 app-update.yml 决定
+  // (publish=github -> 读取 GitHub Release 的 latest.yml), 公开仓库无需 token。
+  function setupAutoUpdater() {
+    if (process.platform !== "win32" || !app.isPackaged) return;
+    try {
+      autoUpdater = require("electron-updater").autoUpdater;
+    } catch (_err) {
+      autoUpdater = null;
+      return;
+    }
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.on("download-progress", (p) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send("app:update-progress", {
+        percent: p && p.percent,
+        transferred: p && p.transferred,
+        total: p && p.total,
+        fileName: "更新包",
+      });
+    });
+    autoUpdater.on("error", (err) => {
+      emitAppEvent("update-error", { message: String((err && err.message) || err) });
+    });
   }
 
   function focusMainWindow() {
@@ -1157,6 +1187,64 @@ function createElectronApp(baseMode = "all") {
         return null;
       }
     });
+    // 是否支持「原地无感更新」(Windows 打包版 = true; mac / dev = false -> 前端回退到下载方式)。
+    ipcMain.handle("app:update-supported", () => Boolean(autoUpdater));
+    // Windows 无感更新: 检查 -> 下载(进度走 app:update-progress) -> 完成后原地安装并自动重启。
+    ipcMain.handle("app:update-install", async () => {
+      if (!autoUpdater) {
+        throw new Error("当前版本不支持原地自动安装，请用下载方式更新");
+      }
+      if (autoUpdaterBusy) {
+        throw new Error("更新正在进行中…");
+      }
+      autoUpdaterBusy = true;
+      try {
+        return await new Promise((resolve, reject) => {
+          const cleanup = () => {
+            autoUpdater.removeListener("update-available", onAvailable);
+            autoUpdater.removeListener("update-not-available", onNotAvailable);
+            autoUpdater.removeListener("update-downloaded", onDownloaded);
+            autoUpdater.removeListener("error", onError);
+          };
+          const onAvailable = () => {
+            autoUpdater.downloadUpdate().catch(onError);
+          };
+          const onNotAvailable = () => {
+            cleanup();
+            resolve({ updated: false });
+          };
+          const onDownloaded = async () => {
+            cleanup();
+            await flushAiSessionStorage().catch(() => {});
+            try {
+              backend && backend.createUpdateBackup("before-autoupdate");
+            } catch (_e) {
+              /* 数据已在固定 userData 目录, 备份失败不阻断安装 */
+            }
+            resolve({ updated: true, installing: true });
+            // 静默安装 NSIS 包并自动重启 (isSilent=true, isForceRunAfter=true)。
+            setTimeout(() => {
+              try {
+                autoUpdater.quitAndInstall(true, true);
+              } catch (_e) {
+                /* ignore */
+              }
+            }, 600);
+          };
+          const onError = (err) => {
+            cleanup();
+            reject(err instanceof Error ? err : new Error(String((err && err.message) || err)));
+          };
+          autoUpdater.on("update-available", onAvailable);
+          autoUpdater.on("update-not-available", onNotAvailable);
+          autoUpdater.on("update-downloaded", onDownloaded);
+          autoUpdater.on("error", onError);
+          autoUpdater.checkForUpdates().catch(onError);
+        });
+      } finally {
+        autoUpdaterBusy = false;
+      }
+    });
     ipcMain.handle("app:update-download", async (event, payload) => {
       return backend.downloadUpdatePackage(payload || {}, (progress) => {
         event.sender.send("app:update-progress", progress);
@@ -1574,6 +1662,7 @@ function createElectronApp(baseMode = "all") {
 
     registerIpc();
     createWindow();
+    setupAutoUpdater();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

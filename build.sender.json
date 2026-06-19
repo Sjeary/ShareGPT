@@ -30,11 +30,19 @@
   },
   "win": {
     "target": [
-      "portable"
+      "nsis"
     ],
     "artifactName": "sharegpt-sender-${version}.${ext}",
     "executableName": "sharegpt_sender",
     "signAndEditExecutable": false
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "ShareGPT Sender"
   },
   "mac": {
     "target": [
@@ -46,6 +54,13 @@
   "extraMetadata": {
     "main": "src/main/main_sender.js",
     "name": "sharegpt-sender-desktop"
-  }
+  },
+  "publish": [
+    {
+      "provider": "github",
+      "owner": "Sjeary",
+      "repo": "ShareGPT"
+    }
+  ]
 }
 

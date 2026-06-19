@@ -1,6 +1,6 @@
 {
   "name": "sharegpt-desktop",
-  "version": "5.5.0",
+  "version": "1.0.0",
   "description": "ShareGPT desktop client with built-in messaging and embedded ChatGPT, Gemini and Claude web access (Gemini/Claude optional).",
   "main": "src/main/main.js",
   "author": "Sjeary",
@@ -94,5 +94,8 @@
       ],
       "category": "Network"
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }
