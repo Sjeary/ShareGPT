@@ -7,11 +7,11 @@
 _A cross-platform desktop app that embeds ChatGPT / Claude / Gemini, routes them through an admin-managed proxy, and adds team chat._
 
 [![CI](https://github.com/Sjeary/ShareGPT/actions/workflows/ci.yml/badge.svg)](https://github.com/Sjeary/ShareGPT/actions/workflows/ci.yml)
-![version](https://img.shields.io/badge/version-1.0.0-blue)
+[![version](https://img.shields.io/github/v/release/Sjeary/ShareGPT)](https://github.com/Sjeary/ShareGPT/releases)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue)
 ![electron](https://img.shields.io/badge/Electron-31-47848F)
 ![react](https://img.shields.io/badge/React-19-61DAFB)
-![license](https://img.shields.io/badge/license-AGPL--3.0-green)
+[![license](https://img.shields.io/github/license/Sjeary/ShareGPT)](LICENSE)
 
 </div>
 
