@@ -6,12 +6,12 @@
 ## P0 — 不做就别自称高质量开源
 - [x] **许可证定位**：已改为 **AGPL-3.0**（用户拍板）。`LICENSE`=AGPL-3.0 全文、`package.json` `license`=`AGPL-3.0-or-later`、README badge/措辞/许可证章节同步；ToS 风险仍靠免责声明承担。
 - [x] **SECURITY.md**：已加（含代理相关风险范围 + 私密披露渠道占位）。
-- [ ] **最小 CI**：`.github/workflows/ci.yml` —— 渲染层 + admin `tsc -b`、主进程 `node --check` / lint、一次构建冒烟；PR 必过。
+- [x] **最小 CI**：`.github/workflows/ci.yml` —— push/PR 触发，跑主进程+服务端 `node --check`、渲染层 + admin `tsc -b`、`npm test`（均已本地验证通过）。lint 待统一后再纳入。
 - [~] **第一批测试**：已加 `npm test`（Node 内置 runner，无新依赖）+ `collab_server2/test/server.test.js`（6 用例：hashPassword/verifyPassword/原子写/normalizeIp/登录限流/safeParseJson）。待补：session 过期、聊天读写、配置下发。
 
 ## P1 — 让它经得起协作
 - [x] **社区文件**：已加 CONTRIBUTING.md、CODE_OF_CONDUCT.md、CHANGELOG.md（Keep a Changelog）、`.github/ISSUE_TEMPLATE/*`、PULL_REQUEST_TEMPLATE.md。
-- [ ] **统一 lint/format**：根目录 ESLint + Prettier + `.editorconfig`，覆盖主进程与服务端，纳入 CI。
+- [~] **统一 lint/format**：已加 `.editorconfig` + `.gitattributes`（LF）。根 ESLint + Prettier 配置 + 纳入 CI 待做（分步推进，避免一次性大规模 reformat 影响可读历史）。
 - [ ] **主进程类型化**：`src/main/*.js` 上 `// @ts-check` + JSDoc（低风险，先做），再谨慎拆分巨石 `appFactory.js`/`backend.js`（高风险，逐步且实测）。
 - [x] **服务端加固**（`collab_server2/server.js`，已逐项实测：启动/健康/登录成功+失败+限流/原子写）：
   - [x] `process.on('uncaughtException')` / `unhandledRejection` 兜底（记录日志、不拖垮全服务）。

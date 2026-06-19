@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# 取消同一分支上过期的运行
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      # CI 只做类型检查/测试, 不需要 Electron 二进制, 跳过下载以加速
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 安装依赖 (主程序 + 渲染层 + 管理端)
+        run: |
+          npm install --no-audit --no-fund
+          npm --prefix src/renderer-next install --no-audit --no-fund
+          npm --prefix admin_console/ui install --no-audit --no-fund
+
+      - name: 主进程语法检查 (node --check)
+        run: |
+          for f in src/main/*.js; do
+            echo "checking $f"
+            node --check "$f" || exit 1
+          done
+
+      - name: 服务端语法检查
+        run: node --check collab_server2/server.js
+
+      - name: 类型检查 — 渲染层
+        run: npx tsc -b
+        working-directory: src/renderer-next
+
+      - name: 类型检查 — 管理端
+        run: npx tsc -b
+        working-directory: admin_console/ui
+
+      - name: 单元测试 (collab_server2)
+        run: npm test

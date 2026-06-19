@@ -1,0 +1,12 @@
+# 统一行尾为 LF (仓库内已是 LF, 避免 Windows 上来回 CRLF 转换的告警)
+* text=auto eol=lf
+
+# 二进制文件不做行尾/diff 处理
+*.exe binary
+*.dmg binary
+*.zip binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.node binary
