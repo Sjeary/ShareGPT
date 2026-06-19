@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         感谢反馈！提交前请先搜索是否已有相同问题。
-        ⚠️ **安全漏洞请勿在此公开提交**，请按 [SECURITY.md](../../blob/main/SECURITY.md) 私密上报。
+        ⚠️ **安全漏洞请勿在此公开提交**，请按 [安全策略](https://github.com/Sjeary/ShareGPT/security/policy) 私密上报。
   - type: input
     id: version
     attributes:
