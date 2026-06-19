@@ -21,13 +21,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
-      - name: 安装依赖 (主程序 + 渲染层 + 管理端)
+      - name: 安装依赖 (主程序 + 渲染层 + 管理端 + 协作服务端)
         run: |
           npm install --no-audit --no-fund
           npm --prefix src/renderer-next install --no-audit --no-fund
           npm --prefix admin_console/ui install --no-audit --no-fund
+          npm --prefix collab_server2 install --no-audit --no-fund
 
       - name: 主进程语法检查 (node --check)
         run: |
