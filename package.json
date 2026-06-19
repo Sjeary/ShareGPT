@@ -29,7 +29,7 @@
     "dev:sender": "node scripts/prepare-assets.mjs sender && npm exec -- electron . --mode=sender",
     "dev:receiver": "node scripts/prepare-assets.mjs receiver && npm exec -- electron . --mode=receiver",
     "dist:win": "npm run build:next && node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --win portable",
-    "dist:win:sender": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --win portable --config build.sender.json",
+    "dist:win:sender": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --win nsis --config build.sender.json",
     "dist:win:receiver": "node scripts/prepare-assets.mjs receiver --required && npm exec -- electron-builder --win portable --config build.receiver.json",
     "dist:win:split": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --win portable --config build.sender.json && node scripts/prepare-assets.mjs receiver --required && npm exec -- electron-builder --win portable --config build.receiver.json",
     "dist:win:installer": "npm run build:next && node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --win nsis",
