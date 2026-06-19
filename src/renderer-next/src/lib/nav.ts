@@ -20,7 +20,7 @@ export interface NavItem {
 }
 
 export const NAV: NavItem[] = [
-  { key: 'service', label: '代理转发', icon: Cable, hint: '转发指定流量到接收端' },
+  { key: 'service', label: '网络 / 代理', icon: Cable, hint: '把指定流量转发到代理出口' },
   { key: 'chat', label: '协作聊天', icon: MessageCircle, hint: '团队消息与文件' },
   { key: 'gpt', label: 'ChatGPT', icon: Bot, hint: '内嵌 ChatGPT 网页' },
   { key: 'gemini', label: 'Gemini', icon: Sparkles, hint: '内嵌 Gemini 网页' },

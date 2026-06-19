@@ -41,7 +41,7 @@ export function SenderForm() {
   const [busy, setBusy] = useState(false)
 
   const running = isSenderRunning(status)
-  // 账号在线(已登录且 WS 在线)才允许开启发送服务, 对齐旧 btnStartSender 的 isCollabOnline 门禁。
+  // 账号在线(已登录且 WS 在线)才允许开启代理, 对齐旧 btnStartSender 的 isCollabOnline 门禁。
   const online = connection === 'online'
 
   const form = useMemo<SenderSettings>(
@@ -81,7 +81,7 @@ export function SenderForm() {
       }
     } else {
       const server = safeText(form.proxy_server)
-      if (!server) return '请先填写服务器地址，再开启发送服务'
+      if (!server) return '请先填写服务器地址，再开启代理'
       if (!isPortNumber(safeText(form.proxy_port))) return '连接端口必须为数字'
       if (!safeText(form.proxy_uuid)) return '请填写连接身份码'
     }
@@ -114,9 +114,9 @@ export function SenderForm() {
         update({ target_domains: payload.target_domains })
       }
       await api.startSender(payload)
-      toast.success('发送服务已开启')
+      toast.success('代理已开启')
     } catch (e) {
-      toast.error((e as Error)?.message || '开启发送服务失败')
+      toast.error((e as Error)?.message || '开启代理失败')
     } finally {
       setBusy(false)
     }
@@ -128,7 +128,7 @@ export function SenderForm() {
       await api.stopSender()
       toast.success('已发送停止指令')
     } catch (e) {
-      toast.error((e as Error)?.message || '停止发送服务失败')
+      toast.error((e as Error)?.message || '停止代理失败')
     } finally {
       setBusy(false)
     }
@@ -137,7 +137,7 @@ export function SenderForm() {
   return (
     <div className="flex flex-col gap-5">
       <p className="text-sm text-muted-foreground">
-        填写连接信息后，可开启发送端，让需要的网站通过这台设备访问。
+        填写连接信息后，可开启代理，让需要的网站通过这台设备访问。
       </p>
 
       {/* 代理方式 (可选): 统一梯子 (默认) 或 服务器下发的机场节点。运行中锁定, 需停止后切换。 */}
@@ -213,7 +213,7 @@ export function SenderForm() {
           className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-muted-foreground"
         >
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-          <span>请先登录账号并保持在线，再开启发送服务。</span>
+          <span>请先登录账号并保持在线，再开启代理。</span>
         </div>
       ) : null}
 
@@ -305,7 +305,7 @@ export function SenderForm() {
               全部流量走代理（测试 · 仅管理员）
             </Label>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              开启后除内网外的所有流量都走梯子（不再只走上面的清单），用于排查内嵌页到底访问了哪些域名；配合各页面的「代理检测」查看实际流量。修改后需重启发送服务生效。
+              开启后除内网外的所有流量都走梯子（不再只走上面的清单），用于排查内嵌页到底访问了哪些域名；配合各页面的「代理检测」查看实际流量。修改后需重启代理生效。
             </p>
           </div>
           <Switch
@@ -321,12 +321,12 @@ export function SenderForm() {
         {running ? (
           <Button variant="destructive" disabled={busy} onClick={handleStop}>
             {busy ? <Loader2 className="animate-spin" /> : <Square />}
-            停止发送服务
+            停止代理
           </Button>
         ) : (
           <Button disabled={busy || !online} onClick={handleStart}>
             {busy ? <Loader2 className="animate-spin" /> : <Play />}
-            开启发送服务
+            开启代理
           </Button>
         )}
       </div>
