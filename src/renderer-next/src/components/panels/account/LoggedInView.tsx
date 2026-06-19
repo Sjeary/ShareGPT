@@ -246,6 +246,10 @@ function UpdateSection() {
 function ChangelogSection() {
   const meta = useAppStore((s) => s.meta)
   const current = safeText(meta.version)
+  // 默认只展开最新一条, 其余收起 (全展开太长); 可点按钮展开历史。
+  const [expanded, setExpanded] = useState(false)
+  const shown = expanded ? CHANGELOG : CHANGELOG.slice(0, 1)
+  const hiddenCount = CHANGELOG.length - 1
   return (
     <Card>
       <CardHeader>
@@ -256,7 +260,7 @@ function ChangelogSection() {
       </CardHeader>
       <CardContent>
         <ol className="relative ml-1 border-l border-border/70">
-          {CHANGELOG.map((entry) => {
+          {shown.map((entry) => {
             const isCurrent = current && entry.version === current
             return (
               <li key={entry.version} className="ml-4 pb-5 last:pb-0">
@@ -294,6 +298,15 @@ function ChangelogSection() {
             )
           })}
         </ol>
+        {hiddenCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-1 text-xs font-medium text-primary hover:underline"
+          >
+            {expanded ? '收起' : `展开更早版本（${hiddenCount}）`}
+          </button>
+        )}
       </CardContent>
     </Card>
   )

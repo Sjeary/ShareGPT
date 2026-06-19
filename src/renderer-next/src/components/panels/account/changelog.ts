@@ -9,6 +9,11 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '5.4.1',
+    date: '2026-06-19',
+    highlights: ['更新日志默认只展开最新一条，历史版本可点击展开（避免太长）。'],
+  },
+  {
     version: '5.4.0',
     date: '2026-06-19',
     highlights: [
