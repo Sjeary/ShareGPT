@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const os = require("node:os");
 const { URL } = require("node:url");
 
@@ -179,6 +179,15 @@ function toInt(value, name) {
   const n = Number.parseInt(String(value), 10);
   if (!Number.isInteger(n) || n < 1 || n > 65535) {
     throw new Error(`${name} 必须是 1~65535 的整数`);
+  }
+  return n;
+}
+
+// 本机监听端口须 >= 1024, 否则 macOS / Windows 上要管理员权限才能绑定 (移植自 sender 启动修复)。
+function toListenPort(value, name) {
+  const n = toInt(value, name);
+  if (n < 1024) {
+    throw new Error(`${name} 必须是 1024~65535 的整数，避免在 macOS 或 Windows 上要求管理员权限`);
   }
   return n;
 }
@@ -1078,6 +1087,14 @@ class Backend {
       this.log(source, String(buf).trim());
     });
 
+    child.on("error", (err) => {
+      this.log(source, `进程启动失败：${err.message || err}`);
+      if (source === "sender") this.senderProcess = null;
+      if (source === "receiver-frpc") this.receiverFrpc = null;
+      if (source === "receiver-singbox") this.receiverSingbox = null;
+      this.emitStatus();
+    });
+
     child.on("exit", (code) => {
       this.log(source, `进程退出，code=${code}`);
       if (source === "sender") this.senderProcess = null;
@@ -1087,6 +1104,30 @@ class Backend {
     });
 
     return child;
+  }
+
+  // 启动 sing-box 前先用 `sing-box check` 校验配置, 配置有问题直接给出明确报错, 不让进程静默退出。
+  checkSingboxConfig(binaryPath, configPath, source) {
+    const result = spawnSync(binaryPath, ["check", "-c", configPath], {
+      encoding: "utf-8",
+      windowsHide: true,
+    });
+    const output = [result.stdout, result.stderr]
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .join("\n");
+
+    if (output) {
+      this.log(source, output);
+    }
+
+    if (result.error) {
+      throw new Error(`sing-box 配置检查失败：${result.error.message || result.error}`);
+    }
+
+    if (result.status !== 0) {
+      throw new Error(`sing-box 配置检查未通过：${output || `exit code ${result.status}`}`);
+    }
   }
 
   emitStatus() {
@@ -1126,7 +1167,7 @@ class Backend {
   }
 
   buildSenderConfig(sender) {
-    const listenPort = toInt(sender.socks_listen_port, "本地SOCKS监听端口");
+    const listenPort = toListenPort(sender.socks_listen_port, "本地SOCKS监听端口");
     const fallbackMode = sender.fallback_mode === "direct" ? "direct" : "system_proxy";
     // 代理出站方式 (可选): "unified" = 内置统一 VMess 梯子(默认); "airport" = 服务器下发的机场节点。
     // 机场模式下 sender.airport_outbound 已是一份 sing-box outbound (由管理端从 Clash 节点转换)。
@@ -1279,7 +1320,7 @@ class Backend {
           type: "vmess",
           tag: "vmess_in",
           listen: "::",
-          listen_port: toInt(receiver.vmess_listen_port, "VMess监听端口"),
+          listen_port: toListenPort(receiver.vmess_listen_port, "VMess监听端口"),
           users: [{ uuid: String(receiver.vmess_uuid || "").trim() }],
           transport: {
             type: "ws",
@@ -1331,6 +1372,7 @@ class Backend {
     const config = this.buildSenderConfig(settings);
     const configPath = path.join(this.runtimeDir, "sender.runtime.json");
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
+    this.checkSingboxConfig(singboxPath, configPath, "sender");
 
     this.senderProcess = this.spawnProcess("sender", singboxPath, ["run", "-c", configPath]);
     // 运行日志标明当前代理方式, 便于观察走的是统一梯子还是下发的机场节点。

@@ -14,6 +14,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     highlights: [
       '自动更新改为以 GitHub Releases 为更新源（参考 cc-switch），不再经过自建服务器；检查哪个仓库由 package.json 决定，fork/自部署各自走自己的发布。',
       '登录页与账户页的「检查更新」均直接查询 GitHub 最新版本，可一键下载安装（保留账号/聊天记录/网页登录态）。',
+      '发送端启动更稳：本地监听端口校验（≥1024，免管理员权限）、启动前 sing-box 配置自检、进程启动失败有明确报错。',
     ],
   },
   {
