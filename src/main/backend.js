@@ -1298,6 +1298,12 @@ class Backend {
     const result = spawnSync(binaryPath, ["check", "-c", configPath], {
       encoding: "utf-8",
       windowsHide: true,
+      // 与运行时(spawnProcess)一致: 较新版 sing-box 校验 legacy special outbounds(dns/block)
+      // 默认 FATAL, 设此标志兼容旧式配置(旧版 sing-box 忽略此变量, 跨平台安全)。
+      env: {
+        ...process.env,
+        ENABLE_DEPRECATED_SPECIAL_OUTBOUNDS: "true",
+      },
     });
     const output = [result.stdout, result.stderr]
       .map((item) => String(item || "").trim())
