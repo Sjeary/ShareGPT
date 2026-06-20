@@ -4,7 +4,7 @@
   "description": "ShareGPT desktop client with built-in messaging and embedded ChatGPT, Gemini and Claude web access (Gemini/Claude optional).",
   "main": "src/main/main.js",
   "author": "Sjeary",
-  "license": "AGPL-3.0-or-later",
+  "license": "GPL-3.0-or-later",
   "homepage": "https://github.com/Sjeary/ShareGPT",
   "repository": {
     "type": "git",
