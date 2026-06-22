@@ -66,7 +66,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
         )}
       >
         {/* 导航项可滚动区: 入口较多/窗口较矮时仍能滚动访问全部; 底部「收起」与版本卡固定不滚动。 */}
-        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-sidebar-border/70 [&::-webkit-scrollbar]:w-1.5">
+        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {navItems.map(({ key, label, icon: Icon, hint }) => {
             const on = key === active
             const badge = badgeFor(key)
