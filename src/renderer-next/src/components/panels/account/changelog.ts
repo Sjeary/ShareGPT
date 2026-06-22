@@ -10,6 +10,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.0.2',
+    date: '2026-06-23',
+    highlights: [
+      '可选更新：新增「个人日历 / 组队日历 / 备忘录·待办」三大模块（左侧入口）。',
+      '个人日历支持月/周/日、导入外部 .ics；待办支持自然语言快速添加、便签；可一键同步到日历，事件可共享到团队。',
+      '个人日历/待办支持云端同步（多端、版本号防覆盖）；修复登录偶发「账号在别处登录」、聊天记录按群隔离。',
+    ],
+  },
+  {
     version: '1.0.1',
     date: '2026-06-22',
     highlights: [

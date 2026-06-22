@@ -171,7 +171,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
           <div className="whitespace-nowrap font-medium text-foreground">
             {((meta?.productName as string) || 'ShareGPT').replace(/\s+(Sender|Receiver)$/i, '')}
           </div>
-          <div className="whitespace-nowrap">v{(meta?.version as string) || '1.0.1'}</div>
+          <div className="whitespace-nowrap">v{(meta?.version as string) || '1.0.2'}</div>
         </div>
       </aside>
     </TooltipProvider>
