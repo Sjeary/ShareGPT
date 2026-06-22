@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { Titlebar } from './Titlebar'
 import { Sidebar } from './Sidebar'
+import { PreviewBar } from './PreviewBar'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { privateConversationKey, useChatStore } from '@/store/useChatStore'
@@ -14,6 +15,7 @@ import { ClaudePanel } from '@/components/panels/ClaudePanel'
 import { StatsPanel } from '@/components/panels/StatsPanel'
 import { LogsPanel } from '@/components/panels/LogsPanel'
 import { SetupGuide } from '@/components/SetupGuide'
+import { Onboarding } from '@/components/Onboarding'
 import { Toaster } from '@/components/ui/sonner'
 
 // 通知点击负载 (对齐旧 renderer.js openConversationFromNotification ~1906)。
@@ -56,6 +58,15 @@ export function Shell() {
   // 启动即采集, 早期/后台日志不因 LogsPanel 未挂载而丢失。订阅实现见 logs 域 useLogStream。
   useLogStream()
 
+  // 首次进入主界面自动开新手导览 (此前没完成/跳过过)。仅在 Shell 挂载时判一次,
+  // 标题栏「?」可随时手动重开 (见 Titlebar / Onboarding)。
+  const setTourOpen = useAppStore((s) => s.setTourOpen)
+  useEffect(() => {
+    const done = useAppStore.getState().settings?.ui?.onboarding_done
+    if (!done) setTourOpen(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // [MEDIUM] 系统通知点击 -> 路由到对应会话。
   // type==='notification-click' 时切到协作聊天, 选中私聊/房间, 约 120ms 后滚动并高亮目标消息。
   useEffect(() => {
@@ -86,6 +97,7 @@ export function Shell() {
   return (
     <div className="flex h-full flex-col bg-background text-foreground">
       <Titlebar />
+      <PreviewBar />
       <div
         className={
           'flex min-h-0 flex-1 ' + (sidebarSide === 'right' ? 'flex-row-reverse' : 'flex-row')
@@ -106,6 +118,7 @@ export function Shell() {
         </div>
       </div>
       <SetupGuide />
+      <Onboarding />
       <Toaster position="bottom-right" theme={dark ? 'dark' : 'light'} richColors />
     </div>
   )

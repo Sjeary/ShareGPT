@@ -3,6 +3,7 @@ const path = require("node:path");
 const {
   app,
   BrowserWindow,
+  Menu,
   Notification,
   WebContentsView,
   clipboard,
@@ -1013,6 +1014,111 @@ function createElectronApp(baseMode = "all") {
         }
       }
     });
+
+    // 浏览器式右键菜单: 内嵌 AI 网页(WebContentsView)默认没有上下文菜单,
+    // 这里按 Chrome 习惯按情景拼装(链接/图片/选区/可编辑框/拼写建议 + 导航 + 检查元素)。
+    wc.on("context-menu", (_event, params) => {
+      if (wc.isDestroyed()) return;
+      popupAiContextMenu(workspace, params);
+    });
+  }
+
+  // 依据右键命中的元素拼装上下文菜单项 (params 见 Electron 'context-menu' 事件):
+  // 链接 -> 复制/外部打开; 图片 -> 复制图片/复制地址; 选区 -> 复制 + 外部搜索;
+  // 可编辑框 -> 剪切/复制/粘贴/全选(按 editFlags 启停) + 拼写建议; 末尾恒有 重新加载/检查元素。
+  function popupAiContextMenu(workspace, params) {
+    const wc = workspace.view.webContents;
+    const template = [];
+    const push = (item) => template.push(item);
+    const sep = () => {
+      if (template.length && template[template.length - 1].type !== "separator") {
+        template.push({ type: "separator" });
+      }
+    };
+    const flags = params.editFlags || {};
+
+    // 拼写建议 (可编辑框内拼错的词): 置顶, 与浏览器一致。
+    if (params.isEditable && params.misspelledWord) {
+      const suggestions = Array.isArray(params.dictionarySuggestions)
+        ? params.dictionarySuggestions.slice(0, 5)
+        : [];
+      for (const word of suggestions) {
+        push({ label: word, click: () => wc.replaceMisspelling(word) });
+      }
+      if (!suggestions.length) {
+        push({ label: "无拼写建议", enabled: false });
+      }
+      sep();
+    }
+
+    // 导航: 与浏览器一致, 后退/前进始终展示(不可用时置灰), 始终可重新加载。
+    push({ label: "后退", enabled: wc.canGoBack(), click: () => wc.goBack() });
+    push({ label: "前进", enabled: wc.canGoForward(), click: () => wc.goForward() });
+    push({ label: "重新加载", click: () => wc.reload() });
+    sep();
+
+    // 链接。
+    if (params.linkURL) {
+      push({
+        label: "在浏览器中打开链接",
+        click: () => void openExternalUrl(params.linkURL).catch(() => {}),
+      });
+      push({
+        label: "复制链接地址",
+        click: () => clipboard.writeText(params.linkURL),
+      });
+      sep();
+    }
+
+    // 图片。
+    if (params.mediaType === "image" && params.srcURL) {
+      push({ label: "复制图片", click: () => wc.copyImageAt(params.x, params.y) });
+      push({
+        label: "复制图片地址",
+        click: () => clipboard.writeText(params.srcURL),
+      });
+      sep();
+    }
+
+    // 编辑动作: 可编辑框给全套, 纯选区只给「复制」。
+    if (params.isEditable) {
+      push({ label: "剪切", enabled: !!flags.canCut, click: () => wc.cut() });
+      push({ label: "复制", enabled: !!flags.canCopy, click: () => wc.copy() });
+      push({ label: "粘贴", enabled: !!flags.canPaste, click: () => wc.paste() });
+      push({
+        label: "全选",
+        enabled: flags.canSelectAll !== false,
+        click: () => wc.selectAll(),
+      });
+      sep();
+    } else if (params.selectionText && params.selectionText.trim()) {
+      const text = params.selectionText.trim();
+      push({ label: "复制", click: () => wc.copy() });
+      push({
+        label: "在浏览器中搜索选中文字",
+        click: () =>
+          void openExternalUrl("https://www.google.com/search?q=" + encodeURIComponent(text)).catch(
+            () => {},
+          ),
+      });
+      sep();
+    }
+
+    // 末尾: 检查元素 (开发/排错用)。
+    push({
+      label: "检查元素",
+      click: () => {
+        wc.inspectElement(params.x, params.y);
+        if (wc.isDevToolsOpened()) wc.devToolsWebContents?.focus();
+      },
+    });
+
+    // 去掉可能的首尾分隔符后弹出。
+    while (template.length && template[0].type === "separator") template.shift();
+    while (template.length && template[template.length - 1].type === "separator") template.pop();
+    if (!template.length) return;
+    const menu = Menu.buildFromTemplate(template);
+    menu.popup({ window: mainWindow ?? undefined });
   }
 
   function getOrCreateAiWorkspace(kind, tabId = "", options = {}) {
@@ -1499,7 +1605,16 @@ function createElectronApp(baseMode = "all") {
         if (h) hostSet.add(h);
       } catch {}
 
-      const suffixes = Array.isArray(DEFAULT_TARGET_DOMAINS) ? DEFAULT_TARGET_DOMAINS : [];
+      // 按「当前运行中的发送端配置实际走代理的域名」分类, 而非写死的内置清单:
+      // 这样把域名加入清单并重启 sing-box 后, 检测才会从"回落"翻到"已走代理"(否则永远爆红)。
+      // 发送端未运行时退回内置清单, 仅用于展示。
+      const runningSuffixes = backend && backend.activeProxiedSuffixes;
+      const suffixes =
+        Array.isArray(runningSuffixes) && runningSuffixes.length
+          ? runningSuffixes
+          : Array.isArray(DEFAULT_TARGET_DOMAINS)
+            ? DEFAULT_TARGET_DOMAINS
+            : [];
       const viaProxy = (host) => suffixes.some((s) => host === s || host.endsWith(`.${s}`));
 
       const hosts = [...hostSet]

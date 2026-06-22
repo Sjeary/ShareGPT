@@ -52,6 +52,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
           const on = key === active
           const btn = (
             <button
+              data-tour={`nav-${key}`}
               onClick={() => setActive(key)}
               className={cn(
                 'group flex w-full items-center rounded-lg py-2.5 text-left transition-colors',
@@ -134,7 +135,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
           <div className="whitespace-nowrap font-medium text-foreground">
             {((meta?.productName as string) || 'ShareGPT').replace(/\s+(Sender|Receiver)$/i, '')}
           </div>
-          <div className="whitespace-nowrap">v{(meta?.version as string) || '1.0.0'}</div>
+          <div className="whitespace-nowrap">v{(meta?.version as string) || '1.0.1'}</div>
         </div>
       </aside>
     </TooltipProvider>

@@ -46,6 +46,15 @@ interface AppState {
   authed: boolean
   setAuthed: (v: boolean) => void
 
+  // 预览态 (true = 未登录但点了"先逛逛"进入只读主界面)。仅内存, 不持久化;
+  // 登录成功后由 setAuthed 顺带清掉, 避免和登录态并存。
+  previewMode: boolean
+  setPreviewMode: (v: boolean) => void
+
+  // 新手引导导览是否正在进行 (仅内存)。首次进入主界面自动开, 也可在标题栏「?」手动重开。
+  tourOpen: boolean
+  setTourOpen: (v: boolean) => void
+
   // 动作
   init: () => Promise<void>
   reloadSettings: () => Promise<AppSettings>
@@ -219,7 +228,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   settings: null,
   status: {},
   authed: false,
-  setAuthed: (v) => set({ authed: v }),
+  // 登录成功(authed=true)时一并退出预览态; 退出登录(false)不动预览态。
+  setAuthed: (v) => set(v ? { authed: true, previewMode: false } : { authed: false }),
+
+  previewMode: false,
+  setPreviewMode: (v) => set({ previewMode: v }),
+
+  tourOpen: false,
+  setTourOpen: (v) => set({ tourOpen: v }),
 
   init: async () => {
     const [settings, mode, meta, status] = await Promise.all([

@@ -481,6 +481,25 @@ class Backend {
     this.senderProcess = null;
     this.receiverFrpc = null;
     this.receiverSingbox = null;
+    // 当前运行中的发送端 SOCKS 端口 / 实际走代理的域名后缀集合 (供更新代理、代理检测分类复用)。
+    this.activeSocksPort = null;
+    this.activeProxiedSuffixes = null;
+  }
+
+  // 当前发送端配置里「走代理(梯子)」的域名后缀集合。路由规则(buildSenderConfig)与
+  // 「代理检测」分类共用同一套, 避免出现"加入了清单但检测仍判回落"的不一致。
+  // 基础清单: sender 模式=内置固定清单(用户不可改); all/dev 模式=可编辑的 target_domains。
+  // 自动累积 auto_domains 在两种模式下都并入 —— 否则 all 模式下"一键加入并重启"写了 auto_domains 也不生效。
+  proxiedDomainSuffixes(sender = {}) {
+    const autoDomains = Array.isArray(sender.auto_domains) ? sender.auto_domains : [];
+    const baseRaw =
+      this.appMode === "sender"
+        ? DEFAULT_TARGET_DOMAINS.join(",")
+        : String(sender.target_domains || "");
+    const merged = [...String(baseRaw).replace(/\n/g, ",").split(","), ...autoDomains]
+      .map((s) => String(s).trim().replace(/^\./, ""))
+      .filter(Boolean);
+    return [...new Set(merged)];
   }
 
   resolvePrivateDefaultsCandidates() {
@@ -1274,19 +1293,23 @@ class Backend {
       this.log(source, String(buf).trim());
     });
 
+    // 仅当退出/出错的就是「当前」那个子进程才清引用: 重启时旧进程的 exit 晚于新进程被赋值,
+    // 若无条件清空会把刚起的新进程引用一起抹掉(导致状态显示已停、且无法再正常 stop)。
     child.on("error", (err) => {
       this.log(source, `进程启动失败：${err.message || err}`);
-      if (source === "sender") this.senderProcess = null;
-      if (source === "receiver-frpc") this.receiverFrpc = null;
-      if (source === "receiver-singbox") this.receiverSingbox = null;
+      if (source === "sender" && this.senderProcess === child) this.senderProcess = null;
+      if (source === "receiver-frpc" && this.receiverFrpc === child) this.receiverFrpc = null;
+      if (source === "receiver-singbox" && this.receiverSingbox === child)
+        this.receiverSingbox = null;
       this.emitStatus();
     });
 
     child.on("exit", (code) => {
       this.log(source, `进程退出，code=${code}`);
-      if (source === "sender") this.senderProcess = null;
-      if (source === "receiver-frpc") this.receiverFrpc = null;
-      if (source === "receiver-singbox") this.receiverSingbox = null;
+      if (source === "sender" && this.senderProcess === child) this.senderProcess = null;
+      if (source === "receiver-frpc" && this.receiverFrpc === child) this.receiverFrpc = null;
+      if (source === "receiver-singbox" && this.receiverSingbox === child)
+        this.receiverSingbox = null;
       this.emitStatus();
     });
 
@@ -1344,7 +1367,52 @@ class Backend {
     this.stopChild(this.senderProcess, "sender");
     this.senderProcess = null;
     this.activeSocksPort = null;
+    this.activeProxiedSuffixes = null;
     this.emitStatus();
+  }
+
+  // 等子进程真正退出再 resolve(监听端口随退出释放); 超时则强杀兜底。
+  // 用于「重启」前确保旧进程退出, 避免新进程抢绑同一端口报 EADDRINUSE 而 FATAL。
+  stopChildAndWait(child, source, timeoutMs = 5000) {
+    return new Promise((resolve) => {
+      if (!child || child.exitCode !== null || child.signalCode !== null) {
+        resolve();
+        return;
+      }
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        try {
+          child.kill("SIGKILL");
+        } catch {}
+        done();
+      }, timeoutMs);
+      child.once("exit", () => {
+        clearTimeout(timer);
+        done();
+      });
+      try {
+        child.kill();
+        this.log(source, "已停止");
+      } catch (err) {
+        this.log(source, `停止失败: ${err.message}`);
+        clearTimeout(timer);
+        done();
+      }
+    });
+  }
+
+  async stopSenderAndWait() {
+    const child = this.senderProcess;
+    this.senderProcess = null;
+    this.activeSocksPort = null;
+    this.activeProxiedSuffixes = null;
+    this.emitStatus();
+    await this.stopChildAndWait(child, "sender");
   }
 
   stopReceiver() {
@@ -1376,21 +1444,10 @@ class Backend {
     const routeAll =
       sender.route_all === true || sender.route_all === "1" || sender.route_all === "true";
 
-    // 本机自动加入的额外域名 (代理检测自动累积), 与内置清单合并。
-    const autoDomains = Array.isArray(sender.auto_domains) ? sender.auto_domains : [];
-    const domainsRaw =
-      this.appMode === "sender"
-        ? [...DEFAULT_TARGET_DOMAINS, ...autoDomains].join(",")
-        : String(sender.target_domains || "");
-
-    const domains = String(domainsRaw)
-      .replace(/\n/g, ",")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    const uniqueDomains = [...new Set(domains)];
-    const domainSuffix = uniqueDomains.map((d) => d.replace(/^\./, ""));
+    // 走代理的域名集合: 见 proxiedDomainSuffixes (基础清单 + 自动累积 auto_domains, 两模式都并入)。
+    // domain(精确)与 domain_suffix(后缀)用同一套去点号后的清单, 路由与代理检测据此保持一致。
+    const uniqueDomains = this.proxiedDomainSuffixes(sender);
+    const domainSuffix = uniqueDomains;
 
     // "proxy" 出站: 机场模式用下发节点(强制 tag=proxy); 否则用统一 VMess 梯子。
     // 两种方式都挂在 tag="proxy" 上, 路由/DNS 规则不变, 所有命中流量统一从此出站。
@@ -1555,8 +1612,10 @@ class Backend {
     return { singbox: cfg, frpcIni };
   }
 
-  startSender(settings) {
-    this.stopSender();
+  async startSender(settings) {
+    // 重启前等旧 sing-box 真正退出、端口释放, 再起新进程;
+    // 否则新进程会抢绑同一 SOCKS 端口 -> "bind: only one usage..."(EADDRINUSE) FATAL, code=1。
+    await this.stopSenderAndWait();
 
     const singboxPath = this.resolveBinary("sing-box");
     if (!fs.existsSync(singboxPath)) {
@@ -1573,6 +1632,9 @@ class Backend {
     this.senderProcess = this.spawnProcess("sender", singboxPath, ["run", "-c", configPath]);
     // 记下本机 SOCKS 端口, 供"更新检查"经代理走出口 (github 已在路由清单里)。
     this.activeSocksPort = Number(settings.socks_listen_port) || null;
+    // 记下「当前运行中的配置」实际走代理的域名后缀, 供代理检测按真实路由分类
+    // (而非写死的内置清单), 加入域名并重启后检测才会从"回落"翻到"已走代理"。
+    this.activeProxiedSuffixes = this.proxiedDomainSuffixes(settings);
     // 运行日志标明当前代理方式, 便于观察走的是统一梯子还是下发的机场节点。
     const useAirportLog =
       settings.proxy_mode === "airport" &&

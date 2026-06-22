@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
-import { Cable, Moon, Sun, Minus, Square, Copy, X } from 'lucide-react'
+import { Cable, Moon, Sun, Minus, Square, Copy, X, HelpCircle } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
@@ -37,6 +37,9 @@ export function Titlebar() {
   const mode = useAppStore((s) => s.mode)
   const dark = useAppStore((s) => s.dark)
   const toggleTheme = useAppStore((s) => s.toggleTheme)
+  // 「?」新手导览入口仅在主界面(已登录或预览态)显示; 登录页/加载页没有可高亮的侧栏。
+  const inShell = useAppStore((s) => s.authed || s.previewMode)
+  const setTourOpen = useAppStore((s) => s.setTourOpen)
 
   // [LOW] 最大化按钮态 (旧 syncWindowMaxButton ~2640): 监听窗口最大化变化,
   // 更新图标 (最大化->双层叠图标 / 还原->方框) 与无障碍标签/标题。
@@ -115,6 +118,11 @@ export function Titlebar() {
         )}
       </div>
       <div className="app-no-drag flex items-center gap-1">
+        {inShell && (
+          <CtlButton onClick={() => setTourOpen(true)} label="新手引导">
+            <HelpCircle className="size-4" />
+          </CtlButton>
+        )}
         <CtlButton onClick={toggleTheme} label="切换主题">
           {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
         </CtlButton>

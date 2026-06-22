@@ -9,6 +9,7 @@ import { LoginScreen } from '@/components/LoginScreen'
 // 应用级登录门: 先等设置加载(确保登录页能预填), 未登录展示登录页, 登录成功(authed)后进入 Shell。
 export default function App() {
   const authed = useAppStore((s) => s.authed)
+  const previewMode = useAppStore((s) => s.previewMode)
   const settings = useAppStore((s) => s.settings)
   const meta = useAppStore((s) => s.meta)
   const init = useAppStore((s) => s.init)
@@ -45,5 +46,6 @@ export default function App() {
     )
   }
 
-  return authed ? <Shell /> : <LoginScreen />
+  // 已登录 或 预览态 进入主界面 Shell; 否则展示登录页。预览态下 Shell 顶部挂"预览条"引导登录。
+  return authed || previewMode ? <Shell /> : <LoginScreen />
 }

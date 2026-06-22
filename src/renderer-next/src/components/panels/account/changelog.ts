@@ -10,6 +10,15 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.0.1',
+    date: '2026-06-22',
+    highlights: [
+      '可选更新：本版以体验优化与小问题修复为主，非必需升级。',
+      '新增「未登录预览」与分步「新手引导」；内嵌 AI 网页支持浏览器式右键菜单；登录页改版更友好。',
+      '修复代理重启偶发端口占用导致起不来，以及「一键加入并重启」加入的域名不生效（检测一直显示回落）的问题。',
+    ],
+  },
+  {
     version: '1.0.0',
     date: '2026-06-19',
     highlights: [

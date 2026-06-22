@@ -15,9 +15,11 @@ export function SetupGuide() {
   const mode = useAppStore((s) => s.mode)
   const patchSection = useAppStore((s) => s.patchSection)
   const setActive = useAppStore((s) => s.setActive)
+  // 新手导览进行中时不弹配置引导, 避免两个覆盖层叠在一起。
+  const tourOpen = useAppStore((s) => s.tourOpen)
   const [hidden, setHidden] = useState(false)
 
-  if (!settings) return null
+  if (!settings || tourOpen) return null
 
   const collab = (settings.collab ?? {}) as Partial<CollabSettings>
   const sender = (settings.sender ?? {}) as Partial<SenderSettings>

@@ -61,6 +61,8 @@ export interface UiSettings {
   airport_notice_dismissed: boolean
   // 「不用 Claude 就别打开」提醒是否已关闭。
   claude_notice_dismissed: boolean
+  // 新手引导(分步高亮导览)是否已完成/跳过过一次; 已完成则不再自动弹, 仅可手动重看。
+  onboarding_done: boolean
 }
 
 export interface AppSettings {

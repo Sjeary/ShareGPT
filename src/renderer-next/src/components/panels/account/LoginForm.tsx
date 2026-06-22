@@ -1,6 +1,17 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
-import { Loader2, LogIn, Download, Sparkles, X } from 'lucide-react'
+import {
+  Loader2,
+  LogIn,
+  Download,
+  Sparkles,
+  X,
+  Cable,
+  Eye,
+  MessageCircle,
+  Bot,
+  BarChart3,
+} from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -85,7 +96,19 @@ type ErrorField = 'server' | 'username' | 'password'
 // 未登录态: 居中登录表单。预填 store.settings.collab。
 export function LoginForm() {
   const collab = useAppStore((s) => s.settings?.collab)
+  const meta = useAppStore((s) => s.meta)
+  const previewMode = useAppStore((s) => s.previewMode)
+  const setPreviewMode = useAppStore((s) => s.setPreviewMode)
   const { login } = useAuth()
+
+  // 品牌名: 取 app 元信息 productName, 去掉「Sender/Receiver」后缀, 回退 ShareGPT。
+  const brandName = String((meta?.productName as string) || 'ShareGPT').replace(
+    /\s+(Sender|Receiver)$/i,
+    '',
+  )
+  // 本表单既用于应用级登录页(LoginScreen), 也用于 Shell 内账户面板(预览态下未登录时)。
+  // 仅在登录页(非预览态)给"先逛逛"入口与品牌头; 预览态下已在 Shell 内, 不再重复。
+  const showPreviewEntry = !previewMode
 
   const [serverUrl, setServerUrl] = useState(collab?.server_url ?? '')
   const [username, setUsername] = useState(collab?.last_username ?? '')
@@ -156,103 +179,151 @@ export function LoginForm() {
   }
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 p-6">
-      <LoginUpdateBanner />
-      <Card className="w-full max-w-sm">
-        <CardHeader className="text-center">
-          <CardTitle className="text-xl">登录协作服务</CardTitle>
-          <CardDescription>连接到协作服务器以使用聊天与统计</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="grid gap-4" onSubmit={handleSubmit}>
-            <div className="grid gap-2">
-              <Label htmlFor="account-server">服务地址</Label>
-              <Input
-                ref={serverRef}
-                id="account-server"
-                placeholder="http://example.com:8088"
-                autoComplete="off"
-                spellCheck={false}
-                value={serverUrl}
-                onChange={(e) => setServerUrl(e.target.value)}
-                disabled={submitting}
-                aria-invalid={errorField === 'server' || undefined}
-              />
+    // 外层只负责竖向滚动(窗口矮时), 内层 grid 居中一列 max-w-sm 内容,
+    // 避免 flex + overflow 同时作用时出现的横向偏移。
+    <div className="h-full overflow-y-auto">
+      <div className="grid min-h-full place-items-center p-6">
+        <div className="flex w-full max-w-sm flex-col items-center gap-3">
+          <LoginUpdateBanner />
+
+          {/* 品牌头 (仅登录页): logo + 名称 + 友好欢迎语 + 一句话功能点, 让开局不再是一张冷冰冰的表单。 */}
+          {showPreviewEntry && (
+            <div className="flex w-full flex-col items-center gap-3 text-center">
+              <div className="grid size-14 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
+                <Cable className="size-7" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-semibold tracking-tight">欢迎使用 {brandName}</h1>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  一站式的团队协作与 AI 网页客户端 · 登录后开启全部能力
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">
+                  <MessageCircle className="size-3.5 text-primary" />
+                  协作聊天
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <Bot className="size-3.5 text-primary" />
+                  内嵌 AI 网页
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <BarChart3 className="size-3.5 text-primary" />
+                  用量统计
+                </span>
+              </div>
             </div>
+          )}
 
-            <div className="grid gap-2">
-              <Label htmlFor="account-username">账号</Label>
-              <Input
-                ref={usernameRef}
-                id="account-username"
-                placeholder="用户名"
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                disabled={submitting}
-                aria-invalid={errorField === 'username' || undefined}
-              />
-            </div>
+          <Card className="w-full">
+            <CardHeader className="text-center">
+              <CardTitle className="text-xl">登录协作服务</CardTitle>
+              <CardDescription>填写服务地址与账号即可登录</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form className="grid gap-4" onSubmit={handleSubmit}>
+                <div className="grid gap-2">
+                  <Label htmlFor="account-server">服务地址</Label>
+                  <Input
+                    ref={serverRef}
+                    id="account-server"
+                    placeholder="http://example.com:8088"
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={serverUrl}
+                    onChange={(e) => setServerUrl(e.target.value)}
+                    disabled={submitting}
+                    aria-invalid={errorField === 'server' || undefined}
+                  />
+                </div>
 
-            <div className="grid gap-2">
-              <Label htmlFor="account-password">密码</Label>
-              <Input
-                ref={passwordRef}
-                id="account-password"
-                type="password"
-                placeholder="密码"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={submitting}
-                aria-invalid={errorField === 'password' || undefined}
-              />
-            </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="account-username">账号</Label>
+                  <Input
+                    ref={usernameRef}
+                    id="account-username"
+                    placeholder="用户名"
+                    autoComplete="username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    disabled={submitting}
+                    aria-invalid={errorField === 'username' || undefined}
+                  />
+                </div>
 
-            <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-              <Label htmlFor="account-remember" className="cursor-pointer text-sm font-normal">
-                记住密码
-              </Label>
-              <Switch
-                id="account-remember"
-                checked={rememberPassword}
-                onCheckedChange={setRememberPassword}
-                disabled={submitting}
-              />
-            </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="account-password">密码</Label>
+                  <Input
+                    ref={passwordRef}
+                    id="account-password"
+                    type="password"
+                    placeholder="密码"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    disabled={submitting}
+                    aria-invalid={errorField === 'password' || undefined}
+                  />
+                </div>
 
-            {error && (
-              <p
-                role="alert"
-                className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-              >
-                {error}
-              </p>
-            )}
+                <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+                  <Label htmlFor="account-remember" className="cursor-pointer text-sm font-normal">
+                    记住密码
+                  </Label>
+                  <Switch
+                    id="account-remember"
+                    checked={rememberPassword}
+                    onCheckedChange={setRememberPassword}
+                    disabled={submitting}
+                  />
+                </div>
 
-            <Button type="submit" className="w-full" disabled={submitting}>
-              {submitting ? (
-                <>
-                  <Loader2 className="animate-spin" />
-                  登录中…
-                </>
-              ) : (
-                <>
-                  <LogIn />
-                  登录
-                </>
-              )}
+                {error && (
+                  <p
+                    role="alert"
+                    className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                  >
+                    {error}
+                  </p>
+                )}
+
+                <Button type="submit" className="w-full" disabled={submitting}>
+                  {submitting ? (
+                    <>
+                      <Loader2 className="animate-spin" />
+                      登录中…
+                    </>
+                  ) : (
+                    <>
+                      <LogIn />
+                      登录
+                    </>
+                  )}
+                </Button>
+              </form>
+
+              <Separator className="my-4" />
+
+              <div className="grid gap-2">
+                <p className="text-xs text-muted-foreground">从备份文件恢复本机配置或资料包</p>
+                <ImportActions />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 不登录也能先逛逛: 进入只读预览态 (Shell 顶部会挂"预览条"引导随时登录)。 */}
+          {showPreviewEntry && (
+            <Button
+              variant="ghost"
+              className="w-full text-muted-foreground"
+              onClick={() => setPreviewMode(true)}
+            >
+              <Eye />
+              先不登录，随便逛逛
             </Button>
-          </form>
-
-          <Separator className="my-4" />
-
-          <div className="grid gap-2">
-            <p className="text-xs text-muted-foreground">从备份文件恢复本机配置或资料包</p>
-            <ImportActions />
-          </div>
-        </CardContent>
-      </Card>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
