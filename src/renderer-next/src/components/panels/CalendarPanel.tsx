@@ -3,6 +3,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, Plus, Upload } from 'lucide-re
 import { addDays, addMonths, addWeeks, startOfDay } from 'date-fns'
 import { toast } from 'sonner'
 import { PanelScaffold } from './PanelScaffold'
+import { SyncBadge } from '@/components/SyncBadge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useCalendarStore } from '@/store/useCalendarStore'
@@ -134,6 +135,8 @@ export function CalendarPanel() {
 
   const toolbar = (
     <div className="flex items-center gap-2">
+      {/* 云端同步状态 */}
+      <SyncBadge kind="calendar" className="mr-1" />
       {/* 视图切换 (分段控件) */}
       <div className="inline-flex items-center gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5">
         {VIEW_OPTIONS.map((opt) => (

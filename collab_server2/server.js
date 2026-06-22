@@ -15,6 +15,9 @@ const CLIENT_BOOTSTRAP_FILE =
   process.env.CLIENT_BOOTSTRAP_FILE || path.join(__dirname, "data", "client_bootstrap.json");
 // 组队(共享)日历持久化文件: 房间(subnetKey)维度的团队事件 (含 RSVP)。
 const CALENDARS_FILE = process.env.CALENDARS_FILE || path.join(__dirname, "data", "calendars.json");
+// 个人云端存储: 按用户隔离的个人日历 / 待办备忘 (多端同步 + 乐观并发版本号防覆盖)。
+const USER_STORES_FILE =
+  process.env.USER_STORES_FILE || path.join(__dirname, "data", "user_stores.json");
 const RELEASES_DIR = process.env.RELEASES_DIR || path.join(__dirname, "data", "releases");
 const SESSION_TTL_MS = Number.parseInt(process.env.SESSION_TTL_MS || `${24 * 60 * 60 * 1000}`, 10);
 const HISTORY_MAX = Number.parseInt(process.env.HISTORY_MAX || "2000", 10);
@@ -643,6 +646,61 @@ function saveCalendarStore(store) {
 
 function eventsForSubnet(subnetKey) {
   return loadCalendarStore().events.filter((e) => e.subnetKey === subnetKey);
+}
+
+// —— 个人云端存储 (按用户隔离: 个人日历 calendar / 待办备忘 tasks) ——
+// 结构: { stores: { [username]: { calendar: {rev,updatedAt,data}, tasks: {rev,updatedAt,data} } } }
+// rev 为单调递增整数, 用于乐观并发: 客户端写入须带 baseRev=当前 rev, 不匹配则拒绝(防止老版本覆盖新版本)。
+const USER_STORE_KINDS = new Set(["calendar", "tasks"]);
+
+function loadUserStores() {
+  try {
+    if (!fs.existsSync(USER_STORES_FILE)) return { stores: {} };
+    const raw = JSON.parse(fs.readFileSync(USER_STORES_FILE, "utf8"));
+    return raw && typeof raw.stores === "object" && raw.stores ? raw : { stores: {} };
+  } catch {
+    return { stores: {} };
+  }
+}
+
+function saveUserStores(store) {
+  writeJsonAtomic(USER_STORES_FILE, { stores: store?.stores || {} });
+}
+
+function getUserStoreEntry(stores, username, kind) {
+  const u = stores.stores[username];
+  const e = u && u[kind];
+  return e && typeof e === "object" && Number.isInteger(e.rev)
+    ? e
+    : { rev: 0, updatedAt: "", data: null };
+}
+
+// 纯函数: 对 stores 做一次乐观并发写入。baseRev 必须等于当前 rev, 否则返回冲突(不修改 stores)。
+// 返回 { ok, conflict?, rev, updatedAt, data }; ok 时 stores 已就地更新(调用方负责持久化)。
+function putUserStore(stores, username, kind, baseRev, data) {
+  const entry = getUserStoreEntry(stores, username, kind);
+  if (baseRev !== entry.rev) {
+    return {
+      ok: false,
+      conflict: true,
+      rev: entry.rev,
+      updatedAt: entry.updatedAt,
+      data: entry.data,
+    };
+  }
+  const next = { rev: entry.rev + 1, updatedAt: nowIso(), data };
+  stores.stores[username] = stores.stores[username] || {};
+  stores.stores[username][kind] = next;
+  return { ok: true, rev: next.rev, updatedAt: next.updatedAt, data };
+}
+
+// 把负载实时下发给同一用户的其它在线端 (按 username 匹配, 排除发起端 token)。
+function broadcastToUser(username, payload, exceptToken) {
+  for (const client of wsClients) {
+    if (client.username !== username) continue;
+    if (exceptToken && client.token === exceptToken) continue;
+    sendToClient(client, payload);
+  }
 }
 
 function findUser(username) {
@@ -1989,6 +2047,63 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  // 个人云端存储 (按用户隔离, 多端同步 + 乐观并发防覆盖)。/api/user-store/:kind  kind=calendar|tasks
+  if (pathname.startsWith("/api/user-store/")) {
+    const token = extractBearer(req);
+    const session = resolveSessionByToken(token);
+    if (!session) {
+      sendText(res, 401, "未授权");
+      return;
+    }
+    const kind = decodeURIComponent(pathname.slice("/api/user-store/".length));
+    if (!USER_STORE_KINDS.has(kind)) {
+      sendText(res, 404, "Not Found");
+      return;
+    }
+
+    if (req.method === "GET") {
+      const entry = getUserStoreEntry(loadUserStores(), session.username, kind);
+      sendJson(res, 200, { rev: entry.rev, updatedAt: entry.updatedAt, data: entry.data });
+      return;
+    }
+
+    if (req.method === "PUT") {
+      try {
+        const payload = safeParseJson(await readBody(req, 8 * 1024 * 1024)) || {};
+        const baseRev = Number.isInteger(payload.baseRev) ? payload.baseRev : 0;
+        const data = payload.data;
+        if (!data || typeof data !== "object") {
+          sendText(res, 400, "data 必填");
+          return;
+        }
+        const stores = loadUserStores();
+        // 乐观并发: baseRev 必须等于服务端当前 rev, 否则拒绝, 防止老版本覆盖新版本。
+        const result = putUserStore(stores, session.username, kind, baseRev, data);
+        if (!result.ok) {
+          sendJson(res, 409, result);
+          return;
+        }
+        saveUserStores(stores);
+        // 实时下发给该用户其它在线端 (排除发起端)。
+        broadcastToUser(
+          session.username,
+          {
+            type: "user_store_updated",
+            kind,
+            rev: result.rev,
+            updatedAt: result.updatedAt,
+            data,
+          },
+          token,
+        );
+        sendJson(res, 200, { ok: true, rev: result.rev, updatedAt: result.updatedAt });
+      } catch (err) {
+        sendText(res, 500, err.message || "保存失败");
+      }
+      return;
+    }
+  }
+
   sendText(res, 404, "Not Found");
 });
 
@@ -2437,4 +2552,6 @@ module.exports = {
   clearLoginFails,
   safeParseJson,
   normalizeUserRecord,
+  getUserStoreEntry,
+  putUserStore,
 };

@@ -6,6 +6,7 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { privateConversationKey, useChatStore } from '@/store/useChatStore'
 import { useLogStream } from '@/components/panels/logs/useLogStream'
+import { useCloudSync } from '@/hooks/useCloudSync'
 import { ServicePanel } from '@/components/panels/ServicePanel'
 import { ChatPanel } from '@/components/panels/ChatPanel'
 import { AccountPanel } from '@/components/panels/AccountPanel'
@@ -60,6 +61,9 @@ export function Shell() {
   // [MEDIUM] 全局日志订阅: 应用级单次挂载 (登录后 Shell 常驻),
   // 启动即采集, 早期/后台日志不因 LogsPanel 未挂载而丢失。订阅实现见 logs 域 useLogStream。
   useLogStream()
+
+  // 个人日历 / 待办备忘 云端同步 (多端实时 + 版本号防覆盖); 未登录或服务器不支持则静默本地。
+  useCloudSync()
 
   // 首次进入主界面自动开新手导览 (此前没完成/跳过过)。仅在 Shell 挂载时判一次,
   // 标题栏「?」可随时手动重开 (见 Titlebar / Onboarding)。

@@ -73,6 +73,9 @@ interface CalendarState {
       notes?: string
     }[],
   ) => number
+
+  // 用(云端合并后的)整组数据替换本地 (云同步用); 会触发本地落盘。
+  replaceAll: (data: { calendars: Calendar[]; events: CalendarEvent[] }) => void
 }
 
 // 专用「导入」日历的固定名称与颜色 (青色, 与其它默认日历区分)。
@@ -350,6 +353,13 @@ export const useCalendarStore = create<CalendarState>((set, get) => {
 
       commit({ calendars: nextCalendars, events: [...get().events, ...newEvents] })
       return newEvents.length
+    },
+
+    replaceAll: (data) => {
+      commit({
+        calendars: Array.isArray(data.calendars) ? data.calendars : [],
+        events: Array.isArray(data.events) ? data.events : [],
+      })
     },
   }
 })

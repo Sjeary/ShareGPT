@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CheckSquare } from 'lucide-react'
 import { PanelScaffold } from './PanelScaffold'
+import { SyncBadge } from '@/components/SyncBadge'
 import { cn } from '@/lib/utils'
 import { useTasksStore } from '@/store/useTasksStore'
 import { TodoSidebar, type TodoSelection } from './todo/TodoSidebar'
@@ -41,22 +42,25 @@ export function TodoPanel() {
       hint="任务清单与便签"
       scrollable={false}
       toolbar={
-        <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/40 p-1">
-          {(['todo', 'memo'] as TopTab[]).map((t) => (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setTab(t)}
-              className={cn(
-                'rounded-md px-4 py-1.5 text-base font-medium transition-colors',
-                tab === t
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {t === 'todo' ? '待办' : '备忘录'}
-            </button>
-          ))}
+        <div className="flex items-center gap-3">
+          <SyncBadge kind="tasks" />
+          <div className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/40 p-1">
+            {(['todo', 'memo'] as TopTab[]).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setTab(t)}
+                className={cn(
+                  'rounded-md px-4 py-1.5 text-base font-medium transition-colors',
+                  tab === t
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {t === 'todo' ? '待办' : '备忘录'}
+              </button>
+            ))}
+          </div>
         </div>
       }
     >

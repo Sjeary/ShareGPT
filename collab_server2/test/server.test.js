@@ -76,3 +76,34 @@ test("safeParseJson: 合法返回对象, 非法返回 null", () => {
   assert.strictEqual(srv.safeParseJson("not json"), null); // 真正非法 -> null
   assert.deepStrictEqual(srv.safeParseJson(""), {}); // 空串按 "{}" 处理 -> {}
 });
+
+test("putUserStore: 乐观并发 — baseRev 不匹配则拒绝, 防止老版本覆盖新版本", () => {
+  const stores = { stores: {} };
+
+  // 初始空: rev 0。
+  assert.strictEqual(srv.getUserStoreEntry(stores, "alice", "calendar").rev, 0);
+
+  // 首次写入 baseRev=0 -> rev1。
+  const r1 = srv.putUserStore(stores, "alice", "calendar", 0, { events: [{ id: "a" }] });
+  assert.strictEqual(r1.ok, true);
+  assert.strictEqual(r1.rev, 1);
+  assert.strictEqual(stores.stores.alice.calendar.rev, 1);
+
+  // 老版本(baseRev=0)再写 -> 冲突, 不覆盖, 返回服务器当前(rev1)。
+  const stale = srv.putUserStore(stores, "alice", "calendar", 0, { events: [{ id: "OLD" }] });
+  assert.strictEqual(stale.ok, false);
+  assert.strictEqual(stale.conflict, true);
+  assert.strictEqual(stale.rev, 1);
+  assert.deepStrictEqual(stale.data, { events: [{ id: "a" }] }, "冲突时不应被老数据覆盖");
+  assert.strictEqual(stores.stores.alice.calendar.rev, 1, "rev 不应变化");
+
+  // 用正确 baseRev=1 写 -> rev2 成功。
+  const r2 = srv.putUserStore(stores, "alice", "calendar", 1, { events: [{ id: "b" }] });
+  assert.strictEqual(r2.ok, true);
+  assert.strictEqual(r2.rev, 2);
+  assert.deepStrictEqual(stores.stores.alice.calendar.data, { events: [{ id: "b" }] });
+
+  // 不同用户/种类相互隔离。
+  assert.strictEqual(srv.getUserStoreEntry(stores, "bob", "calendar").rev, 0);
+  assert.strictEqual(srv.getUserStoreEntry(stores, "alice", "tasks").rev, 0);
+});

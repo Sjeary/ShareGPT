@@ -320,6 +320,9 @@ interface TasksState {
   updateMemo: (id: string, patch: Partial<Omit<Memo, 'id' | 'createdAt'>>) => void
   removeMemo: (id: string) => void
   toggleMemoPin: (id: string) => void
+
+  // 用(云端合并后的)整组数据替换本地 (云同步用); 会触发本地落盘。
+  replaceAll: (data: { lists: TaskList[]; tasks: Task[]; memos: Memo[] }) => void
 }
 
 export const useTasksStore = create<TasksState>((set, get) => {
@@ -550,6 +553,14 @@ export const useTasksStore = create<TasksState>((set, get) => {
         memos: get().memos.map((m) =>
           m.id === id ? { ...m, pinned: !m.pinned, updatedAt: nowIso() } : m,
         ),
+      })
+    },
+
+    replaceAll: (data) => {
+      commit({
+        lists: Array.isArray(data.lists) ? data.lists : [],
+        tasks: Array.isArray(data.tasks) ? data.tasks : [],
+        memos: Array.isArray(data.memos) ? data.memos : [],
       })
     },
   }
