@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useChatStore } from '@/store/useChatStore'
 import { useCalendarStore } from '@/store/useCalendarStore'
 import { useTasksStore } from '@/store/useTasksStore'
+import { wsBus } from '@/lib/wsBus'
 import {
   KIND_CONFIGS,
   getStoredRev,
@@ -13,16 +14,8 @@ import {
 
 const KINDS: SyncKind[] = ['calendar', 'tasks']
 const PUSH_DEBOUNCE_MS = 800
-
-// http(s)://host -> ws(s)://host/ws?token= (复刻协作聊天约定)。
-function toWsUrl(httpUrl: string, token: string): string | null {
-  const normalized = (httpUrl || '').replace(/\/+$/, '')
-  if (!/^https?:\/\//i.test(normalized)) return null
-  const base = normalized.startsWith('https://')
-    ? `wss://${normalized.slice('https://'.length)}/ws`
-    : `ws://${normalized.slice('http://'.length)}/ws`
-  return `${base}?token=${encodeURIComponent(token)}`
-}
+// 轮询兜底间隔: 实时主要走协作聊天的那条 WS(经 wsBus); 这里仅作断连/漏推时的最终一致兜底。
+const POLL_INTERVAL_MS = 20000
 
 // 个人数据云端同步主控 hook (在 Shell 挂载一次)。登录态下自动: 初次拉取合并 -> 本地变更推送
 // -> 服务器实时推送其它端更新。乐观并发(rev)防止老版本覆盖新版本; 未登录/服务器不支持则静默本地。
@@ -45,7 +38,7 @@ export function useCloudSync(): void {
     const supported: Record<SyncKind, boolean> = { calendar: false, tasks: false }
     const pushTimers: Record<SyncKind, number | null> = { calendar: null, tasks: null }
     const unsubs: Array<() => void> = []
-    let ws: WebSocket | null = null
+    let pollTimer: number | null = null
 
     const authFetch = (path: string, init?: RequestInit) =>
       fetch(`${serverUrl}${path}`, {
@@ -144,40 +137,47 @@ export function useCloudSync(): void {
       unsubs.push(cfg.subscribe(handler))
     }
 
-    // 实时: 监听服务器对「本用户其它端」更新的推送。
-    function openRealtime(): void {
-      const wsUrl = toWsUrl(serverUrl, token)
-      if (!wsUrl) return
-      try {
-        ws = new WebSocket(wsUrl)
-        ws.onmessage = (ev) => {
-          if (cancelled) return
-          let p: Record<string, unknown>
-          try {
-            p = JSON.parse(String(ev.data || '{}'))
-          } catch {
-            return
-          }
-          if (p.type !== 'user_store_updated') return
+    // 应用来自服务器的某 kind 更新 (rev 更新时才合并)。realtime 与 poll 共用。
+    function applyRemote(kind: SyncKind, rev: number, data: unknown): void {
+      if (cancelled) return
+      if (rev <= getStoredRev(serverUrl, username, kind)) return
+      supported[kind] = true
+      const cfg = KIND_CONFIGS[kind]
+      const merged = cfg.merge(cfg.getLocal() as never, data) as never
+      cfg.apply(merged)
+      lastSynced[kind] = stable(merged)
+      setStoredRev(serverUrl, username, kind, rev)
+      // 合并后若本地仍有服务器没有的条目, 推回去保持一致。
+      if (stable(merged) !== stable(data)) void push(kind, merged, rev)
+      else setStatus(kind, 'synced')
+    }
+
+    // 实时: 复用协作聊天的唯一 WS (经 wsBus), 不再自建连接, 避免「账号在别处登录」。
+    function subscribeRealtime(): void {
+      unsubs.push(
+        wsBus.subscribe((p) => {
+          if (cancelled || p.type !== 'user_store_updated') return
           const kind = p.kind as SyncKind
           if (kind !== 'calendar' && kind !== 'tasks') return
-          supported[kind] = true
-          const rev = typeof p.rev === 'number' ? p.rev : 0
-          if (rev <= getStoredRev(serverUrl, username, kind)) return
-          const cfg = KIND_CONFIGS[kind]
-          const merged = cfg.merge(cfg.getLocal() as never, p.data) as never
-          cfg.apply(merged)
-          lastSynced[kind] = stable(merged)
-          setStoredRev(serverUrl, username, kind, rev)
-          // 合并后若本地仍有服务器没有的条目, 推回去保持一致。
-          if (stable(merged) !== stable(p.data)) void push(kind, merged, rev)
-          else setStatus(kind, 'synced')
+          applyRemote(kind, typeof p.rev === 'number' ? p.rev : 0, p.data)
+        }),
+      )
+    }
+
+    // 轮询兜底: WS 断连/漏推时, 定期 GET 比对 rev, 拉取较新数据。
+    async function pollOnce(): Promise<void> {
+      for (const kind of KINDS) {
+        if (cancelled || !supported[kind]) continue
+        try {
+          const res = await authFetch(`/api/user-store/${kind}`, { method: 'GET' })
+          if (!res.ok) continue
+          const remote = (await res.json()) as { rev: number; data: unknown }
+          if (remote.rev > getStoredRev(serverUrl, username, kind)) {
+            applyRemote(kind, remote.rev, remote.data)
+          }
+        } catch {
+          /* 忽略单次轮询失败 */
         }
-        ws.onerror = () => {
-          /* 实时失败无妨, 推送/拉取仍工作 */
-        }
-      } catch {
-        /* 构造失败忽略 */
       }
     }
 
@@ -188,12 +188,16 @@ export function useCloudSync(): void {
         useTasksStore.getState().init(),
       ]).catch(() => undefined)
       if (cancelled) return
+      subscribeRealtime()
       for (const kind of KINDS) {
         await initialSync(kind)
         if (cancelled) return
         watchLocal(kind)
       }
-      if (!cancelled) openRealtime()
+      // 仅当服务器支持时才轮询。
+      if (!cancelled && (supported.calendar || supported.tasks)) {
+        pollTimer = window.setInterval(() => void pollOnce(), POLL_INTERVAL_MS)
+      }
     })()
 
     return () => {
@@ -201,22 +205,13 @@ export function useCloudSync(): void {
       for (const kind of KINDS) {
         if (pushTimers[kind]) window.clearTimeout(pushTimers[kind] as number)
       }
+      if (pollTimer) window.clearInterval(pollTimer)
       for (const fn of unsubs) {
         try {
           fn()
         } catch {
           /* ignore */
         }
-      }
-      if (ws) {
-        ws.onmessage = null
-        ws.onerror = null
-        try {
-          ws.close()
-        } catch {
-          /* ignore */
-        }
-        ws = null
       }
     }
   }, [serverUrl, token, username])

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { api } from '@/lib/api'
+import { wsBus } from '@/lib/wsBus'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import {
@@ -486,6 +487,10 @@ export function useChat() {
           return
         }
         const type = String(payload.type || '')
+
+        // 转发给 WS 总线: 其它功能(云同步 / 组队日历)复用这条唯一连接, 不再自建 WS,
+        // 否则同账号第二条 WS 会触发服务器「账号在别处登录」把本连接踢掉。
+        wsBus.publish(payload)
 
         switch (type) {
           case 'presence': {

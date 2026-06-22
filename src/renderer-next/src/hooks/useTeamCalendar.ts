@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useChatStore } from '@/store/useChatStore'
+import { wsBus } from '@/lib/wsBus'
 import {
   selectSortedEvents,
   useTeamCalendarStore,
@@ -22,16 +23,6 @@ import {
 const LOCAL_STORAGE_KEY = 'team-calendar:local-events'
 const LOCAL_SUBNET = 'local'
 const POLL_INTERVAL_MS = 15000
-
-// 复刻 useChat.ts 的 ws-url 拼接 (http(s) -> ws(s) + /ws?token=)。
-function toWsUrl(httpUrl: string, token: string): string | null {
-  const normalized = (httpUrl || '').replace(/\/+$/, '')
-  if (!/^https?:\/\//i.test(normalized)) return null
-  const base = normalized.startsWith('https://')
-    ? `wss://${normalized.slice('https://'.length)}/ws`
-    : `ws://${normalized.slice('http://'.length)}/ws`
-  return `${base}?token=${encodeURIComponent(token)}`
-}
 
 // ----- 本地降级存储 -----
 function loadLocalEvents(): TeamEvent[] {
@@ -85,7 +76,6 @@ export function useTeamCalendar(): UseTeamCalendar {
   const upsert = useTeamCalendarStore((s) => s.upsert)
   const remove = useTeamCalendarStore((s) => s.remove)
 
-  const wsRef = useRef<WebSocket | null>(null)
   const pollRef = useRef<number | null>(null)
 
   const loggedIn = Boolean(identity.serverUrl && identity.token)
@@ -133,46 +123,28 @@ export function useTeamCalendar(): UseTeamCalendar {
     void reload()
   }, [reload])
 
-  // 实时: 服务端模式下尝试 WS 监听 calendar_event_*; 同时启动轮询兜底。
+  // 实时: 服务端模式下复用协作聊天的唯一 WS (经 wsBus) 监听 calendar_event_*; 另加轮询兜底。
+  // 不再自建 WS —— 同账号第二条连接会触发服务器「账号在别处登录」把聊天踢掉。
   useEffect(() => {
     if (source !== 'server') return
-    const { serverUrl, token } = useChatStore.getState().identity
-    const url = toWsUrl(serverUrl, token)
     let cancelled = false
 
-    if (url) {
-      try {
-        const ws = new WebSocket(url)
-        wsRef.current = ws
-        ws.onmessage = (event) => {
-          if (cancelled) return
-          let payload: Record<string, unknown>
-          try {
-            payload = JSON.parse(String(event.data || '{}'))
-          } catch {
-            return
-          }
-          switch (String(payload.type || '')) {
-            case 'calendar_event_created':
-            case 'calendar_event_updated':
-              if (payload.event) upsert(payload.event as TeamEvent)
-              break
-            case 'calendar_event_deleted':
-              if (payload.id) remove(String(payload.id))
-              break
-            default:
-              break
-          }
-        }
-        ws.onerror = () => {
-          /* WS 失败无妨, 轮询兜底 */
-        }
-      } catch {
-        /* 构造 WS 失败忽略, 走轮询 */
+    const unsub = wsBus.subscribe((payload) => {
+      if (cancelled) return
+      switch (String(payload.type || '')) {
+        case 'calendar_event_created':
+        case 'calendar_event_updated':
+          if (payload.event) upsert(payload.event as TeamEvent)
+          break
+        case 'calendar_event_deleted':
+          if (payload.id) remove(String(payload.id))
+          break
+        default:
+          break
       }
-    }
+    })
 
-    // ~15s 轮询兜底 (服务端可能不广播日历 WS 消息)。
+    // ~15s 轮询兜底 (WS 漏推/断连时最终一致)。
     pollRef.current = window.setInterval(() => {
       void reload()
     }, POLL_INTERVAL_MS)
@@ -183,17 +155,7 @@ export function useTeamCalendar(): UseTeamCalendar {
         window.clearInterval(pollRef.current)
         pollRef.current = null
       }
-      const ws = wsRef.current
-      if (ws) {
-        ws.onmessage = null
-        ws.onerror = null
-        try {
-          ws.close()
-        } catch {
-          /* ignore */
-        }
-      }
-      wsRef.current = null
+      unsub()
     }
   }, [source, reload, upsert, remove])
 
