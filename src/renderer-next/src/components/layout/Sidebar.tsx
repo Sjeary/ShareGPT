@@ -65,77 +65,80 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
               ),
         )}
       >
-        {navItems.map(({ key, label, icon: Icon, hint }) => {
-          const on = key === active
-          const badge = badgeFor(key)
-          const btn = (
-            <button
-              data-tour={`nav-${key}`}
-              onClick={() => setActive(key)}
-              className={cn(
-                'group flex w-full items-center rounded-lg py-2.5 text-left transition-colors',
-                'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-                collapsed ? 'justify-center gap-0 px-0' : 'gap-3 px-2.5',
-                on
-                  ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                  : 'text-sidebar-foreground hover:bg-sidebar-accent/60',
-              )}
-            >
-              <span
+        {/* 导航项可滚动区: 入口较多/窗口较矮时仍能滚动访问全部; 底部「收起」与版本卡固定不滚动。 */}
+        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-sidebar-border/70 [&::-webkit-scrollbar]:w-1.5">
+          {navItems.map(({ key, label, icon: Icon, hint }) => {
+            const on = key === active
+            const badge = badgeFor(key)
+            const btn = (
+              <button
+                data-tour={`nav-${key}`}
+                onClick={() => setActive(key)}
                 className={cn(
-                  'relative grid size-9 shrink-0 place-items-center rounded-full transition-colors',
+                  'group flex w-full items-center rounded-lg py-2.5 text-left transition-colors',
+                  'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                  collapsed ? 'justify-center gap-0 px-0' : 'gap-3 px-2.5',
                   on
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-sidebar-accent text-muted-foreground group-hover:text-foreground',
+                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                    : 'text-sidebar-foreground hover:bg-sidebar-accent/60',
                 )}
               >
-                <Icon className="size-[18px]" />
-                {/* 收起态: 角标用图标右上角的小红点表示「有今日项」 */}
-                {collapsed && badge > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-primary ring-2 ring-sidebar" />
-                )}
-              </span>
-              <span
-                className={cn(
-                  'overflow-hidden whitespace-nowrap transition-all duration-200',
-                  collapsed
-                    ? 'w-0 flex-none pointer-events-none opacity-0'
-                    : 'min-w-0 flex-1 opacity-100',
-                )}
-              >
-                <span className="block truncate text-[15px] font-medium">{label}</span>
-                <span className="block truncate text-xs text-muted-foreground">{hint}</span>
-              </span>
-              {/* 展开态: 右侧显示今日数量胶囊 */}
-              {!collapsed && badge > 0 && (
                 <span
                   className={cn(
-                    'ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums',
-                    on ? 'bg-primary/20 text-primary' : 'bg-primary/15 text-primary',
+                    'relative grid size-9 shrink-0 place-items-center rounded-full transition-colors',
+                    on
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-sidebar-accent text-muted-foreground group-hover:text-foreground',
                   )}
                 >
-                  {badge}
+                  <Icon className="size-[18px]" />
+                  {/* 收起态: 角标用图标右上角的小红点表示「有今日项」 */}
+                  {collapsed && badge > 0 && (
+                    <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-primary ring-2 ring-sidebar" />
+                  )}
                 </span>
-              )}
-            </button>
-          )
-          return collapsed ? (
-            <Tooltip key={key}>
-              <TooltipTrigger asChild>{btn}</TooltipTrigger>
-              <TooltipContent side={tooltipSide} className="font-medium">
-                {label}
-              </TooltipContent>
-            </Tooltip>
-          ) : (
-            <div key={key}>{btn}</div>
-          )
-        })}
+                <span
+                  className={cn(
+                    'overflow-hidden whitespace-nowrap transition-all duration-200',
+                    collapsed
+                      ? 'w-0 flex-none pointer-events-none opacity-0'
+                      : 'min-w-0 flex-1 opacity-100',
+                  )}
+                >
+                  <span className="block truncate text-[15px] font-medium">{label}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{hint}</span>
+                </span>
+                {/* 展开态: 右侧显示今日数量胶囊 */}
+                {!collapsed && badge > 0 && (
+                  <span
+                    className={cn(
+                      'ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums',
+                      on ? 'bg-primary/20 text-primary' : 'bg-primary/15 text-primary',
+                    )}
+                  >
+                    {badge}
+                  </span>
+                )}
+              </button>
+            )
+            return collapsed ? (
+              <Tooltip key={key}>
+                <TooltipTrigger asChild>{btn}</TooltipTrigger>
+                <TooltipContent side={tooltipSide} className="font-medium">
+                  {label}
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              <div key={key}>{btn}</div>
+            )
+          })}
+        </div>
 
         <button
           onClick={toggleSidebar}
           aria-label={collapsed ? '展开侧栏' : '收起侧栏'}
           className={cn(
-            'mt-auto flex items-center rounded-lg py-2.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent/60',
+            'mt-1 flex shrink-0 items-center rounded-lg py-2.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent/60',
             'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
             collapsed ? 'justify-center gap-0 px-0' : 'gap-3 px-2.5',
           )}
@@ -161,7 +164,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
 
         <div
           className={cn(
-            'overflow-hidden rounded-lg bg-sidebar-accent/50 text-xs text-muted-foreground transition-all duration-200',
+            'shrink-0 overflow-hidden rounded-lg bg-sidebar-accent/50 text-xs text-muted-foreground transition-all duration-200',
             collapsed ? 'pointer-events-none h-0 p-0 opacity-0' : 'p-3 opacity-100',
           )}
         >
