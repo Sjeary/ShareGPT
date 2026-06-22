@@ -10,7 +10,7 @@ import type { ParsedQuickAdd } from '@/lib/quickadd'
 //  - 回车提交: 把解析结果交给父级建任务; 清空输入
 export function QuickAddBar({
   onAdd,
-  placeholder = '添加任务，试试「明天 下午5点 写周报 !high #工作」',
+  placeholder = '添加任务，试试「明天下午5点写周报 !high #工作」或「下周三开会」',
 }: {
   onAdd: (parsed: ParsedQuickAdd) => void
   placeholder?: string
