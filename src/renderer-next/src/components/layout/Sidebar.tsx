@@ -1,12 +1,11 @@
 import { useEffect } from 'react'
 import { ChevronLeft } from 'lucide-react'
-import { format, isSameDay, parseISO } from 'date-fns'
+import { format } from 'date-fns'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { NAV, type NavKey } from '@/lib/nav'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
-import { useCalendarStore } from '@/store/useCalendarStore'
 import { useTasksStore } from '@/store/useTasksStore'
 
 // 可收起侧栏 (对齐 shadcn Sidebar collapsible="icon" 成熟实践):
@@ -35,31 +34,19 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const onRight = sidebarSide === 'right'
   const tooltipSide = onRight ? 'left' : 'right'
 
-  // 导航角标: 个人日历=今日事件数, 备忘录/待办=今日(含逾期)未完成任务数。
-  // 初始化两个本地 store(幂等), 让角标不必先打开面板就能显示。
-  const calEvents = useCalendarStore((s) => s.events)
-  const calInit = useCalendarStore((s) => s.init)
+  // 导航角标: 仅「备忘录/待办」显示今日(含逾期)未完成任务数 —— 它是可操作的待办,
+  // 勾完成会自动减少/清零。个人日历不显示角标(日程数量不是待办, 易被误解为未读消息)。
   const tasks = useTasksStore((s) => s.tasks)
   const tasksInit = useTasksStore((s) => s.init)
   useEffect(() => {
-    void calInit()
     void tasksInit()
-  }, [calInit, tasksInit])
+  }, [tasksInit])
 
   const todayStr = format(new Date(), 'yyyy-MM-dd')
   const todayTaskCount = tasks.filter(
     (t) => !t.completed && t.dueDate && t.dueDate <= todayStr,
   ).length
-  const now = new Date()
-  const todayEventCount = calEvents.filter((e) => {
-    try {
-      return isSameDay(parseISO(e.start), now)
-    } catch {
-      return false
-    }
-  }).length
-  const badgeFor = (key: NavKey): number =>
-    key === 'todo' ? todayTaskCount : key === 'calendar' ? todayEventCount : 0
+  const badgeFor = (key: NavKey): number => (key === 'todo' ? todayTaskCount : 0)
 
   return (
     <TooltipProvider delayDuration={0}>
