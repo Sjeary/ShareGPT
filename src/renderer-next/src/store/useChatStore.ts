@@ -169,6 +169,10 @@ interface ChatState {
   // 收到单条 (chat / chat_recall / chat_edit / system)
   upsertMessage: (message: ChatMessage) => void
 
+  // 切换「群」(不同协作服务器)时清空与该群绑定的本地缓存: 消息/成员目录/未读/输入态/草稿/房间标签,
+  // 但保留 identity/connection (由登录流程管理)。配合本地按群缓存, 实现登录即切换。
+  clearGroupCaches: () => void
+
   reset: () => void
 }
 
@@ -327,6 +331,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     })
   },
+
+  clearGroupCaches: () =>
+    set({
+      messagesByConversation: {},
+      directory: [],
+      typingByConversation: {},
+      knownOnlineUsers: [],
+      presenceReady: false,
+      replyDraft: null,
+      editDraft: null,
+      forwardDraft: null,
+      activeKey: '',
+      filter: '',
+      unreadByKey: {},
+      roomScope: '-',
+    }),
 
   reset: () =>
     set({
