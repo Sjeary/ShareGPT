@@ -43,7 +43,7 @@ export function formatDue(
   return { label, overdue }
 }
 
-// —— 便签调色板 —— (柔和的便利贴色, 浅/深色都可读)
+// —— 便签调色板 —— (参考 Google Keep, 柔和雅致, 浅/深色都耐看)
 export interface MemoColor {
   name: string
   bg: string // 浅色背景
@@ -51,20 +51,47 @@ export interface MemoColor {
 }
 
 export const MEMO_COLORS: MemoColor[] = [
-  { name: '黄', bg: '#fff3bf', darkBg: '#4a3f1a' },
-  { name: '绿', bg: '#d3f9d8', darkBg: '#1e3a26' },
-  { name: '蓝', bg: '#d0ebff', darkBg: '#1b3346' },
-  { name: '粉', bg: '#ffdeeb', darkBg: '#45203a' },
-  { name: '紫', bg: '#e5dbff', darkBg: '#2e2348' },
-  { name: '橙', bg: '#ffe8cc', darkBg: '#4a3018' },
-  { name: '灰', bg: '#e9ecef', darkBg: '#2a3340' },
+  { name: '默认', bg: '#ffffff', darkBg: '#27272a' },
+  { name: '黄', bg: '#fef7cd', darkBg: '#403a1d' },
+  { name: '橙', bg: '#ffe4c7', darkBg: '#42301c' },
+  { name: '红', bg: '#ffdcdc', darkBg: '#412528' },
+  { name: '绿', bg: '#d8f5d3', darkBg: '#22361f' },
+  { name: '青', bg: '#cdf2ec', darkBg: '#163530' },
+  { name: '蓝', bg: '#d7ecff', darkBg: '#1a3043' },
+  { name: '紫', bg: '#e7defb', darkBg: '#2b2447' },
+  { name: '粉', bg: '#ffdff0', darkBg: '#3f2338' },
 ]
 
-// 取便签底色 (按当前是否深色返回对应值)。
+// 取便签底色 (按当前是否深色返回对应值)。兼容旧色值: 命中调色板按主题给深/浅变体;
+// 未命中(老数据/自定义)时, 深色模式回退到中性深色卡, 避免浅底配浅字不可读。
 export function memoBg(color: string, dark: boolean): string {
   const found = MEMO_COLORS.find((c) => c.bg === color)
-  if (!found) return color
-  return dark ? found.darkBg : found.bg
+  if (found) return dark ? found.darkBg : found.bg
+  if (dark && isLightColor(color)) return '#2e2e33' // 老的浅色值在深色模式回退中性深卡
+  return color
+}
+
+// 判断底色是否偏亮 (据感知亮度), 用于决定卡片文字取深色还是浅色, 保证任意底色都可读。
+export function isLightColor(hex: string): boolean {
+  const m = hex.replace('#', '')
+  if (m.length < 6) return true
+  const r = parseInt(m.slice(0, 2), 16)
+  const g = parseInt(m.slice(2, 4), 16)
+  const b = parseInt(m.slice(4, 6), 16)
+  if ([r, g, b].some((v) => Number.isNaN(v))) return true
+  return 0.299 * r + 0.587 * g + 0.114 * b > 140
+}
+
+// 便签更新时间的简短文案 (今天显示时刻, 否则显示日期)。
+export function memoTimeLabel(iso: string): string {
+  try {
+    const d = parseISO(iso)
+    if (isToday(d)) return format(d, 'HH:mm')
+    const sameYear = d.getFullYear() === new Date().getFullYear()
+    return format(d, sameYear ? 'M月d日' : 'yyyy/M/d', { locale: zhCN })
+  } catch {
+    return ''
+  }
 }
 
 // 清单颜色候选 (新建/编辑清单用)。

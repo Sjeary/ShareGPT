@@ -11,6 +11,7 @@ export function MemoBoard() {
   const memos = useTasksStore((s) => s.memos)
   const addMemo = useTasksStore((s) => s.addMemo)
   const toggleMemoPin = useTasksStore((s) => s.toggleMemoPin)
+  const removeMemo = useTasksStore((s) => s.removeMemo)
 
   const [query, setQuery] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -32,7 +33,16 @@ export function MemoBoard() {
     })
   }, [memos, query])
 
-  const pinnedCount = filtered.filter((m) => m.pinned).length
+  const pinned = filtered.filter((m) => m.pinned)
+  const others = filtered.filter((m) => !m.pinned)
+  // 搜索时不分区, 直接平铺; 否则按 置顶 / 其他 分区 (Google Keep 风格)。
+  const sections =
+    query.trim() || pinned.length === 0
+      ? [{ key: 'all', label: '', items: filtered }]
+      : [
+          { key: 'pinned', label: '置顶', items: pinned },
+          { key: 'others', label: '其他', items: others },
+        ].filter((s) => s.items.length > 0)
   const editing = editingId ? (memos.find((m) => m.id === editingId) ?? null) : null
 
   const handleNew = () => {
@@ -71,20 +81,30 @@ export function MemoBoard() {
             </p>
           </div>
         ) : (
-          <>
-            {pinnedCount > 0 && !query && (
-              <div className="mb-1.5 flex items-center gap-1 text-sm font-medium text-muted-foreground">
-                <Pin className="size-3.5" />
-                置顶
-              </div>
-            )}
-            {/* CSS columns 瀑布流 (break-inside-avoid 保证卡片不被截断) */}
-            <div className="columns-1 gap-3 sm:columns-2 lg:columns-3 xl:columns-4">
-              {filtered.map((m) => (
-                <MemoCard key={m.id} memo={m} onOpen={setEditingId} onTogglePin={toggleMemoPin} />
-              ))}
-            </div>
-          </>
+          <div className="space-y-5">
+            {sections.map((sec) => (
+              <section key={sec.key}>
+                {sec.label && (
+                  <div className="mb-2 flex items-center gap-1.5 px-0.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                    {sec.key === 'pinned' && <Pin className="size-3.5" />}
+                    {sec.label}
+                  </div>
+                )}
+                {/* CSS columns 瀑布流 (break-inside-avoid 保证卡片不被截断) */}
+                <div className="columns-1 gap-4 sm:columns-2 lg:columns-3 xl:columns-4">
+                  {sec.items.map((m) => (
+                    <MemoCard
+                      key={m.id}
+                      memo={m}
+                      onOpen={setEditingId}
+                      onTogglePin={toggleMemoPin}
+                      onDelete={removeMemo}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
         )}
       </div>
 

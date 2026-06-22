@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { MEMO_COLORS, memoBg } from './helpers'
+import { MEMO_COLORS, isLightColor, memoBg } from './helpers'
 import { useDarkMode } from './useDarkMode'
 import type { Memo } from '@/store/useTasksStore'
 import { useTasksStore } from '@/store/useTasksStore'
@@ -33,6 +33,12 @@ export function MemoEditor({
   const [body, setBody] = useState('')
   const [color, setColor] = useState(MEMO_COLORS[0].bg)
   const [pinned, setPinned] = useState(false)
+
+  const bg = memoBg(color, dark)
+  const light = isLightColor(bg)
+  const ink = light ? 'text-neutral-800' : 'text-neutral-100'
+  const ph = light ? 'placeholder:text-neutral-500' : 'placeholder:text-neutral-400'
+  const borderCls = light ? 'border-black/10' : 'border-white/10'
 
   useEffect(() => {
     if (!memo) return
@@ -62,7 +68,7 @@ export function MemoEditor({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         className="gap-0 overflow-hidden p-0 sm:max-w-md"
-        style={{ backgroundColor: memoBg(color, dark) }}
+        style={{ backgroundColor: bg }}
       >
         <DialogHeader className="px-5 pt-4 pb-2">
           <DialogTitle className="sr-only">编辑便签</DialogTitle>
@@ -71,7 +77,11 @@ export function MemoEditor({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="标题"
-              className="h-10 border-0 bg-transparent px-0 text-lg font-semibold text-neutral-800 shadow-none placeholder:text-neutral-500 focus-visible:ring-0 md:text-lg dark:text-neutral-100"
+              className={cn(
+                'h-10 border-0 bg-transparent px-0 text-lg font-semibold shadow-none focus-visible:ring-0 md:text-lg',
+                ink,
+                ph,
+              )}
             />
             <button
               type="button"
@@ -95,7 +105,11 @@ export function MemoEditor({
             onChange={(e) => setBody(e.target.value)}
             placeholder="写点什么…"
             rows={8}
-            className="w-full resize-none border-0 bg-transparent text-[15px] leading-relaxed text-neutral-800 outline-none placeholder:text-neutral-500 dark:text-neutral-100"
+            className={cn(
+              'w-full resize-none border-0 bg-transparent text-[15px] leading-relaxed outline-none',
+              ink,
+              ph,
+            )}
           />
         </div>
 
@@ -116,7 +130,9 @@ export function MemoEditor({
           ))}
         </div>
 
-        <DialogFooter className="flex-row items-center justify-between border-t border-black/5 px-5 py-2.5 dark:border-white/5">
+        <DialogFooter
+          className={cn('flex-row items-center justify-between border-t px-5 py-2.5', borderCls)}
+        >
           <Button
             variant="ghost"
             size="sm"
