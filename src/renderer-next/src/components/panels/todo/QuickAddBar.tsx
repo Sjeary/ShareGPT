@@ -33,7 +33,7 @@ export function QuickAddBar({
   return (
     <div className="px-4 pt-3 pb-2">
       <div className="flex items-center gap-2 rounded-xl border border-border bg-card px-3 shadow-sm transition-colors focus-within:border-primary/60">
-        <Plus className="size-4 shrink-0 text-muted-foreground" />
+        <Plus className="size-[18px] shrink-0 text-muted-foreground" />
         <Input
           value={value}
           onChange={(e) => setValue(e.target.value)}
@@ -44,7 +44,7 @@ export function QuickAddBar({
             }
           }}
           placeholder={placeholder}
-          className="h-10 border-0 bg-transparent px-0 shadow-none focus-visible:ring-0"
+          className="h-11 border-0 bg-transparent px-0 text-base shadow-none focus-visible:ring-0 md:text-base"
         />
       </div>
       {/* 解析命中提示 */}
@@ -54,7 +54,7 @@ export function QuickAddBar({
             <span
               key={`${h.kind}-${i}`}
               className={cn(
-                'inline-flex items-center rounded-md px-1.5 py-0.5 text-xs',
+                'inline-flex items-center rounded-md px-1.5 py-0.5 text-sm',
                 h.kind === 'priority' && 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
                 h.kind === 'tag' && 'bg-primary/10 text-primary',
                 (h.kind === 'date' || h.kind === 'time') &&
@@ -64,7 +64,7 @@ export function QuickAddBar({
               {h.label}
             </span>
           ))}
-          <span className="text-xs text-muted-foreground">→ {preview.title || '(无标题)'}</span>
+          <span className="text-sm text-muted-foreground">→ {preview.title || '(无标题)'}</span>
         </div>
       )}
     </div>

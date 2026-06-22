@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Plus, Trash2, X } from 'lucide-react'
+import { Plus, Trash2, X, CalendarPlus } from 'lucide-react'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { syncTaskToCalendar } from '@/lib/integrations'
 import {
   Dialog,
   DialogContent,
@@ -104,7 +106,7 @@ export function TaskEditor({
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-h-[85vh] gap-0 overflow-hidden p-0 sm:max-w-lg">
         <DialogHeader className="border-b border-border px-6 py-4">
-          <DialogTitle className="text-base">编辑任务</DialogTitle>
+          <DialogTitle className="text-lg">编辑任务</DialogTitle>
         </DialogHeader>
 
         <div className="max-h-[60vh] space-y-4 overflow-y-auto px-6 py-4">
@@ -113,7 +115,7 @@ export function TaskEditor({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="任务标题"
-            className="h-10 text-base font-medium"
+            className="h-11 text-lg font-medium md:text-lg"
           />
 
           {/* 备注 */}
@@ -122,13 +124,13 @@ export function TaskEditor({
             onChange={(e) => setNotes(e.target.value)}
             placeholder="备注…"
             rows={3}
-            className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"
+            className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-[15px] leading-relaxed outline-none transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"
           />
 
           {/* 清单 + 优先级 */}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">清单</Label>
+              <Label className="text-sm text-muted-foreground">清单</Label>
               <div className="flex flex-wrap gap-1.5">
                 {lists.map((l) => (
                   <button
@@ -136,7 +138,7 @@ export function TaskEditor({
                     type="button"
                     onClick={() => setListId(l.id)}
                     className={cn(
-                      'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors',
+                      'inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-sm transition-colors',
                       listId === l.id
                         ? 'border-primary bg-primary/10 text-foreground'
                         : 'border-border text-muted-foreground hover:bg-accent',
@@ -149,7 +151,7 @@ export function TaskEditor({
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">优先级</Label>
+              <Label className="text-sm text-muted-foreground">优先级</Label>
               <div className="flex gap-1.5">
                 {PRIORITY_OPTIONS.map((p) => {
                   const m = PRIORITY_META[p]
@@ -177,12 +179,12 @@ export function TaskEditor({
           {/* 到期 日期 + 时间 + 全天 */}
           <div className="space-y-2 rounded-lg border border-border p-3">
             <div className="flex items-center gap-3">
-              <Label className="w-12 shrink-0 text-xs text-muted-foreground">日期</Label>
+              <Label className="w-12 shrink-0 text-sm text-muted-foreground">日期</Label>
               <Input
                 type="date"
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
-                className="h-8 flex-1"
+                className="h-9 flex-1 text-sm md:text-sm"
               />
               {dueDate && (
                 <button
@@ -201,7 +203,7 @@ export function TaskEditor({
             {dueDate && (
               <>
                 <div className="flex items-center justify-between">
-                  <Label className="text-xs text-muted-foreground">全天</Label>
+                  <Label className="text-sm text-muted-foreground">全天</Label>
                   <Switch
                     checked={isAllDay}
                     onCheckedChange={(v) => {
@@ -212,17 +214,17 @@ export function TaskEditor({
                 </div>
                 {!isAllDay && (
                   <div className="flex items-center gap-3">
-                    <Label className="w-12 shrink-0 text-xs text-muted-foreground">时间</Label>
+                    <Label className="w-12 shrink-0 text-sm text-muted-foreground">时间</Label>
                     <Input
                       type="time"
                       value={dueTime}
                       onChange={(e) => setDueTime(e.target.value)}
-                      className="h-8 flex-1"
+                      className="h-9 flex-1 text-sm md:text-sm"
                     />
                   </div>
                 )}
                 <div className="flex items-center gap-3">
-                  <Label className="w-12 shrink-0 text-xs text-muted-foreground">重复</Label>
+                  <Label className="w-12 shrink-0 text-sm text-muted-foreground">重复</Label>
                   <div className="flex flex-wrap gap-1.5">
                     {REPEAT_OPTIONS.map((o) => (
                       <button
@@ -230,7 +232,7 @@ export function TaskEditor({
                         type="button"
                         onClick={() => setRepeat(o.value)}
                         className={cn(
-                          'rounded-md border px-2 py-1 text-xs transition-colors',
+                          'rounded-md border px-2.5 py-1.5 text-sm transition-colors',
                           repeat === o.value
                             ? 'border-primary bg-primary/10 text-foreground'
                             : 'border-border text-muted-foreground hover:bg-accent',
@@ -247,12 +249,12 @@ export function TaskEditor({
 
           {/* 标签 */}
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">标签</Label>
+            <Label className="text-sm text-muted-foreground">标签</Label>
             <div className="flex flex-wrap items-center gap-1.5">
               {tags.map((t) => (
                 <span
                   key={t}
-                  className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-1 text-xs text-primary"
+                  className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-2 py-1 text-sm text-primary"
                 >
                   #{t}
                   <button type="button" onClick={() => setTags(tags.filter((x) => x !== t))}>
@@ -270,14 +272,14 @@ export function TaskEditor({
                   }
                 }}
                 placeholder="添加标签…"
-                className="h-7 w-28 text-xs"
+                className="h-8 w-32 text-sm md:text-sm"
               />
             </div>
           </div>
 
           {/* 子任务 */}
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">子任务</Label>
+            <Label className="text-sm text-muted-foreground">子任务</Label>
             <div className="space-y-1">
               {subtasks.map((s) => (
                 <div key={s.id} className="group flex items-center gap-2">
@@ -285,19 +287,17 @@ export function TaskEditor({
                     type="button"
                     onClick={() => toggleSubtask(task.id, s.id)}
                     className={cn(
-                      'grid size-4 shrink-0 place-items-center rounded-full border-2 transition-colors',
+                      'grid size-5 shrink-0 place-items-center rounded-full border-2 transition-colors',
                       s.completed
                         ? 'border-primary bg-primary text-primary-foreground'
                         : 'border-muted-foreground/40 hover:border-primary',
                     )}
                   >
-                    {s.completed && (
-                      <span className="size-1.5 rounded-full bg-primary-foreground" />
-                    )}
+                    {s.completed && <span className="size-2 rounded-full bg-primary-foreground" />}
                   </button>
                   <span
                     className={cn(
-                      'flex-1 text-sm',
+                      'flex-1 text-base',
                       s.completed && 'text-muted-foreground line-through',
                     )}
                   >
@@ -326,7 +326,7 @@ export function TaskEditor({
                   }
                 }}
                 placeholder="添加子任务…"
-                className="h-7 text-xs"
+                className="h-9 text-base md:text-base"
               />
             </div>
           </div>
@@ -345,15 +345,34 @@ export function TaskEditor({
             <Trash2 className="size-4" />
             删除
           </Button>
-          <Button
-            size="sm"
-            onClick={() => {
-              persist()
-              onOpenChange(false)
-            }}
-          >
-            完成
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* 加入个人日历: 先保存草稿再同步 (需有到期日) */}
+            <Button
+              variant="outline"
+              size="sm"
+              title="把此任务加入个人日历(需设置到期日期)"
+              onClick={() => {
+                persist()
+                const r = syncTaskToCalendar(task.id)
+                if (r === 'no-date') toast.error('请先设置到期日期，再加入日历')
+                else if (r === 'updated') toast.success('已更新到个人日历')
+                else if (r === 'synced') toast.success('已加入个人日历')
+                else toast.error('加入失败')
+              }}
+            >
+              <CalendarPlus className="size-4" />
+              加入日历
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                persist()
+                onOpenChange(false)
+              }}
+            >
+              完成
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

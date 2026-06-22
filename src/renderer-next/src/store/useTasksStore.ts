@@ -48,6 +48,8 @@ export interface Task {
   completed: boolean
   completedAt?: string // ISO
   sortOrder: number
+  // 已同步到个人日历时, 记录对应日历事件 id (再次同步则更新该事件而非重复创建)。
+  calendarEventId?: string
   createdAt: string
   updatedAt: string
 }
@@ -227,6 +229,7 @@ function parseTask(v: unknown, idx: number): Task | null {
     subtasks: parseSubtasks(v.subtasks),
     completed: v.completed === true,
     completedAt: typeof v.completedAt === 'string' ? v.completedAt : undefined,
+    calendarEventId: typeof v.calendarEventId === 'string' ? v.calendarEventId : undefined,
     sortOrder: typeof v.sortOrder === 'number' ? v.sortOrder : idx,
     createdAt: created,
     updatedAt: typeof v.updatedAt === 'string' ? v.updatedAt : created,

@@ -54,7 +54,7 @@ export function MemoBoard() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="搜索便签…"
-            className="h-9 pl-8"
+            className="h-10 pl-8 text-base md:text-base"
           />
         </div>
       </div>
@@ -66,15 +66,15 @@ export function MemoBoard() {
             <div className="grid size-14 place-items-center rounded-full bg-muted">
               <StickyNote className="size-7 text-muted-foreground" />
             </div>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-base text-muted-foreground">
               {query ? '没有匹配的便签' : '还没有便签，点「新建便签」记一笔'}
             </p>
           </div>
         ) : (
           <>
             {pinnedCount > 0 && !query && (
-              <div className="mb-1.5 flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                <Pin className="size-3" />
+              <div className="mb-1.5 flex items-center gap-1 text-sm font-medium text-muted-foreground">
+                <Pin className="size-3.5" />
                 置顶
               </div>
             )}

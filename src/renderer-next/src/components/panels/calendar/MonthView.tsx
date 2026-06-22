@@ -89,7 +89,7 @@ export function MonthView({
       {/* 星期表头 */}
       <div className="grid grid-cols-7 border-b border-border">
         {WEEKDAY_LABELS.map((w) => (
-          <div key={w} className="py-2 text-center text-xs font-medium text-muted-foreground">
+          <div key={w} className="py-2.5 text-center text-sm font-semibold text-muted-foreground">
             {w}
           </div>
         ))}
@@ -110,7 +110,7 @@ export function MonthView({
               key={key}
               onClick={() => onPickDay(day)}
               className={cn(
-                'flex min-h-0 cursor-pointer flex-col gap-0.5 border-r border-b border-border p-1 transition-colors hover:bg-accent/40',
+                'flex min-h-[88px] cursor-pointer flex-col gap-1 border-r border-b border-border p-1.5 transition-colors hover:bg-accent/40',
                 !inMonth && 'bg-muted/30',
               )}
             >
@@ -118,7 +118,7 @@ export function MonthView({
               <div className="flex justify-end px-0.5">
                 <span
                   className={cn(
-                    'grid size-6 place-items-center rounded-full text-xs',
+                    'grid size-7 place-items-center rounded-full text-sm',
                     today && 'bg-primary font-semibold text-primary-foreground',
                     !today && inMonth && 'text-foreground',
                     !today && !inMonth && 'text-muted-foreground/60',
@@ -142,7 +142,7 @@ export function MonthView({
                         e.stopPropagation()
                         onPickEvent(occ.event.id)
                       }}
-                      className="flex items-center gap-1 truncate rounded px-1 py-0.5 text-left text-[11px] leading-tight transition-opacity hover:opacity-80"
+                      className="flex items-center gap-1 truncate rounded px-1.5 py-1 text-left text-sm leading-tight transition-opacity hover:opacity-80"
                       style={{
                         backgroundColor: hexToRgba(color, 0.16),
                         color,
@@ -158,7 +158,7 @@ export function MonthView({
                   )
                 })}
                 {overflow > 0 && (
-                  <span className="px-1 text-[11px] font-medium text-muted-foreground">
+                  <span className="px-1 text-sm font-medium text-muted-foreground">
                     +{overflow}
                   </span>
                 )}

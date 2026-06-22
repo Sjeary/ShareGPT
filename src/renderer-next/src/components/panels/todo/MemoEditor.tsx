@@ -71,7 +71,7 @@ export function MemoEditor({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="标题"
-              className="h-9 border-0 bg-transparent px-0 text-base font-semibold text-neutral-800 shadow-none placeholder:text-neutral-500 focus-visible:ring-0 dark:text-neutral-100"
+              className="h-10 border-0 bg-transparent px-0 text-lg font-semibold text-neutral-800 shadow-none placeholder:text-neutral-500 focus-visible:ring-0 md:text-lg dark:text-neutral-100"
             />
             <button
               type="button"
@@ -95,7 +95,7 @@ export function MemoEditor({
             onChange={(e) => setBody(e.target.value)}
             placeholder="写点什么…"
             rows={8}
-            className="w-full resize-none border-0 bg-transparent text-sm leading-relaxed text-neutral-800 outline-none placeholder:text-neutral-500 dark:text-neutral-100"
+            className="w-full resize-none border-0 bg-transparent text-[15px] leading-relaxed text-neutral-800 outline-none placeholder:text-neutral-500 dark:text-neutral-100"
           />
         </div>
 

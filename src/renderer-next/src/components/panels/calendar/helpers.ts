@@ -7,7 +7,8 @@ import type { EventOccurrence } from '@/lib/recurrence'
 export type CalendarView = 'month' | 'week' | 'day'
 
 // 时间网格: 每小时行高 (px) 与一天总高。
-export const HOUR_HEIGHT = 48
+// 行高调高一点, 让放大后的事件标题与时间不至于挤压/裁切。
+export const HOUR_HEIGHT = 60
 export const DAY_HEIGHT = HOUR_HEIGHT * 24
 
 // 新建日历的备选色板 (Apple 风格的明快色)。
@@ -69,8 +70,8 @@ export function layoutInDay(occ: EventOccurrence, day: Date): TimedLayout {
   const startMin = (clampedStart.getTime() - dayStart.getTime()) / 60000
   const endMin = (clampedEnd.getTime() - dayStart.getTime()) / 60000
   const topPx = (startMin / 60) * HOUR_HEIGHT
-  // 最小高度保证短事件可点。
-  const heightPx = Math.max(18, ((endMin - startMin) / 60) * HOUR_HEIGHT)
+  // 最小高度保证短事件可点 (放大字号后略增)。
+  const heightPx = Math.max(22, ((endMin - startMin) / 60) * HOUR_HEIGHT)
   return { topPx, heightPx }
 }
 

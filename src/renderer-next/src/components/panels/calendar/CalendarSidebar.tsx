@@ -27,32 +27,32 @@ export function CalendarSidebar() {
   }
 
   return (
-    <aside className="flex w-52 shrink-0 flex-col border-r border-border bg-card/40">
-      <div className="px-4 pt-4 pb-2 text-xs font-semibold tracking-wide text-muted-foreground">
+    <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-card/40">
+      <div className="px-4 pt-4 pb-2 text-lg font-semibold tracking-wide text-foreground">
         我的日历
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2">
         {calendars.map((c) => (
           <div
             key={c.id}
-            className="group flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-accent"
+            className="group flex items-center gap-2.5 rounded-md px-2 py-2 hover:bg-accent"
           >
             {/* 自绘勾选框: 选中填日历色 */}
             <button
               type="button"
               onClick={() => toggleVisible(c.id)}
               className={cn(
-                'grid size-4 shrink-0 place-items-center rounded-[5px] border transition-colors',
+                'grid size-[18px] shrink-0 place-items-center rounded-[5px] border transition-colors',
                 c.visible ? 'border-transparent text-white' : 'border-border text-transparent',
               )}
               style={c.visible ? { backgroundColor: c.color } : undefined}
               aria-label={c.visible ? '隐藏' : '显示'}
             >
-              <Check className="size-3" strokeWidth={3} />
+              <Check className="size-3.5" strokeWidth={3} />
             </button>
             <span
               className={cn(
-                'min-w-0 flex-1 truncate text-sm',
+                'min-w-0 flex-1 truncate text-base',
                 c.visible ? 'text-foreground' : 'text-muted-foreground',
               )}
             >

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { MapPin, FileText, Link2, Trash2, Repeat, Check } from 'lucide-react'
+import { MapPin, FileText, Link2, Trash2, Repeat, Check, Users } from 'lucide-react'
+import { shareEventToTeam } from '@/lib/integrations'
 import {
   Dialog,
   DialogContent,
@@ -116,6 +117,23 @@ export function EventEditorDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.eventId, target?.draftStart, target?.draftEnd, open])
 
+  // 由表单计算起止 ISO (保存与「共享到团队」共用)。
+  const computeTimes = (): { startIso: string; endIso: string } => {
+    let startIso: string
+    let endIso: string
+    if (allDay) {
+      startIso = partsToIso(startDate, '00:00')
+      endIso = partsToIso(endDate || startDate, '00:00')
+    } else {
+      startIso = partsToIso(startDate, startTime)
+      endIso = partsToIso(endDate || startDate, endTime)
+    }
+    if (new Date(endIso) < new Date(startIso)) {
+      endIso = allDay ? startIso : new Date(new Date(startIso).getTime() + 3600_000).toISOString()
+    }
+    return { startIso, endIso }
+  }
+
   const handleSave = () => {
     const trimmed = title.trim()
     if (!trimmed) {
@@ -126,20 +144,7 @@ export function EventEditorDialog({
       toast.error('请先选择日历')
       return
     }
-    // 全天事件: 起止取整到当天 0 点 / 次日前。
-    let startIso: string
-    let endIso: string
-    if (allDay) {
-      startIso = partsToIso(startDate, '00:00')
-      endIso = partsToIso(endDate || startDate, '00:00')
-    } else {
-      startIso = partsToIso(startDate, startTime)
-      endIso = partsToIso(endDate || startDate, endTime)
-    }
-    // 结束早于开始: 自动顺延为开始 + 1 小时 (或同日全天)。
-    if (new Date(endIso) < new Date(startIso)) {
-      endIso = allDay ? startIso : new Date(new Date(startIso).getTime() + 3600_000).toISOString()
-    }
+    const { startIso, endIso } = computeTimes()
 
     const recurrenceVal =
       recurrence === 'none' ? null : { freq: recurrence as RecurrenceFreq, interval: 1 }
@@ -173,11 +178,32 @@ export function EventEditorDialog({
     onClose()
   }
 
+  // 共享到组队日历: 把当前表单内容作为一条团队事件发出 (登录则同步服务器, 否则本地预览)。
+  const handleShareToTeam = () => {
+    const trimmed = title.trim()
+    if (!trimmed) {
+      toast.error('请输入标题')
+      return
+    }
+    const { startIso, endIso } = computeTimes()
+    const color = calendars.find((c) => c.id === calendarId)?.color
+    shareEventToTeam({
+      title: trimmed,
+      start: startIso,
+      end: endIso,
+      allDay,
+      location: location.trim() || undefined,
+      description: notes.trim() || undefined,
+      color,
+    })
+    toast.success('已共享到组队日历')
+  }
+
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{existing ? '编辑事件' : '新建事件'}</DialogTitle>
+          <DialogTitle className="text-xl">{existing ? '编辑事件' : '新建事件'}</DialogTitle>
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
@@ -187,12 +213,12 @@ export function EventEditorDialog({
             placeholder="标题"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            className="text-base font-medium"
+            className="h-11 text-base font-medium"
           />
 
           {/* 日历选择 (色点行) */}
           <div className="flex flex-col gap-2">
-            <Label className="text-xs text-muted-foreground">日历</Label>
+            <Label className="text-sm text-muted-foreground">日历</Label>
             <div className="flex flex-wrap gap-2">
               {calendars.map((c) => {
                 const active = c.id === calendarId
@@ -202,7 +228,7 @@ export function EventEditorDialog({
                     type="button"
                     onClick={() => setCalendarId(c.id)}
                     className={cn(
-                      'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors',
+                      'inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition-colors',
                       active
                         ? 'border-transparent bg-secondary text-secondary-foreground'
                         : 'border-border text-muted-foreground hover:bg-accent',
@@ -210,7 +236,7 @@ export function EventEditorDialog({
                   >
                     <span className="size-2.5 rounded-full" style={{ backgroundColor: c.color }} />
                     {c.name}
-                    {active && <Check className="size-3" />}
+                    {active && <Check className="size-3.5" />}
                   </button>
                 )
               })}
@@ -219,43 +245,45 @@ export function EventEditorDialog({
 
           {/* 全天 */}
           <div className="flex items-center justify-between">
-            <Label htmlFor="allday-switch">全天</Label>
+            <Label htmlFor="allday-switch" className="text-base">
+              全天
+            </Label>
             <Switch id="allday-switch" checked={allDay} onCheckedChange={setAllDay} />
           </div>
 
           {/* 起止时间 */}
           <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2">
-              <Label className="w-10 shrink-0 text-xs text-muted-foreground">开始</Label>
+              <Label className="w-10 shrink-0 text-sm text-muted-foreground">开始</Label>
               <Input
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
-                className="flex-1"
+                className="h-10 flex-1 text-base"
               />
               {!allDay && (
                 <Input
                   type="time"
                   value={startTime}
                   onChange={(e) => setStartTime(e.target.value)}
-                  className="w-28"
+                  className="h-10 w-28 text-base"
                 />
               )}
             </div>
             <div className="flex items-center gap-2">
-              <Label className="w-10 shrink-0 text-xs text-muted-foreground">结束</Label>
+              <Label className="w-10 shrink-0 text-sm text-muted-foreground">结束</Label>
               <Input
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
-                className="flex-1"
+                className="h-10 flex-1 text-base"
               />
               {!allDay && (
                 <Input
                   type="time"
                   value={endTime}
                   onChange={(e) => setEndTime(e.target.value)}
-                  className="w-28"
+                  className="h-10 w-28 text-base"
                 />
               )}
             </div>
@@ -263,8 +291,8 @@ export function EventEditorDialog({
 
           {/* 重复 (自绘按钮组) */}
           <div className="flex flex-col gap-2">
-            <Label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Repeat className="size-3.5" />
+            <Label className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <Repeat className="size-4" />
               重复
             </Label>
             <div className="flex flex-wrap gap-1.5">
@@ -274,7 +302,7 @@ export function EventEditorDialog({
                   type="button"
                   onClick={() => setRecurrence(opt.value)}
                   className={cn(
-                    'rounded-md border px-2.5 py-1 text-xs transition-colors',
+                    'rounded-md border px-3 py-1.5 text-sm transition-colors',
                     recurrence === opt.value
                       ? 'border-transparent bg-primary text-primary-foreground'
                       : 'border-border text-muted-foreground hover:bg-accent',
@@ -288,29 +316,35 @@ export function EventEditorDialog({
 
           {/* 地点 */}
           <div className="flex items-center gap-2">
-            <MapPin className="size-4 shrink-0 text-muted-foreground" />
+            <MapPin className="size-5 shrink-0 text-muted-foreground" />
             <Input
               placeholder="地点"
               value={location}
               onChange={(e) => setLocation(e.target.value)}
+              className="h-10 text-base"
             />
           </div>
 
           {/* 链接 */}
           <div className="flex items-center gap-2">
-            <Link2 className="size-4 shrink-0 text-muted-foreground" />
-            <Input placeholder="链接" value={url} onChange={(e) => setUrl(e.target.value)} />
+            <Link2 className="size-5 shrink-0 text-muted-foreground" />
+            <Input
+              placeholder="链接"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              className="h-10 text-base"
+            />
           </div>
 
           {/* 备注 */}
           <div className="flex items-start gap-2">
-            <FileText className="mt-2 size-4 shrink-0 text-muted-foreground" />
+            <FileText className="mt-2.5 size-5 shrink-0 text-muted-foreground" />
             <textarea
               placeholder="备注"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={3}
-              className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"
+              className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"
             />
           </div>
         </div>
@@ -329,6 +363,10 @@ export function EventEditorDialog({
             <span />
           )}
           <div className="flex gap-2">
+            <Button variant="outline" onClick={handleShareToTeam} title="把此事件共享到组队日历">
+              <Users className="size-4" />
+              共享到团队
+            </Button>
             <Button variant="outline" onClick={onClose}>
               取消
             </Button>

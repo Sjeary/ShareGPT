@@ -64,7 +64,7 @@ export function TodoSidebar({
   }
 
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-sidebar/50">
+    <aside className="flex w-60 shrink-0 flex-col border-r border-border bg-sidebar/50">
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
         {/* 智能清单 */}
         <nav className="space-y-0.5">
@@ -77,16 +77,16 @@ export function TodoSidebar({
                 type="button"
                 onClick={() => onSelect({ kind: 'smart', view })}
                 className={cn(
-                  'flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors',
+                  'flex w-full items-center gap-2.5 rounded-md px-2.5 py-2.5 text-base transition-colors',
                   active
                     ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
                     : 'text-sidebar-foreground hover:bg-sidebar-accent/60',
                 )}
               >
-                <Icon className={cn('size-4 shrink-0', active && 'text-primary')} />
+                <Icon className={cn('size-[18px] shrink-0', active && 'text-primary')} />
                 <span className="flex-1 truncate text-left">{label}</span>
                 {count > 0 && (
-                  <span className="text-xs tabular-nums text-muted-foreground">{count}</span>
+                  <span className="text-sm tabular-nums text-muted-foreground">{count}</span>
                 )}
               </button>
             )
@@ -95,7 +95,7 @@ export function TodoSidebar({
 
         {/* 分隔 + 用户清单标题 */}
         <div className="mt-4 mb-1 flex items-center justify-between px-2.5">
-          <span className="text-xs font-medium text-muted-foreground">清单</span>
+          <span className="text-sm font-medium text-muted-foreground">清单</span>
           <button
             type="button"
             onClick={() => setAdding(true)}
@@ -114,7 +114,7 @@ export function TodoSidebar({
               <div
                 key={l.id}
                 className={cn(
-                  'group relative flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors',
+                  'group relative flex w-full items-center gap-2.5 rounded-md px-2.5 py-2.5 text-base transition-colors',
                   active
                     ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
                     : 'text-sidebar-foreground hover:bg-sidebar-accent/60',
@@ -132,7 +132,7 @@ export function TodoSidebar({
                   <span className="flex-1 truncate">{l.name}</span>
                 </button>
                 {count > 0 && (
-                  <span className="text-xs tabular-nums text-muted-foreground group-hover:hidden">
+                  <span className="text-sm tabular-nums text-muted-foreground group-hover:hidden">
                     {count}
                   </span>
                 )}
@@ -190,7 +190,7 @@ export function TodoSidebar({
                 }}
                 onBlur={submitNew}
                 placeholder="清单名称"
-                className="h-7 text-sm"
+                className="h-9 text-base"
               />
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {LIST_COLORS.map((c) => (

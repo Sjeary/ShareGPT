@@ -213,7 +213,7 @@ function EventEditorForm({
   return (
     <DialogContent className="max-h-[88vh] gap-0 overflow-hidden p-0 sm:max-w-lg">
       <DialogHeader className="border-b border-border px-6 py-4">
-        <DialogTitle>{isEditing ? '编辑事件' : '新建团队事件'}</DialogTitle>
+        <DialogTitle className="text-lg">{isEditing ? '编辑事件' : '新建团队事件'}</DialogTitle>
       </DialogHeader>
 
       <ScrollArea className="max-h-[64vh]">
@@ -289,7 +289,7 @@ function EventEditorForm({
               onChange={(e) => setDescription(e.target.value)}
               placeholder="补充说明 (可选)"
               rows={3}
-              className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"
+              className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 md:text-sm dark:bg-input/30"
             />
           </div>
 
@@ -345,7 +345,7 @@ function EventEditorForm({
                     onClick={() =>
                       addAttendee({ username: u.username, displayName: u.displayName })
                     }
-                    className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-2.5 py-1 text-xs hover:bg-accent"
+                    className="inline-flex items-center gap-1 rounded-full border border-border bg-card px-3 py-1.5 text-sm hover:bg-accent"
                   >
                     <span
                       className={cn(
@@ -368,7 +368,7 @@ function EventEditorForm({
                       key={a.username}
                       className="flex items-center justify-between gap-2 rounded-md px-1.5 py-1"
                     >
-                      <span className="truncate text-sm">{a.displayName}</span>
+                      <span className="truncate text-base">{a.displayName}</span>
                       <div className="flex shrink-0 items-center gap-2">
                         {isEditing && <RsvpBadge status={rsvp} />}
                         <button
@@ -377,7 +377,7 @@ function EventEditorForm({
                           className="text-muted-foreground hover:text-destructive"
                           aria-label="移除"
                         >
-                          <Trash2 className="size-3.5" />
+                          <Trash2 className="size-4" />
                         </button>
                       </div>
                     </div>

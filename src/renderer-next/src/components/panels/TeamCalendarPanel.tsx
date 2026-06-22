@@ -82,7 +82,7 @@ export function TeamCalendarPanel() {
           type="button"
           onClick={() => setView('month')}
           className={cn(
-            'rounded px-2.5 py-1 text-xs transition-colors',
+            'rounded px-3 py-1 text-sm transition-colors',
             view === 'month' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground',
           )}
         >
@@ -92,7 +92,7 @@ export function TeamCalendarPanel() {
           type="button"
           onClick={() => setView('week')}
           className={cn(
-            'rounded px-2.5 py-1 text-xs transition-colors',
+            'rounded px-3 py-1 text-sm transition-colors',
             view === 'week' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground',
           )}
         >
@@ -124,8 +124,8 @@ export function TeamCalendarPanel() {
     >
       <div className="flex h-full min-h-0 flex-col">
         {source === 'local' && (
-          <div className="flex shrink-0 items-center gap-2 border-b border-border bg-amber-50 px-4 py-2 text-xs text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
-            <WifiOff className="size-3.5" />
+          <div className="flex shrink-0 items-center gap-2 border-b border-border bg-amber-50 px-4 py-2.5 text-sm text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+            <WifiOff className="size-4" />
             未连接协作服务器，当前为本地预览（事件仅保存在本机）。
           </div>
         )}

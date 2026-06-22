@@ -30,6 +30,21 @@ function buildSteps(brand: string): Step[] {
       body: '和团队成员实时收发消息、互传文件，在线状态一目了然。',
     },
     {
+      target: 'nav-calendar',
+      title: '个人日历',
+      body: '月/周/日视图管理日程，可导入外部 .ics 日历；事件还能一键「共享到团队」。',
+    },
+    {
+      target: 'nav-team',
+      title: '组队日历',
+      body: '团队共享日程，邀请成员并收集 接受/拒绝/待定 回应；未登录也能本地预览。',
+    },
+    {
+      target: 'nav-todo',
+      title: '备忘录 / 待办',
+      body: '清单 + 智能视图 + 便签；自然语言快速添加，待办还能一键同步到个人日历。',
+    },
+    {
       target: 'nav-gpt',
       title: '内嵌 AI 网页',
       body: 'ChatGPT / Gemini / Claude 直接在客户端里打开，免去来回切换浏览器。空白处右键还有浏览器式菜单。',

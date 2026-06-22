@@ -31,7 +31,7 @@ export function MonthView({
         {WEEKDAY_LABELS.map((label) => (
           <div
             key={label}
-            className="px-2 py-2 text-center text-xs font-medium text-muted-foreground"
+            className="px-2 py-2.5 text-center text-sm font-medium text-muted-foreground"
           >
             周{label}
           </div>
@@ -50,14 +50,14 @@ export function MonthView({
               type="button"
               onClick={() => onSelectDay(day)}
               className={cn(
-                'flex min-h-0 flex-col gap-0.5 border-r border-b border-border p-1 text-left transition-colors hover:bg-accent/50',
+                'flex min-h-[88px] flex-col gap-1 border-r border-b border-border p-1.5 text-left transition-colors hover:bg-accent/50',
                 !inMonth && 'bg-muted/30 text-muted-foreground',
               )}
             >
               <div className="flex items-center justify-between px-1">
                 <span
                   className={cn(
-                    'flex size-5 items-center justify-center rounded-full text-xs',
+                    'flex size-6 items-center justify-center rounded-full text-sm',
                     isToday && 'bg-primary font-semibold text-primary-foreground',
                   )}
                 >
@@ -80,7 +80,7 @@ export function MonthView({
                         onSelectEvent(e)
                       }
                     }}
-                    className="flex items-center gap-1 truncate rounded px-1 py-0.5 text-[11px] leading-tight text-foreground hover:opacity-80"
+                    className="flex items-center gap-1 truncate rounded px-1.5 py-1 text-sm leading-tight text-foreground hover:opacity-80"
                     style={{ backgroundColor: `${eventColor(e)}22` }}
                   >
                     <span
@@ -96,7 +96,7 @@ export function MonthView({
                   </span>
                 ))}
                 {dayEvents.length > 3 && (
-                  <span className="px-1 text-[11px] text-muted-foreground">
+                  <span className="px-1 text-xs text-muted-foreground">
                     +{dayEvents.length - 3} 更多
                   </span>
                 )}

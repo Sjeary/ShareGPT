@@ -21,7 +21,7 @@ export function MemoCard({
       onClick={() => onOpen(memo.id)}
       style={{ backgroundColor: memoBg(memo.color, dark) }}
       className={cn(
-        'group relative mb-3 block w-full break-inside-avoid rounded-xl border border-black/5 p-3.5 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md dark:border-white/5',
+        'group relative mb-3 block w-full break-inside-avoid rounded-xl border border-black/5 p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md dark:border-white/5',
         'text-neutral-800 dark:text-neutral-100',
       )}
     >
@@ -43,20 +43,22 @@ export function MemoCard({
         <Pin className="size-4" fill={memo.pinned ? 'currentColor' : 'none'} />
       </button>
 
-      {memo.title && <h4 className="mb-1 pr-6 text-sm font-semibold break-words">{memo.title}</h4>}
+      {memo.title && (
+        <h4 className="mb-1.5 pr-6 text-base font-semibold break-words">{memo.title}</h4>
+      )}
       {memo.body && (
-        <p className="text-sm leading-relaxed break-words whitespace-pre-wrap opacity-90 line-clamp-[12]">
+        <p className="text-[15px] leading-relaxed break-words whitespace-pre-wrap opacity-90 line-clamp-[12]">
           {memo.body}
         </p>
       )}
-      {!memo.title && !memo.body && <p className="text-sm italic opacity-50">空便签</p>}
+      {!memo.title && !memo.body && <p className="text-[15px] italic opacity-50">空便签</p>}
 
       {memo.tags && memo.tags.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
+        <div className="mt-2.5 flex flex-wrap gap-1">
           {memo.tags.map((t) => (
             <span
               key={t}
-              className="rounded-md bg-black/5 px-1.5 py-0.5 text-xs opacity-80 dark:bg-white/10"
+              className="rounded-md bg-black/5 px-1.5 py-0.5 text-sm opacity-80 dark:bg-white/10"
             >
               #{t}
             </span>

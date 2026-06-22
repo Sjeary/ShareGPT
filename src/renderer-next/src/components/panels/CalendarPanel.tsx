@@ -1,10 +1,12 @@
-import { useEffect, useState, useCallback } from 'react'
-import { CalendarDays, ChevronLeft, ChevronRight, Plus } from 'lucide-react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { CalendarDays, ChevronLeft, ChevronRight, Plus, Upload } from 'lucide-react'
 import { addDays, addMonths, addWeeks, startOfDay } from 'date-fns'
+import { toast } from 'sonner'
 import { PanelScaffold } from './PanelScaffold'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useCalendarStore } from '@/store/useCalendarStore'
+import { parseIcs } from '@/lib/ics'
 import { periodLabel, type CalendarView } from './calendar/helpers'
 import { CalendarSidebar } from './calendar/CalendarSidebar'
 import { MonthView } from './calendar/MonthView'
@@ -24,10 +26,14 @@ const VIEW_OPTIONS: { value: CalendarView; label: string }[] = [
 export function CalendarPanel() {
   const init = useCalendarStore((s) => s.init)
   const loaded = useCalendarStore((s) => s.loaded)
+  const importEvents = useCalendarStore((s) => s.importEvents)
 
   const [cursor, setCursor] = useState(() => new Date())
   const [view, setView] = useState<CalendarView>('month')
   const [editorTarget, setEditorTarget] = useState<EditorTarget | null>(null)
+
+  // 隐藏的文件选择器, 由「导入」按钮触发。
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // 初始化: 加载本地数据 (首次播种)。
   useEffect(() => {
@@ -93,6 +99,39 @@ export function CalendarPanel() {
     handlePickDay(cursor)
   }, [cursor, handlePickDay])
 
+  // 选中 .ics 文件后: 读文本 -> 解析 -> 落进「导入」日历。
+  const handleFileSelected = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      // 允许重复选择同一文件: 用后即清空。
+      e.target.value = ''
+      if (!file) return
+      const reader = new FileReader()
+      reader.onload = () => {
+        const text = typeof reader.result === 'string' ? reader.result : ''
+        const parsed = parseIcs(text)
+        if (parsed.length === 0) {
+          toast.error('未找到可导入的事件')
+          return
+        }
+        const count = importEvents(
+          parsed.map((p) => ({
+            title: p.title,
+            start: p.start,
+            end: p.end,
+            allDay: p.allDay,
+            location: p.location,
+            notes: p.description,
+          })),
+        )
+        toast.success(`已导入 ${count} 个事件`)
+      }
+      reader.onerror = () => toast.error('读取文件失败')
+      reader.readAsText(file)
+    },
+    [importEvents],
+  )
+
   const toolbar = (
     <div className="flex items-center gap-2">
       {/* 视图切换 (分段控件) */}
@@ -103,7 +142,7 @@ export function CalendarPanel() {
             type="button"
             onClick={() => setView(opt.value)}
             className={cn(
-              'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+              'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
               view === opt.value
                 ? 'bg-background text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground',
@@ -113,6 +152,18 @@ export function CalendarPanel() {
           </button>
         ))}
       </div>
+      {/* 导入外部日历 (.ics) */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".ics,text/calendar"
+        className="hidden"
+        onChange={handleFileSelected}
+      />
+      <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+        <Upload className="size-4" />
+        导入
+      </Button>
       <Button variant="default" size="sm" onClick={handleQuickAdd}>
         <Plus className="size-4" />
         新建
@@ -133,17 +184,17 @@ export function CalendarPanel() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           {/* 导航条: ‹ › + 今天 + 当前时段标签 */}
-          <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
+          <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-4">
             <Button variant="ghost" size="icon-sm" onClick={() => stepBy(-1)} aria-label="上一页">
-              <ChevronLeft className="size-4" />
+              <ChevronLeft className="size-5" />
             </Button>
             <Button variant="ghost" size="icon-sm" onClick={() => stepBy(1)} aria-label="下一页">
-              <ChevronRight className="size-4" />
+              <ChevronRight className="size-5" />
             </Button>
             <Button variant="outline" size="sm" onClick={() => setCursor(new Date())}>
               今天
             </Button>
-            <h2 className="ml-1 text-base font-semibold text-foreground">
+            <h2 className="ml-1 text-xl font-semibold text-foreground">
               {periodLabel(cursor, view)}
             </h2>
           </div>
@@ -158,7 +209,7 @@ export function CalendarPanel() {
               <DayView cursor={cursor} onPickSlot={handlePickSlot} onPickEvent={handlePickEvent} />
             )
           ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+            <div className="flex flex-1 items-center justify-center text-base text-muted-foreground">
               加载中…
             </div>
           )}

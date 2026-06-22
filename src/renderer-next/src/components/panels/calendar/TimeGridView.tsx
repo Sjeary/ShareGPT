@@ -95,7 +95,7 @@ export function TimeGridView({
       {/* 顶部: 表头 + 全天行 (随主体不滚动) */}
       <div className="flex shrink-0 border-b border-border">
         {/* 左侧时间列占位 */}
-        <div className="w-14 shrink-0 border-r border-border" />
+        <div className="w-16 shrink-0 border-r border-border" />
         <div className="flex min-w-0 flex-1 flex-col">
           {/* 天表头 */}
           <div className="flex">
@@ -104,15 +104,15 @@ export function TimeGridView({
               return (
                 <div
                   key={format(day, 'yyyy-MM-dd')}
-                  className="flex flex-col items-center gap-0.5 border-r border-border py-2 last:border-r-0"
+                  className="flex flex-col items-center gap-0.5 border-r border-border py-2.5 last:border-r-0"
                   style={{ width: colWidth }}
                 >
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-sm text-muted-foreground">
                     {format(day, 'EEE', { locale: zhCN })}
                   </span>
                   <span
                     className={cn(
-                      'grid size-7 place-items-center rounded-full text-sm',
+                      'grid size-8 place-items-center rounded-full text-base',
                       today
                         ? 'bg-primary font-semibold text-primary-foreground'
                         : 'text-foreground',
@@ -143,7 +143,7 @@ export function TimeGridView({
                           key={occ.key + key}
                           type="button"
                           onClick={() => onPickEvent(occ.event.id)}
-                          className="truncate rounded px-1.5 py-0.5 text-left text-[11px] font-medium hover:opacity-80"
+                          className="truncate rounded px-1.5 py-1 text-left text-sm font-medium hover:opacity-80"
                           style={{ backgroundColor: hexToRgba(color, 0.18), color }}
                         >
                           {occ.event.title || '(无标题)'}
@@ -161,7 +161,7 @@ export function TimeGridView({
       {/* 主体: 滚动时间网格 */}
       <div ref={scrollRef} className="flex min-h-0 flex-1 overflow-y-auto">
         {/* 时间刻度列 */}
-        <div className="w-14 shrink-0 border-r border-border" style={{ height: DAY_HEIGHT }}>
+        <div className="w-16 shrink-0 border-r border-border" style={{ height: DAY_HEIGHT }}>
           {HOURS.map((h) => (
             <div
               key={h}
@@ -169,7 +169,7 @@ export function TimeGridView({
               style={{ height: HOUR_HEIGHT }}
             >
               {h > 0 && (
-                <span className="absolute -top-2 right-1.5 text-[10px] tabular-nums text-muted-foreground">
+                <span className="absolute -top-2.5 right-2 text-sm tabular-nums text-muted-foreground">
                   {String(h).padStart(2, '0')}:00
                 </span>
               )}
@@ -265,7 +265,7 @@ function DayColumn({
               e.stopPropagation()
               onPickEvent(occ.event.id)
             }}
-            className="absolute overflow-hidden rounded-md px-1.5 py-0.5 text-left text-[11px] leading-tight transition-shadow hover:shadow-md"
+            className="absolute overflow-hidden rounded-md px-2 py-1 text-left text-sm leading-tight transition-shadow hover:shadow-md"
             style={{
               top: layout.topPx,
               height: layout.heightPx,
@@ -277,7 +277,7 @@ function DayColumn({
             }}
           >
             <span className="block truncate font-semibold">{occ.event.title || '(无标题)'}</span>
-            {layout.heightPx > 28 && (
+            {layout.heightPx > 38 && (
               <span className="block truncate tabular-nums opacity-80">
                 {format(new Date(occ.start), 'HH:mm')}
               </span>

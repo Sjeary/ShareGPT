@@ -41,7 +41,7 @@ export function TaskItem({
     <div
       onClick={() => onOpen(task.id)}
       className={cn(
-        'group flex cursor-pointer items-start gap-3 rounded-lg border border-transparent px-3 py-2.5 transition-all hover:border-border hover:bg-accent/40',
+        'group flex cursor-pointer items-start gap-3 rounded-lg border border-transparent px-3 py-3 transition-all hover:border-border hover:bg-accent/40',
         leaving && 'translate-x-1 scale-[0.98] opacity-0',
       )}
     >
@@ -51,7 +51,7 @@ export function TaskItem({
         onClick={handleToggle}
         aria-label={task.completed ? '标记未完成' : '标记完成'}
         className={cn(
-          'mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border-2 transition-all duration-200 active:scale-90',
+          'mt-0.5 grid size-6 shrink-0 place-items-center rounded-full border-2 transition-all duration-200 active:scale-90',
           task.completed
             ? 'border-primary bg-primary text-primary-foreground'
             : cn(
@@ -69,7 +69,7 @@ export function TaskItem({
       >
         <Check
           className={cn(
-            'size-3 transition-all duration-200',
+            'size-3.5 transition-all duration-200',
             task.completed || leaving ? 'scale-100 opacity-100' : 'scale-0 opacity-0',
           )}
           strokeWidth={3}
@@ -81,11 +81,11 @@ export function TaskItem({
         <div className="flex items-start gap-2">
           {/* 优先级竖条 (无优先级不显示) */}
           {task.priority > 0 && (
-            <span className={cn('mt-1.5 h-3.5 w-1 shrink-0 rounded-full', meta.dot)} />
+            <span className={cn('mt-2 h-3.5 w-1 shrink-0 rounded-full', meta.dot)} />
           )}
           <p
             className={cn(
-              'min-w-0 flex-1 text-sm leading-snug break-words',
+              'min-w-0 flex-1 text-[15px] leading-snug break-words',
               task.completed ? 'text-muted-foreground line-through' : 'text-foreground',
             )}
           >
@@ -95,11 +95,11 @@ export function TaskItem({
 
         {/* 元信息行: 到期 / 重复 / 子任务 / 标签 */}
         {(due || totalSubs > 0 || task.tags.length > 0 || task.repeat) && (
-          <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-0">
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-0">
             {due && (
               <span
                 className={cn(
-                  'inline-flex items-center rounded-md px-1.5 py-0.5 text-xs',
+                  'inline-flex items-center rounded-md px-1.5 py-0.5 text-sm',
                   due.overdue && !task.completed
                     ? 'bg-destructive/10 text-destructive'
                     : 'bg-muted text-muted-foreground',
@@ -108,17 +108,17 @@ export function TaskItem({
                 {due.label}
               </span>
             )}
-            {task.repeat && <RepeatIcon className="size-3 text-muted-foreground" />}
+            {task.repeat && <RepeatIcon className="size-3.5 text-muted-foreground" />}
             {totalSubs > 0 && (
-              <span className="inline-flex items-center gap-0.5 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                <ListChecks className="size-3" />
+              <span className="inline-flex items-center gap-0.5 rounded-md bg-muted px-1.5 py-0.5 text-sm text-muted-foreground">
+                <ListChecks className="size-3.5" />
                 {doneSubs}/{totalSubs}
               </span>
             )}
             {task.tags.map((tag) => (
               <span
                 key={tag}
-                className="inline-flex items-center rounded-md bg-primary/10 px-1.5 py-0.5 text-xs text-primary"
+                className="inline-flex items-center rounded-md bg-primary/10 px-1.5 py-0.5 text-sm text-primary"
               >
                 #{tag}
               </span>

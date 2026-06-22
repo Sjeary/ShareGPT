@@ -61,7 +61,23 @@ interface CalendarState {
   addEvent: (input: NewEventInput) => CalendarEvent
   updateEvent: (id: string, patch: Partial<Omit<CalendarEvent, 'id' | 'createdAt'>>) => void
   removeEvent: (id: string) => void
+
+  // 批量导入: 把外部解析出的事件落进 (按需创建) 一个专用「导入」日历。返回导入数量。
+  importEvents: (
+    items: {
+      title: string
+      start: string
+      end: string
+      allDay: boolean
+      location?: string
+      notes?: string
+    }[],
+  ) => number
 }
+
+// 专用「导入」日历的固定名称与颜色 (青色, 与其它默认日历区分)。
+const IMPORT_CALENDAR_NAME = '导入'
+const IMPORT_CALENDAR_COLOR = '#14b8a6'
 
 // —— 默认播种 —— (首次运行, 本地无数据时)
 function nowIso(): string {
@@ -298,6 +314,42 @@ export const useCalendarStore = create<CalendarState>((set, get) => {
 
     removeEvent: (id) => {
       commit({ events: get().events.filter((e) => e.id !== id) })
+    },
+
+    importEvents: (items) => {
+      if (items.length === 0) return 0
+
+      // 复用已有「导入」日历, 否则新建一个。
+      const calendars = get().calendars
+      let importCal = calendars.find((c) => c.name === IMPORT_CALENDAR_NAME)
+      let nextCalendars = calendars
+      if (!importCal) {
+        importCal = {
+          id: crypto.randomUUID(),
+          name: IMPORT_CALENDAR_NAME,
+          color: IMPORT_CALENDAR_COLOR,
+          visible: true,
+        }
+        nextCalendars = [...calendars, importCal]
+      }
+
+      const ts = nowIso()
+      const newEvents: CalendarEvent[] = items.map((it) => ({
+        id: crypto.randomUUID(),
+        calendarId: importCal!.id,
+        title: it.title,
+        start: it.start,
+        end: it.end,
+        allDay: it.allDay,
+        location: it.location,
+        notes: it.notes,
+        recurrence: null,
+        createdAt: ts,
+        updatedAt: ts,
+      }))
+
+      commit({ calendars: nextCalendars, events: [...get().events, ...newEvents] })
+      return newEvents.length
     },
   }
 })

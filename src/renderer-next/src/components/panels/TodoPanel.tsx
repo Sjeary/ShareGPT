@@ -48,7 +48,7 @@ export function TodoPanel() {
               type="button"
               onClick={() => setTab(t)}
               className={cn(
-                'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                'rounded-md px-4 py-1.5 text-base font-medium transition-colors',
                 tab === t
                   ? 'bg-background text-foreground shadow-sm'
                   : 'text-muted-foreground hover:text-foreground',

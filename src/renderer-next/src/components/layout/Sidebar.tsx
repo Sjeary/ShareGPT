@@ -1,9 +1,13 @@
+import { useEffect } from 'react'
 import { ChevronLeft } from 'lucide-react'
+import { format, isSameDay, parseISO } from 'date-fns'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import { NAV } from '@/lib/nav'
+import { NAV, type NavKey } from '@/lib/nav'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
+import { useCalendarStore } from '@/store/useCalendarStore'
+import { useTasksStore } from '@/store/useTasksStore'
 
 // 可收起侧栏 (对齐 shadcn Sidebar collapsible="icon" 成熟实践):
 // 宽度用 CSS transition 平滑过渡(非两帧切换), 标签淡出, 收起态图标配 Tooltip, 尊重 reduced-motion。
@@ -31,6 +35,32 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const onRight = sidebarSide === 'right'
   const tooltipSide = onRight ? 'left' : 'right'
 
+  // 导航角标: 个人日历=今日事件数, 备忘录/待办=今日(含逾期)未完成任务数。
+  // 初始化两个本地 store(幂等), 让角标不必先打开面板就能显示。
+  const calEvents = useCalendarStore((s) => s.events)
+  const calInit = useCalendarStore((s) => s.init)
+  const tasks = useTasksStore((s) => s.tasks)
+  const tasksInit = useTasksStore((s) => s.init)
+  useEffect(() => {
+    void calInit()
+    void tasksInit()
+  }, [calInit, tasksInit])
+
+  const todayStr = format(new Date(), 'yyyy-MM-dd')
+  const todayTaskCount = tasks.filter(
+    (t) => !t.completed && t.dueDate && t.dueDate <= todayStr,
+  ).length
+  const now = new Date()
+  const todayEventCount = calEvents.filter((e) => {
+    try {
+      return isSameDay(parseISO(e.start), now)
+    } catch {
+      return false
+    }
+  }).length
+  const badgeFor = (key: NavKey): number =>
+    key === 'todo' ? todayTaskCount : key === 'calendar' ? todayEventCount : 0
+
   return (
     <TooltipProvider delayDuration={0}>
       <aside
@@ -50,6 +80,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
       >
         {navItems.map(({ key, label, icon: Icon, hint }) => {
           const on = key === active
+          const badge = badgeFor(key)
           const btn = (
             <button
               data-tour={`nav-${key}`}
@@ -65,13 +96,17 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
             >
               <span
                 className={cn(
-                  'grid size-9 shrink-0 place-items-center rounded-full transition-colors',
+                  'relative grid size-9 shrink-0 place-items-center rounded-full transition-colors',
                   on
                     ? 'bg-primary text-primary-foreground'
                     : 'bg-sidebar-accent text-muted-foreground group-hover:text-foreground',
                 )}
               >
                 <Icon className="size-[18px]" />
+                {/* 收起态: 角标用图标右上角的小红点表示「有今日项」 */}
+                {collapsed && badge > 0 && (
+                  <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-primary ring-2 ring-sidebar" />
+                )}
               </span>
               <span
                 className={cn(
@@ -81,9 +116,20 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
                     : 'min-w-0 flex-1 opacity-100',
                 )}
               >
-                <span className="block truncate text-sm font-medium">{label}</span>
+                <span className="block truncate text-[15px] font-medium">{label}</span>
                 <span className="block truncate text-xs text-muted-foreground">{hint}</span>
               </span>
+              {/* 展开态: 右侧显示今日数量胶囊 */}
+              {!collapsed && badge > 0 && (
+                <span
+                  className={cn(
+                    'ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums',
+                    on ? 'bg-primary/20 text-primary' : 'bg-primary/15 text-primary',
+                  )}
+                >
+                  {badge}
+                </span>
+              )}
             </button>
           )
           return collapsed ? (

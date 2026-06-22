@@ -39,10 +39,10 @@ export function WeekView({
                 isToday && 'bg-primary/5',
               )}
             >
-              <span className="text-xs text-muted-foreground">周{WEEKDAY_LABELS[i]}</span>
+              <span className="text-sm text-muted-foreground">周{WEEKDAY_LABELS[i]}</span>
               <span
                 className={cn(
-                  'flex size-6 items-center justify-center rounded-full text-sm',
+                  'flex size-7 items-center justify-center rounded-full text-base',
                   isToday && 'bg-primary font-semibold text-primary-foreground',
                 )}
               >
@@ -50,29 +50,27 @@ export function WeekView({
               </span>
               {/* free/busy 提示: 当天有事件则显示忙碌点 */}
               {dayEvents.length > 0 && (
-                <span className="text-[10px] text-muted-foreground">{dayEvents.length} 项</span>
+                <span className="text-xs text-muted-foreground">{dayEvents.length} 项</span>
               )}
             </button>
 
-            <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-auto p-1">
+            <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-auto p-1.5">
               {dayEvents.length === 0 ? (
-                <div className="px-1 pt-2 text-center text-[11px] text-muted-foreground/60">
-                  空闲
-                </div>
+                <div className="px-1 pt-2 text-center text-xs text-muted-foreground/60">空闲</div>
               ) : (
                 dayEvents.map((e) => (
                   <button
                     key={e.id}
                     type="button"
                     onClick={() => onSelectEvent(e)}
-                    className="flex flex-col gap-0.5 rounded-md border-l-2 px-1.5 py-1 text-left transition-colors hover:opacity-80"
+                    className="flex flex-col gap-0.5 rounded-md border-l-2 px-2 py-1.5 text-left transition-colors hover:opacity-80"
                     style={{
                       borderLeftColor: eventColor(e),
                       backgroundColor: `${eventColor(e)}14`,
                     }}
                   >
-                    <span className="truncate text-xs font-medium leading-tight">{e.title}</span>
-                    <span className="truncate text-[11px] text-muted-foreground">
+                    <span className="truncate text-sm font-medium leading-tight">{e.title}</span>
+                    <span className="truncate text-xs text-muted-foreground">
                       {e.allDay ? '全天' : `${fmtTime(e.start)}–${fmtTime(e.end)}`}
                     </span>
                   </button>

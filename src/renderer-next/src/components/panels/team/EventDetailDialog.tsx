@@ -79,9 +79,9 @@ export function EventDetailDialog({
     <Dialog open onOpenChange={(v) => (!v ? onClose() : undefined)}>
       <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-md">
         <DialogHeader className="border-b border-border px-6 py-4">
-          <DialogTitle className="flex items-start gap-2">
+          <DialogTitle className="flex items-start gap-2 text-lg">
             <span
-              className="mt-1 size-3 shrink-0 rounded-full"
+              className="mt-1.5 size-3 shrink-0 rounded-full"
               style={{ backgroundColor: color }}
             />
             <span className="min-w-0 break-words">{event.title}</span>
@@ -89,7 +89,7 @@ export function EventDetailDialog({
         </DialogHeader>
 
         <ScrollArea className="max-h-[60vh]">
-          <div className="flex flex-col gap-3 px-6 py-4 text-sm">
+          <div className="flex flex-col gap-3 px-6 py-4 text-base">
             <div className="flex items-start gap-2 text-muted-foreground">
               <CalendarClock className="mt-0.5 size-4 shrink-0" />
               <span>
@@ -121,7 +121,7 @@ export function EventDetailDialog({
             {me && (
               <div className="rounded-lg border border-border p-3">
                 <div className="mb-2 flex items-center justify-between">
-                  <span className="text-xs font-medium text-muted-foreground">我的回复</span>
+                  <span className="text-sm font-medium text-muted-foreground">我的回复</span>
                   <RsvpBadge status={me.rsvp} />
                 </div>
                 <div className="flex gap-2">
@@ -131,7 +131,7 @@ export function EventDetailDialog({
                       type="button"
                       disabled={busy}
                       onClick={() => doRsvp(a.status)}
-                      className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 ${
+                      className={`flex-1 rounded-md px-2 py-2 text-sm font-medium transition-colors disabled:opacity-50 ${
                         me.rsvp === a.status
                           ? a.cls
                           : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'
@@ -148,11 +148,11 @@ export function EventDetailDialog({
 
             {/* 参与者列表 + 各自 RSVP */}
             <div className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">
+              <span className="text-sm font-medium text-muted-foreground">
                 参与者 ({event.attendees.length})
               </span>
               {event.attendees.length === 0 ? (
-                <p className="text-xs text-muted-foreground">暂无参与者</p>
+                <p className="text-sm text-muted-foreground">暂无参与者</p>
               ) : (
                 event.attendees.map((a) => (
                   <div key={a.username} className="flex items-center justify-between gap-2">

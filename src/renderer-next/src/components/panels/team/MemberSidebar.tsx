@@ -42,13 +42,13 @@ export function MemberSidebar({
   members.sort((a, b) => b.count - a.count)
 
   return (
-    <aside className="flex w-52 shrink-0 flex-col border-l border-border bg-sidebar/40">
-      <div className="border-b border-border px-4 py-3 text-xs font-medium text-muted-foreground">
+    <aside className="flex w-56 shrink-0 flex-col border-l border-border bg-sidebar/40">
+      <div className="border-b border-border px-4 py-3 text-sm font-semibold text-muted-foreground">
         成员 ({members.length})
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-auto p-2">
         {members.length === 0 ? (
-          <p className="px-2 py-3 text-xs text-muted-foreground">暂无事件组织者</p>
+          <p className="px-2 py-3 text-sm text-muted-foreground">暂无事件组织者</p>
         ) : (
           members.map((m) => {
             const hidden = hiddenOrganizers.includes(m.username)
@@ -59,17 +59,17 @@ export function MemberSidebar({
                 type="button"
                 onClick={() => onToggle(m.username)}
                 className={cn(
-                  'flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent',
+                  'flex items-center gap-2 rounded-md px-2 py-2 text-left text-base transition-colors hover:bg-accent',
                   hidden && 'opacity-50',
                 )}
               >
                 <span className="size-3 shrink-0 rounded-full" style={{ backgroundColor: color }} />
                 <span className="min-w-0 flex-1 truncate">{m.displayName}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">{m.count}</span>
+                <span className="shrink-0 text-sm text-muted-foreground">{m.count}</span>
                 {hidden ? (
-                  <EyeOff className="size-3.5 shrink-0 text-muted-foreground" />
+                  <EyeOff className="size-4 shrink-0 text-muted-foreground" />
                 ) : (
-                  <Eye className="size-3.5 shrink-0 text-muted-foreground" />
+                  <Eye className="size-4 shrink-0 text-muted-foreground" />
                 )}
               </button>
             )
