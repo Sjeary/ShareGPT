@@ -474,6 +474,9 @@ class Backend {
 
     this.settingsFile = path.join(this.app.getPath("userData"), "settings.json");
     this.chatHistoryFile = path.join(this.app.getPath("userData"), "chat_history.json");
+    // 新增本地功能存储 (个人日历 / 任务+备忘录): 纯本机 JSON, 结构由渲染层维护, 后端只做读写与轻量兜底。
+    this.calendarFile = path.join(this.app.getPath("userData"), "calendar.json");
+    this.tasksFile = path.join(this.app.getPath("userData"), "tasks.json");
     this.runtimeDir = path.join(this.app.getPath("userData"), "runtime");
     this.updatesDir = path.join(this.app.getPath("downloads"), "ShareGPT Updates");
     this.updateBackupsDir = path.join(this.app.getPath("appData"), "ShareGPT Backups");
@@ -755,6 +758,48 @@ class Backend {
     const normalized = normalizeChatHistoryStore(data);
     fs.writeFileSync(this.chatHistoryFile, JSON.stringify(normalized, null, 2), "utf-8");
     return normalized;
+  }
+
+  // 通用本地 JSON 存储 (供日历/任务等新功能): 读不到或损坏则回退默认; 写入时盖上 updatedAt。
+  // 结构由渲染层(store)负责, 后端不做强校验, 仅保证是对象、并防止整体过大(简单上限保护)。
+  readLocalStore(file, fallback) {
+    try {
+      if (!fs.existsSync(file)) return structuredClone(fallback);
+      const raw = JSON.parse(fs.readFileSync(file, "utf-8"));
+      return raw && typeof raw === "object" && !Array.isArray(raw)
+        ? raw
+        : structuredClone(fallback);
+    } catch {
+      return structuredClone(fallback);
+    }
+  }
+
+  writeLocalStore(file, data) {
+    const payload = data && typeof data === "object" && !Array.isArray(data) ? { ...data } : {};
+    payload.updatedAt = new Date().toISOString();
+    const text = JSON.stringify(payload, null, 2);
+    // 简单上限保护 (~16MB), 避免异常数据写爆磁盘。
+    if (text.length > 16 * 1024 * 1024) {
+      throw new Error("数据过大, 已拒绝写入");
+    }
+    fs.writeFileSync(file, text, "utf-8");
+    return payload;
+  }
+
+  loadCalendar() {
+    return this.readLocalStore(this.calendarFile, { version: 1, calendars: [], events: [] });
+  }
+
+  saveCalendar(data) {
+    return this.writeLocalStore(this.calendarFile, data);
+  }
+
+  loadTasks() {
+    return this.readLocalStore(this.tasksFile, { version: 1, lists: [], tasks: [], memos: [] });
+  }
+
+  saveTasks(data) {
+    return this.writeLocalStore(this.tasksFile, data);
   }
 
   async exportUserData() {

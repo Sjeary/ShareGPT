@@ -22,6 +22,21 @@ export interface AiProxyReport {
   hosts?: AiProxyHost[]
 }
 
+// 本地功能存储的文件壳 (具体条目类型见各功能 store)。
+export interface CalendarStoreFile {
+  version?: number
+  updatedAt?: string
+  calendars?: unknown[]
+  events?: unknown[]
+}
+export interface TasksStoreFile {
+  version?: number
+  updatedAt?: string
+  lists?: unknown[]
+  tasks?: unknown[]
+  memos?: unknown[]
+}
+
 export interface ShareGptApi {
   platform: NodeJS.Platform | string
 
@@ -34,6 +49,11 @@ export interface ShareGptApi {
   importSettings: () => Promise<unknown>
   loadChatHistory: () => Promise<unknown>
   saveChatHistory: (payload: unknown) => Promise<unknown>
+  // 个人日历 / 任务+备忘录 本地存储 (结构由各自 store 维护; 这里用宽松的文件壳类型)。
+  loadCalendar: () => Promise<CalendarStoreFile>
+  saveCalendar: (payload: CalendarStoreFile) => Promise<unknown>
+  loadTasks: () => Promise<TasksStoreFile>
+  saveTasks: (payload: TasksStoreFile) => Promise<unknown>
   exportUserData: () => Promise<unknown>
   importUserData: () => Promise<unknown>
   readClipboardAttachment: () => Promise<unknown>

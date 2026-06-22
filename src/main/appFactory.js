@@ -1321,6 +1321,11 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("settings:import", () => backend.importSettings());
     ipcMain.handle("chat-history:load", () => backend.loadChatHistory());
     ipcMain.handle("chat-history:save", (_event, payload) => backend.saveChatHistory(payload));
+    // 个人日历 / 任务+备忘录 本地存储。
+    ipcMain.handle("calendar:load", () => backend.loadCalendar());
+    ipcMain.handle("calendar:save", (_event, payload) => backend.saveCalendar(payload));
+    ipcMain.handle("tasks:load", () => backend.loadTasks());
+    ipcMain.handle("tasks:save", (_event, payload) => backend.saveTasks(payload));
     ipcMain.handle("user-data:export", () => backend.exportUserData());
     ipcMain.handle("user-data:import", () => backend.importUserData());
     ipcMain.handle("clipboard:read-attachment", () => buildClipboardAttachmentPayload());

@@ -7,10 +7,24 @@ import {
   BarChart3,
   UserRound,
   ScrollText,
+  CalendarDays,
+  Users,
+  ListTodo,
   type LucideIcon,
 } from 'lucide-react'
 
-export type NavKey = 'service' | 'chat' | 'gpt' | 'gemini' | 'claude' | 'stats' | 'account' | 'logs'
+export type NavKey =
+  | 'service'
+  | 'chat'
+  | 'calendar'
+  | 'team'
+  | 'todo'
+  | 'gpt'
+  | 'gemini'
+  | 'claude'
+  | 'stats'
+  | 'account'
+  | 'logs'
 
 export interface NavItem {
   key: NavKey
@@ -22,6 +36,9 @@ export interface NavItem {
 export const NAV: NavItem[] = [
   { key: 'service', label: '网络 / 代理', icon: Cable, hint: '把指定流量转发到代理出口' },
   { key: 'chat', label: '协作聊天', icon: MessageCircle, hint: '团队消息与文件' },
+  { key: 'calendar', label: '个人日历', icon: CalendarDays, hint: '日程、事件与提醒' },
+  { key: 'team', label: '组队日历', icon: Users, hint: '团队共享日程与协作' },
+  { key: 'todo', label: '备忘录 / 待办', icon: ListTodo, hint: '清单、任务与便签' },
   { key: 'gpt', label: 'ChatGPT', icon: Bot, hint: '内嵌 ChatGPT 网页' },
   { key: 'gemini', label: 'Gemini', icon: Sparkles, hint: '内嵌 Gemini 网页' },
   { key: 'claude', label: 'Claude', icon: Asterisk, hint: '内嵌 Claude 网页' },

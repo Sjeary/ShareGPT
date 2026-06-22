@@ -13,6 +13,8 @@ const CHAT_HISTORY_FILE =
   process.env.CHAT_HISTORY_FILE || path.join(__dirname, "data", "chat_history.json");
 const CLIENT_BOOTSTRAP_FILE =
   process.env.CLIENT_BOOTSTRAP_FILE || path.join(__dirname, "data", "client_bootstrap.json");
+// 组队(共享)日历持久化文件: 房间(subnetKey)维度的团队事件 (含 RSVP)。
+const CALENDARS_FILE = process.env.CALENDARS_FILE || path.join(__dirname, "data", "calendars.json");
 const RELEASES_DIR = process.env.RELEASES_DIR || path.join(__dirname, "data", "releases");
 const SESSION_TTL_MS = Number.parseInt(process.env.SESSION_TTL_MS || `${24 * 60 * 60 * 1000}`, 10);
 const HISTORY_MAX = Number.parseInt(process.env.HISTORY_MAX || "2000", 10);
@@ -546,6 +548,101 @@ function recordGptUsage(username, count = 1) {
     count: Math.max(1, Number.parseInt(String(count || "1"), 10) || 1),
   });
   saveGptUsageStore(usageStore);
+}
+
+// ===== 组队(共享)日历: 房间(subnetKey)维度的团队事件 =====
+// 数据模型 TeamEvent {
+//   id, subnetKey, title, description?, location?, start(ISO), end(ISO), allDay,
+//   organizer(username), attendees:[{username, displayName, rsvp}], color?,
+//   createdBy, createdAt, updatedAt
+// }
+// 持久化镜像聊天历史: ensure -> load(normalize) -> writeJsonAtomic。
+
+const CALENDAR_RSVP_VALUES = ["needs_action", "accept", "decline", "tentative"];
+
+function ensureCalendarsFile() {
+  fs.mkdirSync(path.dirname(CALENDARS_FILE), { recursive: true });
+  if (!fs.existsSync(CALENDARS_FILE)) {
+    fs.writeFileSync(CALENDARS_FILE, JSON.stringify({ events: [] }, null, 2), "utf-8");
+  }
+}
+
+function normalizeRsvp(value) {
+  const v = safeText(value);
+  return CALENDAR_RSVP_VALUES.includes(v) ? v : "needs_action";
+}
+
+function normalizeAttendee(record) {
+  const username = safeText(record?.username);
+  if (!username) return null;
+  return {
+    username,
+    displayName: safeText(record?.displayName) || username,
+    rsvp: normalizeRsvp(record?.rsvp),
+  };
+}
+
+function normalizeTeamEvent(record) {
+  const id = safeText(record?.id);
+  const title = safeText(record?.title).slice(0, 200);
+  const start = safeText(record?.start);
+  const end = safeText(record?.end);
+  if (!id || !start) return null;
+  const attendees = Array.isArray(record?.attendees)
+    ? record.attendees.map(normalizeAttendee).filter(Boolean)
+    : [];
+  // 同名去重 (后者覆盖前者)。
+  const dedupAttendees = [];
+  const seen = new Set();
+  for (const a of attendees) {
+    if (seen.has(a.username)) {
+      const idx = dedupAttendees.findIndex((x) => x.username === a.username);
+      if (idx >= 0) dedupAttendees[idx] = a;
+      continue;
+    }
+    seen.add(a.username);
+    dedupAttendees.push(a);
+  }
+  return {
+    id,
+    subnetKey: safeText(record?.subnetKey),
+    title,
+    description: safeText(record?.description).slice(0, 2000),
+    location: safeText(record?.location).slice(0, 200),
+    start,
+    end: end || start,
+    allDay: Boolean(record?.allDay),
+    organizer: safeText(record?.organizer),
+    attendees: dedupAttendees,
+    color: safeText(record?.color).slice(0, 32),
+    createdBy: safeText(record?.createdBy),
+    createdAt: safeText(record?.createdAt) || nowIso(),
+    updatedAt: safeText(record?.updatedAt) || nowIso(),
+  };
+}
+
+function loadCalendarStore() {
+  ensureCalendarsFile();
+  try {
+    const raw = JSON.parse(fs.readFileSync(CALENDARS_FILE, "utf-8"));
+    const events = Array.isArray(raw.events)
+      ? raw.events.map(normalizeTeamEvent).filter(Boolean)
+      : [];
+    return { events };
+  } catch {
+    return { events: [] };
+  }
+}
+
+function saveCalendarStore(store) {
+  const events = Array.isArray(store?.events)
+    ? store.events.map(normalizeTeamEvent).filter(Boolean)
+    : [];
+  writeJsonAtomic(CALENDARS_FILE, { events });
+}
+
+function eventsForSubnet(subnetKey) {
+  return loadCalendarStore().events.filter((e) => e.subnetKey === subnetKey);
 }
 
 function findUser(username) {
@@ -1742,6 +1839,154 @@ const server = http.createServer(async (req, res) => {
       sendText(res, 400, err.message || "查询 GPT 使用统计失败");
     }
     return;
+  }
+
+  // ===== 组队(共享)日历 REST =====
+  // 鉴权统一: 复用聊天 token (extractBearer + resolveSessionByToken)。
+  // 房间维度: 一律以 session.subnetKey 落库, 忽略客户端传入的 scope (同聊天信任模型)。
+  // 变更后通过 WS broadcastToSubnet 广播给同房间在线客户端实时更新。
+  if (pathname === "/api/team-calendar/events" && req.method === "GET") {
+    const session = resolveSessionByToken(extractBearer(req));
+    if (!session) {
+      sendText(res, 401, "未授权");
+      return;
+    }
+    sendJson(res, 200, { events: eventsForSubnet(session.subnetKey), serverTime: nowIso() });
+    return;
+  }
+
+  if (pathname === "/api/team-calendar/events" && req.method === "POST") {
+    const session = resolveSessionByToken(extractBearer(req));
+    if (!session) {
+      sendText(res, 401, "未授权");
+      return;
+    }
+    try {
+      const payload = safeParseJson(await readBody(req)) || {};
+      const title = safeText(payload.title).slice(0, 200);
+      const start = safeText(payload.start);
+      if (!title || !start) {
+        sendText(res, 400, "标题与开始时间必填");
+        return;
+      }
+      const store = loadCalendarStore();
+      const event = normalizeTeamEvent({
+        ...payload,
+        id: crypto.randomUUID(),
+        subnetKey: session.subnetKey, // 服务端盖章
+        title,
+        organizer: session.username, // 组织者 = 创建者
+        createdBy: session.username,
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+      });
+      store.events.push(event);
+      saveCalendarStore(store);
+      broadcastToSubnet(session.subnetKey, { type: "calendar_event_created", event });
+      sendJson(res, 200, { event });
+    } catch (err) {
+      sendText(res, 500, err.message || "创建事件失败");
+    }
+    return;
+  }
+
+  // /api/team-calendar/events/:id  (PATCH / DELETE) 以及 .../:id/rsvp (POST)
+  if (pathname.startsWith("/api/team-calendar/events/")) {
+    const session = resolveSessionByToken(extractBearer(req));
+    if (!session) {
+      sendText(res, 401, "未授权");
+      return;
+    }
+    const rest = pathname.slice("/api/team-calendar/events/".length);
+    const isRsvp = rest.endsWith("/rsvp");
+    const eventId = decodeURIComponent(isRsvp ? rest.slice(0, -"/rsvp".length) : rest);
+
+    if (isRsvp && req.method === "POST") {
+      try {
+        const payload = safeParseJson(await readBody(req)) || {};
+        const status = normalizeRsvp(payload.status);
+        const store = loadCalendarStore();
+        const event = store.events.find(
+          (e) => e.id === eventId && e.subnetKey === session.subnetKey,
+        );
+        if (!event) {
+          sendText(res, 404, "事件不存在");
+          return;
+        }
+        const existing = event.attendees.find((a) => a.username === session.username);
+        if (existing) {
+          existing.rsvp = status;
+        } else {
+          // 允许房间成员主动响应即使未被显式邀请。
+          event.attendees.push({
+            username: session.username,
+            displayName: session.displayName || session.username,
+            rsvp: status,
+          });
+        }
+        event.updatedAt = nowIso();
+        saveCalendarStore(store);
+        broadcastToSubnet(session.subnetKey, { type: "calendar_event_updated", event });
+        sendJson(res, 200, { event });
+      } catch (err) {
+        sendText(res, 500, err.message || "更新 RSVP 失败");
+      }
+      return;
+    }
+
+    if (req.method === "PATCH") {
+      try {
+        const payload = safeParseJson(await readBody(req)) || {};
+        const store = loadCalendarStore();
+        const idx = store.events.findIndex(
+          (e) => e.id === eventId && e.subnetKey === session.subnetKey,
+        );
+        if (idx < 0) {
+          sendText(res, 404, "事件不存在");
+          return;
+        }
+        const prev = store.events[idx];
+        // MVP: 组织者或任意房间成员可编辑; 关键字段(id/subnetKey/organizer/createdBy/createdAt)不可被客户端改。
+        const merged = normalizeTeamEvent({
+          ...prev,
+          ...payload,
+          id: prev.id,
+          subnetKey: prev.subnetKey,
+          organizer: prev.organizer,
+          createdBy: prev.createdBy,
+          createdAt: prev.createdAt,
+          updatedAt: nowIso(),
+        });
+        store.events[idx] = merged;
+        saveCalendarStore(store);
+        broadcastToSubnet(session.subnetKey, { type: "calendar_event_updated", event: merged });
+        sendJson(res, 200, { event: merged });
+      } catch (err) {
+        sendText(res, 500, err.message || "编辑事件失败");
+      }
+      return;
+    }
+
+    if (req.method === "DELETE") {
+      const store = loadCalendarStore();
+      const idx = store.events.findIndex(
+        (e) => e.id === eventId && e.subnetKey === session.subnetKey,
+      );
+      if (idx < 0) {
+        sendText(res, 404, "事件不存在");
+        return;
+      }
+      // 仅组织者可删除。
+      if (store.events[idx].organizer !== session.username) {
+        sendText(res, 403, "只有组织者可以删除事件");
+        return;
+      }
+      store.events.splice(idx, 1);
+      saveCalendarStore(store);
+      broadcastToSubnet(session.subnetKey, { type: "calendar_event_deleted", id: eventId });
+      sendJson(res, 200, { ok: true, id: eventId });
+      return;
+    }
   }
 
   sendText(res, 404, "Not Found");

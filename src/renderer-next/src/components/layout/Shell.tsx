@@ -14,6 +14,9 @@ import { GeminiPanel } from '@/components/panels/GeminiPanel'
 import { ClaudePanel } from '@/components/panels/ClaudePanel'
 import { StatsPanel } from '@/components/panels/StatsPanel'
 import { LogsPanel } from '@/components/panels/LogsPanel'
+import { CalendarPanel } from '@/components/panels/CalendarPanel'
+import { TeamCalendarPanel } from '@/components/panels/TeamCalendarPanel'
+import { TodoPanel } from '@/components/panels/TodoPanel'
 import { SetupGuide } from '@/components/SetupGuide'
 import { Onboarding } from '@/components/Onboarding'
 import { Toaster } from '@/components/ui/sonner'
@@ -105,6 +108,9 @@ export function Shell() {
       >
         <Sidebar hidden={hideSidebar} />
         {active === 'service' && <ServicePanel />}
+        {active === 'calendar' && <CalendarPanel />}
+        {active === 'team' && <TeamCalendarPanel />}
+        {active === 'todo' && <TodoPanel />}
         {active === 'account' && <AccountPanel />}
         {active === 'gpt' && <GptPanel />}
         {active === 'gemini' && <GeminiPanel />}
