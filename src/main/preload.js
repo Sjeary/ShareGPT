@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld("api", {
   saveCalendar: (payload) => ipcRenderer.invoke("calendar:save", payload),
   loadTasks: () => ipcRenderer.invoke("tasks:load"),
   saveTasks: (payload) => ipcRenderer.invoke("tasks:save", payload),
+  loadFocus: () => ipcRenderer.invoke("focus:load"),
+  saveFocus: (payload) => ipcRenderer.invoke("focus:save", payload),
   // 知识库 vault (笔记文件 IO)。
   vault: {
     start: () => ipcRenderer.invoke("vault:start"),

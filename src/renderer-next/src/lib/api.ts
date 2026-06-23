@@ -14,6 +14,8 @@ const fallback = {
   saveCalendar: async () => undefined,
   loadTasks: async () => ({ version: 1, lists: [], tasks: [], memos: [] }),
   saveTasks: async () => undefined,
+  loadFocus: async () => ({ version: 1, sessions: [], settings: null }),
+  saveFocus: async () => undefined,
   vault: {
     start: async () => undefined,
     getRoot: async () => '',

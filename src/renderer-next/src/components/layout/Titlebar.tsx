@@ -1,9 +1,34 @@
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
-import { Cable, Moon, Sun, Minus, Square, Copy, X, HelpCircle } from 'lucide-react'
+import { Cable, Moon, Sun, Minus, Square, Copy, X, HelpCircle, Timer } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
+import { useFocusStore } from '@/store/useFocusStore'
+import { useClockTick } from '@/hooks/useFocusTimer'
+
+// 标题栏番茄钟倒计时: 运行时显示剩余时间, 点击跳到「专注」面板。
+function FocusChip() {
+  const running = useFocusStore((s) => s.running)
+  const phase = useFocusStore((s) => s.phase)
+  const setActive = useAppStore((s) => s.setActive)
+  useClockTick(running)
+  if (!running) return null
+  const t = Math.max(0, Math.round(useFocusStore.getState().displayMs() / 1000))
+  const label = `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`
+  return (
+    <button
+      onClick={() => setActive('focus')}
+      title="专注计时中"
+      className={cn(
+        'app-no-drag inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums transition-colors',
+        phase === 'focus' ? 'bg-primary/15 text-primary' : 'bg-blue-500/15 text-blue-500',
+      )}
+    >
+      <Timer className="size-3.5" /> {label}
+    </button>
+  )
+}
 
 function CtlButton({
   onClick,
@@ -118,6 +143,7 @@ export function Titlebar() {
         )}
       </div>
       <div className="app-no-drag flex items-center gap-1">
+        <FocusChip />
         {inShell && (
           <CtlButton onClick={() => setTourOpen(true)} label="新手引导">
             <HelpCircle className="size-4" />

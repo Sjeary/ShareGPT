@@ -11,6 +11,7 @@ import {
   Users,
   ListTodo,
   BookText,
+  Timer,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -21,6 +22,7 @@ export type NavKey =
   | 'team'
   | 'todo'
   | 'notes'
+  | 'focus'
   | 'gpt'
   | 'gemini'
   | 'claude'
@@ -42,6 +44,7 @@ export const NAV: NavItem[] = [
   { key: 'team', label: '组队日历', icon: Users, hint: '团队共享日程与协作' },
   { key: 'todo', label: '备忘录 / 待办', icon: ListTodo, hint: '清单、任务与便签' },
   { key: 'notes', label: '笔记 / 知识库', icon: BookText, hint: '双链笔记、图谱与全文检索' },
+  { key: 'focus', label: '专注', icon: Timer, hint: '番茄钟、专注统计与团队排名' },
   { key: 'gpt', label: 'ChatGPT', icon: Bot, hint: '内嵌 ChatGPT 网页' },
   { key: 'gemini', label: 'Gemini', icon: Sparkles, hint: '内嵌 Gemini 网页' },
   { key: 'claude', label: 'Claude', icon: Asterisk, hint: '内嵌 Claude 网页' },

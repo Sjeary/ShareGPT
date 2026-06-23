@@ -130,6 +130,8 @@ export interface ShareGptApi {
   saveCalendar: (payload: CalendarStoreFile) => Promise<unknown>
   loadTasks: () => Promise<TasksStoreFile>
   saveTasks: (payload: TasksStoreFile) => Promise<unknown>
+  loadFocus: () => Promise<{ version?: number; sessions?: unknown[]; settings?: unknown }>
+  saveFocus: (payload: { version: number; sessions: unknown[]; settings: unknown }) => Promise<unknown>
   // 知识库 vault
   vault: VaultApi
   onVaultChanged: (handler: (payload: VaultChangeEvent) => void) => Unsubscribe

@@ -479,6 +479,7 @@ class Backend {
     // 新增本地功能存储 (个人日历 / 任务+备忘录): 纯本机 JSON, 结构由渲染层维护, 后端只做读写与轻量兜底。
     this.calendarFile = path.join(this.app.getPath("userData"), "calendar.json");
     this.tasksFile = path.join(this.app.getPath("userData"), "tasks.json");
+    this.focusFile = path.join(this.app.getPath("userData"), "focus.json");
     // 知识库 vault 管理器 (笔记真源 = 磁盘 .md 文件夹; 仅做文件 IO + 监听, 解析/索引在渲染层)。
     this.vault = new VaultManager(this.app, this.getWindow);
     // 知识库 AI 助手 (OpenAI Responses / Codex 中转, 流式; provider 由渲染层传入, 不持久化密钥)。
@@ -806,6 +807,14 @@ class Backend {
 
   saveTasks(data) {
     return this.writeLocalStore(this.tasksFile, data);
+  }
+
+  loadFocus() {
+    return this.readLocalStore(this.focusFile, { version: 1, sessions: [], settings: null });
+  }
+
+  saveFocus(data) {
+    return this.writeLocalStore(this.focusFile, data);
   }
 
   async exportUserData() {

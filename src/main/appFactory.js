@@ -1326,6 +1326,8 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("calendar:save", (_event, payload) => backend.saveCalendar(payload));
     ipcMain.handle("tasks:load", () => backend.loadTasks());
     ipcMain.handle("tasks:save", (_event, payload) => backend.saveTasks(payload));
+    ipcMain.handle("focus:load", () => backend.loadFocus());
+    ipcMain.handle("focus:save", (_event, payload) => backend.saveFocus(payload));
     // 知识库 vault (笔记文件 IO + 监听)。
     ipcMain.handle("vault:start", () => backend.vault.startWatch());
     ipcMain.handle("vault:get-root", () => backend.vault.getRoot());
