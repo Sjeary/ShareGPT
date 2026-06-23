@@ -651,7 +651,7 @@ function eventsForSubnet(subnetKey) {
 // —— 个人云端存储 (按用户隔离: 个人日历 calendar / 待办备忘 tasks) ——
 // 结构: { stores: { [username]: { calendar: {rev,updatedAt,data}, tasks: {rev,updatedAt,data} } } }
 // rev 为单调递增整数, 用于乐观并发: 客户端写入须带 baseRev=当前 rev, 不匹配则拒绝(防止老版本覆盖新版本)。
-const USER_STORE_KINDS = new Set(["calendar", "tasks"]);
+const USER_STORE_KINDS = new Set(["calendar", "tasks", "notes"]);
 
 function loadUserStores() {
   try {

@@ -28,6 +28,35 @@ import { BacklinksPanel, OutlinePanel, PropertiesPanel } from './notes/RightPane
 import { QuickSwitcher } from './notes/QuickSwitcher'
 import { NotesEmptyState } from './notes/NotesEmptyState'
 import { GraphView } from './notes/GraphView'
+import { SyncCompareDialog } from './notes/SyncCompareDialog'
+import { useNotesSync, useNotesSyncStore, type NotesSyncState } from '@/hooks/useNotesSync'
+import { Cloud, CloudOff, RefreshCw } from 'lucide-react'
+
+const SYNC_LABEL: Record<NotesSyncState, string> = {
+  off: '未同步',
+  local: '仅本地',
+  syncing: '同步中',
+  synced: '云端已同步',
+  error: '同步出错',
+}
+function NotesSyncBadge() {
+  const state = useNotesSyncStore((s) => s.state)
+  const Icon = state === 'syncing' ? RefreshCw : state === 'synced' ? Cloud : CloudOff
+  const color =
+    state === 'synced'
+      ? 'text-emerald-500'
+      : state === 'error'
+        ? 'text-rose-500'
+        : state === 'syncing'
+          ? 'text-primary'
+          : 'text-muted-foreground'
+  return (
+    <span className={cn('inline-flex items-center gap-1 text-xs', color)} title={SYNC_LABEL[state]}>
+      <Icon className={cn('size-3.5', state === 'syncing' && 'animate-spin')} />
+      <span className="hidden sm:inline">{SYNC_LABEL[state]}</span>
+    </span>
+  )
+}
 
 const CENTER_TABS: { key: CenterMode; label: string; icon: typeof Eye }[] = [
   { key: 'edit', label: '编辑', icon: Pencil },
@@ -72,6 +101,9 @@ export function NotesPanel() {
     void init()
   }, [init])
 
+  // 云端同步 (登录态自动; 未登录静默本地)。
+  useNotesSync()
+
   useEffect(() => api.onVaultChanged((payload) => void applyExternalChanges(payload)), [applyExternalChanges])
 
   useEffect(() => {
@@ -105,6 +137,7 @@ export function NotesPanel() {
 
   const toolbar = (
     <div className="flex items-center gap-2">
+      <NotesSyncBadge />
       <button
         type="button"
         onClick={onNew}
@@ -220,6 +253,7 @@ export function NotesPanel() {
         </div>
       )}
       <QuickSwitcher />
+      <SyncCompareDialog />
     </PanelScaffold>
   )
 }
