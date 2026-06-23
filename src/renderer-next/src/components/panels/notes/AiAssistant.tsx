@@ -94,7 +94,13 @@ export function AiAssistant() {
   }, [])
   useEffect(() => () => cancelRef.current?.(), [])
 
-  const start = (mode: NotesAiMode, text: string, ctx: { titles?: string[]; context?: string } | undefined, rk: ResultKind) => {
+  const start = (
+    mode: NotesAiMode,
+    text: string,
+    ctx: { titles?: string[]; context?: string } | undefined,
+    rk: ResultKind,
+    instructions?: string,
+  ) => {
     if (!text.trim()) {
       toast.error('内容为空')
       return
@@ -104,7 +110,7 @@ export function AiAssistant() {
     setRunning(true)
     setKind(rk)
     cancelRef.current = runAi(
-      { provider: useNotesAiStore.getState().provider(), mode, text, ctx },
+      { provider: useNotesAiStore.getState().provider(), mode, text, ctx, instructions },
       {
         onDelta: (t) => setResult((p) => p + t),
         onDone: () => setRunning(false),
@@ -144,13 +150,19 @@ export function AiAssistant() {
   }
 
   const askRag = () => {
-    const index = useVaultStore.getState().index
+    const store = useVaultStore.getState()
+    const index = store.index
     if (!index || !q.trim()) return
-    const hits = index.search(q).slice(0, 5)
-    const context = hits
-      .map((h) => `## ${h.title}\n${useVaultStore.getState().notesByPath[h.path]?.body.slice(0, 800) ?? h.snippet}`)
-      .join('\n\n---\n\n')
-    start('ask', q, { context }, 'text')
+    const all = Object.values(store.notesByPath).filter(
+      (n) => !n.path.endsWith('.canvas') && !n.path.endsWith('.base'),
+    )
+    const hits = index.search(q).slice(0, 6)
+    const titleList = all.map((n) => `- ${n.title}`).join('\n')
+    const snippets = hits
+      .map((h) => `### ${h.title}\n${(store.notesByPath[h.path]?.body || h.snippet).slice(0, 700)}`)
+      .join('\n\n')
+    const context = `【库内全部笔记标题，共 ${all.length} 篇】\n${titleList}\n\n【与问题最相关的片段】\n${snippets || '（无明显关键词匹配，可结合上面的标题进行概括）'}`
+    start('ask', q, { context }, 'text', '你是用户个人知识库的问答助手，用中文清晰、有条理地作答，可概括与归纳。')
   }
 
   if (showSettings) return <SettingsForm onDone={() => setShowSettings(false)} />

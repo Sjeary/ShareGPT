@@ -19,6 +19,7 @@ import {
 import '@xyflow/react/dist/style.css'
 import { FileText, Plus, Type as TypeIcon } from 'lucide-react'
 import { api } from '@/lib/api'
+import { useAppStore } from '@/store/useAppStore'
 import { useVaultStore } from '@/store/useVaultStore'
 import { parseCanvas, toCanvas, toReactFlow } from '@/lib/notes/canvas'
 
@@ -127,6 +128,7 @@ function CanvasInner({ path }: { path: string }) {
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
   const rf = useReactFlow()
+  const dark = useAppStore((s) => s.dark)
   const ready = useRef(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -198,12 +200,13 @@ function CanvasInner({ path }: { path: string }) {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         nodeTypes={nodeTypes}
+        colorMode={dark ? 'dark' : 'light'}
         fitView
         proOptions={{ hideAttribution: true }}
       >
-        <Background gap={20} className="!bg-background" />
+        <Background gap={20} color={dark ? '#3f3f46' : '#d4d4d8'} />
         <Controls />
-        <MiniMap pannable zoomable className="!bg-muted" />
+        <MiniMap pannable zoomable />
       </ReactFlow>
     </div>
   )
