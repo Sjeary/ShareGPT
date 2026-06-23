@@ -1,8 +1,9 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
 import type { VaultChangeEvent, VaultFileMeta, VaultImportReport } from '@/types/api'
+import { dump as yamlDump } from 'js-yaml'
 import { NotesIndex } from '@/lib/notes'
-import { parseNote } from '@/lib/notes/parse'
+import { parseNote, splitFrontmatter } from '@/lib/notes/parse'
 import type { ParsedNote } from '@/lib/notes/types'
 
 // 知识库主 store: 持有 vault 根、各笔记磁盘内容/解析结果、全库索引、当前打开的笔记与编辑缓冲。
@@ -29,6 +30,7 @@ interface VaultState {
   createNote: (path: string, content?: string) => Promise<string>
   renameNote: (from: string, to: string) => Promise<void>
   deleteNote: (path: string) => Promise<void>
+  setFrontmatter: (path: string, data: Record<string, unknown>) => Promise<void>
   openToday: () => Promise<void>
   setRootViaDialog: () => Promise<boolean>
   importVault: () => Promise<VaultImportReport | null>
@@ -206,6 +208,26 @@ export const useVaultStore = create<VaultState>((set, get) => {
           currentPath: wasCurrent ? null : s.currentPath,
           draft: wasCurrent ? '' : s.draft,
           dirty: wasCurrent ? false : s.dirty,
+        }
+      })
+    },
+
+    setFrontmatter: async (path, data) => {
+      const raw = get().rawByPath[path] ?? ''
+      const { body } = splitFrontmatter(raw)
+      const keys = Object.keys(data)
+      const next = keys.length ? `---\n${yamlDump(data)}---\n${body}` : body
+      await api.vault.write(path, next)
+      const parsed = parseNote({ path, content: next, mtime: Date.now(), ctime: Date.now() })
+      set((s) => {
+        const notesByPath = { ...s.notesByPath, [path]: parsed }
+        const rawByPath = { ...s.rawByPath, [path]: next }
+        return {
+          notesByPath,
+          rawByPath,
+          index: rebuild(notesByPath),
+          indexVersion: s.indexVersion + 1,
+          draft: s.currentPath === path && !s.dirty ? next : s.draft,
         }
       })
     },

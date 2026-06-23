@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { CornerDownRight, FileText, Hash, Link2 } from 'lucide-react'
+import { CornerDownRight, FileText, Hash, Link2, Plus, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useVaultStore } from '@/store/useVaultStore'
 import { useNotesUi } from '@/store/useNotesUi'
@@ -95,15 +95,25 @@ export function OutlinePanel() {
   )
 }
 
-// 属性: 当前笔记 frontmatter。
+// 属性: 当前笔记 frontmatter (预览态可编辑; 编辑态为避免与编辑器缓冲冲突仅只读)。
 export function PropertiesPanel() {
   const currentPath = useVaultStore((s) => s.currentPath)
   const note = useVaultStore((s) => (s.currentPath ? s.notesByPath[s.currentPath] : null))
+  const setFrontmatter = useVaultStore((s) => s.setFrontmatter)
+  const editable = useNotesUi((s) => s.centerMode) !== 'edit'
 
   if (!currentPath || !note) return <Empty text="选择一篇笔记查看属性" />
-  const entries = Object.entries(note.frontmatter)
-  if (entries.length === 0 && note.tags.length === 0)
-    return <Empty text="没有属性 (YAML frontmatter)" />
+  const fm = note.frontmatter
+  const entries = Object.entries(fm)
+
+  const commit = (next: Record<string, unknown>) => void setFrontmatter(currentPath, next)
+  const setKey = (k: string, raw: string) => {
+    // 逗号分隔且原值为数组 → 存数组; 否则存字符串/数字
+    let val: unknown = raw
+    if (Array.isArray(fm[k])) val = raw.split(',').map((s) => s.trim()).filter(Boolean)
+    else if (raw !== '' && !Number.isNaN(Number(raw)) && /^-?\d/.test(raw)) val = Number(raw)
+    commit({ ...fm, [k]: val })
+  }
 
   return (
     <div className="space-y-2 p-3 text-sm">
@@ -116,14 +126,58 @@ export function PropertiesPanel() {
           ))}
         </div>
       )}
+      {entries.length === 0 && (
+        <p className="py-2 text-xs text-muted-foreground">没有属性 (YAML frontmatter)</p>
+      )}
       {entries.map(([k, v]) => (
-        <div key={k} className="grid grid-cols-[auto_1fr] gap-2 border-b border-border/50 pb-1.5">
-          <span className="font-medium text-muted-foreground">{k}</span>
-          <span className="truncate text-right text-foreground">
-            {Array.isArray(v) ? v.join(', ') : String(v)}
+        <div key={k} className="group grid grid-cols-[5.5rem_1fr_auto] items-center gap-2 border-b border-border/50 pb-1.5">
+          <span className="truncate font-medium text-muted-foreground" title={k}>
+            {k}
           </span>
+          {editable ? (
+            <input
+              defaultValue={Array.isArray(v) ? v.join(', ') : String(v ?? '')}
+              onBlur={(e) => {
+                const cur = Array.isArray(v) ? v.join(', ') : String(v ?? '')
+                if (e.target.value !== cur) setKey(k, e.target.value)
+              }}
+              className="h-7 w-full rounded border border-transparent bg-transparent px-1.5 text-right outline-none transition-colors hover:border-border focus:border-primary/60"
+            />
+          ) : (
+            <span className="truncate text-right">{Array.isArray(v) ? v.join(', ') : String(v)}</span>
+          )}
+          {editable && (
+            <button
+              type="button"
+              title="删除属性"
+              onClick={() => {
+                const next = { ...fm }
+                delete next[k]
+                commit(next)
+              }}
+              className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100"
+            >
+              <X className="size-3.5" />
+            </button>
+          )}
         </div>
       ))}
+      {editable ? (
+        <button
+          type="button"
+          onClick={() => {
+            const key = window.prompt('属性名')
+            if (!key || !key.trim()) return
+            const val = window.prompt(`${key} 的值`, '') ?? ''
+            commit({ ...fm, [key.trim()]: val })
+          }}
+          className="mt-1 flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <Plus className="size-3.5" /> 添加属性
+        </button>
+      ) : (
+        <p className="pt-1 text-[11px] text-muted-foreground/70">切到「预览」可编辑属性</p>
+      )}
     </div>
   )
 }
