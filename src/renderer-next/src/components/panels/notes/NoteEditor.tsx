@@ -9,6 +9,7 @@ import { editorHighlighting, editorTheme } from './cm/theme'
 import { wikilinkCompletions, tagDecorations } from './cm/wikilink'
 import { livePreview } from './cm/livePreview'
 import { useVaultStore } from '@/store/useVaultStore'
+import { useEditorBridge } from '@/store/useEditorBridge'
 
 // 基于 CodeMirror 6 的 markdown 编辑器: 双链高亮/补全/点击跳转 + 自动换行 + 历史。
 // 由父组件用 key={path} 控制, 切换笔记即重挂载, 初始内容取 store.draft。
@@ -56,6 +57,7 @@ export function NoteEditor({ path }: { path: string }) {
           livePreview(openLink),
           tagDecorations,
           keymap.of([
+            { key: 'Mod-k', run: () => (useEditorBridge.getState().openAiEdit(), true) },
             ...defaultKeymap,
             ...historyKeymap,
             ...completionKeymap,
@@ -64,13 +66,23 @@ export function NoteEditor({ path }: { path: string }) {
           ]),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) setDraftRef.current(u.state.doc.toString())
+            if (u.selectionSet || u.docChanged) {
+              const s = u.state.selection.main
+              useEditorBridge.getState().setSelection({
+                from: s.from,
+                to: s.to,
+                text: u.state.sliceDoc(s.from, s.to),
+              })
+            }
           }),
         ],
       }),
     })
     viewRef.current = view
+    useEditorBridge.getState().setView(view)
     view.focus()
     return () => {
+      if (useEditorBridge.getState().view === view) useEditorBridge.getState().setView(null)
       view.destroy()
       viewRef.current = null
     }

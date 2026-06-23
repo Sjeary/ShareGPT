@@ -93,11 +93,13 @@ export type NotesAiMode =
   | 'tags'
   | 'linkSuggest'
   | 'ask'
+  | 'edit'
+  | 'generate'
 export interface NotesAiRequest {
   provider: NotesAiProvider
   mode: NotesAiMode
   text: string
-  ctx?: { titles?: string[]; context?: string }
+  ctx?: { titles?: string[]; context?: string; instruction?: string }
   instructions?: string
 }
 export interface NotesAiEvent {

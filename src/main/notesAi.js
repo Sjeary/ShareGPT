@@ -30,6 +30,10 @@ function buildPrompt(mode, text, ctx) {
       return `阅读下面的笔记，给出 3-6 个最贴切的中文标签，用逗号分隔，只输出标签本身（不带 # 不解释）：\n\n${text}`;
     case "linkSuggest":
       return `下面是「当前笔记」内容，以及知识库中「已有笔记标题」列表。请挑选 3-8 个与当前笔记最相关、值得建立双链的已有标题，每行一个，只输出标题原文（要与列表完全一致），不要编号或解释。\n\n当前笔记：\n${text}\n\n已有标题：\n${titles}`;
+    case "edit":
+      return `你在帮用户编辑一篇 markdown 文档。根据「指令」修改「原文」，直接输出修改后的**完整** markdown 文本本身，保持原有 markdown 风格与结构；不要解释、不要用代码围栏包裹。\n\n指令：${(ctx && ctx.instruction) || ""}\n\n原文：\n${text}`;
+    case "generate":
+      return `根据下面的要求撰写一段 markdown 内容，直接输出 markdown 文本本身，不要解释、不要用代码围栏包裹：\n\n${(ctx && ctx.instruction) || text}`;
     case "ask":
       return `你是用户个人知识库的问答助手。请结合下面的「库内资料」回答问题：可以概括、归纳与合理推断（例如根据笔记标题判断这个库的主题）；只有在资料里确实毫无线索时才说明。用中文清晰作答，回答末尾可另起一行用「来源：」列出引用到的笔记标题。\n\n问题：${text}\n\n${context}`;
     default:
