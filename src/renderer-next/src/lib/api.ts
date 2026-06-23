@@ -30,6 +30,11 @@ const fallback = {
     importFrom: async () => ({ notes: 0, attachments: 0, skipped: 0, root: '' }),
   },
   onVaultChanged: () => noop,
+  notesAi: {
+    complete: async () => ({ streamId: '' }),
+    cancel: async () => ({ ok: true }),
+  },
+  onNotesAiEvent: () => noop,
   exportUserData: async () => undefined,
   importUserData: async () => undefined,
   readClipboardAttachment: async () => undefined,

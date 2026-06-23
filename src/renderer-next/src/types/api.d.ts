@@ -75,6 +75,42 @@ export interface VaultApi {
   importFrom: (src: string) => Promise<VaultImportReport>
 }
 
+// —— 知识库 AI (Responses 流式) ——
+export interface NotesAiProvider {
+  baseUrl: string
+  apiKey: string
+  model: string
+  effort: string
+}
+export type NotesAiMode =
+  | 'expand'
+  | 'continue'
+  | 'summary'
+  | 'polish'
+  | 'rewrite'
+  | 'title'
+  | 'translate'
+  | 'tags'
+  | 'linkSuggest'
+  | 'ask'
+export interface NotesAiRequest {
+  provider: NotesAiProvider
+  mode: NotesAiMode
+  text: string
+  ctx?: { titles?: string[]; context?: string }
+  instructions?: string
+}
+export interface NotesAiEvent {
+  streamId: string
+  type: 'delta' | 'done' | 'error'
+  text?: string
+  message?: string
+}
+export interface NotesAiApi {
+  complete: (req: NotesAiRequest) => Promise<{ streamId: string }>
+  cancel: (streamId: string) => Promise<{ ok: boolean }>
+}
+
 export interface ShareGptApi {
   platform: NodeJS.Platform | string
 
@@ -95,6 +131,9 @@ export interface ShareGptApi {
   // 知识库 vault
   vault: VaultApi
   onVaultChanged: (handler: (payload: VaultChangeEvent) => void) => Unsubscribe
+  // 知识库 AI
+  notesAi: NotesAiApi
+  onNotesAiEvent: (handler: (payload: NotesAiEvent) => void) => Unsubscribe
   exportUserData: () => Promise<unknown>
   importUserData: () => Promise<unknown>
   readClipboardAttachment: () => Promise<unknown>

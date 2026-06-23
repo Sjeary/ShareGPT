@@ -9,6 +9,7 @@ import {
   Link2,
   ListTree,
   Network,
+  Sparkles,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -32,6 +33,7 @@ import { NotesEmptyState } from './notes/NotesEmptyState'
 import { GraphView } from './notes/GraphView'
 import { CanvasView } from './notes/CanvasView'
 import { BaseView } from './notes/BaseView'
+import { AiAssistant } from './notes/AiAssistant'
 import { SyncCompareDialog } from './notes/SyncCompareDialog'
 import { useNotesSync, useNotesSyncStore, type NotesSyncState } from '@/hooks/useNotesSync'
 import { Cloud, CloudOff, RefreshCw } from 'lucide-react'
@@ -71,6 +73,7 @@ const RIGHT_TABS: { key: RightTab; label: string; icon: typeof Link2 }[] = [
   { key: 'backlinks', label: '反链', icon: Link2 },
   { key: 'outline', label: '大纲', icon: ListTree },
   { key: 'properties', label: '属性', icon: Info },
+  { key: 'ai', label: 'AI', icon: Sparkles },
 ]
 
 export function NotesPanel() {
@@ -262,6 +265,7 @@ export function NotesPanel() {
                 {rightTab === 'backlinks' && <BacklinksPanel />}
                 {rightTab === 'outline' && <OutlinePanel />}
                 {rightTab === 'properties' && <PropertiesPanel />}
+                {rightTab === 'ai' && <AiAssistant />}
               </div>
             </div>
           )}

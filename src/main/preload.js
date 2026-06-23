@@ -33,6 +33,16 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.on("vault:changed", listener);
     return () => ipcRenderer.removeListener("vault:changed", listener);
   },
+  // 知识库 AI (Responses 流式)。
+  notesAi: {
+    complete: (req) => ipcRenderer.invoke("notes-ai:complete", req),
+    cancel: (id) => ipcRenderer.invoke("notes-ai:cancel", id),
+  },
+  onNotesAiEvent: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("notes-ai:event", listener);
+    return () => ipcRenderer.removeListener("notes-ai:event", listener);
+  },
   exportUserData: () => ipcRenderer.invoke("user-data:export"),
   importUserData: () => ipcRenderer.invoke("user-data:import"),
   readClipboardAttachment: () => ipcRenderer.invoke("clipboard:read-attachment"),
