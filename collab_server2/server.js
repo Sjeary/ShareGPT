@@ -18,6 +18,8 @@ const CALENDARS_FILE = process.env.CALENDARS_FILE || path.join(__dirname, "data"
 // 个人云端存储: 按用户隔离的个人日历 / 待办备忘 (多端同步 + 乐观并发版本号防覆盖)。
 const USER_STORES_FILE =
   process.env.USER_STORES_FILE || path.join(__dirname, "data", "user_stores.json");
+// 团队专注(番茄钟)排名: 按用户按天聚合专注分钟/番茄数。
+const FOCUS_FILE = process.env.FOCUS_FILE || path.join(__dirname, "data", "focus_stats.json");
 const RELEASES_DIR = process.env.RELEASES_DIR || path.join(__dirname, "data", "releases");
 const SESSION_TTL_MS = Number.parseInt(process.env.SESSION_TTL_MS || `${24 * 60 * 60 * 1000}`, 10);
 const HISTORY_MAX = Number.parseInt(process.env.HISTORY_MAX || "2000", 10);
@@ -701,6 +703,65 @@ function broadcastToUser(username, payload, exceptToken) {
     if (exceptToken && client.token === exceptToken) continue;
     sendToClient(client, payload);
   }
+}
+
+// —— 团队专注(番茄钟)排名 —— 结构: { daily: { [username]: { [YYYY-MM-DD]: { minutes, count } } } }
+function focusDateStr(d = new Date()) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function loadFocusStore() {
+  try {
+    if (!fs.existsSync(FOCUS_FILE)) return { daily: {} };
+    const raw = JSON.parse(fs.readFileSync(FOCUS_FILE, "utf8"));
+    return raw && typeof raw.daily === "object" && raw.daily ? raw : { daily: {} };
+  } catch {
+    return { daily: {} };
+  }
+}
+function saveFocusStore(store) {
+  writeJsonAtomic(FOCUS_FILE, { daily: store?.daily || {} });
+}
+function reportFocus(username, minutes, count) {
+  const store = loadFocusStore();
+  const date = focusDateStr();
+  const u = (store.daily[username] = store.daily[username] || {});
+  const d = (u[date] = u[date] || { minutes: 0, count: 0 });
+  d.minutes += Math.max(0, Math.min(600, Number(minutes) || 0));
+  d.count += Math.max(0, Math.min(50, Number(count) || 0));
+  saveFocusStore(store);
+  return d;
+}
+function focusLeaderboard(range) {
+  const store = loadFocusStore();
+  const days = new Set();
+  if (range === "week") {
+    const now = new Date();
+    for (let i = 0; i < 7; i++) {
+      const dd = new Date(now);
+      dd.setDate(now.getDate() - i);
+      days.add(focusDateStr(dd));
+    }
+  } else {
+    days.add(focusDateStr());
+  }
+  const rows = [];
+  for (const [username, byDate] of Object.entries(store.daily)) {
+    let minutes = 0;
+    let count = 0;
+    for (const [date, v] of Object.entries(byDate)) {
+      if (days.has(date)) {
+        minutes += v.minutes || 0;
+        count += v.count || 0;
+      }
+    }
+    if (minutes > 0 || count > 0) {
+      const prof = getPublicProfile(username);
+      rows.push({ username, displayName: prof.displayName || username, minutes, count });
+    }
+  }
+  rows.sort((a, b) => b.minutes - a.minutes || b.count - a.count);
+  return rows.slice(0, 50);
 }
 
 function findUser(username) {
@@ -2102,6 +2163,27 @@ const server = http.createServer(async (req, res) => {
       }
       return;
     }
+  }
+
+  // 团队专注(番茄钟)排名: 上报会话 + 群内排行。鉴权复用聊天 token。
+  if (pathname === "/api/focus/report" && req.method === "POST") {
+    const session = resolveSessionByToken(extractBearer(req));
+    if (!session) { sendText(res, 401, "未授权"); return; }
+    try {
+      const payload = safeParseJson(await readBody(req)) || {};
+      const d = reportFocus(session.username, payload.minutes, payload.count ?? 1);
+      sendJson(res, 200, { ok: true, today: d });
+    } catch (err) {
+      sendText(res, 500, err.message || "上报失败");
+    }
+    return;
+  }
+  if (pathname === "/api/focus/leaderboard" && req.method === "GET") {
+    const session = resolveSessionByToken(extractBearer(req));
+    if (!session) { sendText(res, 401, "未授权"); return; }
+    const range = reqUrl.searchParams.get("range") === "week" ? "week" : "today";
+    sendJson(res, 200, { leaderboard: focusLeaderboard(range), range });
+    return;
   }
 
   sendText(res, 404, "Not Found");

@@ -20,7 +20,7 @@ import { TeamCalendarPanel } from '@/components/panels/TeamCalendarPanel'
 import { TodoPanel } from '@/components/panels/TodoPanel'
 import { NotesPanel } from '@/components/panels/NotesPanel'
 import { FocusPanel } from '@/components/panels/FocusPanel'
-import { useFocusTimer } from '@/hooks/useFocusTimer'
+import { useFocusTimer, useFocusSync } from '@/hooks/useFocusTimer'
 import { SetupGuide } from '@/components/SetupGuide'
 import { Onboarding } from '@/components/Onboarding'
 import { Toaster } from '@/components/ui/sonner'
@@ -70,6 +70,8 @@ export function Shell() {
 
   // 番茄钟全局计时 (应用级单次挂载, 关面板也继续走, 阶段完成全局通知)。
   useFocusTimer()
+  // 专注段完成上报协作服务器 (团队排名); 未登录/不支持则静默。
+  useFocusSync()
 
   // 首次进入主界面自动开新手导览 (此前没完成/跳过过)。仅在 Shell 挂载时判一次,
   // 标题栏「?」可随时手动重开 (见 Titlebar / Onboarding)。
