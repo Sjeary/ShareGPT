@@ -18,7 +18,9 @@ export function NoteEditor({ path }: { path: string }) {
   // 用 ref 持有最新回调, 避免 CM 闭包拿到过期函数。
   const setDraft = useVaultStore((s) => s.setDraft)
   const setDraftRef = useRef(setDraft)
-  setDraftRef.current = setDraft
+  useEffect(() => {
+    setDraftRef.current = setDraft
+  }, [setDraft])
 
   useEffect(() => {
     if (!hostRef.current) return
@@ -72,7 +74,6 @@ export function NoteEditor({ path }: { path: string }) {
       viewRef.current = null
     }
     // path 变化由父级 key 触发重挂载; 这里只在挂载时建一次。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path])
 
   return <div ref={hostRef} className="h-full min-h-0 overflow-hidden" />

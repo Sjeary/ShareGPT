@@ -20,7 +20,6 @@ interface GLink {
 // 知识库图谱: 节点=笔记, 连线=双链。global 全库 / local 当前笔记邻域。点击节点打开笔记。
 export function GraphView() {
   const index = useVaultStore((s) => s.index)
-  const indexVersion = useVaultStore((s) => s.indexVersion)
   const currentPath = useVaultStore((s) => s.currentPath)
   const openNote = useVaultStore((s) => s.openNote)
 
@@ -50,7 +49,7 @@ export function GraphView() {
       nodes: g.nodes.map((n) => ({ id: n.id, title: n.title, degree: n.degree, folder: n.folder })),
       links: g.links.map((l) => ({ source: l.source, target: l.target })),
     }
-  }, [index, indexVersion, mode, currentPath])
+  }, [index, mode, currentPath])
 
   // 邻接表 (悬停高亮用)
   const neighbors = useMemo(() => {

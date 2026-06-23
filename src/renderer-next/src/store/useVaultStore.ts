@@ -74,7 +74,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
       try {
         root = await api.vault.getRoot()
       } catch {
-        root = ''
+        /* 取不到 root 则保持空串 */
       }
       set({ root })
       await get().reload()
