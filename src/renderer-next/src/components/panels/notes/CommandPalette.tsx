@@ -6,13 +6,16 @@ import {
   FilePlus2,
   FolderInput,
   FolderCog,
+  LayoutGrid,
   Network,
   Pencil,
   Search,
+  Table,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useVaultStore } from '@/store/useVaultStore'
 import { useNotesUi } from '@/store/useNotesUi'
+import { STARTER_BASE } from '@/lib/notes/bases'
 
 interface Cmd {
   id: string
@@ -59,6 +62,30 @@ export function CommandPalette() {
       icon: CalendarDays,
       hint: 'Daily/YYYY-MM-DD',
       run: () => void vault.openToday().then(() => ui.setCenterMode('edit')),
+    },
+    {
+      id: 'canvas',
+      label: '新建白板 (.canvas)',
+      icon: LayoutGrid,
+      run: () => {
+        const name = window.prompt('新建白板 (相对路径)', '白板.canvas')
+        if (name && name.trim()) {
+          const p = /\.canvas$/i.test(name.trim()) ? name.trim() : name.trim() + '.canvas'
+          void vault.createNote(p, '{\n  "nodes": [],\n  "edges": []\n}\n')
+        }
+      },
+    },
+    {
+      id: 'base',
+      label: '新建 Base (.base)',
+      icon: Table,
+      run: () => {
+        const name = window.prompt('新建 Base 视图 (相对路径)', '视图.base')
+        if (name && name.trim()) {
+          const p = /\.base$/i.test(name.trim()) ? name.trim() : name.trim() + '.base'
+          void vault.createNote(p, STARTER_BASE)
+        }
+      },
     },
     { id: 'edit', label: '切换到编辑', icon: Pencil, run: () => ui.setCenterMode('edit') },
     { id: 'preview', label: '切换到预览', icon: Eye, run: () => ui.setCenterMode('preview') },

@@ -30,6 +30,8 @@ import { QuickSwitcher } from './notes/QuickSwitcher'
 import { CommandPalette } from './notes/CommandPalette'
 import { NotesEmptyState } from './notes/NotesEmptyState'
 import { GraphView } from './notes/GraphView'
+import { CanvasView } from './notes/CanvasView'
+import { BaseView } from './notes/BaseView'
 import { SyncCompareDialog } from './notes/SyncCompareDialog'
 import { useNotesSync, useNotesSyncStore, type NotesSyncState } from '@/hooks/useNotesSync'
 import { Cloud, CloudOff, RefreshCw } from 'lucide-react'
@@ -219,6 +221,10 @@ export function NotesPanel() {
                 <BookText className="size-8 opacity-30" />
                 <p>选择左侧笔记，或按 <kbd className="rounded border border-border px-1">Ctrl/⌘ O</kbd> 快速跳转</p>
               </div>
+            ) : currentPath.endsWith('.canvas') ? (
+              <CanvasView key={currentPath} path={currentPath} />
+            ) : currentPath.endsWith('.base') ? (
+              <BaseView key={currentPath} path={currentPath} />
             ) : centerMode === 'edit' ? (
               <NoteEditor key={currentPath} path={currentPath} />
             ) : (
@@ -229,7 +235,11 @@ export function NotesPanel() {
               </div>
             )}
           </div>
-          {showRight && currentPath && centerMode !== 'graph' && (
+          {showRight &&
+            currentPath &&
+            centerMode !== 'graph' &&
+            !currentPath.endsWith('.canvas') &&
+            !currentPath.endsWith('.base') && (
             <div className="flex h-full w-72 shrink-0 flex-col border-l border-border bg-muted/20">
               <div className="flex shrink-0 items-center gap-1 border-b border-border p-1.5">
                 {RIGHT_TABS.map((t) => (

@@ -150,7 +150,8 @@ export const useVaultStore = create<VaultState>((set, get) => {
 
     createNote: async (path, content = '') => {
       let p = path.trim()
-      if (!/\.(md|markdown)$/i.test(p)) p += '.md'
+      // 无扩展名才补 .md; 保留 .canvas / .base 等已有扩展。
+      if (!/\.[a-z0-9]+$/i.test(p)) p += '.md'
       const f = await api.vault.create(p, content)
       const parsed = parseNote(f)
       set((s) => {
