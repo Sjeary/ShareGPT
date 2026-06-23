@@ -2,6 +2,7 @@ import { BookText, FilePlus2, FolderInput, FolderCog } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useVaultStore } from '@/store/useVaultStore'
+import { inputPrompt } from './InputPrompt'
 
 // 知识库为空时的引导: 新建 / 导入 Obsidian 库 / 选择文件夹作为 vault。
 export function NotesEmptyState() {
@@ -26,7 +27,7 @@ export function NotesEmptyState() {
       <div className="flex flex-wrap items-center justify-center gap-2.5">
         <Button
           onClick={async () => {
-            const name = window.prompt('新建笔记 (相对路径)', '未命名.md')
+            const name = await inputPrompt('新建笔记 (相对路径)', '未命名.md')
             if (name && name.trim()) {
               try {
                 await createNote(name.trim())

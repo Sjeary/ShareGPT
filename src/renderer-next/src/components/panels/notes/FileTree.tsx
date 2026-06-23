@@ -3,6 +3,7 @@ import { ChevronRight, FileText, Folder, FolderOpen, MoreHorizontal } from 'luci
 import { cn } from '@/lib/utils'
 import { useVaultStore } from '@/store/useVaultStore'
 import type { ParsedNote } from '@/lib/notes/types'
+import { inputPrompt } from './InputPrompt'
 
 interface TreeNode {
   name: string
@@ -129,16 +130,17 @@ function Row({
         title="重命名 / 删除"
         className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
         onClick={() => {
-          const action = window.prompt(
-            `操作 "${node.title || node.name}":\n输入新路径以重命名, 或输入 DELETE 删除`,
-            node.path,
+          void inputPrompt(`重命名 "${node.title || node.name}" (新路径; 输入 DELETE 删除)`, node.path).then(
+            (action) => {
+              if (action === null) return
+              const v = action.trim()
+              if (v === 'DELETE') {
+                if (window.confirm(`确认删除 ${node.path}?`)) void deleteNote(node.path)
+              } else if (v && v !== node.path) {
+                void renameNote(node.path, v)
+              }
+            },
           )
-          if (action === null) return
-          if (action.trim() === 'DELETE') {
-            if (window.confirm(`确认删除 ${node.path}?`)) void deleteNote(node.path)
-          } else if (action.trim() && action.trim() !== node.path) {
-            void renameNote(node.path, action.trim())
-          }
         }}
       >
         <MoreHorizontal className="size-3.5" />

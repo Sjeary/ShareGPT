@@ -16,6 +16,7 @@ import { toast } from 'sonner'
 import { useVaultStore } from '@/store/useVaultStore'
 import { useNotesUi } from '@/store/useNotesUi'
 import { STARTER_BASE } from '@/lib/notes/bases'
+import { inputPrompt } from './InputPrompt'
 
 interface Cmd {
   id: string
@@ -52,8 +53,9 @@ export function CommandPalette() {
       icon: FilePlus2,
       hint: '相对路径',
       run: () => {
-        const name = window.prompt('新建笔记 (相对路径)', '未命名.md')
-        if (name && name.trim()) void vault.createNote(name.trim()).then(() => ui.setCenterMode('edit'))
+        void inputPrompt('新建笔记 (相对路径)', '未命名.md').then((name) => {
+          if (name && name.trim()) void vault.createNote(name.trim()).then(() => ui.setCenterMode('edit'))
+        })
       },
     },
     {
@@ -68,11 +70,11 @@ export function CommandPalette() {
       label: '新建白板 (.canvas)',
       icon: LayoutGrid,
       run: () => {
-        const name = window.prompt('新建白板 (相对路径)', '白板.canvas')
-        if (name && name.trim()) {
+        void inputPrompt('新建白板 (相对路径)', '白板.canvas').then((name) => {
+          if (!name || !name.trim()) return
           const p = /\.canvas$/i.test(name.trim()) ? name.trim() : name.trim() + '.canvas'
           void vault.createNote(p, '{\n  "nodes": [],\n  "edges": []\n}\n')
-        }
+        })
       },
     },
     {
@@ -80,11 +82,11 @@ export function CommandPalette() {
       label: '新建 Base (.base)',
       icon: Table,
       run: () => {
-        const name = window.prompt('新建 Base 视图 (相对路径)', '视图.base')
-        if (name && name.trim()) {
+        void inputPrompt('新建 Base 视图 (相对路径)', '视图.base').then((name) => {
+          if (!name || !name.trim()) return
           const p = /\.base$/i.test(name.trim()) ? name.trim() : name.trim() + '.base'
           void vault.createNote(p, STARTER_BASE)
-        }
+        })
       },
     },
     { id: 'edit', label: '切换到编辑', icon: Pencil, run: () => ui.setCenterMode('edit') },

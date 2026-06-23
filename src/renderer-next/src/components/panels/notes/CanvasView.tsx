@@ -21,6 +21,7 @@ import { FileText, Plus, Type as TypeIcon } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useVaultStore } from '@/store/useVaultStore'
+import { inputPrompt } from './InputPrompt'
 import { parseCanvas, toCanvas, toReactFlow } from '@/lib/notes/canvas'
 
 let idc = 0
@@ -166,13 +167,14 @@ function CanvasInner({ path }: { path: string }) {
     ])
   }
   const addFile = () => {
-    const name = window.prompt('链接到笔记 (相对路径)', 'Welcome.md')
-    if (!name) return
-    const c = rf.screenToFlowPosition({ x: 360, y: 240 })
-    setNodes((ns) => [
-      ...ns,
-      { id: newId(), type: 'c_file', position: c, style: { width: 220, height: 70 }, data: { file: name } },
-    ])
+    void inputPrompt('链接到笔记 (相对路径)', 'Welcome.md').then((name) => {
+      if (!name) return
+      const c = rf.screenToFlowPosition({ x: 360, y: 240 })
+      setNodes((ns) => [
+        ...ns,
+        { id: newId(), type: 'c_file', position: c, style: { width: 220, height: 70 }, data: { file: name } },
+      ])
+    })
   }
 
   return (

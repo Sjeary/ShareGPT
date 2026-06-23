@@ -34,6 +34,7 @@ import { GraphView } from './notes/GraphView'
 import { CanvasView } from './notes/CanvasView'
 import { BaseView } from './notes/BaseView'
 import { AiAssistant } from './notes/AiAssistant'
+import { InputPromptDialog, inputPrompt } from './notes/InputPrompt'
 import { SyncCompareDialog } from './notes/SyncCompareDialog'
 import { useNotesSync, useNotesSyncStore, type NotesSyncState } from '@/hooks/useNotesSync'
 import { Cloud, CloudOff, RefreshCw } from 'lucide-react'
@@ -128,7 +129,7 @@ export function NotesPanel() {
   const previewBody = useMemo(() => splitFrontmatter(draft).body, [draft])
 
   const onNew = async () => {
-    const name = window.prompt('新建笔记 (相对路径)', '未命名.md')
+    const name = await inputPrompt('新建笔记 (相对路径)', '未命名.md')
     if (name && name.trim()) {
       try {
         await createNote(name.trim())
@@ -274,6 +275,7 @@ export function NotesPanel() {
       <QuickSwitcher />
       <CommandPalette />
       <SyncCompareDialog />
+      <InputPromptDialog />
     </PanelScaffold>
   )
 }

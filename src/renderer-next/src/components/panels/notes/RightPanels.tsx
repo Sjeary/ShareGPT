@@ -3,6 +3,7 @@ import { CornerDownRight, FileText, Hash, Link2, Plus, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useVaultStore } from '@/store/useVaultStore'
 import { useNotesUi } from '@/store/useNotesUi'
+import { inputPrompt } from './InputPrompt'
 
 // 反链面板: 谁链接到了当前笔记 (含来源行上下文)。
 export function BacklinksPanel() {
@@ -166,10 +167,12 @@ export function PropertiesPanel() {
         <button
           type="button"
           onClick={() => {
-            const key = window.prompt('属性名')
-            if (!key || !key.trim()) return
-            const val = window.prompt(`${key} 的值`, '') ?? ''
-            commit({ ...fm, [key.trim()]: val })
+            void inputPrompt('属性名', '').then((key) => {
+              if (!key || !key.trim()) return
+              void inputPrompt(`${key.trim()} 的值`, '').then((val) => {
+                commit({ ...fm, [key.trim()]: val ?? '' })
+              })
+            })
           }}
           className="mt-1 flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
