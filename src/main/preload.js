@@ -12,6 +12,26 @@ contextBridge.exposeInMainWorld("api", {
   saveCalendar: (payload) => ipcRenderer.invoke("calendar:save", payload),
   loadTasks: () => ipcRenderer.invoke("tasks:load"),
   saveTasks: (payload) => ipcRenderer.invoke("tasks:save", payload),
+  // 知识库 vault (笔记文件 IO)。
+  vault: {
+    start: () => ipcRenderer.invoke("vault:start"),
+    getRoot: () => ipcRenderer.invoke("vault:get-root"),
+    setRoot: (absPath) => ipcRenderer.invoke("vault:set-root", absPath),
+    pickFolder: () => ipcRenderer.invoke("vault:pick-folder"),
+    list: () => ipcRenderer.invoke("vault:list"),
+    readAll: () => ipcRenderer.invoke("vault:read-all"),
+    read: (p) => ipcRenderer.invoke("vault:read", p),
+    write: (p, content) => ipcRenderer.invoke("vault:write", { path: p, content }),
+    create: (p, content) => ipcRenderer.invoke("vault:create", { path: p, content }),
+    rename: (from, to) => ipcRenderer.invoke("vault:rename", { from, to }),
+    remove: (p) => ipcRenderer.invoke("vault:remove", p),
+    importFrom: (src) => ipcRenderer.invoke("vault:import", src),
+  },
+  onVaultChanged: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("vault:changed", listener);
+    return () => ipcRenderer.removeListener("vault:changed", listener);
+  },
   exportUserData: () => ipcRenderer.invoke("user-data:export"),
   importUserData: () => ipcRenderer.invoke("user-data:import"),
   readClipboardAttachment: () => ipcRenderer.invoke("clipboard:read-attachment"),

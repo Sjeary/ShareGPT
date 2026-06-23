@@ -37,6 +37,43 @@ export interface TasksStoreFile {
   memos?: unknown[]
 }
 
+// —— 知识库 vault (笔记文件 IO; 解析/索引在渲染层) ——
+export interface VaultFileMeta {
+  path: string // vault 内相对路径 (正斜杠)
+  mtime: number
+  ctime: number
+  size?: number
+}
+export interface VaultFile {
+  path: string
+  content: string
+  mtime: number
+  ctime: number
+}
+export interface VaultImportReport {
+  notes: number
+  attachments: number
+  skipped: number
+  root: string
+}
+export interface VaultChangeEvent {
+  events: { type: 'add' | 'change' | 'unlink'; path: string }[]
+}
+export interface VaultApi {
+  start: () => Promise<void>
+  getRoot: () => Promise<string>
+  setRoot: (absPath: string) => Promise<{ ok: boolean; root: string; count: number }>
+  pickFolder: () => Promise<string | null>
+  list: () => Promise<VaultFileMeta[]>
+  readAll: () => Promise<VaultFile[]>
+  read: (path: string) => Promise<VaultFile>
+  write: (path: string, content: string) => Promise<{ path: string; mtime: number }>
+  create: (path: string, content?: string) => Promise<VaultFile>
+  rename: (from: string, to: string) => Promise<{ ok: boolean }>
+  remove: (path: string) => Promise<{ ok: boolean }>
+  importFrom: (src: string) => Promise<VaultImportReport>
+}
+
 export interface ShareGptApi {
   platform: NodeJS.Platform | string
 
@@ -54,6 +91,9 @@ export interface ShareGptApi {
   saveCalendar: (payload: CalendarStoreFile) => Promise<unknown>
   loadTasks: () => Promise<TasksStoreFile>
   saveTasks: (payload: TasksStoreFile) => Promise<unknown>
+  // 知识库 vault
+  vault: VaultApi
+  onVaultChanged: (handler: (payload: VaultChangeEvent) => void) => Unsubscribe
   exportUserData: () => Promise<unknown>
   importUserData: () => Promise<unknown>
   readClipboardAttachment: () => Promise<unknown>

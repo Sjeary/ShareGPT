@@ -18,6 +18,7 @@ import { LogsPanel } from '@/components/panels/LogsPanel'
 import { CalendarPanel } from '@/components/panels/CalendarPanel'
 import { TeamCalendarPanel } from '@/components/panels/TeamCalendarPanel'
 import { TodoPanel } from '@/components/panels/TodoPanel'
+import { NotesPanel } from '@/components/panels/NotesPanel'
 import { SetupGuide } from '@/components/SetupGuide'
 import { Onboarding } from '@/components/Onboarding'
 import { Toaster } from '@/components/ui/sonner'
@@ -115,6 +116,7 @@ export function Shell() {
         {active === 'calendar' && <CalendarPanel />}
         {active === 'team' && <TeamCalendarPanel />}
         {active === 'todo' && <TodoPanel />}
+        {active === 'notes' && <NotesPanel />}
         {active === 'account' && <AccountPanel />}
         {active === 'gpt' && <GptPanel />}
         {active === 'gemini' && <GeminiPanel />}

@@ -5,6 +5,7 @@ const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const os = require("node:os");
 const { URL } = require("node:url");
+const { VaultManager } = require("./vault");
 
 // 自动更新源 = GitHub Releases (参考 cc-switch 的做法)。仓库地址从 package.json 推导,
 // fork 的人只要改 package.json 的 homepage/repository 就指向自己的仓库, 不写死任何自建服务器。
@@ -477,6 +478,8 @@ class Backend {
     // 新增本地功能存储 (个人日历 / 任务+备忘录): 纯本机 JSON, 结构由渲染层维护, 后端只做读写与轻量兜底。
     this.calendarFile = path.join(this.app.getPath("userData"), "calendar.json");
     this.tasksFile = path.join(this.app.getPath("userData"), "tasks.json");
+    // 知识库 vault 管理器 (笔记真源 = 磁盘 .md 文件夹; 仅做文件 IO + 监听, 解析/索引在渲染层)。
+    this.vault = new VaultManager(this.app, this.getWindow);
     this.runtimeDir = path.join(this.app.getPath("userData"), "runtime");
     this.updatesDir = path.join(this.app.getPath("downloads"), "ShareGPT Updates");
     this.updateBackupsDir = path.join(this.app.getPath("appData"), "ShareGPT Backups");
