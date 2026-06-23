@@ -42,17 +42,69 @@ function SearchResults({ query }: { query: string }) {
   )
 }
 
-function TagStrip() {
-  const index = useVaultStore((s) => s.index)
-  const indexVersion = useVaultStore((s) => s.indexVersion)
+interface TagNode {
+  name: string
+  full: string
+  count: number
+  children: Map<string, TagNode>
+}
+function buildTagTree(tags: { tag: string; count: number }[]): TagNode {
+  const root: TagNode = { name: '', full: '', count: 0, children: new Map() }
+  for (const { tag, count } of tags) {
+    let node = root
+    let full = ''
+    for (const seg of tag.split('/')) {
+      full = full ? `${full}/${seg}` : seg
+      let child = node.children.get(seg)
+      if (!child) {
+        child = { name: seg, full, count: 0, children: new Map() }
+        node.children.set(seg, child)
+      }
+      child.count += count
+      node = child
+    }
+  }
+  return root
+}
+
+function TagTreeNode({ node, depth }: { node: TagNode; depth: number }) {
   const setQuery = useNotesUi((s) => s.setQuery)
   const [open, setOpen] = useState(true)
-  const tags = useMemo(
-    () => (index ? index.tags().slice(0, 50) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [index, indexVersion],
+  const kids = [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name))
+  return (
+    <div>
+      <div
+        className="group flex items-center gap-1 rounded px-1 py-0.5 hover:bg-accent/50"
+        style={{ paddingLeft: depth * 12 + 4 }}
+      >
+        {kids.length > 0 ? (
+          <button type="button" onClick={() => setOpen((v) => !v)} className="text-muted-foreground">
+            <ChevronDown className={cn('size-3 transition-transform', !open && '-rotate-90')} />
+          </button>
+        ) : (
+          <span className="w-3" />
+        )}
+        <button
+          type="button"
+          onClick={() => setQuery(`tag:${node.full}`)}
+          className="flex min-w-0 flex-1 items-center justify-between text-xs text-primary"
+        >
+          <span className="truncate">#{node.name}</span>
+          <span className="ml-1 shrink-0 opacity-60">{node.count}</span>
+        </button>
+      </div>
+      {open && kids.map((c) => <TagTreeNode key={c.full} node={c} depth={depth + 1} />)}
+    </div>
   )
+}
+
+function TagStrip() {
+  const index = useVaultStore((s) => s.index)
+  const [open, setOpen] = useState(true)
+  const tags = useMemo(() => (index ? index.tags() : []), [index])
+  const tree = useMemo(() => buildTagTree(tags), [tags])
   if (tags.length === 0) return null
+  const roots = [...tree.children.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
   return (
     <div className="shrink-0 border-t border-border">
       <button
@@ -64,17 +116,9 @@ function TagStrip() {
         <Hash className="size-3.5" /> 标签 ({tags.length})
       </button>
       {open && (
-        <div className="flex max-h-40 flex-wrap gap-1 overflow-auto px-3 pb-3">
-          {tags.map((t) => (
-            <button
-              key={t.tag}
-              type="button"
-              onClick={() => setQuery(`tag:${t.tag}`)}
-              className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary transition-colors hover:bg-primary/20"
-            >
-              #{t.tag}
-              <span className="ml-1 opacity-60">{t.count}</span>
-            </button>
+        <div className="max-h-48 overflow-auto px-2 pb-3">
+          {roots.map((n) => (
+            <TagTreeNode key={n.full} node={n} depth={0} />
           ))}
         </div>
       )}
