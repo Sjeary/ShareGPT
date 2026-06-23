@@ -106,20 +106,16 @@ function splitFileKey(fileKey: string): { group: string; conv: string } {
 }
 
 // 从「全量(含各群)」会话表中取出某群的会话 (会话 key 还原为不带前缀)。
-// 若该群尚无任何条目, 则继承 legacy(无前缀)会话 —— 迁移老用户的既有单群历史。
+// 严格只取本群前缀的会话; legacy(无前缀)在首次加载时已一次性迁移到某个群(见下), 不再被任何群继承,
+// 从而保证「连不同群, 聊天各自独立, 不串台」。
 function pickGroupConversations(
   all: Record<string, ChatMessage[]>,
   group: string,
 ): Record<string, ChatMessage[]> {
   const out: Record<string, ChatMessage[]> = {}
-  let hasGroup = false
-  for (const fk of Object.keys(all)) {
-    if (splitFileKey(fk).group === group) hasGroup = true
-  }
   for (const [fk, msgs] of Object.entries(all)) {
     const { group: g, conv } = splitFileKey(fk)
     if (g === group) out[conv] = msgs
-    else if (!hasGroup && g === '') out[conv] = msgs
   }
   return out
 }
@@ -189,6 +185,20 @@ export function useChat() {
           fileConvsRef.current = {}
         }
         fileLoadedRef.current = true
+        // 一次性迁移: 老版本「无群前缀」的混合历史归并到当前群并落盘; 此后各群严格隔离, 不再相互串台。
+        const hasLegacy = Object.keys(fileConvsRef.current).some(
+          (fk) => splitFileKey(fk).group === '',
+        )
+        if (hasLegacy) {
+          const migrated: Record<string, ChatMessage[]> = {}
+          for (const [fk, msgs] of Object.entries(fileConvsRef.current)) {
+            const { group: g, conv } = splitFileKey(fk)
+            const key = g === '' ? `${group}${GROUP_SEP}${conv}` : fk
+            if (!migrated[key]) migrated[key] = msgs
+          }
+          fileConvsRef.current = migrated
+          void api.saveChatHistory(serializeConversations(migrated)).catch(() => undefined)
+        }
       }
       if (cancelled || loadedGroupRef.current === group) return
       // 切群: 先清掉上一个群的内存缓存(消息/成员/未读/输入态/草稿), 再换入本群本地会话。
