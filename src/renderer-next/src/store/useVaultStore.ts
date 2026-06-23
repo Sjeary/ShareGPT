@@ -30,6 +30,9 @@ interface VaultState {
   createNote: (path: string, content?: string) => Promise<string>
   renameNote: (from: string, to: string) => Promise<void>
   deleteNote: (path: string) => Promise<void>
+  moveToFolder: (from: string, folder: string) => Promise<void>
+  renameFolder: (oldPrefix: string, newPrefix: string) => Promise<void>
+  deleteFolder: (prefix: string) => Promise<void>
   setFrontmatter: (path: string, data: Record<string, unknown>) => Promise<void>
   openToday: () => Promise<void>
   setRootViaDialog: () => Promise<boolean>
@@ -172,7 +175,8 @@ export const useVaultStore = create<VaultState>((set, get) => {
 
     renameNote: async (from, to) => {
       let target = to.trim()
-      if (!/\.(md|markdown)$/i.test(target)) target += '.md'
+      // 无扩展名才补 .md; 保留 .canvas/.base 等已有扩展。
+      if (!/\.[a-z0-9]+$/i.test(target)) target += '.md'
       await api.vault.rename(from, target)
       const fromContent = get().rawByPath[from] ?? ''
       set((s) => {
@@ -242,6 +246,41 @@ export const useVaultStore = create<VaultState>((set, get) => {
         return
       }
       await get().createNote(path, `# ${name}\n\n`)
+    },
+
+    moveToFolder: async (from, folder) => {
+      const base = from.split('/').pop() as string
+      const to = folder ? `${folder.replace(/\/$/, '')}/${base}` : base
+      if (to === from) return
+      await get().renameNote(from, to)
+    },
+
+    renameFolder: async (oldPrefix, newPrefix) => {
+      const op = oldPrefix.replace(/\/$/, '')
+      const np = newPrefix.replace(/\/$/, '')
+      if (!np || np === op) return
+      const files = Object.keys(get().rawByPath).filter((p) => p.startsWith(op + '/'))
+      for (const p of files) {
+        try {
+          await api.vault.rename(p, np + p.slice(op.length))
+        } catch {
+          /* 单个失败跳过 */
+        }
+      }
+      await get().reload()
+    },
+
+    deleteFolder: async (prefix) => {
+      const pf = prefix.replace(/\/$/, '')
+      const files = Object.keys(get().rawByPath).filter((p) => p.startsWith(pf + '/'))
+      for (const p of files) {
+        try {
+          await api.vault.remove(p)
+        } catch {
+          /* 跳过 */
+        }
+      }
+      await get().reload()
     },
 
     setRootViaDialog: async () => {
