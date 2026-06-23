@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import {
   BookText,
+  CalendarDays,
   Eye,
   FilePlus2,
   FolderInput,
@@ -23,9 +24,10 @@ import { useNotesUi, type CenterMode, type RightTab } from '@/store/useNotesUi'
 import { splitFrontmatter } from '@/lib/notes/parse'
 import { NotesLeft } from './notes/NotesLeft'
 import { NoteEditor } from './notes/NoteEditor'
-import { Markdown } from './notes/Markdown'
+import { NoteReader } from './notes/NoteReader'
 import { BacklinksPanel, OutlinePanel, PropertiesPanel } from './notes/RightPanels'
 import { QuickSwitcher } from './notes/QuickSwitcher'
+import { CommandPalette } from './notes/CommandPalette'
 import { NotesEmptyState } from './notes/NotesEmptyState'
 import { GraphView } from './notes/GraphView'
 import { SyncCompareDialog } from './notes/SyncCompareDialog'
@@ -69,13 +71,6 @@ const RIGHT_TABS: { key: RightTab; label: string; icon: typeof Link2 }[] = [
   { key: 'properties', label: '属性', icon: Info },
 ]
 
-function openWikiTarget(target: string) {
-  const store = useVaultStore.getState()
-  const resolved = store.index?.resolve(target) ?? null
-  if (resolved) void store.openNote(resolved)
-  else void store.createNote(target)
-}
-
 export function NotesPanel() {
   const init = useVaultStore((s) => s.init)
   const loaded = useVaultStore((s) => s.loaded)
@@ -95,7 +90,8 @@ export function NotesPanel() {
   const toggleLeft = useNotesUi((s) => s.toggleLeft)
   const toggleRight = useNotesUi((s) => s.toggleRight)
   const setQuickOpen = useNotesUi((s) => s.setQuickOpen)
-  const setQuery = useNotesUi((s) => s.setQuery)
+  const setPaletteOpen = useNotesUi((s) => s.setPaletteOpen)
+  const openToday = useVaultStore((s) => s.openToday)
 
   useEffect(() => {
     void init()
@@ -112,6 +108,9 @@ export function NotesPanel() {
       if (mod && e.key.toLowerCase() === 'o') {
         e.preventDefault()
         setQuickOpen(true)
+      } else if (mod && e.key.toLowerCase() === 'p') {
+        e.preventDefault()
+        setPaletteOpen(true)
       } else if (mod && e.key.toLowerCase() === 'e') {
         e.preventDefault()
         setCenterMode(centerMode === 'edit' ? 'preview' : 'edit')
@@ -119,7 +118,7 @@ export function NotesPanel() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [centerMode, setCenterMode, setQuickOpen])
+  }, [centerMode, setCenterMode, setQuickOpen, setPaletteOpen])
 
   const previewBody = useMemo(() => splitFrontmatter(draft).body, [draft])
 
@@ -145,6 +144,16 @@ export function NotesPanel() {
         className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
       >
         <FilePlus2 className="size-4" /> 新建
+      </button>
+      <button
+        type="button"
+        title="今日笔记"
+        onClick={() => {
+          void openToday().then(() => setCenterMode('edit'))
+        }}
+        className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent"
+      >
+        <CalendarDays className="size-4" />
       </button>
       <button
         type="button"
@@ -215,11 +224,7 @@ export function NotesPanel() {
             ) : (
               <div className="min-h-0 flex-1 overflow-auto">
                 <div className="mx-auto max-w-[820px] px-8 py-6">
-                  <Markdown
-                    content={previewBody}
-                    onOpenLink={openWikiTarget}
-                    onOpenTag={(tag) => setQuery(`tag:${tag}`)}
-                  />
+                  <NoteReader body={previewBody} />
                 </div>
               </div>
             )}
@@ -253,6 +258,7 @@ export function NotesPanel() {
         </div>
       )}
       <QuickSwitcher />
+      <CommandPalette />
       <SyncCompareDialog />
     </PanelScaffold>
   )

@@ -29,6 +29,7 @@ interface VaultState {
   createNote: (path: string, content?: string) => Promise<string>
   renameNote: (from: string, to: string) => Promise<void>
   deleteNote: (path: string) => Promise<void>
+  openToday: () => Promise<void>
   setRootViaDialog: () => Promise<boolean>
   importVault: () => Promise<VaultImportReport | null>
   applyExternalChanges: (payload: VaultChangeEvent) => Promise<void>
@@ -206,6 +207,18 @@ export const useVaultStore = create<VaultState>((set, get) => {
           dirty: wasCurrent ? false : s.dirty,
         }
       })
+    },
+
+    openToday: async () => {
+      const d = new Date()
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const name = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+      const path = `Daily/${name}.md`
+      if (get().notesByPath[path]) {
+        await get().openNote(path)
+        return
+      }
+      await get().createNote(path, `# ${name}\n\n`)
     },
 
     setRootViaDialog: async () => {
