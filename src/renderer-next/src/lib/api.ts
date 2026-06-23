@@ -22,6 +22,7 @@ const fallback = {
     list: async () => [],
     readAll: async () => [],
     read: async () => ({ path: '', content: '', mtime: 0, ctime: 0 }),
+    readBinary: async () => null,
     write: async () => ({ path: '', mtime: 0 }),
     create: async () => ({ path: '', content: '', mtime: 0, ctime: 0 }),
     rename: async () => ({ ok: true }),

@@ -8,6 +8,16 @@ const path = require("node:path");
 
 // 纳入 vault 的文本类扩展 (其余文件视为附件, 仅在导入时按需复制, 不进笔记列表)。
 const TEXT_EXT = new Set([".md", ".markdown", ".canvas", ".base", ".txt"]);
+const MIME = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".bmp": "image/bmp",
+  ".pdf": "application/pdf",
+};
 const IGNORED_DIRS = new Set([".obsidian", ".git", ".trash", "node_modules", "vault-cache"]);
 const MAX_FILE_BYTES = 8 * 1024 * 1024; // 单文件上限保护
 
@@ -137,6 +147,50 @@ class VaultManager {
     const st = await fsp.stat(abs);
     const content = await fsp.readFile(abs, "utf-8");
     return { path: toPosix(path.relative(this.root, abs)), content, mtime: st.mtimeMs, ctime: st.birthtimeMs || st.ctimeMs };
+  }
+
+  // 在库内按 basename 查首个匹配文件 (用于解析 ![[图片.png]] 这类只给文件名的附件引用)。
+  async #findByName(name) {
+    const target = String(name || "").toLowerCase();
+    let found = null;
+    const walk = async (dir) => {
+      if (found) return;
+      let entries;
+      try {
+        entries = await fsp.readdir(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const ent of entries) {
+        if (found) return;
+        if (ent.isDirectory()) {
+          if (IGNORED_DIRS.has(ent.name) || ent.name.startsWith(".")) continue;
+          await walk(path.join(dir, ent.name));
+        } else if (ent.isFile() && ent.name.toLowerCase() === target) {
+          found = path.join(dir, ent.name);
+        }
+      }
+    };
+    await walk(this.root);
+    return found;
+  }
+
+  // 读二进制附件 (图片等) → dataURL, 供渲染层内联展示。relPath 可为相对路径或纯文件名。
+  async readBinary(relPath) {
+    let abs = null;
+    try {
+      abs = this.#abs(relPath);
+      if (!fs.existsSync(abs)) abs = null;
+    } catch {
+      abs = null;
+    }
+    if (!abs) abs = await this.#findByName(path.basename(String(relPath || "")));
+    if (!abs) return null;
+    const st = await fsp.stat(abs);
+    if (st.size > MAX_FILE_BYTES) return null;
+    const buf = await fsp.readFile(abs);
+    const mime = MIME[path.extname(abs).toLowerCase()] || "application/octet-stream";
+    return { dataUrl: `data:${mime};base64,${buf.toString("base64")}`, mime };
   }
 
   #markWrite(abs) {

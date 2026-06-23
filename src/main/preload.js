@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld("api", {
     list: () => ipcRenderer.invoke("vault:list"),
     readAll: () => ipcRenderer.invoke("vault:read-all"),
     read: (p) => ipcRenderer.invoke("vault:read", p),
+    readBinary: (p) => ipcRenderer.invoke("vault:read-binary", p),
     write: (p, content) => ipcRenderer.invoke("vault:write", { path: p, content }),
     create: (p, content) => ipcRenderer.invoke("vault:create", { path: p, content }),
     rename: (from, to) => ipcRenderer.invoke("vault:rename", { from, to }),

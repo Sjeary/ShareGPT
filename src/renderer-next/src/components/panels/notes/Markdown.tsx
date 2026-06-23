@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -43,6 +43,23 @@ function preprocess(src: string): string {
     return `${pre}[#${tag}](#tag/${encodeURIComponent(tag)})`
   })
   return out
+}
+
+// vault 内的图片附件: 经主进程读成 dataURL 再展示 (相对路径或纯文件名均可)。
+function VaultImage({ src, alt }: { src: string; alt: string }) {
+  const [url, setUrl] = useState<string | null>(null)
+  useEffect(() => {
+    let on = true
+    void api.vault.readBinary(decodeURIComponent(src)).then((r) => {
+      if (on) setUrl(r?.dataUrl ?? null)
+    })
+    return () => {
+      on = false
+    }
+  }, [src])
+  if (!url)
+    return <span className="text-xs text-muted-foreground">🖼 {alt || src}（附件未找到）</span>
+  return <img src={url} alt={alt} className="my-2 max-w-full rounded-lg border border-border" />
 }
 
 export interface MarkdownProps {
@@ -151,9 +168,13 @@ export function Markdown({ content, onOpenLink, onOpenTag, className }: Markdown
         </th>
       ),
       td: ({ children }) => <td className="border border-border px-3 py-1.5">{children}</td>,
-      img: ({ src, alt }) => (
-        <img src={typeof src === 'string' ? src : ''} alt={alt || ''} className="my-2 max-w-full rounded-lg" />
-      ),
+      img: ({ src, alt }) => {
+        const url = typeof src === 'string' ? src : ''
+        if (/^(https?:|data:)/.test(url))
+          return <img src={url} alt={alt || ''} className="my-2 max-w-full rounded-lg" />
+        // vault 相对路径 / 文件名 → 经主进程读取
+        return <VaultImage src={url} alt={alt || ''} />
+      },
     }),
     [onOpenLink, onOpenTag],
   )

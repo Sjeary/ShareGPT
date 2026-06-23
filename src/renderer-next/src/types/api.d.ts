@@ -67,6 +67,7 @@ export interface VaultApi {
   list: () => Promise<VaultFileMeta[]>
   readAll: () => Promise<VaultFile[]>
   read: (path: string) => Promise<VaultFile>
+  readBinary: (path: string) => Promise<{ dataUrl: string; mime: string } | null>
   write: (path: string, content: string) => Promise<{ path: string; mtime: number }>
   create: (path: string, content?: string) => Promise<VaultFile>
   rename: (from: string, to: string) => Promise<{ ok: boolean }>

@@ -38,8 +38,9 @@ export function NoteReader({ body }: { body: string }) {
       const targetPart = inner.split('|')[0]
       const [target, sub] = targetPart.split('#')
       const t = target.trim()
-      // 图片等附件嵌入: 暂以占位提示 (文本 vault 不内联二进制)。
-      if (/\.(png|jpe?g|gif|webp|svg|pdf)$/i.test(t)) return `> 📎 附件嵌入：${inner}`
+      // 图片附件: 转成标准 markdown 图片, 由 VaultImage 经主进程读成 dataURL 展示。
+      if (/\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(t)) return `![${t}](${encodeURIComponent(t)})`
+      if (/\.pdf$/i.test(t)) return `> 📎 PDF 附件：${inner}`
       const path = index?.resolve(t) ?? null
       if (!path) return `> ⚠️ 未找到嵌入：[[${inner}]]`
       const note = notesByPath[path]

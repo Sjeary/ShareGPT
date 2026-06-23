@@ -6,7 +6,8 @@ import { markdown } from '@codemirror/lang-markdown'
 import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
 import { searchKeymap } from '@codemirror/search'
 import { editorHighlighting, editorTheme } from './cm/theme'
-import { wikilinkClickHandler, wikilinkCompletions, wikilinkDecorations } from './cm/wikilink'
+import { wikilinkCompletions, tagDecorations } from './cm/wikilink'
+import { livePreview } from './cm/livePreview'
 import { useVaultStore } from '@/store/useVaultStore'
 
 // 基于 CodeMirror 6 的 markdown 编辑器: 双链高亮/补全/点击跳转 + 自动换行 + 历史。
@@ -52,8 +53,8 @@ export function NoteEditor({ path }: { path: string }) {
           editorTheme,
           editorHighlighting,
           autocompletion({ override: [completionSource] }),
-          wikilinkDecorations,
-          wikilinkClickHandler(openLink),
+          livePreview(openLink),
+          tagDecorations,
           keymap.of([
             ...defaultKeymap,
             ...historyKeymap,

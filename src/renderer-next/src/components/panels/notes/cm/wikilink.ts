@@ -42,6 +42,8 @@ function decoPlugin(matcher: MatchDecorator) {
 }
 
 export const wikilinkDecorations = [decoPlugin(wikilinkMatcher), decoPlugin(tagMatcher)]
+// 仅 #标签 高亮 (双链交给 livePreview 渲染成胶囊/隐藏记号)。
+export const tagDecorations = decoPlugin(tagMatcher)
 
 export interface CompletionItem {
   label: string
