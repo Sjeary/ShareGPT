@@ -36,6 +36,7 @@ import { BaseView } from './notes/BaseView'
 import { AiAssistant } from './notes/AiAssistant'
 import { InputPromptDialog, inputPrompt } from './notes/InputPrompt'
 import { InlineAiEdit, SelectionAiButton } from './notes/InlineAiEdit'
+import { AutoLinkDialog } from './notes/AutoLinkDialog'
 import { SyncCompareDialog } from './notes/SyncCompareDialog'
 import { useNotesSync, useNotesSyncStore, type NotesSyncState } from '@/hooks/useNotesSync'
 import { useNotesAiStore } from '@/store/useNotesAiStore'
@@ -281,6 +282,7 @@ export function NotesPanel() {
       <InputPromptDialog />
       <SelectionAiButton />
       <InlineAiEdit />
+      <AutoLinkDialog />
     </PanelScaffold>
   )
 }

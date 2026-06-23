@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ForceGraph2D from 'react-force-graph-2d'
+import { Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useVaultStore } from '@/store/useVaultStore'
+import { useNotesUi } from '@/store/useNotesUi'
 
 type Mode = 'global' | 'local'
 interface GNode {
@@ -88,8 +90,18 @@ export function GraphView() {
           </button>
         ))}
       </div>
-      <div className="pointer-events-none absolute right-3 top-3 z-10 rounded-md border border-border bg-popover/90 px-2 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
-        {data.nodes.length} 节点 · {data.links.length} 连接
+      <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => useNotesUi.getState().setAutoLinkOpen(true)}
+          className="inline-flex items-center gap-1 rounded-md border border-border bg-popover/90 px-2.5 py-1 text-xs font-medium text-primary shadow-sm backdrop-blur transition-colors hover:bg-accent"
+          title="让 AI 分析全库并自动建立双链"
+        >
+          <Sparkles className="size-3.5" /> AI 连线
+        </button>
+        <span className="rounded-md border border-border bg-popover/90 px-2 py-1 text-xs text-muted-foreground shadow-sm backdrop-blur">
+          {data.nodes.length} 节点 · {data.links.length} 连接
+        </span>
       </div>
       {data.nodes.length === 0 ? (
         <div className="flex h-full items-center justify-center text-sm text-muted-foreground">

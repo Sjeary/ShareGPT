@@ -14,6 +14,7 @@ interface NotesUiState {
   quickOpen: boolean
   paletteOpen: boolean
   graphFullscreen: boolean
+  autoLinkOpen: boolean
 
   setCenterMode: (m: CenterMode) => void
   setRightTab: (t: RightTab) => void
@@ -24,6 +25,7 @@ interface NotesUiState {
   setQuickOpen: (v: boolean) => void
   setPaletteOpen: (v: boolean) => void
   setGraphFullscreen: (v: boolean) => void
+  setAutoLinkOpen: (v: boolean) => void
 }
 
 export const useNotesUi = create<NotesUiState>((set) => ({
@@ -36,6 +38,7 @@ export const useNotesUi = create<NotesUiState>((set) => ({
   quickOpen: false,
   paletteOpen: false,
   graphFullscreen: false,
+  autoLinkOpen: false,
 
   setCenterMode: (centerMode) => set({ centerMode }),
   setRightTab: (rightTab) => set({ rightTab }),
@@ -46,4 +49,5 @@ export const useNotesUi = create<NotesUiState>((set) => ({
   setQuickOpen: (quickOpen) => set({ quickOpen }),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   setGraphFullscreen: (graphFullscreen) => set({ graphFullscreen }),
+  setAutoLinkOpen: (autoLinkOpen) => set({ autoLinkOpen }),
 }))

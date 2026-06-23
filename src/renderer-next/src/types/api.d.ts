@@ -95,6 +95,7 @@ export type NotesAiMode =
   | 'ask'
   | 'edit'
   | 'generate'
+  | 'autolink'
 export interface NotesAiRequest {
   provider: NotesAiProvider
   mode: NotesAiMode

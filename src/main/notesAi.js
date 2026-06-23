@@ -34,6 +34,8 @@ function buildPrompt(mode, text, ctx) {
       return `你在帮用户编辑一篇 markdown 文档。根据「指令」修改「原文」，直接输出修改后的**完整** markdown 文本本身，保持原有 markdown 风格与结构；不要解释、不要用代码围栏包裹。\n\n指令：${(ctx && ctx.instruction) || ""}\n\n原文：\n${text}`;
     case "generate":
       return `根据下面的要求撰写一段 markdown 内容，直接输出 markdown 文本本身，不要解释、不要用代码围栏包裹：\n\n${(ctx && ctx.instruction) || text}`;
+    case "autolink":
+      return `下面是知识库的笔记清单（每行：标题 —— 摘要）。请找出彼此主题相关、值得建立双链的笔记对，用于构建知识网络。\n规则：每行输出一对，严格用 " || " 分隔为三段：源标题 || 目标标题 || 简短理由；标题必须与清单完全一致；不要编造不存在的标题；同一对只出现一次；最多 30 对；除这些行外不要输出任何其它内容。\n\n清单：\n${text}`;
     case "ask":
       return `你是用户个人知识库的问答助手。请结合下面的「库内资料」回答问题：可以概括、归纳与合理推断（例如根据笔记标题判断这个库的主题）；只有在资料里确实毫无线索时才说明。用中文清晰作答，回答末尾可另起一行用「来源：」列出引用到的笔记标题。\n\n问题：${text}\n\n${context}`;
     default:

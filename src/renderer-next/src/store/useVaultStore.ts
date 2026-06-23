@@ -34,6 +34,7 @@ interface VaultState {
   renameFolder: (oldPrefix: string, newPrefix: string) => Promise<void>
   deleteFolder: (prefix: string) => Promise<void>
   setFrontmatter: (path: string, data: Record<string, unknown>) => Promise<void>
+  batchAppend: (items: { path: string; text: string }[]) => Promise<void>
   openToday: () => Promise<void>
   setRootViaDialog: () => Promise<boolean>
   importVault: () => Promise<VaultImportReport | null>
@@ -234,6 +235,15 @@ export const useVaultStore = create<VaultState>((set, get) => {
           draft: s.currentPath === path && !s.dirty ? next : s.draft,
         }
       })
+    },
+
+    batchAppend: async (items) => {
+      for (const { path, text } of items) {
+        const raw = get().rawByPath[path] ?? ''
+        if (raw.includes(text.trim())) continue
+        await api.vault.write(path, raw.replace(/\s*$/, '') + '\n\n' + text + '\n')
+      }
+      await get().reload()
     },
 
     openToday: async () => {

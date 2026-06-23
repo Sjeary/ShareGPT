@@ -92,6 +92,7 @@ export function CommandPalette() {
     { id: 'edit', label: '切换到编辑', icon: Pencil, run: () => ui.setCenterMode('edit') },
     { id: 'preview', label: '切换到预览', icon: Eye, run: () => ui.setCenterMode('preview') },
     { id: 'graph', label: '打开图谱', icon: Network, run: () => ui.setCenterMode('graph') },
+    { id: 'autolink', label: 'AI 自动连线（全库）', icon: Network, run: () => ui.setAutoLinkOpen(true) },
     {
       id: 'search',
       label: '聚焦搜索',
