@@ -71,7 +71,8 @@ export function OutlinePanel() {
   const setCenterMode = useNotesUi((s) => s.setCenterMode)
 
   if (!currentPath || !note) return <Empty text="选择一篇笔记查看大纲" />
-  if (note.headings.length === 0) return <Empty text="没有标题" icon={<Hash className="size-5" />} />
+  if (note.headings.length === 0)
+    return <Empty text="没有标题" icon={<Hash className="size-5" />} />
 
   const minLevel = Math.min(...note.headings.map((h) => h.level))
   return (
@@ -83,7 +84,9 @@ export function OutlinePanel() {
           onClick={() => {
             setCenterMode('preview')
             setTimeout(() => {
-              document.getElementById(`h-${h.slug}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              document
+                .getElementById(`h-${h.slug}`)
+                ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
             }, 60)
           }}
           className="block w-full truncate rounded px-2 py-1 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
@@ -111,7 +114,11 @@ export function PropertiesPanel() {
   const setKey = (k: string, raw: string) => {
     // 逗号分隔且原值为数组 → 存数组; 否则存字符串/数字
     let val: unknown = raw
-    if (Array.isArray(fm[k])) val = raw.split(',').map((s) => s.trim()).filter(Boolean)
+    if (Array.isArray(fm[k]))
+      val = raw
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
     else if (raw !== '' && !Number.isNaN(Number(raw)) && /^-?\d/.test(raw)) val = Number(raw)
     commit({ ...fm, [k]: val })
   }
@@ -131,7 +138,10 @@ export function PropertiesPanel() {
         <p className="py-2 text-xs text-muted-foreground">没有属性 (YAML frontmatter)</p>
       )}
       {entries.map(([k, v]) => (
-        <div key={k} className="group grid grid-cols-[5.5rem_1fr_auto] items-center gap-2 border-b border-border/50 pb-1.5">
+        <div
+          key={k}
+          className="group grid grid-cols-[5.5rem_1fr_auto] items-center gap-2 border-b border-border/50 pb-1.5"
+        >
           <span className="truncate font-medium text-muted-foreground" title={k}>
             {k}
           </span>
@@ -145,7 +155,9 @@ export function PropertiesPanel() {
               className="h-7 w-full rounded border border-transparent bg-transparent px-1.5 text-right outline-none transition-colors hover:border-border focus:border-primary/60"
             />
           ) : (
-            <span className="truncate text-right">{Array.isArray(v) ? v.join(', ') : String(v)}</span>
+            <span className="truncate text-right">
+              {Array.isArray(v) ? v.join(', ') : String(v)}
+            </span>
           )}
           {editable && (
             <button

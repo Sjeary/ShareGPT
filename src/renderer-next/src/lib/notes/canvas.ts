@@ -93,6 +93,11 @@ export function toCanvas(nodes: Node[], edges: Edge[]): CanvasDoc {
         label: typeof d.label === 'string' ? d.label : undefined,
       }
     }),
-    edges: edges.map((e) => ({ id: e.id, fromNode: e.source, toNode: e.target, label: typeof e.label === 'string' ? e.label : undefined })),
+    edges: edges.map((e) => ({
+      id: e.id,
+      fromNode: e.source,
+      toNode: e.target,
+      label: typeof e.label === 'string' ? e.label : undefined,
+    })),
   }
 }

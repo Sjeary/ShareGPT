@@ -23,9 +23,13 @@ function cellValue(note: ParsedNote, col: string): string {
 
 function applyFilter(notes: ParsedNote[], view: BV): ParsedNote[] {
   return notes.filter((n) => {
-    if (view.filterTag && !n.tags.some((t) => t === view.filterTag || t.startsWith(view.filterTag + '/')))
+    if (
+      view.filterTag &&
+      !n.tags.some((t) => t === view.filterTag || t.startsWith(view.filterTag + '/'))
+    )
       return false
-    if (view.filterFolder && !n.path.startsWith(view.filterFolder.replace(/\/$/, '') + '/')) return false
+    if (view.filterFolder && !n.path.startsWith(view.filterFolder.replace(/\/$/, '') + '/'))
+      return false
     return true
   })
 }
@@ -40,7 +44,9 @@ export function BaseView({ path }: { path: string }) {
 
   const view = doc.views[Math.min(vi, doc.views.length - 1)]
   const rows = useMemo(() => {
-    const all = Object.values(notesByPath).filter((n) => !n.path.endsWith('.canvas') && !n.path.endsWith('.base'))
+    const all = Object.values(notesByPath).filter(
+      (n) => !n.path.endsWith('.canvas') && !n.path.endsWith('.base'),
+    )
     return applyFilter(all, view).sort((a, b) => b.mtime - a.mtime)
   }, [notesByPath, view])
 

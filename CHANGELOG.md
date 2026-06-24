@@ -7,6 +7,31 @@
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-06-24
+
+> **功能更新**：新增「笔记 / 知识库」与「专注 / 番茄钟」两大模块，并为协作聊天加上表情回应。建议升级体验新功能。
+
+### 新增
+
+- **笔记 / 知识库（Obsidian 式）**：本地优先的真 `.md` 仓库（可直接用 Obsidian 打开）；双链 `[[..]]` 与反链、Live Preview 编辑（CodeMirror 6）、全文检索、标签嵌套树、可编辑属性（frontmatter）。
+- **关系图谱**：全局 / 局部视图，悬停高亮邻居，**点击节点平滑居中放大**；并支持**全库 AI 自动连线**（让 AI 分析全库、建议并批量建立双链）。
+- **AI 辅助写作**：接入 Codex（OpenAI Responses API，流式）——扩写 / 续写 / 总结 / 润色 / 改写 / 起标题 / 翻译 / 标签建议 / RAG 问答；选区或 ⌘K 内联改写，带 diff 评审（保留 / 放弃 / 重试 / 撤回）。
+- **Canvas 白板 + Bases 数据库视图**：JSON Canvas 白板、笔记的表格 / 看板式视图；命令面板、快速跳转、日记。
+- **笔记云端同步**：整库 blob + 三方合并的单会话顺序模型（写入云端、另一端打开时与本地对比合并）。
+- **专注 / 番茄钟**：计时器（专注 / 短休 / 长休）、任务绑定、白噪音（白 / 棕 / 雨声）、专注统计与连续天数；**团队专注排名**（今日 / 本周）。
+- **协作消息表情回应**：Telegram 式全 emoji 回应，长按 / 悬停拾取，回应聚合显示。
+- **可隐藏内容入口** + **左侧导航长按拖动排序**（顺序跨设备记忆）。
+
+### 修复
+
+- 各群协作聊天严格隔离，不再串台；Electron 下用应用内输入弹窗替换不可用的 `window.prompt`。
+- AI 接口遇上游过载 / 限流 / 超时自动退避重试并友好提示；Canvas 夜间配色修正。
+
+### 备注
+
+- 笔记云同步、团队专注排名、消息表情回应依赖协作服务端对应能力（已部署的服务器自动生效，否则相应功能自动降级 / 仅本地）。
+- macOS 为「提示下载安装包」（dmg）方式，无原地自动更新。
+
 ## [1.0.2] - 2026-06-23
 
 > **可选更新**：新增日历 / 待办 等效率模块；旧版本仍可正常使用，非必需升级。
@@ -72,7 +97,8 @@
 
 - 更早的 5.x 为测试版本，不在此正式记录。
 
-[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/Sjeary/ShareGPT/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/Sjeary/ShareGPT/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/Sjeary/ShareGPT/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/Sjeary/ShareGPT/releases/tag/v1.0.0

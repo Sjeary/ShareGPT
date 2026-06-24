@@ -96,11 +96,16 @@ function createNotesAi({ getWindow }) {
     let gotDelta = false;
     const retryable = (code, msg) => {
       if ([429, 500, 502, 503, 504, 529].includes(Number(code))) return true;
-      return /overload|rate.?limit|too many|temporar|timeout|busy|unavailable|capacity/i.test(String(msg || ""));
+      return /overload|rate.?limit|too many|temporar|timeout|busy|unavailable|capacity/i.test(
+        String(msg || ""),
+      );
     };
     const scheduleRetry = (attempt, reason) => {
       const delay = 800 * (attempt + 1) + 400 * attempt;
-      emit(streamId, { type: "status", message: `服务繁忙, 正在重试(${attempt + 1}/${MAX_RETRY})…` });
+      emit(streamId, {
+        type: "status",
+        message: `服务繁忙, 正在重试(${attempt + 1}/${MAX_RETRY})…`,
+      });
       setTimeout(() => send(attempt + 1), delay);
     };
 
@@ -165,7 +170,10 @@ function createNotesAi({ getWindow }) {
               }
             }
           });
-          res.on("end", () => { emit(streamId, { type: "done" }); live.delete(streamId); });
+          res.on("end", () => {
+            emit(streamId, { type: "done" });
+            live.delete(streamId);
+          });
         },
       );
       r.on("error", (e) => {

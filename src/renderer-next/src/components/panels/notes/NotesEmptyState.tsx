@@ -20,8 +20,8 @@ export function NotesEmptyState() {
         <h2 className="text-xl font-semibold">你的知识库还是空的</h2>
         <p className="max-w-md text-sm text-muted-foreground">
           这里的笔记就是磁盘上真实的 <code className="rounded bg-muted px-1">.md</code>{' '}
-          文件，支持双链 <code className="rounded bg-muted px-1">[[ ]]</code>、反链、全文检索与图谱，
-          可随时被 Obsidian 直接打开。
+          文件，支持双链 <code className="rounded bg-muted px-1">[[ ]]</code>
+          、反链、全文检索与图谱， 可随时被 Obsidian 直接打开。
         </p>
       </div>
       <div className="flex flex-wrap items-center justify-center gap-2.5">

@@ -2168,7 +2168,10 @@ const server = http.createServer(async (req, res) => {
   // 团队专注(番茄钟)排名: 上报会话 + 群内排行。鉴权复用聊天 token。
   if (pathname === "/api/focus/report" && req.method === "POST") {
     const session = resolveSessionByToken(extractBearer(req));
-    if (!session) { sendText(res, 401, "未授权"); return; }
+    if (!session) {
+      sendText(res, 401, "未授权");
+      return;
+    }
     try {
       const payload = safeParseJson(await readBody(req)) || {};
       const d = reportFocus(session.username, payload.minutes, payload.count ?? 1);
@@ -2180,7 +2183,10 @@ const server = http.createServer(async (req, res) => {
   }
   if (pathname === "/api/focus/leaderboard" && req.method === "GET") {
     const session = resolveSessionByToken(extractBearer(req));
-    if (!session) { sendText(res, 401, "未授权"); return; }
+    if (!session) {
+      sendText(res, 401, "未授权");
+      return;
+    }
     const range = reqUrl.searchParams.get("range") === "week" ? "week" : "today";
     sendJson(res, 200, { leaderboard: focusLeaderboard(range), range });
     return;

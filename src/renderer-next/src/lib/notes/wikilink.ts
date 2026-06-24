@@ -71,7 +71,9 @@ export function buildResolver(paths: string[]): (linkText: string) => string | n
     if (!arr || arr.length === 0) return null
     if (arr.length === 1) return arr[0]
     // Obsidian「最短唯一路径」: 先比文件夹层级深度, 再比字符长度。
-    return [...arr].sort((a, b) => a.split('/').length - b.split('/').length || a.length - b.length)[0]
+    return [...arr].sort(
+      (a, b) => a.split('/').length - b.split('/').length || a.length - b.length,
+    )[0]
   }
 }
 

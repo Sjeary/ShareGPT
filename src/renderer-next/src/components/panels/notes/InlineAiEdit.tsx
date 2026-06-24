@@ -45,11 +45,17 @@ function DiffView({ a, b }: { a: string; b: string }) {
     <div className="whitespace-pre-wrap leading-relaxed">
       {parts.map((p, i) =>
         p.added ? (
-          <span key={i} className="rounded bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
+          <span
+            key={i}
+            className="rounded bg-emerald-500/20 text-emerald-700 dark:text-emerald-300"
+          >
             {p.value}
           </span>
         ) : p.removed ? (
-          <span key={i} className="rounded bg-rose-500/15 text-rose-600 line-through dark:text-rose-400">
+          <span
+            key={i}
+            className="rounded bg-rose-500/15 text-rose-600 line-through dark:text-rose-400"
+          >
             {p.value}
           </span>
         ) : (
@@ -176,13 +182,25 @@ export function InlineAiEdit() {
             )}
             {!err && !running && result && (
               <div className="mt-2 flex gap-1.5 border-t border-border/60 pt-2">
-                <button type="button" onClick={keep} className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90">
+                <button
+                  type="button"
+                  onClick={keep}
+                  className="rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                >
                   {hasSel ? '保留' : '插入'}
                 </button>
-                <button type="button" onClick={close} className="rounded-md border border-border px-2.5 py-1 text-xs hover:bg-accent">
+                <button
+                  type="button"
+                  onClick={close}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs hover:bg-accent"
+                >
                   放弃
                 </button>
-                <button type="button" onClick={run} className="rounded-md border border-border px-2.5 py-1 text-xs hover:bg-accent">
+                <button
+                  type="button"
+                  onClick={run}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs hover:bg-accent"
+                >
                   重试
                 </button>
               </div>

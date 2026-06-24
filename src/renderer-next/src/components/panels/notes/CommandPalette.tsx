@@ -54,7 +54,8 @@ export function CommandPalette() {
       hint: '相对路径',
       run: () => {
         void inputPrompt('新建笔记 (相对路径)', '未命名.md').then((name) => {
-          if (name && name.trim()) void vault.createNote(name.trim()).then(() => ui.setCenterMode('edit'))
+          if (name && name.trim())
+            void vault.createNote(name.trim()).then(() => ui.setCenterMode('edit'))
         })
       },
     },
@@ -92,27 +93,37 @@ export function CommandPalette() {
     { id: 'edit', label: '切换到编辑', icon: Pencil, run: () => ui.setCenterMode('edit') },
     { id: 'preview', label: '切换到预览', icon: Eye, run: () => ui.setCenterMode('preview') },
     { id: 'graph', label: '打开图谱', icon: Network, run: () => ui.setCenterMode('graph') },
-    { id: 'autolink', label: 'AI 自动连线（全库）', icon: Network, run: () => ui.setAutoLinkOpen(true) },
+    {
+      id: 'autolink',
+      label: 'AI 自动连线（全库）',
+      icon: Network,
+      run: () => ui.setAutoLinkOpen(true),
+    },
     {
       id: 'search',
       label: '聚焦搜索',
       icon: Search,
       run: () => {
         if (!ui.showLeft) ui.toggleLeft()
-        setTimeout(() => document.querySelector<HTMLInputElement>('input[placeholder^="搜索"]')?.focus(), 50)
+        setTimeout(
+          () => document.querySelector<HTMLInputElement>('input[placeholder^="搜索"]')?.focus(),
+          50,
+        )
       },
     },
     {
       id: 'import',
       label: '导入 Obsidian 库',
       icon: FolderInput,
-      run: () => void vault.importVault().then((r) => r && toast.success(`已导入 ${r.notes} 篇笔记`)),
+      run: () =>
+        void vault.importVault().then((r) => r && toast.success(`已导入 ${r.notes} 篇笔记`)),
     },
     {
       id: 'setroot',
       label: '设置知识库目录',
       icon: FolderCog,
-      run: () => void vault.setRootViaDialog().then((ok) => ok && toast.success('已切换知识库目录')),
+      run: () =>
+        void vault.setRootViaDialog().then((ok) => ok && toast.success('已切换知识库目录')),
     },
   ]
 
@@ -132,7 +143,9 @@ export function CommandPalette() {
           className="h-12 w-full border-b border-border bg-transparent px-4 text-sm outline-none placeholder:text-muted-foreground"
         />
         <Command.List className="max-h-[50vh] overflow-auto p-1.5">
-          <Command.Empty className="px-3 py-6 text-center text-sm text-muted-foreground">无匹配命令</Command.Empty>
+          <Command.Empty className="px-3 py-6 text-center text-sm text-muted-foreground">
+            无匹配命令
+          </Command.Empty>
           {cmds.map((c) => (
             <Command.Item
               key={c.id}

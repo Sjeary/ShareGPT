@@ -65,7 +65,11 @@ function saveRev(server: string, user: string, rev: number) {
   }
 }
 function stable(files: VaultFiles): string {
-  return JSON.stringify(Object.keys(files).sort().map((k) => [k, files[k]]))
+  return JSON.stringify(
+    Object.keys(files)
+      .sort()
+      .map((k) => [k, files[k]]),
+  )
 }
 
 export function useNotesSync(): void {
@@ -172,8 +176,7 @@ export function useNotesSync(): void {
           lastSynced = stable(report.merged)
           // 回推合并结果, 拿到新 rev (保持服务器与本地一致)。
           await push(remote.rev)
-          const incoming =
-            report.fromCloud.length + report.conflicts.length + report.deleted.length
+          const incoming = report.fromCloud.length + report.conflicts.length + report.deleted.length
           if (!silent && incoming > 0) useNotesSyncStore.getState().showReport(report)
         } else {
           // 云端无新内容: 本地若有改动则推送。

@@ -20,7 +20,10 @@ const DEFAULT: BaseDoc = {
 export function parseBase(raw: string): BaseDoc {
   try {
     const j = yamlLoad(raw) as Record<string, unknown> | null
-    const rawViews = j && Array.isArray((j as { views?: unknown[] }).views) ? (j as { views: unknown[] }).views : []
+    const rawViews =
+      j && Array.isArray((j as { views?: unknown[] }).views)
+        ? (j as { views: unknown[] }).views
+        : []
     const views: BaseView[] = rawViews
       .map((v): BaseView | null => {
         if (!v || typeof v !== 'object') return null

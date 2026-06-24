@@ -141,7 +141,12 @@ export const useVaultStore = create<VaultState>((set, get) => {
       const { currentPath, draft } = get()
       if (!currentPath) return
       await api.vault.write(currentPath, draft)
-      const parsed = parseNote({ path: currentPath, content: draft, mtime: Date.now(), ctime: Date.now() })
+      const parsed = parseNote({
+        path: currentPath,
+        content: draft,
+        mtime: Date.now(),
+        ctime: Date.now(),
+      })
       set((s) => {
         const notesByPath = { ...s.notesByPath, [currentPath]: parsed }
         const rawByPath = { ...s.rawByPath, [currentPath]: draft }

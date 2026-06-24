@@ -11,7 +11,8 @@ function nodeText(node: ReactNode): string {
   if (node == null || node === false) return ''
   if (typeof node === 'string' || typeof node === 'number') return String(node)
   if (Array.isArray(node)) return node.map(nodeText).join('')
-  if (typeof node === 'object' && 'props' in node) return nodeText((node as { props: { children?: ReactNode } }).props.children)
+  if (typeof node === 'object' && 'props' in node)
+    return nodeText((node as { props: { children?: ReactNode } }).props.children)
   return ''
 }
 function slugify(text: string): string {
@@ -114,17 +115,26 @@ export function Markdown({ content, onOpenLink, onOpenTag, className }: Markdown
         )
       },
       h1: ({ children }) => (
-        <h1 id={`h-${slugify(nodeText(children))}`} className="mb-3 mt-6 scroll-mt-4 border-b border-border pb-1 text-2xl font-bold">
+        <h1
+          id={`h-${slugify(nodeText(children))}`}
+          className="mb-3 mt-6 scroll-mt-4 border-b border-border pb-1 text-2xl font-bold"
+        >
           {children}
         </h1>
       ),
       h2: ({ children }) => (
-        <h2 id={`h-${slugify(nodeText(children))}`} className="mb-2 mt-5 scroll-mt-4 text-xl font-bold">
+        <h2
+          id={`h-${slugify(nodeText(children))}`}
+          className="mb-2 mt-5 scroll-mt-4 text-xl font-bold"
+        >
           {children}
         </h2>
       ),
       h3: ({ children }) => (
-        <h3 id={`h-${slugify(nodeText(children))}`} className="mb-2 mt-4 scroll-mt-4 text-lg font-semibold">
+        <h3
+          id={`h-${slugify(nodeText(children))}`}
+          className="mb-2 mt-4 scroll-mt-4 text-lg font-semibold"
+        >
           {children}
         </h3>
       ),

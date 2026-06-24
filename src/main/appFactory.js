@@ -1337,8 +1337,12 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("vault:read-all", () => backend.vault.readAll());
     ipcMain.handle("vault:read", (_event, p) => backend.vault.read(p));
     ipcMain.handle("vault:read-binary", (_event, p) => backend.vault.readBinary(p));
-    ipcMain.handle("vault:write", (_event, { path, content }) => backend.vault.write(path, content));
-    ipcMain.handle("vault:create", (_event, { path, content }) => backend.vault.create(path, content));
+    ipcMain.handle("vault:write", (_event, { path, content }) =>
+      backend.vault.write(path, content),
+    );
+    ipcMain.handle("vault:create", (_event, { path, content }) =>
+      backend.vault.create(path, content),
+    );
     ipcMain.handle("vault:rename", (_event, { from, to }) => backend.vault.rename(from, to));
     ipcMain.handle("vault:remove", (_event, p) => backend.vault.remove(p));
     ipcMain.handle("vault:import", (_event, src) => backend.vault.importFrom(src));

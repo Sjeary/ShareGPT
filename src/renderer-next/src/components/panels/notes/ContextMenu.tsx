@@ -33,7 +33,8 @@ export function ContextMenu({
     let left = x
     let top = y
     if (left + r.width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - r.width - 8)
-    if (top + r.height > window.innerHeight - 8) top = Math.max(8, window.innerHeight - r.height - 8)
+    if (top + r.height > window.innerHeight - 8)
+      top = Math.max(8, window.innerHeight - r.height - 8)
     setPos({ left, top })
   }, [x, y, items])
 
@@ -49,7 +50,14 @@ export function ContextMenu({
   }, [onClose])
 
   return (
-    <div className="fixed inset-0 z-[70]" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose() }}>
+    <div
+      className="fixed inset-0 z-[70]"
+      onClick={onClose}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        onClose()
+      }}
+    >
       <div
         ref={ref}
         style={{ left: pos.left, top: pos.top }}

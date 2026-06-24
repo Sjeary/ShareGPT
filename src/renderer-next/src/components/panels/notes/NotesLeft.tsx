@@ -78,7 +78,11 @@ function TagTreeNode({ node, depth }: { node: TagNode; depth: number }) {
         style={{ paddingLeft: depth * 12 + 4 }}
       >
         {kids.length > 0 ? (
-          <button type="button" onClick={() => setOpen((v) => !v)} className="text-muted-foreground">
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            className="text-muted-foreground"
+          >
             <ChevronDown className={cn('size-3 transition-transform', !open && '-rotate-90')} />
           </button>
         ) : (
@@ -104,7 +108,9 @@ function TagStrip() {
   const tags = useMemo(() => (index ? index.tags() : []), [index])
   const tree = useMemo(() => buildTagTree(tags), [tags])
   if (tags.length === 0) return null
-  const roots = [...tree.children.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  const roots = [...tree.children.values()].sort(
+    (a, b) => b.count - a.count || a.name.localeCompare(b.name),
+  )
   return (
     <div className="shrink-0 border-t border-border">
       <button

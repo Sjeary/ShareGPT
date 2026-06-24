@@ -110,7 +110,10 @@ export function NotesPanel() {
   // 云端同步 (登录态自动; 未登录静默本地)。
   useNotesSync()
 
-  useEffect(() => api.onVaultChanged((payload) => void applyExternalChanges(payload)), [applyExternalChanges])
+  useEffect(
+    () => api.onVaultChanged((payload) => void applyExternalChanges(payload)),
+    [applyExternalChanges],
+  )
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -208,14 +211,24 @@ export function NotesPanel() {
           title="信息栏"
           className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent"
         >
-          {showRight ? <PanelRightClose className="size-4" /> : <PanelRightOpen className="size-4" />}
+          {showRight ? (
+            <PanelRightClose className="size-4" />
+          ) : (
+            <PanelRightOpen className="size-4" />
+          )}
         </button>
       </div>
     </div>
   )
 
   return (
-    <PanelScaffold icon={BookText} title="笔记 / 知识库" hint="双链笔记、图谱与全文检索" scrollable={false} toolbar={toolbar}>
+    <PanelScaffold
+      icon={BookText}
+      title="笔记 / 知识库"
+      hint="双链笔记、图谱与全文检索"
+      scrollable={false}
+      toolbar={toolbar}
+    >
       {loaded && notesCount === 0 ? (
         <NotesEmptyState />
       ) : (
@@ -227,7 +240,10 @@ export function NotesPanel() {
             ) : !currentPath ? (
               <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
                 <BookText className="size-8 opacity-30" />
-                <p>选择左侧笔记，或按 <kbd className="rounded border border-border px-1">Ctrl/⌘ O</kbd> 快速跳转</p>
+                <p>
+                  选择左侧笔记，或按{' '}
+                  <kbd className="rounded border border-border px-1">Ctrl/⌘ O</kbd> 快速跳转
+                </p>
               </div>
             ) : currentPath.endsWith('.canvas') ? (
               <CanvasView key={currentPath} path={currentPath} />
@@ -248,32 +264,32 @@ export function NotesPanel() {
             centerMode !== 'graph' &&
             !currentPath.endsWith('.canvas') &&
             !currentPath.endsWith('.base') && (
-            <div className="flex h-full w-72 shrink-0 flex-col border-l border-border bg-muted/20">
-              <div className="flex shrink-0 items-center gap-1 border-b border-border p-1.5">
-                {RIGHT_TABS.map((t) => (
-                  <button
-                    key={t.key}
-                    type="button"
-                    onClick={() => setRightTab(t.key)}
-                    className={cn(
-                      'inline-flex flex-1 items-center justify-center gap-1 rounded-md py-1.5 text-xs font-medium transition-colors',
-                      rightTab === t.key
-                        ? 'bg-primary/15 text-primary'
-                        : 'text-muted-foreground hover:bg-accent',
-                    )}
-                  >
-                    <t.icon className="size-3.5" /> {t.label}
-                  </button>
-                ))}
+              <div className="flex h-full w-72 shrink-0 flex-col border-l border-border bg-muted/20">
+                <div className="flex shrink-0 items-center gap-1 border-b border-border p-1.5">
+                  {RIGHT_TABS.map((t) => (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => setRightTab(t.key)}
+                      className={cn(
+                        'inline-flex flex-1 items-center justify-center gap-1 rounded-md py-1.5 text-xs font-medium transition-colors',
+                        rightTab === t.key
+                          ? 'bg-primary/15 text-primary'
+                          : 'text-muted-foreground hover:bg-accent',
+                      )}
+                    >
+                      <t.icon className="size-3.5" /> {t.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="min-h-0 flex-1 overflow-auto">
+                  {rightTab === 'backlinks' && <BacklinksPanel />}
+                  {rightTab === 'outline' && <OutlinePanel />}
+                  {rightTab === 'properties' && <PropertiesPanel />}
+                  {rightTab === 'ai' && <AiAssistant />}
+                </div>
               </div>
-              <div className="min-h-0 flex-1 overflow-auto">
-                {rightTab === 'backlinks' && <BacklinksPanel />}
-                {rightTab === 'outline' && <OutlinePanel />}
-                {rightTab === 'properties' && <PropertiesPanel />}
-                {rightTab === 'ai' && <AiAssistant />}
-              </div>
-            </div>
-          )}
+            )}
         </div>
       )}
       <QuickSwitcher />

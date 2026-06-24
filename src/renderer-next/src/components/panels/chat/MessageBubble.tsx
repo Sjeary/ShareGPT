@@ -1,5 +1,13 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
-import { CornerUpLeft, FileText, MoreHorizontal, Pencil, Share2, SmilePlus, Trash2 } from 'lucide-react'
+import {
+  CornerUpLeft,
+  FileText,
+  MoreHorizontal,
+  Pencil,
+  Share2,
+  SmilePlus,
+  Trash2,
+} from 'lucide-react'
 import { Theme, EmojiStyle, type EmojiClickData } from 'emoji-picker-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'

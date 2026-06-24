@@ -51,7 +51,13 @@ function buildTree(notes: ParsedNote[]): TreeNode {
   for (const n of [...notes].sort((a, b) => a.path.localeCompare(b.path))) {
     const idx = n.path.lastIndexOf('/')
     const parent = ensureDir(idx >= 0 ? n.path.slice(0, idx) : '')
-    parent.children.push({ name: n.path.slice(idx + 1), path: n.path, isDir: false, title: n.title, children: [] })
+    parent.children.push({
+      name: n.path.slice(idx + 1),
+      path: n.path,
+      isDir: false,
+      title: n.title,
+      children: [],
+    })
   }
   const sortRec = (node: TreeNode) => {
     node.children.sort((a, b) => {
@@ -110,12 +116,22 @@ function Row({ node, depth, ctx }: { node: TreeNode; depth: number; ctx: RowCtx 
             className="group flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/60"
             style={{ paddingLeft: depth * 12 + 6 }}
           >
-            <ChevronRight className={cn('size-3.5 shrink-0 transition-transform duration-150', !isCollapsed && 'rotate-90')} />
-            {isCollapsed ? <Folder className="size-3.5 shrink-0" /> : <FolderOpen className="size-3.5 shrink-0" />}
+            <ChevronRight
+              className={cn(
+                'size-3.5 shrink-0 transition-transform duration-150',
+                !isCollapsed && 'rotate-90',
+              )}
+            />
+            {isCollapsed ? (
+              <Folder className="size-3.5 shrink-0" />
+            ) : (
+              <FolderOpen className="size-3.5 shrink-0" />
+            )}
             <span className="truncate font-medium">{node.name}</span>
           </button>
         </div>
-        {!isCollapsed && node.children.map((c) => <Row key={c.path} node={c} depth={depth + 1} ctx={ctx} />)}
+        {!isCollapsed &&
+          node.children.map((c) => <Row key={c.path} node={c} depth={depth + 1} ctx={ctx} />)}
       </div>
     )
   }
@@ -146,7 +162,9 @@ function Row({ node, depth, ctx }: { node: TreeNode; depth: number; ctx: RowCtx 
         onClick={() => void openNote(node.path)}
         className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
       >
-        <FileText className={cn('size-3.5 shrink-0', active ? 'text-primary' : 'text-muted-foreground')} />
+        <FileText
+          className={cn('size-3.5 shrink-0', active ? 'text-primary' : 'text-muted-foreground')}
+        />
         <span className="truncate">{node.title || node.name}</span>
       </button>
       <button
@@ -199,9 +217,17 @@ export function FileTree() {
 
   const newFile = async (folder: string, ext: '.md' | '.canvas' | '.base') => {
     const def = `${folder ? folder + '/' : ''}未命名${ext}`
-    const name = await inputPrompt(`新建${ext === '.canvas' ? '白板' : ext === '.base' ? 'Base' : '笔记'} (相对路径)`, def)
+    const name = await inputPrompt(
+      `新建${ext === '.canvas' ? '白板' : ext === '.base' ? 'Base' : '笔记'} (相对路径)`,
+      def,
+    )
     if (!name || !name.trim()) return
-    const content = ext === '.canvas' ? '{\n  "nodes": [],\n  "edges": []\n}\n' : ext === '.base' ? STARTER_BASE : ''
+    const content =
+      ext === '.canvas'
+        ? '{\n  "nodes": [],\n  "edges": []\n}\n'
+        : ext === '.base'
+          ? STARTER_BASE
+          : ''
     try {
       await createNote(name.trim(), content)
     } catch (e) {
@@ -223,7 +249,9 @@ export function FileTree() {
           onClick: () =>
             void inputPrompt('重命名 (新路径)', node.path).then((v) => {
               if (v && v.trim() && v.trim() !== node.path)
-                void renameNote(node.path, v.trim()).catch((err) => toast.error(err instanceof Error ? err.message : '重命名失败'))
+                void renameNote(node.path, v.trim()).catch((err) =>
+                  toast.error(err instanceof Error ? err.message : '重命名失败'),
+                )
             }),
         },
         ...(isMd
@@ -232,7 +260,9 @@ export function FileTree() {
                 label: '复制为双链',
                 icon: Link2,
                 onClick: () => {
-                  void navigator.clipboard.writeText(`[[${node.title || node.name.replace(/\.md$/i, '')}]]`)
+                  void navigator.clipboard.writeText(
+                    `[[${node.title || node.name.replace(/\.md$/i, '')}]]`,
+                  )
                   toast.success('已复制双链')
                 },
               } as MenuItem,
@@ -252,7 +282,8 @@ export function FileTree() {
           danger: true,
           sep: true,
           onClick: () => {
-            if (window.confirm(`确认删除 “${node.title || node.name}”？`)) void deleteNote(node.path)
+            if (window.confirm(`确认删除 “${node.title || node.name}”？`))
+              void deleteNote(node.path)
           },
         },
       ],
@@ -266,7 +297,11 @@ export function FileTree() {
       y: e.clientY,
       items: [
         { label: '在此新建笔记', icon: FilePlus2, onClick: () => void newFile(node.path, '.md') },
-        { label: '在此新建白板', icon: LayoutGrid, onClick: () => void newFile(node.path, '.canvas') },
+        {
+          label: '在此新建白板',
+          icon: LayoutGrid,
+          onClick: () => void newFile(node.path, '.canvas'),
+        },
         { label: '在此新建 Base', icon: Table, onClick: () => void newFile(node.path, '.base') },
         {
           label: '重命名文件夹',
@@ -344,12 +379,16 @@ export function FileTree() {
         }}
       >
         {tree.children.length === 0 ? (
-          <p className="px-3 py-6 text-center text-xs text-muted-foreground">还没有笔记，右键新建</p>
+          <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+            还没有笔记，右键新建
+          </p>
         ) : (
           tree.children.map((c) => <Row key={c.path} node={c} depth={0} ctx={ctx} />)
         )}
       </div>
-      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
+      )}
     </>
   )
 }

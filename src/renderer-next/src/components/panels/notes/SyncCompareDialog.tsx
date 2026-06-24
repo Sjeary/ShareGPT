@@ -67,14 +67,30 @@ export function SyncCompareDialog() {
       >
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <h3 className="text-sm font-semibold">云端同步对比</h3>
-          <button type="button" onClick={close} className="rounded p-1 text-muted-foreground hover:bg-accent">
+          <button
+            type="button"
+            onClick={close}
+            className="rounded p-1 text-muted-foreground hover:bg-accent"
+          >
             <X className="size-4" />
           </button>
         </div>
         <div className="max-h-[60vh] space-y-3 overflow-auto p-4">
           {nothing && <p className="text-sm text-muted-foreground">已是最新，无差异。</p>}
-          <Section icon={ArrowDownToLine} title="从云端更新" paths={report.fromCloud} tone="text-blue-500" onOpen={onOpen} />
-          <Section icon={GitMerge} title="自动合并" paths={report.autoMerged} tone="text-emerald-500" onOpen={onOpen} />
+          <Section
+            icon={ArrowDownToLine}
+            title="从云端更新"
+            paths={report.fromCloud}
+            tone="text-blue-500"
+            onOpen={onOpen}
+          />
+          <Section
+            icon={GitMerge}
+            title="自动合并"
+            paths={report.autoMerged}
+            tone="text-emerald-500"
+            onOpen={onOpen}
+          />
           <Section
             icon={AlertTriangle}
             title="冲突 (本地保留，云端已存为副本)"
@@ -82,7 +98,13 @@ export function SyncCompareDialog() {
             tone="text-amber-500"
             onOpen={onOpen}
           />
-          <Section icon={Trash2} title="已删除" paths={report.deleted} tone="text-rose-500" onOpen={onOpen} />
+          <Section
+            icon={Trash2}
+            title="已删除"
+            paths={report.deleted}
+            tone="text-rose-500"
+            onOpen={onOpen}
+          />
         </div>
       </div>
     </div>

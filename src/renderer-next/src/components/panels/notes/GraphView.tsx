@@ -30,7 +30,10 @@ export function GraphView() {
   const [hover, setHover] = useState<string | null>(null)
   const hostRef = useRef<HTMLDivElement>(null)
   // react-force-graph 实例引用 (centerAt / zoom 等命令式方法)
-  const fgRef = useRef<{ centerAt: (x?: number, y?: number, ms?: number) => void; zoom: (k?: number, ms?: number) => void } | null>(null)
+  const fgRef = useRef<{
+    centerAt: (x?: number, y?: number, ms?: number) => void
+    zoom: (k?: number, ms?: number) => void
+  } | null>(null)
 
   useEffect(() => {
     const el = hostRef.current
@@ -85,7 +88,9 @@ export function GraphView() {
             disabled={m === 'local' && !currentPath}
             className={cn(
               'rounded-md px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-40',
-              mode === m ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent',
+              mode === m
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:bg-accent',
             )}
           >
             {m === 'global' ? '全局' : '局部'}
@@ -131,8 +136,7 @@ export function GraphView() {
           cooldownTicks={80}
           nodeCanvasObject={(node: GNode, ctx: CanvasRenderingContext2D, scale: number) => {
             const r = Math.max(2, Math.min(10, 2 + node.degree * 0.8))
-            const active =
-              !hover || hover === node.id || neighbors.get(hover)?.has(node.id)
+            const active = !hover || hover === node.id || neighbors.get(hover)?.has(node.id)
             ctx.beginPath()
             ctx.arc(node.x || 0, node.y || 0, r, 0, 2 * Math.PI)
             ctx.fillStyle = active ? baseColor : dimColor

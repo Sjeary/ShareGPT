@@ -7,7 +7,11 @@ import type { ParsedNote } from '@/lib/notes/types'
 // 非递归 (展开内容里的 ![[ ]] 被剥除), 避免循环嵌入。
 
 function slugify(text: string): string {
-  return text.toLowerCase().replace(/[^\w一-龥- ]/g, '').trim().replace(/\s+/g, '-')
+  return text
+    .toLowerCase()
+    .replace(/[^\w一-龥- ]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
 }
 
 // 取某标题下的章节 (到下一个同级或更高级标题为止)。
@@ -23,14 +27,18 @@ function extractSection(note: ParsedNote, sub: string): string {
 
 function asQuote(header: string, content: string): string {
   const stripped = content.replace(/!\[\[[^\]\n]+?\]\]/g, '').trimEnd()
-  const body = stripped.split('\n').map((l) => '> ' + l).join('\n')
+  const body = stripped
+    .split('\n')
+    .map((l) => '> ' + l)
+    .join('\n')
   return `> **${header}**\n>\n${body}\n`
 }
 
 export function NoteReader({ body }: { body: string }) {
   const notesByPath = useVaultStore((s) => s.notesByPath)
   const index = useVaultStore((s) => s.index)
-  const setQuery = (q: string) => import('@/store/useNotesUi').then((m) => m.useNotesUi.getState().setQuery(q))
+  const setQuery = (q: string) =>
+    import('@/store/useNotesUi').then((m) => m.useNotesUi.getState().setQuery(q))
   const openNote = useVaultStore((s) => s.openNote)
 
   const expanded = useMemo(() => {

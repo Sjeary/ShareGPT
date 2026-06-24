@@ -117,7 +117,12 @@ class VaultManager {
           const rel = relBase ? `${relBase}/${ent.name}` : ent.name;
           try {
             const st = await fsp.stat(path.join(dir, ent.name));
-            out.push({ path: rel, mtime: st.mtimeMs, ctime: st.birthtimeMs || st.ctimeMs, size: st.size });
+            out.push({
+              path: rel,
+              mtime: st.mtimeMs,
+              ctime: st.birthtimeMs || st.ctimeMs,
+              size: st.size,
+            });
           } catch {}
         }
       }
@@ -146,7 +151,12 @@ class VaultManager {
     const abs = this.#abs(relPath);
     const st = await fsp.stat(abs);
     const content = await fsp.readFile(abs, "utf-8");
-    return { path: toPosix(path.relative(this.root, abs)), content, mtime: st.mtimeMs, ctime: st.birthtimeMs || st.ctimeMs };
+    return {
+      path: toPosix(path.relative(this.root, abs)),
+      content,
+      mtime: st.mtimeMs,
+      ctime: st.birthtimeMs || st.ctimeMs,
+    };
   }
 
   // 在库内按 basename 查首个匹配文件 (用于解析 ![[图片.png]] 这类只给文件名的附件引用)。
@@ -177,7 +187,7 @@ class VaultManager {
 
   // 读二进制附件 (图片等) → dataURL, 供渲染层内联展示。relPath 可为相对路径或纯文件名。
   async readBinary(relPath) {
-    let abs = null;
+    let abs;
     try {
       abs = this.#abs(relPath);
       if (!fs.existsSync(abs)) abs = null;
@@ -312,7 +322,10 @@ class VaultManager {
       this._pendingEvents.push({ type, path: rel });
       this.#scheduleEmit();
     };
-    this.watcher.on("add", onEvt("add")).on("change", onEvt("change")).on("unlink", onEvt("unlink"));
+    this.watcher
+      .on("add", onEvt("add"))
+      .on("change", onEvt("change"))
+      .on("unlink", onEvt("unlink"));
   }
 
   #scheduleEmit() {

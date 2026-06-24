@@ -53,7 +53,8 @@ export function FocusPanel() {
 
   const R = 130
   const C = 2 * Math.PI * R
-  const phaseColor = phase === 'focus' ? 'var(--primary)' : phase === 'short' ? '#3b82f6' : '#14b8a6'
+  const phaseColor =
+    phase === 'focus' ? 'var(--primary)' : phase === 'short' ? '#3b82f6' : '#14b8a6'
 
   const openTasks = tasks.filter((t) => !t.completed)
   const curTask = tasks.find((t) => t.id === currentTaskId)
@@ -86,7 +87,9 @@ export function FocusPanel() {
                 onClick={() => useFocusStore.getState().setPhase(p.key)}
                 className={cn(
                   'rounded-md px-3 py-1 text-sm font-medium transition-all',
-                  phase === p.key ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+                  phase === p.key
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground',
                 )}
               >
                 {p.label}
@@ -111,7 +114,9 @@ export function FocusPanel() {
               />
             </svg>
             <div className="absolute flex flex-col items-center">
-              <span className="font-mono text-5xl font-semibold tabular-nums">{fmt(displayMs)}</span>
+              <span className="font-mono text-5xl font-semibold tabular-nums">
+                {fmt(displayMs)}
+              </span>
               <span className="mt-1 text-xs text-muted-foreground">
                 {phase === 'focus' ? `第 ${cycle + 1} 个番茄` : '休息中'}
               </span>
@@ -121,16 +126,28 @@ export function FocusPanel() {
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={() => (running ? useFocusStore.getState().pause() : useFocusStore.getState().start())}
+              onClick={() =>
+                running ? useFocusStore.getState().pause() : useFocusStore.getState().start()
+              }
               className="inline-flex h-11 items-center gap-2 rounded-full bg-primary px-7 text-base font-semibold text-primary-foreground shadow-sm transition-transform hover:scale-[1.02] active:scale-95"
             >
               {running ? <Pause className="size-5" /> : <Play className="size-5" />}
               {running ? '暂停' : '开始'}
             </button>
-            <button type="button" onClick={() => useFocusStore.getState().reset()} title="重置" className="inline-flex size-10 items-center justify-center rounded-full border border-border text-muted-foreground hover:bg-accent">
+            <button
+              type="button"
+              onClick={() => useFocusStore.getState().reset()}
+              title="重置"
+              className="inline-flex size-10 items-center justify-center rounded-full border border-border text-muted-foreground hover:bg-accent"
+            >
               <RotateCcw className="size-4" />
             </button>
-            <button type="button" onClick={() => useFocusStore.getState().skip()} title="跳过" className="inline-flex size-10 items-center justify-center rounded-full border border-border text-muted-foreground hover:bg-accent">
+            <button
+              type="button"
+              onClick={() => useFocusStore.getState().skip()}
+              title="跳过"
+              className="inline-flex size-10 items-center justify-center rounded-full border border-border text-muted-foreground hover:bg-accent"
+            >
               <SkipForward className="size-4" />
             </button>
           </div>
@@ -145,38 +162,62 @@ export function FocusPanel() {
             >
               <option value="">（不绑定任务）</option>
               {openTasks.map((t) => (
-                <option key={t.id} value={t.id}>{t.title}</option>
+                <option key={t.id} value={t.id}>
+                  {t.title}
+                </option>
               ))}
             </select>
           </div>
-          {curTask && <p className="text-xs text-muted-foreground">「{curTask.title}」已专注 {taskPomos} 个番茄</p>}
+          {curTask && (
+            <p className="text-xs text-muted-foreground">
+              「{curTask.title}」已专注 {taskPomos} 个番茄
+            </p>
+          )}
 
           {showSettings && (
             <div className="grid w-full grid-cols-3 gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm">
               {(['focusMin', 'shortMin', 'longMin'] as const).map((k) => (
                 <label key={k} className="space-y-1">
-                  <span className="text-xs text-muted-foreground">{k === 'focusMin' ? '专注' : k === 'shortMin' ? '短休' : '长休'}(分)</span>
+                  <span className="text-xs text-muted-foreground">
+                    {k === 'focusMin' ? '专注' : k === 'shortMin' ? '短休' : '长休'}(分)
+                  </span>
                   <input
                     type="number"
                     min={1}
                     value={settings[k]}
-                    onChange={(e) => useFocusStore.getState().setSettings({ [k]: Math.max(1, Number(e.target.value) || 1) })}
+                    onChange={(e) =>
+                      useFocusStore
+                        .getState()
+                        .setSettings({ [k]: Math.max(1, Number(e.target.value) || 1) })
+                    }
                     className="h-8 w-full rounded-md border border-border bg-background px-2 outline-none focus:border-primary/60"
                   />
                 </label>
               ))}
               <label className="col-span-2 flex items-center gap-2">
-                <input type="checkbox" checked={settings.autoStart} onChange={(e) => useFocusStore.getState().setSettings({ autoStart: e.target.checked })} />
+                <input
+                  type="checkbox"
+                  checked={settings.autoStart}
+                  onChange={(e) =>
+                    useFocusStore.getState().setSettings({ autoStart: e.target.checked })
+                  }
+                />
                 <span className="text-xs">自动开始下一段</span>
               </label>
               <label className="space-y-1">
                 <span className="text-xs text-muted-foreground">氛围音</span>
                 <select
                   value={settings.sound}
-                  onChange={(e) => useFocusStore.getState().setSettings({ sound: e.target.value as NoiseKind })}
+                  onChange={(e) =>
+                    useFocusStore.getState().setSettings({ sound: e.target.value as NoiseKind })
+                  }
                   className="h-8 w-full rounded-md border border-border bg-background px-1 outline-none focus:border-primary/60"
                 >
-                  {SOUNDS.map((s) => (<option key={s.key} value={s.key}>{s.label}</option>))}
+                  {SOUNDS.map((s) => (
+                    <option key={s.key} value={s.key}>
+                      {s.label}
+                    </option>
+                  ))}
                 </select>
               </label>
             </div>
@@ -188,7 +229,12 @@ export function FocusPanel() {
           <div className="grid grid-cols-3 gap-3">
             <Stat label="今日专注" value={`${stats.todayMinutes}`} unit="分钟" />
             <Stat label="今日番茄" value={`${stats.todayCount}`} unit="个" />
-            <Stat label="连续天数" value={`${stats.streak}`} unit="天" icon={<Flame className="size-4 text-orange-500" />} />
+            <Stat
+              label="连续天数"
+              value={`${stats.streak}`}
+              unit="天"
+              icon={<Flame className="size-4 text-orange-500" />}
+            />
           </div>
 
           <div className="rounded-xl border border-border bg-card/40 p-4">
@@ -198,7 +244,10 @@ export function FocusPanel() {
                 <div key={w.date} className="flex flex-1 flex-col items-center gap-1">
                   <div
                     className="w-full rounded-t bg-primary/70 transition-all"
-                    style={{ height: `${(w.minutes / maxWeek) * 88}px`, minHeight: w.minutes > 0 ? 4 : 0 }}
+                    style={{
+                      height: `${(w.minutes / maxWeek) * 88}px`,
+                      minHeight: w.minutes > 0 ? 4 : 0,
+                    }}
                     title={`${w.minutes} 分钟`}
                   />
                   <span className="text-[10px] text-muted-foreground">{w.date.slice(5)}</span>
@@ -214,14 +263,26 @@ export function FocusPanel() {
   )
 }
 
-function Stat({ label, value, unit, icon }: { label: string; value: string; unit: string; icon?: React.ReactNode }) {
+function Stat({
+  label,
+  value,
+  unit,
+  icon,
+}: {
+  label: string
+  value: string
+  unit: string
+  icon?: React.ReactNode
+}) {
   return (
     <div className="rounded-xl border border-border bg-card/40 p-3 text-center">
       <div className="flex items-center justify-center gap-1 text-2xl font-semibold tabular-nums">
         {icon}
         {value}
       </div>
-      <div className="mt-0.5 text-xs text-muted-foreground">{label}（{unit}）</div>
+      <div className="mt-0.5 text-xs text-muted-foreground">
+        {label}（{unit}）
+      </div>
     </div>
   )
 }

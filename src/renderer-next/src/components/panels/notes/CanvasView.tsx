@@ -27,13 +27,7 @@ import { parseCanvas, toCanvas, toReactFlow } from '@/lib/notes/canvas'
 let idc = 0
 const newId = () => `n${Date.now()}_${idc++}`
 
-function NodeShell({
-  children,
-  color,
-}: {
-  children: React.ReactNode
-  color?: string
-}) {
+function NodeShell({ children, color }: { children: React.ReactNode; color?: string }) {
   return (
     <div
       className="h-full w-full overflow-auto rounded-lg border bg-card p-2.5 text-sm shadow-sm"
@@ -59,13 +53,18 @@ function TextNode({ id, data }: NodeProps) {
           defaultValue={text}
           onBlur={(e) => {
             const v = e.target.value
-            rf.setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, text: v } } : n)))
+            rf.setNodes((ns) =>
+              ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, text: v } } : n)),
+            )
             setEditing(false)
           }}
           className="nodrag h-full w-full resize-none bg-transparent outline-none"
         />
       ) : (
-        <div onDoubleClick={() => setEditing(true)} className="h-full whitespace-pre-wrap break-words">
+        <div
+          onDoubleClick={() => setEditing(true)}
+          className="h-full whitespace-pre-wrap break-words"
+        >
           {text || <span className="text-muted-foreground">双击编辑…</span>}
         </div>
       )}
@@ -87,7 +86,10 @@ function FileNode({ data }: NodeProps) {
           if (p) void openNote(p)
         }}
       >
-        <FileText className="size-4" /> {String(d.file || '').split('/').pop()}
+        <FileText className="size-4" />{' '}
+        {String(d.file || '')
+          .split('/')
+          .pop()}
       </button>
     </NodeShell>
   )
@@ -163,7 +165,13 @@ function CanvasInner({ path }: { path: string }) {
     const c = rf.screenToFlowPosition({ x: 300, y: 200 })
     setNodes((ns) => [
       ...ns,
-      { id: newId(), type: 'c_text', position: c, style: { width: 240, height: 120 }, data: { text: '' } },
+      {
+        id: newId(),
+        type: 'c_text',
+        position: c,
+        style: { width: 240, height: 120 },
+        data: { text: '' },
+      },
     ])
   }
   const addFile = () => {
@@ -172,7 +180,13 @@ function CanvasInner({ path }: { path: string }) {
       const c = rf.screenToFlowPosition({ x: 360, y: 240 })
       setNodes((ns) => [
         ...ns,
-        { id: newId(), type: 'c_file', position: c, style: { width: 220, height: 70 }, data: { file: name } },
+        {
+          id: newId(),
+          type: 'c_file',
+          position: c,
+          style: { width: 220, height: 70 },
+          data: { file: name },
+        },
       ])
     })
   }

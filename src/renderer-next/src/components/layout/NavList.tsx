@@ -40,7 +40,15 @@ const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v
 
 // 长按拖动重排的导航列表 (类 iOS/macOS/Android): 长按 ~240ms 拾起, 跟手移动,
 // 其余行用 transform 平滑让位; 松手提交新顺序。轻点仍是切换面板。
-export function NavList({ items, collapsed, activeKey, tooltipSide, badgeFor, onActivate, onReorder }: Props) {
+export function NavList({
+  items,
+  collapsed,
+  activeKey,
+  tooltipSide,
+  badgeFor,
+  onActivate,
+  onReorder,
+}: Props) {
   const [drag, setDrag] = useState<DragState | null>(null)
   const rowEls = useRef<(HTMLDivElement | null)[]>([])
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -72,7 +80,14 @@ export function NavList({ items, collapsed, activeKey, tooltipSide, badgeFor, on
       } catch {
         /* 某些环境不支持, 忽略 */
       }
-      setDrag({ key, from: index, startY: pending.current?.startY ?? e.clientY, dy: 0, to: index, h })
+      setDrag({
+        key,
+        from: index,
+        startY: pending.current?.startY ?? e.clientY,
+        dy: 0,
+        to: index,
+        h,
+      })
     }, HOLD_MS)
   }
 
@@ -80,7 +95,11 @@ export function NavList({ items, collapsed, activeKey, tooltipSide, badgeFor, on
     if (!drag) {
       // 还没拾起: 移动超过容差就判定为滚动/误触, 取消长按。
       const p = pending.current
-      if (p && (Math.abs(e.clientY - p.startY) > MOVE_TOLERANCE || Math.abs(e.clientX - p.startX) > MOVE_TOLERANCE)) {
+      if (
+        p &&
+        (Math.abs(e.clientY - p.startY) > MOVE_TOLERANCE ||
+          Math.abs(e.clientX - p.startX) > MOVE_TOLERANCE)
+      ) {
         clearHold()
         pending.current = null
       }
@@ -98,7 +117,13 @@ export function NavList({ items, collapsed, activeKey, tooltipSide, badgeFor, on
     pending.current = null
     if (!drag) return
     if (drag.to !== drag.from) {
-      onReorder(arrayMove(items.map((i) => i.key), drag.from, drag.to))
+      onReorder(
+        arrayMove(
+          items.map((i) => i.key),
+          drag.from,
+          drag.to,
+        ),
+      )
     }
     suppressClick.current = drag.key // 吞掉这一行紧随的 click
     const dragged = drag.key
@@ -174,7 +199,9 @@ export function NavList({ items, collapsed, activeKey, tooltipSide, badgeFor, on
             <span
               className={cn(
                 'overflow-hidden whitespace-nowrap transition-all duration-200',
-                collapsed ? 'w-0 flex-none pointer-events-none opacity-0' : 'min-w-0 flex-1 opacity-100',
+                collapsed
+                  ? 'w-0 flex-none pointer-events-none opacity-0'
+                  : 'min-w-0 flex-1 opacity-100',
               )}
             >
               <span className="block truncate text-[15px] font-medium">{label}</span>

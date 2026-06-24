@@ -60,7 +60,10 @@ export function FocusLeaderboard() {
               key={r}
               type="button"
               onClick={() => setRange(r)}
-              className={cn('rounded px-2 py-0.5 transition-colors', range === r ? 'bg-background shadow-sm' : 'text-muted-foreground')}
+              className={cn(
+                'rounded px-2 py-0.5 transition-colors',
+                range === r ? 'bg-background shadow-sm' : 'text-muted-foreground',
+              )}
             >
               {r === 'today' ? '今日' : '本周'}
             </button>
@@ -85,11 +88,24 @@ export function FocusLeaderboard() {
                 r.username === username && 'bg-primary/10',
               )}
             >
-              <span className={cn('w-5 text-center font-semibold', i === 0 ? 'text-amber-500' : i === 1 ? 'text-zinc-400' : i === 2 ? 'text-orange-600' : 'text-muted-foreground')}>
+              <span
+                className={cn(
+                  'w-5 text-center font-semibold',
+                  i === 0
+                    ? 'text-amber-500'
+                    : i === 1
+                      ? 'text-zinc-400'
+                      : i === 2
+                        ? 'text-orange-600'
+                        : 'text-muted-foreground',
+                )}
+              >
                 {i + 1}
               </span>
               <span className="min-w-0 flex-1 truncate">{r.displayName || r.username}</span>
-              <span className="shrink-0 tabular-nums text-muted-foreground">{r.minutes} 分 · {r.count} 🍅</span>
+              <span className="shrink-0 tabular-nums text-muted-foreground">
+                {r.minutes} 分 · {r.count} 🍅
+              </span>
             </div>
           ))}
         </div>

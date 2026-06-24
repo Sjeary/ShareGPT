@@ -79,7 +79,12 @@ export const useFocusStore = create<FocusState>((set, get) => {
   const durationMs = (p?: Phase): number => {
     const { settings } = get()
     const phase = p ?? get().phase
-    const m = phase === 'focus' ? settings.focusMin : phase === 'short' ? settings.shortMin : settings.longMin
+    const m =
+      phase === 'focus'
+        ? settings.focusMin
+        : phase === 'short'
+          ? settings.shortMin
+          : settings.longMin
     return Math.max(1, m) * 60_000
   }
 
@@ -103,7 +108,10 @@ export const useFocusStore = create<FocusState>((set, get) => {
       const cycle = s.cycle + 1
       const next: Phase = cycle % s.settings.longEvery === 0 ? 'long' : 'short'
       set({ sessions: [...s.sessions, session], cycle, phase: next })
-      void api.showSystemNotification({ title: '专注完成 🍅', body: `已专注 ${s.settings.focusMin} 分钟，休息一下` })
+      void api.showSystemNotification({
+        title: '专注完成 🍅',
+        body: `已专注 ${s.settings.focusMin} 分钟，休息一下`,
+      })
     } else {
       set({ phase: 'focus' })
       void api.showSystemNotification({ title: '休息结束', body: '开始下一个专注吧' })
@@ -223,7 +231,10 @@ export function focusStats(sessions: FocusSession[]) {
     const dd = new Date(w)
     dd.setDate(w.getDate() - i)
     const ds = todayStr(dd)
-    week.push({ date: ds, minutes: sessions.filter((s) => s.date === ds).reduce((a, s) => a + s.minutes, 0) })
+    week.push({
+      date: ds,
+      minutes: sessions.filter((s) => s.date === ds).reduce((a, s) => a + s.minutes, 0),
+    })
   }
   return { todayMinutes, todayCount: todays.length, streak, week }
 }
