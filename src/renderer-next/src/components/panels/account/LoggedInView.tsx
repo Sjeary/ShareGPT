@@ -55,8 +55,8 @@ const NOTIFY_FIELDS: ReadonlyArray<{
   {
     key: 'notify_message_popup',
     label: '消息弹窗',
-    desc: '收到新消息时在应用内提示',
-    defaultOn: true,
+    desc: '收到新消息时在应用内左上角提示（默认关闭）',
+    defaultOn: false,
   },
   {
     key: 'notify_system_notification',
@@ -64,7 +64,12 @@ const NOTIFY_FIELDS: ReadonlyArray<{
     desc: '通过操作系统通知中心提醒',
     defaultOn: true,
   },
-  { key: 'notify_sound_play', label: '提示音', desc: '收到新消息时播放提示音', defaultOn: true },
+  {
+    key: 'notify_sound_play',
+    label: '提示音',
+    desc: '收到新消息时播放提示音（默认关闭）',
+    defaultOn: false,
+  },
   { key: 'notify_user_online', label: '上线提醒', desc: '有成员上线时提醒', defaultOn: false },
 ]
 

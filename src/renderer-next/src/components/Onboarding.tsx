@@ -27,7 +27,7 @@ function buildSteps(brand: string): Step[] {
     {
       target: 'nav-chat',
       title: '协作聊天',
-      body: '和团队成员实时收发消息、互传文件，在线状态一目了然。',
+      body: '和团队成员实时收发消息、互传文件，在线状态一目了然。输入框可插入表情；消息可加表情回应，纯表情消息会放大并动态显示。',
     },
     {
       target: 'nav-calendar',
@@ -45,9 +45,19 @@ function buildSteps(brand: string): Step[] {
       body: '清单 + 智能视图 + 便签；自然语言快速添加，待办还能一键同步到个人日历。',
     },
     {
+      target: 'nav-notes',
+      title: '笔记 / 知识库',
+      body: '本地 Markdown 笔记 + 双链 [[..]] 与反链、关系图谱、全文检索、Canvas 白板与表格视图；还有 AI 辅助写作（扩写/润色/⌘K 内联改写）和全库「AI 自动连线」，可云端同步。',
+    },
+    {
+      target: 'nav-focus',
+      title: '专注 / 番茄钟',
+      body: '番茄钟计时、绑定待办、白噪音与专注统计；还能和团队比拼专注时长排行榜。',
+    },
+    {
       target: 'nav-gpt',
       title: '内嵌 AI 网页',
-      body: 'ChatGPT / Gemini / Claude 直接在客户端里打开，免去来回切换浏览器。空白处右键还有浏览器式菜单。',
+      body: 'ChatGPT / Gemini / Claude 直接在客户端里打开，免去来回切换浏览器。空白处右键有浏览器式菜单；Ctrl + 鼠标滚轮（或 Ctrl 加 +/-/0）可缩放页面。',
     },
     {
       target: 'nav-stats',
@@ -56,12 +66,12 @@ function buildSteps(brand: string): Step[] {
     },
     {
       target: 'nav-account',
-      title: '账户与设置',
-      body: '登录、退出、协作通知与个性化设置都在这里。',
+      title: '账户与通知设置',
+      body: '登录、退出与个性化设置都在这里。其中「协作通知」——消息弹窗、提示音、系统通知、上线提醒——默认是关闭的，想要在收到消息时弹窗/响铃，来这里按需打开即可。',
     },
     {
       title: '准备就绪 🎉',
-      body: '就这些！现在开始上手吧。需要时点标题栏右上角的「?」可再次查看本引导。',
+      body: '就这些！现在开始上手吧。左侧入口可长按拖动排序；需要时点标题栏右上角的「?」可再次查看本引导。',
     },
   ]
 }

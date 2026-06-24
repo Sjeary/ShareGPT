@@ -96,9 +96,11 @@ const PUBLIC_DEFAULT_SETTINGS = {
     last_avatar: "",
     remember_password: false,
     saved_password: "",
-    notify_message_popup: true,
+    // 默认安静: 不主动弹应用内消息弹窗 / 不放提示音 (避免打扰新用户)。
+    // 用户可在「账户 → 协作通知」里自行打开 (新手引导里也有说明)。
+    notify_message_popup: false,
     notify_system_notification: true,
-    notify_sound_play: true,
+    notify_sound_play: false,
     notify_user_online: false,
     pinned_users: [],
   },
