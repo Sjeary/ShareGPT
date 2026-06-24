@@ -114,9 +114,16 @@ export function buildConversations(params: {
   // 当前选中的私聊即使无历史也要出现
   if (activeKey.startsWith('user:')) privateKeys.add(activeKey)
 
+  // 目录(来自 /api/users)只含「未被禁用/未被禁聊天」的账号(在线+离线都在内)。
+  // 因此历史里出现、但不在目录中的私聊对象 = 已被管理员禁用/禁聊天(或已删除) → 从会话列表隐藏。
+  // 守卫: 目录尚未加载(为空)时不过滤; 当前正在查看的会话保留, 避免视图突然清空。
+  const directoryLoaded = directory.length > 0
+  const inDirectory = (username: string) => directory.some((u) => u.username === username)
+
   for (const key of privateKeys) {
     const username = usernameFromKey(key)
     if (!username) continue
+    if (directoryLoaded && key !== activeKey && !inDirectory(username)) continue
     const meta = partnerMeta(username, directory)
     const msgs = messagesByConversation[key] ?? []
     const last = lastMessage(msgs)
