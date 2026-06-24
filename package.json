@@ -95,6 +95,16 @@
       "executableName": "sharegpt",
       "signAndEditExecutable": false
     },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false
+    },
     "mac": {
       "target": [
         "dmg"
