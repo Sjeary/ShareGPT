@@ -268,7 +268,7 @@ function ProfileApp() {
         </footer>
       )}
 
-      <Toaster position="bottom-right" richColors />
+      <Toaster position="top-left" richColors closeButton />
     </div>
   )
 }

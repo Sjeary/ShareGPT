@@ -998,7 +998,17 @@ function createElectronApp(baseMode = "all") {
       emitAiEvent(workspace.kind, "console-message", { message: String(message || "") });
     });
 
+    // 缩放级别上下限 (zoomLevel 每级约 1.2x); 与 Ctrl+滚轮 / Ctrl+加减 共用。
+    const ZOOM_MIN = -3;
+    const ZOOM_MAX = 5;
+    const adjustZoom = (delta) => {
+      if (wc.isDestroyed()) return;
+      const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, wc.getZoomLevel() + delta));
+      wc.setZoomLevel(next);
+    };
+
     // F11: 嵌入的 AI 网页获得焦点时, 渲染层收不到键盘事件; 在此拦截 F11 切换窗口全屏。
+    // 另: Ctrl + 加/减/0 缩放内嵌网页 (浏览器习惯)。
     wc.on("before-input-event", (event, input) => {
       if (
         input.type === "keyDown" &&
@@ -1012,7 +1022,26 @@ function createElectronApp(baseMode = "all") {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.setFullScreen(!mainWindow.isFullScreen());
         }
+        return;
       }
+      if (input.type === "keyDown" && (input.control || input.meta) && !input.alt) {
+        if (input.key === "=" || input.key === "+") {
+          event.preventDefault();
+          adjustZoom(0.5);
+        } else if (input.key === "-") {
+          event.preventDefault();
+          adjustZoom(-0.5);
+        } else if (input.key === "0") {
+          event.preventDefault();
+          if (!wc.isDestroyed()) wc.setZoomLevel(0);
+        }
+      }
+    });
+
+    // Ctrl + 鼠标滚轮缩放内嵌 AI 网页 (Chrome 习惯)。WebContentsView 默认不应用缩放,
+    // 用户用 Ctrl+滚轮请求时触发 zoom-changed, 这里按方向增减缩放级别。
+    wc.on("zoom-changed", (_event, zoomDirection) => {
+      adjustZoom(zoomDirection === "in" ? 0.5 : -0.5);
     });
 
     // 浏览器式右键菜单: 内嵌 AI 网页(WebContentsView)默认没有上下文菜单,

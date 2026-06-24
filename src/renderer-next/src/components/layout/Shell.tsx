@@ -139,7 +139,7 @@ export function Shell() {
       </div>
       <SetupGuide />
       <Onboarding />
-      <Toaster position="bottom-right" theme={dark ? 'dark' : 'light'} richColors />
+      <Toaster position="top-left" theme={dark ? 'dark' : 'light'} richColors closeButton />
     </div>
   )
 }
