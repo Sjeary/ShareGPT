@@ -40,8 +40,50 @@ export function notoAnimatedWebp(cluster: string): string {
   return `https://fonts.gstatic.com/s/e/notoemoji/latest/${notoSequence(cluster)}/512.webp`
 }
 
-// Emoji Kitchen 组合贴纸 (Google Gboard 的两两混合)。用 emojik 代理, 它内部处理
-// 「日期码 / 合法配对」并在无组合时回退; 失败时调用方回退为并排放大。
-export function emojiKitchenUrl(a: string, b: string, size = 256): string {
-  return `https://emojik.vercel.app/s/${encodeURIComponent(a)}_${encodeURIComponent(b)}?size=${size}`
+// Emoji Kitchen 组合贴纸 (Google Gboard 的两两混合)。
+// 随包内置精简索引(有效组合对 → 日期码), 据此「本地判定是否有组合」并直连 Google gstatic 取图,
+// 不再依赖第三方代理(无冷启动); 无组合时立即可知, 0 网络请求。
+type KitchenIndex = { dates: string[]; pairs: Record<string, number> }
+let kitchenIndexPromise: Promise<KitchenIndex> | null = null
+function loadKitchenIndex(): Promise<KitchenIndex> {
+  if (!kitchenIndexPromise) {
+    // 懒加载(~2.5MB): 仅当出现第一个双 emoji 消息时才加载, 不拖累启动。
+    kitchenIndexPromise = import('@/assets/emoji-kitchen-index.json')
+      .then((m) => (m.default || m) as KitchenIndex)
+      .catch(() => ({ dates: [], pairs: {} }) as KitchenIndex)
+  }
+  return kitchenIndexPromise
+}
+
+// emoji 字素簇 → Kitchen 码点串 (小写 hex, '-' 连接), 如 ❤️ → "2764-fe0f"。
+function kitchenCodepoint(cluster: string): string {
+  return Array.from(cluster)
+    .map((ch) => ch.codePointAt(0)?.toString(16) ?? '')
+    .filter(Boolean)
+    .join('-')
+}
+const stripFe0f = (cp: string) => cp.replace(/-fe0f\b/g, '').replace(/^fe0f-?/, '')
+
+// 查组合: 命中返回直连 gstatic 的图片 URL, 无组合返回 null。
+// 试两种顺序 + fe0f 变体提升命中; 用命中的 key 码点拼 URL(即 Google 真实码点)。
+export async function resolveEmojiKitchen(a: string, b: string): Promise<string | null> {
+  const idx = await loadKitchenIndex()
+  const ca = kitchenCodepoint(a)
+  const cb = kitchenCodepoint(b)
+  const variants = [
+    [ca, cb],
+    [cb, ca],
+    [stripFe0f(ca), stripFe0f(cb)],
+    [stripFe0f(cb), stripFe0f(ca)],
+  ]
+  for (const [l, r] of variants) {
+    const di = idx.pairs[`${l}_${r}`]
+    if (di !== undefined) {
+      const date = idx.dates[di]
+      if (date) {
+        return `https://www.gstatic.com/android/keyboard/emojikitchen/${date}/u${l}/u${l}_u${r}.png`
+      }
+    }
+  }
+  return null
 }

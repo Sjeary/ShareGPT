@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { emojiKitchenUrl, notoAnimatedWebp } from '@/lib/chat/emoji'
+import { notoAnimatedWebp, resolveEmojiKitchen } from '@/lib/chat/emoji'
 
-// 组合图加载结果缓存 (会话内): 同一对 emoji 再次出现时直接命中, 不再等待。
-const kitchenCache = new Map<string, 'loaded' | 'failed'>()
+// 组合结果缓存 (会话内): url=有组合且已就绪; null=无组合/失败。同一对再次出现直接命中。
+const kitchenCache = new Map<string, string | null>()
 
 // 单个动态 emoji: 优先 Noto 动图 (WebP), 加载失败回退为系统静态 emoji 字符。
 function AnimatedEmoji({ cluster, size }: { cluster: string; size: number }) {
@@ -27,35 +27,42 @@ function AnimatedEmoji({ cluster, size }: { cluster: string; size: number }) {
   )
 }
 
-// 两个 emoji: 尝试 Emoji Kitchen 组合贴纸。
-// 关键: 先即时显示两个动态 emoji 占位 (无空白等待), 组合图在后台预加载完成后再无缝替换;
-// 无组合/失败则一直保持两个 emoji。会话内缓存结果, 二次出现直接命中。
+// 两个 emoji: 查本地索引判断是否有 Emoji Kitchen 组合。
+// 始终先即时显示两个动态 emoji 占位; 若有组合, 后台直连 Google gstatic 预加载好再无缝替换;
+// 无组合则一直保持两个 emoji(0 网络请求)。会话内缓存结果, 二次出现直接命中。
 function KitchenCombo({ a, b, size }: { a: string; b: string; size: number }) {
-  const url = emojiKitchenUrl(a, b, 256)
   const key = `${a}__${b}`
-  const [state, setState] = useState<'loading' | 'loaded' | 'failed'>(
-    () => kitchenCache.get(key) ?? 'loading',
+  // undefined=查询中; string=组合图就绪; null=无组合/失败
+  const [url, setUrl] = useState<string | null | undefined>(() =>
+    kitchenCache.has(key) ? kitchenCache.get(key) : undefined,
   )
 
   useEffect(() => {
-    if (state !== 'loading') return
+    if (kitchenCache.has(key)) return
     let alive = true
-    const img = new Image()
-    img.onload = () => {
-      kitchenCache.set(key, 'loaded')
-      if (alive) setState('loaded')
-    }
-    img.onerror = () => {
-      kitchenCache.set(key, 'failed')
-      if (alive) setState('failed')
-    }
-    img.src = url // 后台预加载; 加载完进 HTTP 缓存, 渲染时秒出
+    void resolveEmojiKitchen(a, b).then((resolved) => {
+      if (!resolved) {
+        kitchenCache.set(key, null)
+        if (alive) setUrl(null)
+        return
+      }
+      const img = new Image()
+      img.onload = () => {
+        kitchenCache.set(key, resolved)
+        if (alive) setUrl(resolved)
+      }
+      img.onerror = () => {
+        kitchenCache.set(key, null)
+        if (alive) setUrl(null)
+      }
+      img.src = resolved // 后台预加载, 加载完进 HTTP 缓存
+    })
     return () => {
       alive = false
     }
-  }, [key, url, state])
+  }, [a, b, key])
 
-  if (state === 'loaded') {
+  if (typeof url === 'string') {
     return (
       <img
         src={url}
@@ -66,7 +73,7 @@ function KitchenCombo({ a, b, size }: { a: string; b: string; size: number }) {
       />
     )
   }
-  // 加载中 / 无组合 → 即时两个动态 emoji, 不留空白
+  // 查询中 / 无组合 → 即时两个动态 emoji, 不留空白
   return (
     <span className="flex items-center gap-1">
       <AnimatedEmoji cluster={a} size={size} />
