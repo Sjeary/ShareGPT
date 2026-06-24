@@ -18,6 +18,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const sidebarSide = useAppStore((s) => s.sidebarSide)
   const showGemini = useAppStore((s) => s.showGemini)
   const showClaude = useAppStore((s) => s.showClaude)
+  const hiddenNav = useAppStore((s) => s.hiddenNav)
   const meta = useAppStore((s) => s.meta)
   // 管理员可禁止某人用协作聊天: 禁用则隐藏「协作聊天」入口 (服务端不投递消息, 这里只隐藏入口)。
   const chatDisabled = useAuthStore((s) => Boolean(s.profile?.chatDisabled))
@@ -27,7 +28,8 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
     (item) =>
       (item.key !== 'gemini' || showGemini) &&
       (item.key !== 'claude' || showClaude) &&
-      (item.key !== 'chat' || !chatDisabled),
+      (item.key !== 'chat' || !chatDisabled) &&
+      !hiddenNav.includes(item.key),
   )
 
   // 侧栏在右时: 边框换到左侧, 收起态 Tooltip 弹向左侧 (避免被自身遮挡/出屏)。

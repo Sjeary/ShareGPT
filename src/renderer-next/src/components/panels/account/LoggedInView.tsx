@@ -11,6 +11,17 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import type { NavKey } from '@/lib/nav'
+
+// 可在设置里隐藏的内容导航入口 (Gemini/Claude 另有独立开关)。
+const HIDEABLE_NAV: { key: NavKey; label: string }[] = [
+  { key: 'gpt', label: 'ChatGPT' },
+  { key: 'calendar', label: '个人日历' },
+  { key: 'team', label: '组队日历' },
+  { key: 'todo', label: '备忘录 / 待办' },
+  { key: 'notes', label: '笔记 / 知识库' },
+  { key: 'focus', label: '专注' },
+]
 import {
   Download,
   LogOut,
@@ -479,6 +490,8 @@ export function LoggedInView() {
   const setShowGemini = useAppStore((s) => s.setShowGemini)
   const showClaude = useAppStore((s) => s.showClaude)
   const setShowClaude = useAppStore((s) => s.setShowClaude)
+  const hiddenNav = useAppStore((s) => s.hiddenNav)
+  const setNavHidden = useAppStore((s) => s.setNavHidden)
   const profile = useAuthStore((s) => s.profile)
   const { logout } = useAuth()
 
@@ -642,6 +655,27 @@ export function LoggedInView() {
             </div>
             <Switch id="ui-show-claude" checked={showClaude} onCheckedChange={setShowClaude} />
           </div>
+
+          <Separator className="my-1" />
+
+          {/* 隐藏其它内容入口 (ChatGPT / 日历 / 待办 / 笔记 / 专注): 关闭对应开关即从导航栏隐藏。 */}
+          {HIDEABLE_NAV.map((n) => (
+            <div key={n.key} className="flex items-center justify-between gap-3 py-1.5">
+              <div className="min-w-0">
+                <Label htmlFor={`ui-show-${n.key}`} className="cursor-pointer">
+                  显示 {n.label}
+                </Label>
+                <p className="truncate text-xs text-muted-foreground">
+                  控制主页导航栏是否显示「{n.label}」入口。
+                </p>
+              </div>
+              <Switch
+                id={`ui-show-${n.key}`}
+                checked={!hiddenNav.includes(n.key)}
+                onCheckedChange={(v) => setNavHidden(n.key, !v)}
+              />
+            </div>
+          ))}
         </CardContent>
       </Card>
 

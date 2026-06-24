@@ -53,6 +53,8 @@ export interface UiSettings {
   sidebarSide: 'left' | 'right'
   showGemini: boolean
   showClaude: boolean
+  // 被隐藏的内容导航入口 (ChatGPT/日历/待办/笔记/专注 等的 NavKey)。
+  hiddenNav?: string[]
   // 登录页「发现新版本」提醒中点了「不再提示」的版本号集合 (按版本记忆)。
   dismissed_update_versions: string[]
   // 上次运行的 app 版本; 版本变化时用于刷新代理自动域名 (剔除已并入内置清单的项)。
