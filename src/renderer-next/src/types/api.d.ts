@@ -105,7 +105,7 @@ export interface NotesAiRequest {
 }
 export interface NotesAiEvent {
   streamId: string
-  type: 'delta' | 'done' | 'error'
+  type: 'delta' | 'done' | 'error' | 'status'
   text?: string
   message?: string
 }

@@ -29,6 +29,8 @@ export function GraphView() {
   const [size, setSize] = useState({ w: 800, h: 600 })
   const [hover, setHover] = useState<string | null>(null)
   const hostRef = useRef<HTMLDivElement>(null)
+  // react-force-graph 实例引用 (centerAt / zoom 等命令式方法)
+  const fgRef = useRef<{ centerAt: (x?: number, y?: number, ms?: number) => void; zoom: (k?: number, ms?: number) => void } | null>(null)
 
   useEffect(() => {
     const el = hostRef.current
@@ -109,6 +111,7 @@ export function GraphView() {
         </div>
       ) : (
         <ForceGraph2D
+          ref={fgRef as never}
           width={size.w}
           height={size.h}
           graphData={data}
@@ -116,7 +119,14 @@ export function GraphView() {
           nodeRelSize={4}
           linkColor={() => linkColor}
           linkWidth={1}
-          onNodeClick={(n: GNode) => void openNote(n.id)}
+          onNodeClick={(n: GNode) => {
+            // 点击节点: 平滑居中并放大到该节点, 同时打开笔记
+            if (typeof n.x === 'number' && typeof n.y === 'number') {
+              fgRef.current?.centerAt(n.x, n.y, 600)
+              fgRef.current?.zoom(2.4, 600)
+            }
+            void openNote(n.id)
+          }}
           onNodeHover={(n: GNode | null) => setHover(n ? n.id : null)}
           cooldownTicks={80}
           nodeCanvasObject={(node: GNode, ctx: CanvasRenderingContext2D, scale: number) => {

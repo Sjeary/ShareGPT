@@ -90,65 +90,106 @@ function createNotesAi({ getWindow }) {
     const body = Buffer.from(JSON.stringify(payload), "utf-8");
 
     const lib = endpoint.protocol === "http:" ? http : https;
-    const r = lib.request(
-      {
-        method: "POST",
-        hostname: endpoint.hostname,
-        port: endpoint.port || (endpoint.protocol === "http:" ? 80 : 443),
-        path: endpoint.pathname + endpoint.search,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-          Accept: "text/event-stream",
-          "Content-Length": body.length,
+    const MAX_RETRY = 2;
+    // 仅在「尚未吐出任何内容」且属于上游过载/限流/瞬时错误时才自动重试,
+    // 避免把已经流式输出一半的回答重复一遍。
+    let gotDelta = false;
+    const retryable = (code, msg) => {
+      if ([429, 500, 502, 503, 504, 529].includes(Number(code))) return true;
+      return /overload|rate.?limit|too many|temporar|timeout|busy|unavailable|capacity/i.test(String(msg || ""));
+    };
+    const scheduleRetry = (attempt, reason) => {
+      const delay = 800 * (attempt + 1) + 400 * attempt;
+      emit(streamId, { type: "status", message: `服务繁忙, 正在重试(${attempt + 1}/${MAX_RETRY})…` });
+      setTimeout(() => send(attempt + 1), delay);
+    };
+
+    function send(attempt) {
+      const r = lib.request(
+        {
+          method: "POST",
+          hostname: endpoint.hostname,
+          port: endpoint.port || (endpoint.protocol === "http:" ? 80 : 443),
+          path: endpoint.pathname + endpoint.search,
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+            Accept: "text/event-stream",
+            "Content-Length": body.length,
+          },
+          timeout: 120000,
         },
-        timeout: 120000,
-      },
-      (res) => {
-        if (res.statusCode && res.statusCode >= 400) {
-          let err = "";
-          res.on("data", (c) => (err += c));
-          res.on("end", () =>
-            emit(streamId, { type: "error", message: `接口错误 ${res.statusCode}: ${err.slice(0, 300)}` }),
-          );
-          return;
-        }
-        let buf = "";
-        res.setEncoding("utf8");
-        res.on("data", (chunk) => {
-          buf += chunk;
-          let idx;
-          while ((idx = buf.indexOf("\n")) >= 0) {
-            const line = buf.slice(0, idx).trim();
-            buf = buf.slice(idx + 1);
-            if (!line.startsWith("data:")) continue;
-            const data = line.slice(5).trim();
-            if (!data || data === "[DONE]") continue;
-            try {
-              const j = JSON.parse(data);
-              if (j.type === "response.output_text.delta" && typeof j.delta === "string") {
-                emit(streamId, { type: "delta", text: j.delta });
-              } else if (j.type === "response.completed") {
-                emit(streamId, { type: "done" });
-              } else if (j.type === "response.failed" || j.type === "error") {
-                emit(streamId, { type: "error", message: j.error?.message || "生成失败" });
+        (res) => {
+          if (res.statusCode && res.statusCode >= 400) {
+            let err = "";
+            res.on("data", (c) => (err += c));
+            res.on("end", () => {
+              if (!gotDelta && attempt < MAX_RETRY && retryable(res.statusCode, err)) {
+                scheduleRetry(attempt, err);
+              } else {
+                emit(streamId, {
+                  type: "error",
+                  message:
+                    retryable(res.statusCode, err) && !gotDelta
+                      ? `AI 服务繁忙(${res.statusCode}), 已重试 ${MAX_RETRY} 次仍失败, 请稍后再试`
+                      : `接口错误 ${res.statusCode}: ${err.slice(0, 300)}`,
+                });
+                live.delete(streamId);
               }
-            } catch {
-              /* 非完整 JSON, 等下一块 */
-            }
+            });
+            return;
           }
-        });
-        res.on("end", () => { emit(streamId, { type: "done" }); live.delete(streamId); });
-      },
-    );
-    r.on("error", (e) => { emit(streamId, { type: "error", message: e.message || "网络错误" }); live.delete(streamId); });
-    r.on("timeout", () => {
-      r.destroy();
-      emit(streamId, { type: "error", message: "请求超时" });
-      live.delete(streamId);
-    });
-    live.set(streamId, r);
-    r.end(body);
+          let buf = "";
+          res.setEncoding("utf8");
+          res.on("data", (chunk) => {
+            buf += chunk;
+            let idx;
+            while ((idx = buf.indexOf("\n")) >= 0) {
+              const line = buf.slice(0, idx).trim();
+              buf = buf.slice(idx + 1);
+              if (!line.startsWith("data:")) continue;
+              const data = line.slice(5).trim();
+              if (!data || data === "[DONE]") continue;
+              try {
+                const j = JSON.parse(data);
+                if (j.type === "response.output_text.delta" && typeof j.delta === "string") {
+                  gotDelta = true;
+                  emit(streamId, { type: "delta", text: j.delta });
+                } else if (j.type === "response.completed") {
+                  emit(streamId, { type: "done" });
+                } else if (j.type === "response.failed" || j.type === "error") {
+                  emit(streamId, { type: "error", message: j.error?.message || "生成失败" });
+                }
+              } catch {
+                /* 非完整 JSON, 等下一块 */
+              }
+            }
+          });
+          res.on("end", () => { emit(streamId, { type: "done" }); live.delete(streamId); });
+        },
+      );
+      r.on("error", (e) => {
+        if (!gotDelta && attempt < MAX_RETRY && retryable(0, e.message)) {
+          scheduleRetry(attempt, e.message);
+        } else {
+          emit(streamId, { type: "error", message: e.message || "网络错误" });
+          live.delete(streamId);
+        }
+      });
+      r.on("timeout", () => {
+        r.destroy();
+        if (!gotDelta && attempt < MAX_RETRY) {
+          scheduleRetry(attempt, "timeout");
+        } else {
+          emit(streamId, { type: "error", message: "请求超时" });
+          live.delete(streamId);
+        }
+      });
+      live.set(streamId, r);
+      r.end(body);
+    }
+
+    send(0);
     return { streamId };
   }
 

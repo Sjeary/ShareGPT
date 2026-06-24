@@ -1,12 +1,13 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import { format } from 'date-fns'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { NAV, type NavKey } from '@/lib/nav'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useTasksStore } from '@/store/useTasksStore'
+import { NavList } from './NavList'
 
 // 可收起侧栏 (对齐 shadcn Sidebar collapsible="icon" 成熟实践):
 // 宽度用 CSS transition 平滑过渡(非两帧切换), 标签淡出, 收起态图标配 Tooltip, 尊重 reduced-motion。
@@ -19,18 +20,29 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const showGemini = useAppStore((s) => s.showGemini)
   const showClaude = useAppStore((s) => s.showClaude)
   const hiddenNav = useAppStore((s) => s.hiddenNav)
+  const navOrder = useAppStore((s) => s.navOrder)
+  const setNavOrder = useAppStore((s) => s.setNavOrder)
   const meta = useAppStore((s) => s.meta)
   // 管理员可禁止某人用协作聊天: 禁用则隐藏「协作聊天」入口 (服务端不投递消息, 这里只隐藏入口)。
   const chatDisabled = useAuthStore((s) => Boolean(s.profile?.chatDisabled))
 
-  // 可按设置隐藏 Gemini / Claude 入口, 以及对被禁用户隐藏协作聊天入口。
-  const navItems = NAV.filter(
-    (item) =>
-      (item.key !== 'gemini' || showGemini) &&
-      (item.key !== 'claude' || showClaude) &&
-      (item.key !== 'chat' || !chatDisabled) &&
-      !hiddenNav.includes(item.key),
-  )
+  // 可按设置隐藏 Gemini / Claude 入口, 以及对被禁用户隐藏协作聊天入口;
+  // 再按用户自定义顺序 (navOrder) 排序 —— 未列入的 key 退回 NAV 默认顺序、排在末尾。
+  const navItems = useMemo(() => {
+    const filtered = NAV.filter(
+      (item) =>
+        (item.key !== 'gemini' || showGemini) &&
+        (item.key !== 'claude' || showClaude) &&
+        (item.key !== 'chat' || !chatDisabled) &&
+        !hiddenNav.includes(item.key),
+    )
+    if (!navOrder.length) return filtered
+    const rank = (k: NavKey) => {
+      const i = navOrder.indexOf(k)
+      return i >= 0 ? i : navOrder.length + NAV.findIndex((n) => n.key === k)
+    }
+    return [...filtered].sort((a, b) => rank(a.key) - rank(b.key))
+  }, [showGemini, showClaude, chatDisabled, hiddenNav, navOrder])
 
   // 侧栏在右时: 边框换到左侧, 收起态 Tooltip 弹向左侧 (避免被自身遮挡/出屏)。
   const onRight = sidebarSide === 'right'
@@ -67,73 +79,18 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
               ),
         )}
       >
-        {/* 导航项可滚动区: 入口较多/窗口较矮时仍能滚动访问全部; 底部「收起」与版本卡固定不滚动。 */}
+        {/* 导航项可滚动区: 入口较多/窗口较矮时仍能滚动访问全部; 底部「收起」与版本卡固定不滚动。
+            列表支持长按拖动重排 (见 NavList)。 */}
         <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overflow-x-hidden [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {navItems.map(({ key, label, icon: Icon, hint }) => {
-            const on = key === active
-            const badge = badgeFor(key)
-            const btn = (
-              <button
-                data-tour={`nav-${key}`}
-                onClick={() => setActive(key)}
-                className={cn(
-                  'group flex w-full items-center rounded-lg py-2.5 text-left transition-colors',
-                  'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-                  collapsed ? 'justify-center gap-0 px-0' : 'gap-3 px-2.5',
-                  on
-                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                    : 'text-sidebar-foreground hover:bg-sidebar-accent/60',
-                )}
-              >
-                <span
-                  className={cn(
-                    'relative grid size-9 shrink-0 place-items-center rounded-full transition-colors',
-                    on
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-sidebar-accent text-muted-foreground group-hover:text-foreground',
-                  )}
-                >
-                  <Icon className="size-[18px]" />
-                  {/* 收起态: 角标用图标右上角的小红点表示「有今日项」 */}
-                  {collapsed && badge > 0 && (
-                    <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-primary ring-2 ring-sidebar" />
-                  )}
-                </span>
-                <span
-                  className={cn(
-                    'overflow-hidden whitespace-nowrap transition-all duration-200',
-                    collapsed
-                      ? 'w-0 flex-none pointer-events-none opacity-0'
-                      : 'min-w-0 flex-1 opacity-100',
-                  )}
-                >
-                  <span className="block truncate text-[15px] font-medium">{label}</span>
-                  <span className="block truncate text-xs text-muted-foreground">{hint}</span>
-                </span>
-                {/* 展开态: 右侧显示今日数量胶囊 */}
-                {!collapsed && badge > 0 && (
-                  <span
-                    className={cn(
-                      'ml-auto shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums',
-                      on ? 'bg-primary/20 text-primary' : 'bg-primary/15 text-primary',
-                    )}
-                  >
-                    {badge}
-                  </span>
-                )}
-              </button>
-            )
-            return collapsed ? (
-              <Tooltip key={key}>
-                <TooltipTrigger asChild>{btn}</TooltipTrigger>
-                <TooltipContent side={tooltipSide} className="font-medium">
-                  {label}
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <div key={key}>{btn}</div>
-            )
-          })}
+          <NavList
+            items={navItems}
+            collapsed={collapsed}
+            activeKey={active}
+            tooltipSide={tooltipSide}
+            badgeFor={badgeFor}
+            onActivate={setActive}
+            onReorder={setNavOrder}
+          />
         </div>
 
         <button

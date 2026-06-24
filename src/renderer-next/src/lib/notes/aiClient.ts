@@ -4,13 +4,19 @@ import type { NotesAiRequest } from '@/types/api'
 // 发起一次流式 AI 调用; 返回 cancel 函数。事件按 streamId 过滤。
 export function runAi(
   req: NotesAiRequest,
-  cb: { onDelta: (t: string) => void; onDone: () => void; onError: (m: string) => void },
+  cb: {
+    onDelta: (t: string) => void
+    onDone: () => void
+    onError: (m: string) => void
+    onStatus?: (m: string) => void
+  },
 ): () => void {
   let streamId = ''
   let cancelled = false
   const unsub = api.onNotesAiEvent((p) => {
     if (!streamId || p.streamId !== streamId) return
     if (p.type === 'delta') cb.onDelta(p.text || '')
+    else if (p.type === 'status') cb.onStatus?.(p.message || '')
     else if (p.type === 'done') {
       unsub()
       cb.onDone()
