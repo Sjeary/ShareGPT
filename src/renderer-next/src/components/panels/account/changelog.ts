@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.0.4',
+    date: '2026-06-24',
+    highlights: [
+      '安装可自选位置：Windows 安装时可选择安装目录，C 盘空间不足能装到其它盘（卸载保留数据，换盘重装不丢账号/聊天/笔记）。',
+      '消息弹窗与提示音改为默认关闭，避免打扰；可在「账户 → 协作通知」按需打开。',
+      '表情组合更快：内置 Emoji Kitchen 索引、直连 Google 取图，去掉第三方代理；无组合立即显示、有组合不再有冷启动等待。',
+      '新手引导补全（笔记/专注/通知/缩放）；列表滚动条隐藏更清爽；被禁用的账号不再出现在会话列表。',
+    ],
+  },
+  {
     version: '1.0.3',
     date: '2026-06-24',
     highlights: [
