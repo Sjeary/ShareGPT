@@ -28,6 +28,14 @@ interface AppState {
   showClaude: boolean
   setShowClaude: (v: boolean) => void
 
+  // 可隐藏的内容导航入口 (ChatGPT / 个人日历 / 组队日历 / 待办 / 笔记 / 专注)。默认全部展示。
+  hiddenNav: NavKey[]
+  setNavHidden: (key: NavKey, hidden: boolean) => void
+
+  // 用户自定义导航排序 (长按拖动重排得到)。空数组 = 用 NAV 默认顺序。
+  navOrder: NavKey[]
+  setNavOrder: (order: NavKey[]) => void
+
   // GPT/Gemini 页隐藏侧栏 (侧栏三态之一: 左 / 右 / 隐藏), 让内嵌网页占满看着清爽。
   // 仅在 GPT/Gemini 面板生效 (见 Shell), 避免在其它面板把导航藏没了。
   sidebarHidden: boolean
@@ -196,6 +204,55 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { showClaude: v, active: nextActive }
     }),
 
+  hiddenNav: (() => {
+    try {
+      const raw = localStorage.getItem('sharegpt-hidden-nav')
+      const arr = raw ? JSON.parse(raw) : []
+      return Array.isArray(arr) ? (arr as NavKey[]) : []
+    } catch {
+      return []
+    }
+  })(),
+  // 隐藏/显示某个内容入口; 隐藏正在查看的入口时自动切回「网络/代理」。
+  setNavHidden: (key, hidden) =>
+    set((s) => {
+      const next = hidden
+        ? [...new Set([...s.hiddenNav, key])]
+        : s.hiddenNav.filter((k) => k !== key)
+      try {
+        localStorage.setItem('sharegpt-hidden-nav', JSON.stringify(next))
+      } catch {
+        /* ignore */
+      }
+      void get()
+        .patchSection('ui', { hiddenNav: next })
+        .catch(() => undefined)
+      const nextActive = hidden && s.active === key ? 'service' : s.active
+      return { hiddenNav: next, active: nextActive }
+    }),
+
+  navOrder: (() => {
+    try {
+      const raw = localStorage.getItem('sharegpt-nav-order')
+      const arr = raw ? JSON.parse(raw) : []
+      return Array.isArray(arr) ? (arr as NavKey[]) : []
+    } catch {
+      return []
+    }
+  })(),
+  setNavOrder: (order) =>
+    set(() => {
+      try {
+        localStorage.setItem('sharegpt-nav-order', JSON.stringify(order))
+      } catch {
+        /* ignore */
+      }
+      void get()
+        .patchSection('ui', { navOrder: order })
+        .catch(() => undefined)
+      return { navOrder: order }
+    }),
+
   sidebarHidden: (() => {
     try {
       return localStorage.getItem('sharegpt-sidebar-hidden') === '1'
@@ -274,6 +331,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ showGemini: savedShowGemini })
       if (!savedShowGemini && get().active === 'gemini') set({ active: 'service' })
     }
+    const savedHidden = mergedSettings.ui?.hiddenNav
+    if (Array.isArray(savedHidden)) set({ hiddenNav: savedHidden as NavKey[] })
+
+    const savedOrder = mergedSettings.ui?.navOrder
+    if (Array.isArray(savedOrder)) set({ navOrder: savedOrder as NavKey[] })
+
     const savedShowClaude = mergedSettings.ui?.showClaude
     if (typeof savedShowClaude === 'boolean') {
       set({ showClaude: savedShowClaude })

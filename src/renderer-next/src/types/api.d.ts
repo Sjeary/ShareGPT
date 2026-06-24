@@ -37,6 +37,83 @@ export interface TasksStoreFile {
   memos?: unknown[]
 }
 
+// —— 知识库 vault (笔记文件 IO; 解析/索引在渲染层) ——
+export interface VaultFileMeta {
+  path: string // vault 内相对路径 (正斜杠)
+  mtime: number
+  ctime: number
+  size?: number
+}
+export interface VaultFile {
+  path: string
+  content: string
+  mtime: number
+  ctime: number
+}
+export interface VaultImportReport {
+  notes: number
+  attachments: number
+  skipped: number
+  root: string
+}
+export interface VaultChangeEvent {
+  events: { type: 'add' | 'change' | 'unlink'; path: string }[]
+}
+export interface VaultApi {
+  start: () => Promise<void>
+  getRoot: () => Promise<string>
+  setRoot: (absPath: string) => Promise<{ ok: boolean; root: string; count: number }>
+  pickFolder: () => Promise<string | null>
+  list: () => Promise<VaultFileMeta[]>
+  readAll: () => Promise<VaultFile[]>
+  read: (path: string) => Promise<VaultFile>
+  readBinary: (path: string) => Promise<{ dataUrl: string; mime: string } | null>
+  write: (path: string, content: string) => Promise<{ path: string; mtime: number }>
+  create: (path: string, content?: string) => Promise<VaultFile>
+  rename: (from: string, to: string) => Promise<{ ok: boolean }>
+  remove: (path: string) => Promise<{ ok: boolean }>
+  importFrom: (src: string) => Promise<VaultImportReport>
+}
+
+// —— 知识库 AI (Responses 流式) ——
+export interface NotesAiProvider {
+  baseUrl: string
+  apiKey: string
+  model: string
+  effort: string
+}
+export type NotesAiMode =
+  | 'expand'
+  | 'continue'
+  | 'summary'
+  | 'polish'
+  | 'rewrite'
+  | 'title'
+  | 'translate'
+  | 'tags'
+  | 'linkSuggest'
+  | 'ask'
+  | 'edit'
+  | 'generate'
+  | 'autolink'
+export interface NotesAiRequest {
+  provider: NotesAiProvider
+  mode: NotesAiMode
+  text: string
+  ctx?: { titles?: string[]; context?: string; instruction?: string }
+  instructions?: string
+}
+export interface NotesAiEvent {
+  streamId: string
+  type: 'delta' | 'done' | 'error' | 'status'
+  text?: string
+  message?: string
+}
+export interface NotesAiApi {
+  complete: (req: NotesAiRequest) => Promise<{ streamId: string }>
+  cancel: (streamId: string) => Promise<{ ok: boolean }>
+}
+
 export interface ShareGptApi {
   platform: NodeJS.Platform | string
 
@@ -54,6 +131,18 @@ export interface ShareGptApi {
   saveCalendar: (payload: CalendarStoreFile) => Promise<unknown>
   loadTasks: () => Promise<TasksStoreFile>
   saveTasks: (payload: TasksStoreFile) => Promise<unknown>
+  loadFocus: () => Promise<{ version?: number; sessions?: unknown[]; settings?: unknown }>
+  saveFocus: (payload: {
+    version: number
+    sessions: unknown[]
+    settings: unknown
+  }) => Promise<unknown>
+  // 知识库 vault
+  vault: VaultApi
+  onVaultChanged: (handler: (payload: VaultChangeEvent) => void) => Unsubscribe
+  // 知识库 AI
+  notesAi: NotesAiApi
+  onNotesAiEvent: (handler: (payload: NotesAiEvent) => void) => Unsubscribe
   exportUserData: () => Promise<unknown>
   importUserData: () => Promise<unknown>
   readClipboardAttachment: () => Promise<unknown>
