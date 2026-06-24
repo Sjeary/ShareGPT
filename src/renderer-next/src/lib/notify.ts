@@ -15,10 +15,15 @@ export interface SystemNotificationRoute {
 }
 
 // 弹窗 toast (旧 showToast: 标题加粗 + 正文)。
+// 仅「消息通知」放左上角并可手动关闭; 其它操作/状态提示仍走默认右下角 (见 Toaster)。
 export function showNotificationToast(title: string, message: string): void {
   const heading = (title || '').trim() || '提醒'
   const body = (message || '').trim()
-  toast(heading, body ? { description: body } : undefined)
+  toast(heading, {
+    description: body || undefined,
+    position: 'top-left',
+    closeButton: true,
+  })
 }
 
 // 提示音 (旧 playNotificationTone): WebAudio 合成一声短促提示音。
