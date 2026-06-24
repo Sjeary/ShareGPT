@@ -460,7 +460,7 @@ export function MessageBubble({
               {readersOpen && (
                 <div
                   className={cn(
-                    'absolute bottom-full z-30 mb-1 max-h-56 w-48 overflow-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md',
+                    'no-scrollbar absolute bottom-full z-30 mb-1 max-h-56 w-48 overflow-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md',
                     'animate-in fade-in zoom-in-95',
                     mine ? 'right-0' : 'left-0',
                   )}

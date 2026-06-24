@@ -169,4 +169,14 @@
   ::-webkit-scrollbar-thumb:hover {
     background: color-mix(in srgb, var(--muted-foreground) 50%, transparent);
   }
+  /* 隐藏滚动条但保留滚动 (列表/侧栏等不希望露出滚动条的容器) */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
 }

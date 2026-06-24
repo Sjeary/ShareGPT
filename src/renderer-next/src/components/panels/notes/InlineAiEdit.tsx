@@ -169,7 +169,7 @@ export function InlineAiEdit() {
           </button>
         </div>
         {(result || running || err) && (
-          <div className="max-h-[40vh] overflow-auto border-t border-border p-2.5 text-sm">
+          <div className="no-scrollbar max-h-[40vh] overflow-auto border-t border-border p-2.5 text-sm">
             {err ? (
               <p className="text-xs text-destructive">{err}</p>
             ) : hasSel && !running && result ? (

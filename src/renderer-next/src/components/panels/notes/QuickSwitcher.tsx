@@ -38,7 +38,7 @@ export function QuickSwitcher() {
           placeholder="跳转到笔记…"
           className="h-12 w-full border-b border-border bg-transparent px-4 text-sm outline-none placeholder:text-muted-foreground"
         />
-        <Command.List className="max-h-[50vh] overflow-auto p-1.5">
+        <Command.List className="no-scrollbar max-h-[50vh] overflow-auto p-1.5">
           <Command.Empty className="px-3 py-6 text-center text-sm text-muted-foreground">
             没有匹配的笔记
           </Command.Empty>

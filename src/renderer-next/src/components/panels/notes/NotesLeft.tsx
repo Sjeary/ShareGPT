@@ -122,7 +122,7 @@ function TagStrip() {
         <Hash className="size-3.5" /> 标签 ({tags.length})
       </button>
       {open && (
-        <div className="max-h-48 overflow-auto px-2 pb-3">
+        <div className="no-scrollbar max-h-48 overflow-auto px-2 pb-3">
           {roots.map((n) => (
             <TagTreeNode key={n.full} node={n} depth={0} />
           ))}
@@ -159,7 +159,7 @@ export function NotesLeft() {
           )}
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto px-1.5 [-ms-overflow-style:none] [scrollbar-width:thin]">
+      <div className="no-scrollbar min-h-0 flex-1 overflow-auto px-1.5">
         {trimmed ? <SearchResults query={trimmed} /> : <FileTree />}
       </div>
       <TagStrip />

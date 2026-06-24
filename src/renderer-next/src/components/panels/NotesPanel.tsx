@@ -282,7 +282,7 @@ export function NotesPanel() {
                     </button>
                   ))}
                 </div>
-                <div className="min-h-0 flex-1 overflow-auto">
+                <div className="no-scrollbar min-h-0 flex-1 overflow-auto">
                   {rightTab === 'backlinks' && <BacklinksPanel />}
                   {rightTab === 'outline' && <OutlinePanel />}
                   {rightTab === 'properties' && <PropertiesPanel />}

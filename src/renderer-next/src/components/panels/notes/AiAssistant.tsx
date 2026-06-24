@@ -246,7 +246,7 @@ export function AiAssistant() {
         </button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto p-3">
+      <div className="no-scrollbar min-h-0 flex-1 overflow-auto p-3">
         {/* 写作辅助 */}
         <div className="flex flex-wrap gap-1.5">
           {QUICK.map((a) => (
