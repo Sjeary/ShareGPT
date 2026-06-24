@@ -404,7 +404,7 @@ export function ChatPanel() {
         </div>
 
         {/* 消息滚动区 */}
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4">
           {messages.length === 0 ? (
             <div className="grid h-full place-items-center text-center text-sm text-muted-foreground">
               <div className="flex flex-col items-center gap-2">

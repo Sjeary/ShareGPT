@@ -11,8 +11,10 @@ import {
 import { Theme, EmojiStyle, type EmojiClickData } from 'emoji-picker-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
+import { emojiClusters, JUMBO_MAX } from '@/lib/chat/emoji'
 import { useAppStore } from '@/store/useAppStore'
 import type { ChatAttachment, ChatMessage } from '@/store/useChatStore'
+import { JumboEmoji } from './JumboEmoji'
 
 // 表情选择器较重, 懒加载; 用 NATIVE(unicode) 风格, 离线也能显示。
 const EmojiPicker = lazy(() => import('emoji-picker-react'))
@@ -185,6 +187,15 @@ export function MessageBubble({
   const richBody = message.text ? renderMessageRichText(message.text) : null
   const linkPreview = message.text ? buildMessageLinkPreview(extractFirstUrl(message.text)) : null
 
+  // 纯 emoji 消息 (≤3 个) → 放大 / 动态 / 两个组合 (Telegram 式)。
+  const jumbo =
+    !message.recalled && message.text && message.attachments.length === 0
+      ? emojiClusters(message.text)
+      : null
+  const jumboList = jumbo && jumbo.length <= JUMBO_MAX ? jumbo : null
+  // 纯表情且无引用/转发/链接卡时, 去掉气泡底色, 仅显示放大表情 (更像 Telegram)。
+  const bareJumbo = Boolean(jumboList && !message.replyTo && !message.forwardedFrom && !linkPreview)
+
   return (
     <div
       data-message-id={message.id || undefined}
@@ -220,9 +231,11 @@ export function MessageBubble({
           <div
             className={cn(
               'rounded-2xl px-3 py-2 text-sm break-words [overflow-wrap:anywhere]',
-              mine
-                ? 'rounded-br-md bg-primary text-primary-foreground'
-                : 'rounded-bl-md bg-secondary text-secondary-foreground',
+              bareJumbo
+                ? 'bg-transparent px-0 py-0' // 纯表情: 去气泡底色, 只显示放大表情
+                : mine
+                  ? 'rounded-br-md bg-primary text-primary-foreground'
+                  : 'rounded-bl-md bg-secondary text-secondary-foreground',
             )}
           >
             {!message.recalled && message.replyTo && (
@@ -255,10 +268,14 @@ export function MessageBubble({
               </span>
             ) : (
               <>
-                {richBody && (
-                  <div className="selectable whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                    {richBody}
-                  </div>
+                {jumboList ? (
+                  <JumboEmoji clusters={jumboList} />
+                ) : (
+                  richBody && (
+                    <div className="selectable whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                      {richBody}
+                    </div>
+                  )
                 )}
                 {linkPreview && (
                   <button
@@ -308,7 +325,9 @@ export function MessageBubble({
                 <SmilePlus className="size-4" />
               </button>
               {pickerOpen && (
-                <div className={cn('absolute top-7 z-30', mine ? 'left-0' : 'right-0')}>
+                // 朝「内侧」展开 (我的消息工具条在右 → 向左展开; 对方在左 → 向右展开),
+                // 避免 300px 面板越过视口边缘把整页撑出横向滚动。
+                <div className={cn('absolute top-7 z-30', mine ? 'right-0' : 'left-0')}>
                   <Suspense
                     fallback={
                       <div className="rounded-lg border border-border bg-popover p-4 text-xs text-muted-foreground shadow-md">
