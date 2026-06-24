@@ -7,3 +7,5 @@ release*
 LICENSE
 **/package-lock.json
 docs/dev
+# 生成的资源 (体积大/压缩单行, 不参与格式化)
+src/renderer-next/src/assets/emoji-kitchen-index.json
