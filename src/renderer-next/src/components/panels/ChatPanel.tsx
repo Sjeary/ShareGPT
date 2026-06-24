@@ -317,6 +317,13 @@ export function ChatPanel() {
         reportSendError(err)
       }
     },
+    onReact: (m, emoji) => {
+      try {
+        chat.sendReaction(m.id, emoji)
+      } catch (err) {
+        reportSendError(err)
+      }
+    },
     onOpenImage: (dataUrl, alt) => setLightbox({ dataUrl, alt }),
     onJumpToMessage: jumpToMessage,
   }

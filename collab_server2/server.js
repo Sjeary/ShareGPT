@@ -2333,6 +2333,39 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    if (payload?.type === "chat_react") {
+      const emoji = safeText(payload?.emoji).slice(0, 16);
+      const { index, message } = findHistoryMessage(payload?.messageId);
+      if (!message || index < 0 || !emoji || message.recalled) return;
+      const reactions =
+        message.reactions && typeof message.reactions === "object" ? { ...message.reactions } : {};
+      const users = new Set(Array.isArray(reactions[emoji]) ? reactions[emoji] : []);
+      if (users.has(ws.username)) users.delete(ws.username);
+      else users.add(ws.username);
+      if (users.size) reactions[emoji] = [...users];
+      else delete reactions[emoji];
+      history[index] = { ...message, reactions };
+      persistHistorySnapshot();
+      const out = {
+        type: "chat_reaction",
+        messageId: message.id,
+        reactions,
+        roomScope: ws.subnetLabel,
+        timestamp: nowIso(),
+      };
+      if (message.scope === "private") {
+        const recipients = new Set([message.from, message.to].filter(Boolean));
+        for (const client of wsClients) {
+          if (client.readyState !== client.OPEN) continue;
+          if (!recipients.has(client.username)) continue;
+          sendToClient(client, out);
+        }
+      } else {
+        broadcastToSubnet(message.subnetKey, out);
+      }
+      return;
+    }
+
     if (payload?.type === "chat_read") {
       const scope = payload?.scope === "subnet" ? "subnet" : "private";
       const conversationWith = safeText(payload?.with);

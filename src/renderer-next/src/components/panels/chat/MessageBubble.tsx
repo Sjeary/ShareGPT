@@ -1,8 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
-import { CornerUpLeft, FileText, MoreHorizontal, Pencil, Share2, Trash2 } from 'lucide-react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { CornerUpLeft, FileText, MoreHorizontal, Pencil, Share2, SmilePlus, Trash2 } from 'lucide-react'
+import { Theme, EmojiStyle, type EmojiClickData } from 'emoji-picker-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
+import { useAppStore } from '@/store/useAppStore'
 import type { ChatAttachment, ChatMessage } from '@/store/useChatStore'
+
+// 表情选择器较重, 懒加载; 用 NATIVE(unicode) 风格, 离线也能显示。
+const EmojiPicker = lazy(() => import('emoji-picker-react'))
 import { avatarMark, formatBytes, formatMessageTime, formatSmartTime } from './format'
 import {
   buildMessageLinkPreview,
@@ -52,6 +57,7 @@ export interface MessageActions {
   onForward: (message: ChatMessage) => void
   onEdit: (message: ChatMessage) => void
   onRecall: (message: ChatMessage) => void
+  onReact: (message: ChatMessage, emoji: string) => void
   onOpenImage: (dataUrl: string, alt: string) => void
   onJumpToMessage: (id: string) => void
 }
@@ -72,22 +78,25 @@ export function MessageBubble({
   actions: MessageActions
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
   const [confirmRecall, setConfirmRecall] = useState(false)
   const [readersOpen, setReadersOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const readersRef = useRef<HTMLDivElement>(null)
+  const dark = useAppStore((s) => s.dark)
 
   useEffect(() => {
-    if (!menuOpen) return
+    if (!menuOpen && !pickerOpen) return
     const onDown = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false)
+        setPickerOpen(false)
         setConfirmRecall(false)
       }
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
-  }, [menuOpen])
+  }, [menuOpen, pickerOpen])
 
   useEffect(() => {
     if (!readersOpen) return
@@ -270,15 +279,55 @@ export function MessageBubble({
             <div
               ref={menuRef}
               className={cn(
-                'absolute top-0 z-10',
+                'absolute top-0 z-10 flex gap-0.5',
                 mine ? 'left-0 -translate-x-full pr-1' : 'right-0 translate-x-full pl-1',
               )}
             >
               <button
                 type="button"
+                aria-label="表情回应"
+                onClick={() => {
+                  setPickerOpen((v) => !v)
+                  setMenuOpen(false)
+                }}
+                className={cn(
+                  'grid size-6 place-items-center rounded-full bg-secondary text-muted-foreground opacity-0 outline-none transition-opacity hover:text-foreground',
+                  'group-hover/bubble:opacity-100 group-focus-within/bubble:opacity-100',
+                  'focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring',
+                  pickerOpen && 'opacity-100',
+                )}
+              >
+                <SmilePlus className="size-4" />
+              </button>
+              {pickerOpen && (
+                <div className={cn('absolute top-7 z-30', mine ? 'left-0' : 'right-0')}>
+                  <Suspense
+                    fallback={
+                      <div className="rounded-lg border border-border bg-popover p-4 text-xs text-muted-foreground shadow-md">
+                        加载表情…
+                      </div>
+                    }
+                  >
+                    <EmojiPicker
+                      onEmojiClick={(e: EmojiClickData) => {
+                        actions.onReact(message, e.emoji)
+                        setPickerOpen(false)
+                      }}
+                      theme={dark ? Theme.DARK : Theme.LIGHT}
+                      emojiStyle={EmojiStyle.NATIVE}
+                      lazyLoadEmojis
+                      width={300}
+                      height={380}
+                    />
+                  </Suspense>
+                </div>
+              )}
+              <button
+                type="button"
                 aria-label="消息操作"
                 onClick={() => {
                   setMenuOpen((v) => !v)
+                  setPickerOpen(false)
                   setConfirmRecall(false)
                 }}
                 className={cn(
@@ -333,6 +382,31 @@ export function MessageBubble({
             </div>
           )}
         </div>
+
+        {!message.recalled && Object.keys(message.reactions ?? {}).length > 0 && (
+          <div className={cn('flex flex-wrap gap-1 px-1', mine ? 'justify-end' : 'justify-start')}>
+            {Object.entries(message.reactions).map(([emoji, users]) => {
+              const reacted = users.includes(selfUsername)
+              return (
+                <button
+                  key={emoji}
+                  type="button"
+                  onClick={() => actions.onReact(message, emoji)}
+                  title={users.join('、')}
+                  className={cn(
+                    'inline-flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-xs transition-colors animate-in zoom-in-95',
+                    reacted
+                      ? 'border-primary/50 bg-primary/15 text-primary'
+                      : 'border-border bg-secondary hover:bg-accent',
+                  )}
+                >
+                  <span>{emoji}</span>
+                  <span className="tabular-nums">{users.length}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
 
         <span
           className="flex items-center gap-1 px-1 text-[11px] text-muted-foreground"

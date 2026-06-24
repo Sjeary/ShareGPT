@@ -114,6 +114,10 @@ export function normalizeChatMessage(raw: unknown): ChatMessage {
     system,
     recalled,
     recalledAt: recalled ? s(p.recalledAt) || new Date().toISOString() : '',
+    reactions:
+      p.reactions && typeof p.reactions === 'object'
+        ? (p.reactions as Record<string, string[]>)
+        : {},
   }
 }
 

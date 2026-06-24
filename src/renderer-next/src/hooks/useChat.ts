@@ -135,6 +135,7 @@ export function useChat() {
   const upsertMessage = useChatStore((s) => s.upsertMessage)
   const messagesByConversation = useChatStore((s) => s.messagesByConversation)
   const clearGroupCaches = useChatStore((s) => s.clearGroupCaches)
+  const applyReaction = useChatStore((s) => s.applyReaction)
 
   const setTyping = useChatStore((s) => s.setTyping)
   const clearTyping = useChatStore((s) => s.clearTyping)
@@ -610,6 +611,13 @@ export function useChat() {
             if (payload.message) upsertMessage(normalizeChatMessage(payload.message))
             break
           }
+          case 'chat_reaction': {
+            applyReaction(
+              String(payload.messageId ?? '').trim(),
+              (payload.reactions as Record<string, string[]>) || {},
+            )
+            break
+          }
           case 'system':
           case 'error': {
             upsertMessage(
@@ -715,6 +723,7 @@ export function useChat() {
     setSession,
     trackUnread,
     upsertMessage,
+    applyReaction,
   ])
 
   // 上线提醒 (移植自旧 setUserDirectory ~3470): directory 变化时, 据 notify_user_online
@@ -818,6 +827,14 @@ export function useChat() {
     requireOpenSocket().send(JSON.stringify({ type: 'chat_recall', messageId: id }))
   }, [])
 
+  // 表情回应: 切换 (服务端 toggle 后广播 chat_reaction)。
+  const sendReaction = useCallback((messageId: string, emoji: string) => {
+    const id = (messageId || '').trim()
+    const e = (emoji || '').trim()
+    if (!id || !e) return
+    requireOpenSocket().send(JSON.stringify({ type: 'chat_react', messageId: id, emoji: e }))
+  }, [])
+
   // 编辑 (移植自旧 sendChatMessage 的 chat_edit 分支 ~5200)。
   const sendEdit = useCallback((messageId: string, text: string) => {
     const id = (messageId || '').trim()
@@ -855,6 +872,7 @@ export function useChat() {
       sendTyping,
       sendRecall,
       sendEdit,
+      sendReaction,
       sendForward,
       markConversationRead,
       refreshDirectory,
@@ -868,6 +886,7 @@ export function useChat() {
       sendTyping,
       sendRecall,
       sendEdit,
+      sendReaction,
       sendForward,
       markConversationRead,
       refreshDirectory,

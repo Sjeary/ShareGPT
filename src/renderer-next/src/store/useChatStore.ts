@@ -86,6 +86,8 @@ export interface ChatMessage {
   system: boolean
   recalled: boolean
   recalledAt: string
+  // 表情回应: emoji -> 回应过的用户名列表 (计数=长度, 含自己=已回应)。
+  reactions: Record<string, string[]>
 }
 
 export interface DirectoryUser {
@@ -168,6 +170,8 @@ interface ChatState {
   mergeMessages: (messages: ChatMessage[]) => void
   // 收到单条 (chat / chat_recall / chat_edit / system)
   upsertMessage: (message: ChatMessage) => void
+  // 更新某条消息的表情回应 (收到 chat_reaction)。
+  applyReaction: (messageId: string, reactions: Record<string, string[]>) => void
 
   // 切换「群」(不同协作服务器)时清空与该群绑定的本地缓存: 消息/成员目录/未读/输入态/草稿/房间标签,
   // 但保留 identity/connection (由登录流程管理)。配合本地按群缓存, 实现登录即切换。
@@ -313,7 +317,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
           // 合并 readBy: 新消息已读非空则覆盖, 否则保留旧值 (旧 mergeMessageIntoConversation)。
           const mergedReadBy =
             message.readBy && message.readBy.length ? message.readBy : next[idx].readBy
-          next[idx] = { ...next[idx], ...message, readBy: mergedReadBy }
+          next[idx] = {
+            ...next[idx],
+            ...message,
+            readBy: mergedReadBy,
+            reactions: message.reactions ?? next[idx].reactions ?? {},
+          }
           return {
             messagesByConversation: { ...s.messagesByConversation, [key]: next },
           }
@@ -331,6 +340,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
     })
   },
+
+  applyReaction: (messageId, reactions) =>
+    set((s) => {
+      if (!messageId) return s
+      let changed = false
+      const map: Record<string, ChatMessage[]> = {}
+      for (const [k, list] of Object.entries(s.messagesByConversation)) {
+        const idx = list.findIndex((m) => m.id === messageId)
+        if (idx >= 0) {
+          const next = [...list]
+          next[idx] = { ...next[idx], reactions: reactions || {} }
+          map[k] = next
+          changed = true
+        } else {
+          map[k] = list
+        }
+      }
+      return changed ? { messagesByConversation: map } : s
+    }),
 
   clearGroupCaches: () =>
     set({
