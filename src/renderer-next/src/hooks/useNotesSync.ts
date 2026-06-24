@@ -98,6 +98,13 @@ export function useNotesSync(): void {
 
     const ours = (): VaultFiles => ({ ...useVaultStore.getState().rawByPath })
 
+    // 串行化同步操作, 避免 poll / ws / 409 重试 触发的合并相互交叠。
+    let syncChain: Promise<void> = Promise.resolve()
+    const enqueue = (fn: () => Promise<void>): Promise<void> => {
+      syncChain = syncChain.then(fn).catch(() => undefined)
+      return syncChain
+    }
+
     // 把合并结果落盘 (写改动/删多余) 后刷新本地。
     async function applyMerged(merged: VaultFiles): Promise<void> {
       const cur = ours()
@@ -192,7 +199,7 @@ export function useNotesSync(): void {
             setState('synced')
             return
           }
-          void push(loadRev(serverUrl, username))
+          void enqueue(() => push(loadRev(serverUrl, username)))
         }, PUSH_DEBOUNCE_MS)
       }
       unsubs.push(useVaultStore.subscribe(handler))
@@ -203,7 +210,7 @@ export function useNotesSync(): void {
         wsBus.subscribe((p) => {
           if (cancelled || p.type !== 'user_store_updated' || p.kind !== 'notes') return
           if (typeof p.rev === 'number' && p.rev > loadRev(serverUrl, username)) {
-            void pullAndMerge()
+            void enqueue(() => pullAndMerge())
           }
         }),
       )
@@ -217,13 +224,13 @@ export function useNotesSync(): void {
       }
       if (cancelled) return
       setState('syncing')
-      await pullAndMerge(false)
+      await enqueue(() => pullAndMerge(false))
       if (cancelled) return
       watchLocal()
       subscribeRealtime()
       if (!cancelled && supported) {
         pollTimer = window.setInterval(() => {
-          if (!cancelled) void pullAndMerge()
+          if (!cancelled) void enqueue(() => pullAndMerge())
         }, POLL_MS)
       }
     })()

@@ -107,8 +107,9 @@ export const useVaultStore = create<VaultState>((set, get) => {
           index,
           indexVersion: s.indexVersion + 1,
           currentPath: keepCur,
-          draft: keepCur ? rawByPath[keepCur] : '',
-          dirty: false,
+          // 保留「正在编辑且未保存」的草稿, 避免被外部刷新/同步合并覆盖丢失。
+          draft: keepCur ? (s.dirty ? s.draft : rawByPath[keepCur]) : '',
+          dirty: keepCur ? s.dirty : false,
         }))
       } finally {
         set({ busy: false })
@@ -178,23 +179,24 @@ export const useVaultStore = create<VaultState>((set, get) => {
       let target = to.trim()
       // 无扩展名才补 .md; 保留 .canvas/.base 等已有扩展。
       if (!/\.[a-z0-9]+$/i.test(target)) target += '.md'
-      await api.vault.rename(from, target)
-      const fromContent = get().rawByPath[from] ?? ''
-      set((s) => {
-        const rawByPath = { ...s.rawByPath }
-        const notesByPath = { ...s.notesByPath }
-        delete rawByPath[from]
-        delete notesByPath[from]
-        rawByPath[target] = fromContent
-        notesByPath[target] = parseNote({ path: target, content: fromContent, mtime: Date.now(), ctime: Date.now() })
-        return {
-          rawByPath,
-          notesByPath,
-          index: rebuild(notesByPath),
-          indexVersion: s.indexVersion + 1,
-          currentPath: s.currentPath === from ? target : s.currentPath,
+      // basename 变化时, 改写所有指向它的入链 [[oldBase]] -> [[newBase]] (保留 #子路径/|别名)。
+      const baseOf = (p: string) => (p.split('/').pop() || p).replace(/\.(md|markdown)$/i, '')
+      const oldBase = baseOf(from)
+      const newBase = baseOf(target)
+      if (oldBase !== newBase && /\.(md|markdown)$/i.test(from)) {
+        const esc = oldBase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const re = new RegExp(`(\\[\\[)${esc}(?=[\\]#|])`, 'g')
+        const inbound = [...new Set((get().index?.backlinks(from) ?? []).map((h) => h.fromPath))]
+        for (const p of inbound) {
+          const raw = get().rawByPath[p]
+          if (!raw) continue
+          const next = raw.replace(re, `$1${newBase}`)
+          if (next !== raw) await api.vault.write(p, next)
         }
-      })
+      }
+      await api.vault.rename(from, target)
+      if (get().currentPath === from) set({ currentPath: target })
+      await get().reload()
     },
 
     deleteNote: async (path) => {

@@ -138,13 +138,14 @@ function createNotesAi({ getWindow }) {
             }
           }
         });
-        res.on("end", () => emit(streamId, { type: "done" }));
+        res.on("end", () => { emit(streamId, { type: "done" }); live.delete(streamId); });
       },
     );
-    r.on("error", (e) => emit(streamId, { type: "error", message: e.message || "网络错误" }));
+    r.on("error", (e) => { emit(streamId, { type: "error", message: e.message || "网络错误" }); live.delete(streamId); });
     r.on("timeout", () => {
       r.destroy();
       emit(streamId, { type: "error", message: "请求超时" });
+      live.delete(streamId);
     });
     live.set(streamId, r);
     r.end(body);

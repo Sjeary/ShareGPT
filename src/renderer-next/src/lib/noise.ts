@@ -59,4 +59,5 @@ export function stopNoise(): void {
   }
   src = null
   gain = null
+  void ctx?.suspend()
 }

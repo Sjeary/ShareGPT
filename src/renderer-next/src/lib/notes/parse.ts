@@ -6,7 +6,7 @@ import { parseLinks, stripCode } from './wikilink'
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/
 // 行内标签: 允许字母数字下划线连字符、CJK、嵌套 a/b。前面须是行首或空白。
-const TAG_RE = /(?:^|\s)#([A-Za-z0-9_一-龥-][A-Za-z0-9_一-龥/-]*)/g
+const TAG_RE = /(?<=^|\s)#([A-Za-z0-9_一-龥-][A-Za-z0-9_一-龥/-]*)/g
 const HEADING_RE = /^(#{1,6})\s+(.+?)\s*#*\s*$/
 const BLOCK_RE = /(?:^|\s)\^([A-Za-z0-9-]+)\s*$/
 

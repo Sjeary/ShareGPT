@@ -50,9 +50,13 @@ export const useEditorBridge = create<EditorBridgeState>((set, get) => ({
   replaceRange: (from, to, text) => {
     const view = get().view
     if (!view) return
+    // 流式生成期间文档可能已变, 钳制偏移避免替换错位/越界。
+    const len = view.state.doc.length
+    const f = Math.max(0, Math.min(from, len))
+    const t = Math.max(f, Math.min(to, len))
     view.dispatch({
-      changes: { from, to, insert: text },
-      selection: { anchor: from + text.length },
+      changes: { from: f, to: t, insert: text },
+      selection: { anchor: f + text.length },
     })
     view.focus()
   },

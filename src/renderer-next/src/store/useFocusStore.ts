@@ -168,9 +168,8 @@ export const useFocusStore = create<FocusState>((set, get) => {
     },
     skip: () => {
       stopNoise()
-      // 跳过当前阶段(不计专注), 进入下一阶段
-      const s = get()
-      const next: Phase = s.phase === 'focus' ? (((s.cycle + 0) % s.settings.longEvery === s.settings.longEvery - 1) ? 'long' : 'short') : 'focus'
+      // 跳过当前阶段(不计专注、不累加周期): 专注→短休, 休息→专注。
+      const next: Phase = get().phase === 'focus' ? 'short' : 'focus'
       set({ phase: next, running: false, endAt: null, remainingMs: durationMs(next) })
     },
     tick: () => {

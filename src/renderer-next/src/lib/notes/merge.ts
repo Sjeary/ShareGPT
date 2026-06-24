@@ -17,7 +17,11 @@ export interface MergeReport {
 }
 
 function conflictCopyPath(path: string): string {
-  return path.replace(/\.(md|markdown)$/i, '') + ' (云端冲突副本).md'
+  // 保留原扩展名 (.canvas/.base/.txt 等不被改成 .md)。
+  const m = path.match(/\.([a-z0-9]+)$/i)
+  const ext = m ? m[1] : 'md'
+  const base = m ? path.slice(0, -(ext.length + 1)) : path
+  return `${base} (云端冲突副本).${ext}`
 }
 
 export function mergeVault(base: VaultFiles, ours: VaultFiles, theirs: VaultFiles): MergeReport {
