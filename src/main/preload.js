@@ -72,6 +72,10 @@ contextBridge.exposeInMainWorld("api", {
   syncAiViewHost: (payload) => ipcRenderer.invoke("ai:sync-host", payload),
   navigateAiWorkspace: (payload) => ipcRenderer.invoke("ai:navigate", payload),
   checkAiProxy: (kind, tabId) => ipcRenderer.invoke("ai:proxy-check", { kind, tabId }),
+  clearAiBrowserData: (kind, confirmation) =>
+    ipcRenderer.invoke("ai:data-clear", { kind, ...(confirmation || {}) }),
+  applyBrowserPrivacy: () => ipcRenderer.invoke("browser-privacy:apply"),
+  detectProxyEnvironment: () => ipcRenderer.invoke("browser-privacy:detect-proxy-environment"),
   executeAiJavaScript: (payload) => ipcRenderer.invoke("ai:execute-javascript", payload),
   openProfileEditor: (payload) => ipcRenderer.invoke("profile:open", payload),
   emitProfileUpdated: (payload) => ipcRenderer.send("profile:updated", payload),

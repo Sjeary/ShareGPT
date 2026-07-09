@@ -69,6 +69,37 @@ export interface UiSettings {
   onboarding_done: boolean
 }
 
+export type BrowserEnvironmentMode = 'system' | 'us' | 'proxy'
+export type BrowserGeolocationMode = 'disabled' | 'proxy'
+
+export interface BrowserEnvironmentSettings {
+  mode: BrowserEnvironmentMode
+  locale: string
+  acceptLanguages: string
+  timezone: string
+  geolocationMode: BrowserGeolocationMode
+  autoSyncFromProxy: boolean
+  latitude: number | null
+  longitude: number | null
+  accuracy: number | null
+  // 以下节点检测结果仅本机保存，跨设备同步时会整体剔除。
+  sourceIp: string
+  countryCode: string
+  country: string
+  region: string
+  city: string
+  sourceUpdatedAt: string
+}
+
+export interface BrowserPrivacySettings {
+  version: 1
+  syncEnabled: boolean
+  updatedAt: string
+  environment: BrowserEnvironmentSettings
+  // 每台设备独立记录，帮助用户确认本机何时清过哪个服务；不会上传。
+  lastClearedAt: Record<'gpt' | 'gemini' | 'claude', string>
+}
+
 export interface AppSettings {
   sender: Partial<SenderSettings>
   receiver: Partial<ReceiverSettings>
@@ -76,6 +107,7 @@ export interface AppSettings {
   gpt: Record<string, unknown>
   gemini: Record<string, unknown>
   claude: Record<string, unknown>
+  browserPrivacy: BrowserPrivacySettings
   ui: Partial<UiSettings>
 }
 

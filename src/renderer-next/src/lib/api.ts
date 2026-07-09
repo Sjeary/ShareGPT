@@ -60,6 +60,16 @@ const fallback = {
   syncAiViewHost: async () => undefined,
   navigateAiWorkspace: async () => undefined,
   checkAiProxy: async () => ({ ok: false, reason: 'unavailable' }),
+  clearAiBrowserData: async () => ({
+    ok: false,
+    kind: 'gpt',
+    clearedAt: '',
+    homeUrl: '',
+  }),
+  applyBrowserPrivacy: async () => ({ ok: false, results: [] }),
+  detectProxyEnvironment: async () => {
+    throw new Error('仅桌面客户端支持出口环境检测')
+  },
   executeAiJavaScript: async () => undefined,
   openProfileEditor: async () => undefined,
   emitProfileUpdated: noop,

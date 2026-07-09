@@ -37,6 +37,7 @@ import { useAuth } from '@/hooks/useAuth'
 import { compareVersions, checkGithubUpdate } from './bootstrap'
 import { CHANGELOG } from './changelog'
 import type { CollabSettings } from '@/types/settings'
+import { BrowserPrivacySection } from './BrowserPrivacySection'
 
 // 协作通知开关项 (对应 collab.notify_* 字段)。
 const NOTIFY_FIELDS: ReadonlyArray<{
@@ -587,6 +588,8 @@ export function LoggedInView() {
           </div>
         </CardContent>
       </Card>
+
+      <BrowserPrivacySection />
 
       <Card>
         <CardHeader>

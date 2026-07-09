@@ -7,6 +7,8 @@ import { useAppStore } from '@/store/useAppStore'
 import { privateConversationKey, useChatStore } from '@/store/useChatStore'
 import { useLogStream } from '@/components/panels/logs/useLogStream'
 import { useCloudSync } from '@/hooks/useCloudSync'
+import { useBrowserPrivacySync } from '@/hooks/useBrowserPrivacySync'
+import { useBrowserPrivacyAutoSync } from '@/hooks/useBrowserPrivacyAutoSync'
 import { ServicePanel } from '@/components/panels/ServicePanel'
 import { ChatPanel } from '@/components/panels/ChatPanel'
 import { AccountPanel } from '@/components/panels/AccountPanel'
@@ -67,6 +69,9 @@ export function Shell() {
 
   // 个人日历 / 待办备忘 云端同步 (多端实时 + 版本号防覆盖); 未登录或服务器不支持则静默本地。
   useCloudSync()
+  // 只同步非敏感的网页环境策略；Cookie、网页登录态、节点检测结果与清理记录永不上传。
+  useBrowserPrivacySync()
+  useBrowserPrivacyAutoSync()
 
   // 番茄钟全局计时 (应用级单次挂载, 关面板也继续走, 阶段完成全局通知)。
   useFocusTimer()

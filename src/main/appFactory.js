@@ -9,11 +9,20 @@ const {
   clipboard,
   ipcMain,
   nativeTheme,
+  net: electronNet,
   session,
   shell,
 } = require("electron");
 const { Backend, DEFAULT_TARGET_DOMAINS } = require("./backend");
 const appLog = require("./logger");
+const {
+  applyEnvironmentToWebContents,
+  clearAiSessionData,
+  detectProxyEnvironment,
+  isAiKind,
+  normalizeBrowserPrivacySettings,
+  runtimeEnvironment,
+} = require("./browserPrivacy");
 
 // 记录每个 AI 会话(按 partition)实际访问过的主机名, 供「代理检测」展示页面流量去向。
 // 在 configureAiSession 内通过 webRequest 被动收集 (每个 partition 仅装一次)。
@@ -67,18 +76,21 @@ const AI_WORKSPACE_POLICIES = {
     kind: "gpt",
     partition: "persist:gpt-chat",
     homeUrl: "https://chatgpt.com/auth/login",
+    primaryHost: "chatgpt.com",
     allowedHosts: GPT_ALLOWED_HOSTS,
   },
   gemini: {
     kind: "gemini",
     partition: "persist:gemini-chat",
     homeUrl: "https://gemini.google.com/",
+    primaryHost: "gemini.google.com",
     allowedHosts: GEMINI_ALLOWED_HOSTS,
   },
   claude: {
     kind: "claude",
     partition: "persist:claude-chat",
     homeUrl: "https://claude.ai/",
+    primaryHost: "claude.ai",
     allowedHosts: CLAUDE_ALLOWED_HOSTS,
   },
 };
@@ -621,22 +633,46 @@ function createElectronApp(baseMode = "all") {
       });
     } catch {}
 
+    const permissionAllowed = (permission, requestingUrl) => {
+      if (permission === "geolocation") {
+        const environment = runtimeEnvironment(backend?.loadSettings()?.browserPrivacy);
+        if (!environment.geolocationEnabled) return false;
+        try {
+          return new URL(requestingUrl).hostname === policy.primaryHost;
+        } catch {
+          return false;
+        }
+      }
+      return (
+        AI_ALLOWED_PERMISSIONS.has(permission) &&
+        isAllowedUrlForHosts(requestingUrl, policy.allowedHosts)
+      );
+    };
+
     targetSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
       const requestingUrl = safeText(details?.requestingUrl || webContents?.getURL?.());
-      const allow =
-        AI_ALLOWED_PERMISSIONS.has(permission) &&
-        isAllowedUrlForHosts(requestingUrl, policy.allowedHosts);
-      callback(allow);
+      callback(permissionAllowed(permission, requestingUrl));
     });
 
     if (typeof targetSession.setPermissionCheckHandler === "function") {
       targetSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
-        return (
-          AI_ALLOWED_PERMISSIONS.has(permission) &&
-          isAllowedUrlForHosts(requestingOrigin, policy.allowedHosts)
-        );
+        return permissionAllowed(permission, requestingOrigin);
       });
     }
+  }
+
+  async function applyWorkspacePrivacy(workspace) {
+    const targetSession = session.fromPartition(workspace.policy.partition);
+    const privacySettings = normalizeBrowserPrivacySettings(
+      backend?.loadSettings()?.browserPrivacy,
+    );
+    return applyEnvironmentToWebContents({
+      webContents: workspace.view.webContents,
+      targetSession,
+      privacySettings,
+      defaultUserAgent: workspace.userAgent || app.userAgentFallback,
+      systemLanguages: app.getPreferredSystemLanguages?.() || [app.getLocale?.() || "en-US"],
+    });
   }
 
   function getAiStatePayload(workspace) {
@@ -784,6 +820,34 @@ function createElectronApp(baseMode = "all") {
       ...listTabsPayload(targetKind),
       activeState: activeWorkspace ? getAiStatePayload(activeWorkspace) : null,
     };
+  }
+
+  async function closeWorkspacesForKind(kind) {
+    const targetKind = safeText(kind);
+    const ids = [...(tabOrderByKind[targetKind] || [])];
+    const webContentsList = ids.map(
+      (tabId) => getWorkspace(targetKind, tabId)?.view?.webContents || null,
+    );
+    const destroyed = webContentsList.map((webContents) => {
+      if (!webContents || webContents.isDestroyed()) return Promise.resolve(true);
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(webContents.isDestroyed()), 3_000);
+        webContents.once("destroyed", () => {
+          clearTimeout(timer);
+          resolve(true);
+        });
+      });
+    });
+    for (const tabId of ids) {
+      closeTabWorkspace(targetKind, tabId);
+    }
+    const closed = await Promise.all(destroyed);
+    if (closed.some((value) => !value)) {
+      throw new Error("目标网页标签未能安全关闭，请重启客户端后再清除");
+    }
+    tabOrderByKind[targetKind] = [];
+    activeTabIdByKind[targetKind] = "";
+    hostStateByKind[targetKind] = { visible: false, bounds: null };
   }
 
   function syncAiBounds(workspace, options = {}) {
@@ -1585,6 +1649,7 @@ function createElectronApp(baseMode = "all") {
         workspace.userAgent = userAgent;
         workspace.view.webContents.setUserAgent(userAgent);
       }
+      await applyWorkspacePrivacy(workspace);
 
       const targetUrl =
         normalizeAiWorkspaceUrl(
@@ -1596,7 +1661,11 @@ function createElectronApp(baseMode = "all") {
               : workspace.policy.homeUrl,
         ) || workspace.policy.homeUrl;
 
-      if (!workspace.initialized || !safeText(workspace.view.webContents.getURL())) {
+      const currentWorkspaceUrl = safeText(workspace.view.webContents.getURL());
+      if (
+        !workspace.initialized ||
+        !isAllowedUrlForHosts(currentWorkspaceUrl, workspace.policy.allowedHosts)
+      ) {
         workspace.initialized = true;
         workspace.loading = true;
         workspace.lastUrl = targetUrl;
@@ -1617,6 +1686,89 @@ function createElectronApp(baseMode = "all") {
 
       emitTabsChanged(kind);
       return getAiStatePayload(workspace);
+    });
+
+    // 只允许按单个 AI 服务清理；UI 必须先经协作账号密码复核，主进程不提供“全部清理”。
+    ipcMain.handle("ai:data-clear", async (_event, payload) => {
+      const kind = safeText(payload?.kind);
+      if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
+      const password = String(payload?.password || "");
+      const token = safeText(payload?.token);
+      const requestedServerUrl = safeText(payload?.serverUrl).replace(/\/+$/, "");
+      const savedServerUrl = safeText(backend.loadSettings()?.collab?.server_url).replace(
+        /\/+$/,
+        "",
+      );
+      if (!password || !token || !requestedServerUrl || requestedServerUrl !== savedServerUrl) {
+        throw new Error("请重新输入当前协作账号密码确认");
+      }
+      let verifyUrl;
+      try {
+        verifyUrl = new URL(`${requestedServerUrl}/api/account/verify-password`);
+      } catch {
+        throw new Error("协作服务器地址无效");
+      }
+      if (verifyUrl.protocol !== "http:" && verifyUrl.protocol !== "https:") {
+        throw new Error("协作服务器地址无效");
+      }
+      const verifyResponse = await electronNet.fetch(verifyUrl.toString(), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ password }),
+      });
+      if (!verifyResponse.ok) {
+        const message = safeText(await verifyResponse.text().catch(() => ""));
+        if (verifyResponse.status === 404) {
+          throw new Error("协作服务器版本过旧，暂不支持删除前密码复核");
+        }
+        throw new Error(message || `密码验证失败（${verifyResponse.status}）`);
+      }
+      const policy = getAiPolicy(kind);
+      await closeWorkspacesForKind(kind);
+      const targetSession = session.fromPartition(policy.partition);
+      await clearAiSessionData(targetSession);
+      aiContactedHostsByPartition.get(policy.partition)?.clear();
+
+      const settings = backend.loadSettings();
+      const privacy = normalizeBrowserPrivacySettings(settings.browserPrivacy);
+      const clearedAt = new Date().toISOString();
+      privacy.lastClearedAt[kind] = clearedAt;
+      settings.browserPrivacy = privacy;
+      settings[kind] = {
+        ...(settings[kind] || {}),
+        last_url: policy.homeUrl,
+      };
+      backend.saveSettings(settings);
+      return { ok: true, kind, clearedAt, homeUrl: policy.homeUrl };
+    });
+
+    ipcMain.handle("browser-privacy:apply", async () => {
+      const results = [];
+      for (const workspace of aiWorkspaces.values()) {
+        try {
+          const applied = await applyWorkspacePrivacy(workspace);
+          results.push({ kind: workspace.kind, tabId: workspace.id, ok: true, applied });
+        } catch (err) {
+          results.push({
+            kind: workspace.kind,
+            tabId: workspace.id,
+            ok: false,
+            message: err.message || String(err),
+          });
+        }
+      }
+      return { ok: results.every((item) => item.ok), results };
+    });
+
+    ipcMain.handle("browser-privacy:detect-proxy-environment", async () => {
+      const port = Number(backend?.activeSocksPort);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error("请先启动代理，再同步出口环境");
+      }
+      return detectProxyEnvironment(port);
     });
 
     ipcMain.handle("ai:sync-host", (_event, payload) => {

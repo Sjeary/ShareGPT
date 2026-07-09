@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.0.5',
+    date: '2026-07-10',
+    highlights: [
+      '新增「网页隐私与环境」：可分别清除 ChatGPT、Gemini 或 Claude 的 Cookie、登录状态与本地网页记录，清除前必须重新输入协作账号密码。',
+      '支持跟随系统、美国环境或代理出口设置语言与时区；地理位置可关闭，或使用与出口 IP 一致的城市级位置。',
+      '网页环境策略可随协作账号跨设备同步；每台设备单独检测当前代理节点，Cookie、密码、网页登录态、出口 IP、位置检测结果与清理记录不会上传。',
+      'WebRTC 禁止非代理 UDP，减少真实地址意外泄漏；新增完全本地的环境与数据清理自测。',
+    ],
+  },
+  {
     version: '1.0.4',
     date: '2026-06-24',
     highlights: [

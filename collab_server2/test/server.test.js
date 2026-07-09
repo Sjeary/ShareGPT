@@ -14,6 +14,7 @@ process.env.USERS_FILE = path.join(tmpDir, "users.json");
 process.env.GPT_USAGE_FILE = path.join(tmpDir, "gpt_usage.json");
 process.env.CHAT_HISTORY_FILE = path.join(tmpDir, "chat_history.json");
 process.env.CLIENT_BOOTSTRAP_FILE = path.join(tmpDir, "client_bootstrap.json");
+process.env.USER_STORES_FILE = path.join(tmpDir, "user_stores.json");
 process.env.RELEASES_DIR = path.join(tmpDir, "releases");
 process.env.LOGIN_MAX_FAILS = "3"; // 测试用小阈值
 process.env.LOGIN_LOCK_MS = "10000";
@@ -106,4 +107,77 @@ test("putUserStore: 乐观并发 — baseRev 不匹配则拒绝, 防止老版本
   // 不同用户/种类相互隔离。
   assert.strictEqual(srv.getUserStoreEntry(stores, "bob", "calendar").rev, 0);
   assert.strictEqual(srv.getUserStoreEntry(stores, "alice", "tasks").rev, 0);
+});
+
+test("密码复核: 不签发新会话, 错误密码拒绝, 正确密码保留原 token", async (t) => {
+  const salt = "verify-password-salt";
+  const password = "correct-password";
+  fs.writeFileSync(
+    process.env.USERS_FILE,
+    JSON.stringify({
+      users: [
+        {
+          username: "verify-user",
+          displayName: "Verify User",
+          salt,
+          passwordHash: srv.hashPassword(password, salt, 120000, "sha256"),
+          iterations: 120000,
+          digest: "sha256",
+          disabled: false,
+        },
+      ],
+    }),
+    "utf8",
+  );
+
+  await new Promise((resolve) => srv.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => srv.server.close(resolve)));
+  const address = srv.server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  const login = await fetch(`${baseUrl}/api/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "verify-user", password }),
+  });
+  assert.strictEqual(login.status, 200);
+  const { token } = await login.json();
+
+  const wrong = await fetch(`${baseUrl}/api/account/verify-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ password: "wrong-password" }),
+  });
+  assert.strictEqual(wrong.status, 401);
+
+  const correct = await fetch(`${baseUrl}/api/account/verify-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ password }),
+  });
+  assert.strictEqual(correct.status, 200);
+  assert.deepStrictEqual(await correct.json().then((body) => body.ok), true);
+
+  const stillLoggedIn = await fetch(`${baseUrl}/api/users`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.strictEqual(stillLoggedIn.status, 200, "密码复核不应替换或注销当前会话");
+
+  const privacyPayload = {
+    version: 1,
+    updatedAt: "2026-07-10T10:00:00.000Z",
+    environment: { mode: "proxy", timezone: "America/Los_Angeles" },
+  };
+  const savePrivacy = await fetch(`${baseUrl}/api/user-store/browser-privacy`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ baseRev: 0, data: privacyPayload }),
+  });
+  assert.strictEqual(savePrivacy.status, 200);
+  const loadPrivacy = await fetch(`${baseUrl}/api/user-store/browser-privacy`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  assert.strictEqual(loadPrivacy.status, 200);
+  assert.deepStrictEqual((await loadPrivacy.json()).data, privacyPayload);
 });

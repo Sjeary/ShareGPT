@@ -172,6 +172,31 @@ export interface ShareGptApi {
   navigateAiWorkspace: (payload: unknown) => Promise<unknown>
   // 代理检测: 检查该 AI 页面流量是否全部经发送代理 (梯子)。
   checkAiProxy: (kind: 'gpt' | 'gemini' | 'claude', tabId?: string) => Promise<AiProxyReport>
+  clearAiBrowserData: (
+    kind: 'gpt' | 'gemini' | 'claude',
+    confirmation: { password: string; serverUrl: string; token: string },
+  ) => Promise<{
+    ok: boolean
+    kind: 'gpt' | 'gemini' | 'claude'
+    clearedAt: string
+    homeUrl: string
+  }>
+  applyBrowserPrivacy: () => Promise<{
+    ok: boolean
+    results: Array<{ kind: string; tabId: string; ok: boolean; message?: string }>
+  }>
+  detectProxyEnvironment: () => Promise<{
+    ip: string
+    countryCode: string
+    country: string
+    region: string
+    city: string
+    timezone: string
+    latitude: number
+    longitude: number
+    accuracy: number
+    checkedAt: string
+  }>
   executeAiJavaScript: (payload: unknown) => Promise<unknown>
 
   // profile 独立窗口

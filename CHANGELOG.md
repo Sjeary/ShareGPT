@@ -7,6 +7,29 @@
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-07-10
+
+> **隐私与环境更新**：新增按服务清理网页登录数据、浏览器环境配置、代理出口同步与跨设备配置同步。建议升级。
+
+### 新增
+
+- **按服务清理网页登录数据**：可分别清除 ChatGPT、Gemini 或 Claude 的 Cookie、LocalStorage、IndexedDB、Cache Storage、Service Worker、HTTP 认证及网络/代码/DNS 缓存；不提供“一键清除全部”。
+- **密码二次确认**：清除前必须重新输入当前协作账号密码；服务器只复核密码、不签发新会话，也不会挤掉当前登录。
+- **浏览器环境配置**：支持跟随本机、美国预设或跟随代理出口；美国/代理模式使用 `en-US`，时区可选择美国时区或从出口自动校准。
+- **出口位置同步**：两条独立链路返回同一出口 IP 后才采用检测结果；地理位置可完全关闭，或只返回与出口 IP 一致的城市级粗略位置。
+- **跨设备同步**：同步非敏感的语言、美国预设时区与位置策略；每台设备单独检测当前代理节点，不上传 Cookie、密码、网页登录态、出口 IP、位置检测结果或本机清理记录。
+
+### 隐私
+
+- AI 网页启用 WebRTC `disable_non_proxied_udp` 策略，避免非代理 UDP 暴露真实网络地址。
+- 未启用出口地理位置时，网页的地理位置权限会被直接拒绝，不回落读取系统真实位置。
+- 本功能用于减少隐私泄漏和环境矛盾，不承诺删除服务商服务器记录或让网站无法识别代理。
+
+### 验证
+
+- 新增只访问 `127.0.0.1` 的 Electron/Chromium 自测，验证语言、时区、地理位置、WebRTC 策略和分区清理，不访问任何 AI 网站。
+- macOS 已覆盖 Cookie、LocalStorage、IndexedDB、Cache Storage、Service Worker 清理，以及其它 AI 分区不受影响的隔离测试。
+
 ## [1.0.4] - 2026-06-24
 
 > **功能更新**：安装可自选位置（可装到 C 盘以外）；消息通知默认更安静；表情组合更快。建议升级。
@@ -123,7 +146,8 @@
 
 - 更早的 5.x 为测试版本，不在此正式记录。
 
-[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.4...HEAD
+[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/Sjeary/ShareGPT/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/Sjeary/ShareGPT/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/Sjeary/ShareGPT/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/Sjeary/ShareGPT/compare/v1.0.1...v1.0.2

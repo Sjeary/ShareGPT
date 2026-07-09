@@ -650,10 +650,10 @@ function eventsForSubnet(subnetKey) {
   return loadCalendarStore().events.filter((e) => e.subnetKey === subnetKey);
 }
 
-// —— 个人云端存储 (按用户隔离: 个人日历 calendar / 待办备忘 tasks) ——
-// 结构: { stores: { [username]: { calendar: {rev,updatedAt,data}, tasks: {rev,updatedAt,data} } } }
+// —— 个人云端存储 (按用户隔离: 日历 / 待办 / 笔记 / 浏览器环境策略) ——
+// 结构: { stores: { [username]: { [kind]: {rev,updatedAt,data} } } }
 // rev 为单调递增整数, 用于乐观并发: 客户端写入须带 baseRev=当前 rev, 不匹配则拒绝(防止老版本覆盖新版本)。
-const USER_STORE_KINDS = new Set(["calendar", "tasks", "notes"]);
+const USER_STORE_KINDS = new Set(["calendar", "tasks", "notes", "browser-privacy"]);
 
 function loadUserStores() {
   try {
@@ -1524,6 +1524,38 @@ const server = http.createServer(async (req, res) => {
 
     sendJson(res, 200, { ok: true });
     setTimeout(broadcastPresence, 10);
+    return;
+  }
+
+  // 本地网页登录数据属于高风险删除操作：客户端在执行前必须让当前协作账号重输密码。
+  // 此端点只复核密码，不签发新 token，也不会挤掉当前登录会话。
+  if (req.method === "POST" && pathname === "/api/account/verify-password") {
+    const token = extractBearer(req);
+    const currentSession = resolveSessionByToken(token);
+    if (!currentSession) {
+      sendText(res, 401, "未授权");
+      return;
+    }
+    try {
+      const remoteIp = normalizeIp(req.socket?.remoteAddress);
+      const lock = loginLockState(remoteIp);
+      if (lock.locked) {
+        sendText(res, 429, `密码错误次数过多，请 ${Math.ceil(lock.retryAfterMs / 1000)} 秒后再试`);
+        return;
+      }
+      const payload = safeParseJson(await readBody(req)) || {};
+      const password = String(payload.password || "");
+      const { user } = findUser(currentSession.username);
+      if (!password || !user || user.disabled || !verifyPassword(user, password)) {
+        recordLoginFail(remoteIp);
+        sendText(res, 401, "密码错误");
+        return;
+      }
+      clearLoginFails(remoteIp);
+      sendJson(res, 200, { ok: true, verifiedAt: nowIso() });
+    } catch (err) {
+      sendText(res, 500, err.message || "密码验证失败");
+    }
     return;
   }
 
@@ -2664,6 +2696,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  server,
   hashPassword,
   verifyPassword,
   writeJsonAtomic,

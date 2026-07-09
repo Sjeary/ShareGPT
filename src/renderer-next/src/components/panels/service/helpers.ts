@@ -62,12 +62,18 @@ const CLAUDE_ALLOWED_HOSTS = [
   'jsdelivr.net',
   'esm.sh',
 ]
+const ENVIRONMENT_LOOKUP_HOSTS = ['ipwho.is']
 
 // 对应旧 renderer.js ~126 的 DEFAULT_TARGET_DOMAINS: 各组允许域去重后以逗号拼接。
 // target_domains 缺省/导入为空时回填此默认串 (旧 getSenderForm ~2408 / fillForm ~2489
 // / normalizeBootstrapPayload ~2750 / applySenderBootstrapConfig ~2790 行为一致)。
 export const DEFAULT_TARGET_DOMAINS = [
-  ...new Set([...GPT_ALLOWED_HOSTS, ...GEMINI_ALLOWED_HOSTS, ...CLAUDE_ALLOWED_HOSTS]),
+  ...new Set([
+    ...GPT_ALLOWED_HOSTS,
+    ...GEMINI_ALLOWED_HOSTS,
+    ...CLAUDE_ALLOWED_HOSTS,
+    ...ENVIRONMENT_LOOKUP_HOSTS,
+  ]),
 ].join(',')
 
 export const FALLBACK_MODES = [

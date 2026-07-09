@@ -1,6 +1,6 @@
 {
   "name": "sharegpt-desktop",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "ShareGPT desktop client with built-in messaging and embedded ChatGPT, Gemini and Claude web access (Gemini/Claude optional).",
   "main": "src/main/main.js",
   "author": "Sjeary",
@@ -23,11 +23,13 @@
     "sing-box"
   ],
   "scripts": {
-    "test": "node --test collab_server2/test/server.test.js",
+    "test": "node --test collab_server2/test/server.test.js src/main/test/browserPrivacy.test.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "typecheck:main": "tsc -p src/main/jsconfig.json",
+    "verify:browser-privacy": "electron scripts/verify-browser-privacy.js",
+    "verify:browser-privacy-ui": "npm run build:next && node scripts/verify-browser-privacy-ui.js",
     "prepare:assets": "node scripts/prepare-assets.mjs all",
     "build:next": "npm --prefix src/renderer-next install && npm --prefix src/renderer-next run build",
     "dev": "node scripts/prepare-assets.mjs all && npm exec -- electron .",

@@ -7,6 +7,10 @@ const os = require("node:os");
 const { URL } = require("node:url");
 const { VaultManager } = require("./vault");
 const { createNotesAi } = require("./notesAi");
+const {
+  DEFAULT_BROWSER_PRIVACY_SETTINGS,
+  normalizeBrowserPrivacySettings,
+} = require("./browserPrivacy");
 
 // 自动更新源 = GitHub Releases (参考 cc-switch 的做法)。仓库地址从 package.json 推导,
 // fork 的人只要改 package.json 的 homepage/repository 就指向自己的仓库, 不写死任何自建服务器。
@@ -32,6 +36,8 @@ const DEFAULT_TARGET_DOMAINS = [
   "oaiusercontent.com",
   "gravatar.com",
   "cloudflare.com",
+  // 设置页用它查询代理出口的时区与城市级位置；必须经发送代理，不能回落真实出口。
+  "ipwho.is",
   "wp.com",
   "gemini.google.com",
   "google.com",
@@ -123,6 +129,14 @@ const PUBLIC_DEFAULT_SETTINGS = {
     proxy_host: "127.0.0.1",
     proxy_port: "1080",
   },
+  claude: {
+    partition: "persist:claude-chat",
+    home_url: "https://claude.ai/",
+    last_url: "https://claude.ai/",
+    proxy_host: "127.0.0.1",
+    proxy_port: "1080",
+  },
+  browserPrivacy: structuredClone(DEFAULT_BROWSER_PRIVACY_SETTINGS),
   ui: {
     setup_guide_dismissed: false,
     theme: "dark",
@@ -152,12 +166,27 @@ const UPDATE_BACKUP_SKIP_NAMES = new Set([
 ]);
 
 function mergeSettings(base, override = {}) {
+  const basePrivacy = base.browserPrivacy || DEFAULT_BROWSER_PRIVACY_SETTINGS;
+  const overridePrivacy = override.browserPrivacy || {};
   return {
     sender: { ...base.sender, ...(override.sender || {}) },
     receiver: { ...base.receiver, ...(override.receiver || {}) },
     collab: { ...base.collab, ...(override.collab || {}) },
     gpt: { ...base.gpt, ...(override.gpt || {}) },
     gemini: { ...base.gemini, ...(override.gemini || {}) },
+    claude: { ...(base.claude || {}), ...(override.claude || {}) },
+    browserPrivacy: normalizeBrowserPrivacySettings({
+      ...basePrivacy,
+      ...overridePrivacy,
+      environment: {
+        ...(basePrivacy.environment || {}),
+        ...(overridePrivacy.environment || {}),
+      },
+      lastClearedAt: {
+        ...(basePrivacy.lastClearedAt || {}),
+        ...(overridePrivacy.lastClearedAt || {}),
+      },
+    }),
     ui: { ...base.ui, ...(override.ui || {}) },
   };
 }
@@ -508,7 +537,12 @@ class Backend {
       this.appMode === "sender"
         ? DEFAULT_TARGET_DOMAINS.join(",")
         : String(sender.target_domains || "");
-    const merged = [...String(baseRaw).replace(/\n/g, ",").split(","), ...autoDomains]
+    const merged = [
+      ...String(baseRaw).replace(/\n/g, ",").split(","),
+      ...autoDomains,
+      // 环境检测必须始终经远端出口，即使 all/dev 模式仍保存着旧版可编辑域名清单。
+      "ipwho.is",
+    ]
       .map((s) => String(s).trim().replace(/^\./, ""))
       .filter(Boolean);
     return [...new Set(merged)];
