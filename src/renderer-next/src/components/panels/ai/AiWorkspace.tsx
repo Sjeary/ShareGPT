@@ -557,13 +557,29 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
         {feedback.text && (
           <div
-            className={
+            role={feedback.tone === 'error' ? 'alert' : 'status'}
+            className={cn(
+              'flex shrink-0 items-start gap-2 border-b border-border px-4 py-1.5 text-xs',
               feedback.tone === 'error'
-                ? 'shrink-0 border-b border-border bg-destructive/10 px-4 py-1.5 text-xs text-destructive'
-                : 'shrink-0 border-b border-border bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground'
-            }
+                ? 'bg-destructive/10 text-destructive'
+                : 'bg-muted/40 text-muted-foreground',
+            )}
           >
-            {feedback.text}
+            <span className="min-w-0 flex-1 break-words">{feedback.text}</span>
+            <button
+              type="button"
+              title="关闭提示"
+              aria-label={`关闭 ${meta.title} 提示`}
+              onClick={() => setFeedback(kind, '')}
+              className={cn(
+                'shrink-0 rounded p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                feedback.tone === 'error'
+                  ? 'text-destructive/70 hover:bg-destructive/10 hover:text-destructive'
+                  : 'text-muted-foreground/70 hover:bg-muted hover:text-muted-foreground',
+              )}
+            >
+              <X className="size-3.5" />
+            </button>
           </div>
         )}
 
