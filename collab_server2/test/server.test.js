@@ -15,7 +15,14 @@ process.env.GPT_USAGE_FILE = path.join(tmpDir, "gpt_usage.json");
 process.env.CHAT_HISTORY_FILE = path.join(tmpDir, "chat_history.json");
 process.env.CLIENT_BOOTSTRAP_FILE = path.join(tmpDir, "client_bootstrap.json");
 process.env.USER_STORES_FILE = path.join(tmpDir, "user_stores.json");
+process.env.CALENDARS_FILE = path.join(tmpDir, "calendars.json");
+process.env.FOCUS_FILE = path.join(tmpDir, "focus_stats.json");
+process.env.FEEDBACK_FILE = path.join(tmpDir, "feedback.json");
+process.env.PROXY_MISSING_FILE = path.join(tmpDir, "proxy_missing.json");
+process.env.AIRPORT_FILE = path.join(tmpDir, "airport.json");
 process.env.RELEASES_DIR = path.join(tmpDir, "releases");
+process.env.RELEASE_STORE = path.join(tmpDir, "release_shared");
+process.env.SHARED_RELEASE_FILE = path.join(tmpDir, "release_shared", "release.json");
 process.env.LOGIN_MAX_FAILS = "3"; // 测试用小阈值
 process.env.LOGIN_LOCK_MS = "10000";
 
@@ -109,7 +116,7 @@ test("putUserStore: 乐观并发 — baseRev 不匹配则拒绝, 防止老版本
   assert.strictEqual(srv.getUserStoreEntry(stores, "alice", "tasks").rev, 0);
 });
 
-test("密码复核: 不签发新会话, 错误密码拒绝, 正确密码保留原 token", async (t) => {
+test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async (t) => {
   const salt = "verify-password-salt";
   const password = "correct-password";
   fs.writeFileSync(
@@ -136,6 +143,16 @@ test("密码复核: 不签发新会话, 错误密码拒绝, 正确密码保留�
   assert.ok(address && typeof address === "object");
   const baseUrl = `http://127.0.0.1:${address.port}`;
 
+  const health = await fetch(`${baseUrl}/api/health`);
+  assert.strictEqual(health.status, 200);
+  const healthBody = await health.json();
+  assert.strictEqual(healthBody.ok, true);
+  assert.strictEqual(typeof healthBody.serverTime, "string");
+
+  const preflight = await fetch(`${baseUrl}/api/login`, { method: "OPTIONS" });
+  assert.strictEqual(preflight.status, 204);
+  assert.strictEqual(preflight.headers.get("access-control-allow-origin"), "*");
+
   const login = await fetch(`${baseUrl}/api/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -143,6 +160,41 @@ test("密码复核: 不签发新会话, 错误密码拒绝, 正确密码保留�
   });
   assert.strictEqual(login.status, 200);
   const { token } = await login.json();
+  const authHeaders = { Authorization: `Bearer ${token}` };
+
+  const profile = await fetch(`${baseUrl}/api/profile`, { headers: authHeaders });
+  assert.strictEqual(profile.status, 200);
+  assert.strictEqual((await profile.json()).profile.username, "verify-user");
+
+  const bootstrap = await fetch(`${baseUrl}/api/client/bootstrap`, { headers: authHeaders });
+  assert.strictEqual(bootstrap.status, 200);
+  const bootstrapBody = await bootstrap.json();
+  assert.strictEqual(typeof bootstrapBody.fetchedAt, "string");
+  assert.ok(bootstrapBody.update && typeof bootstrapBody.update === "object");
+
+  const usage = await fetch(`${baseUrl}/api/gpt/usage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ count: 1 }),
+  });
+  assert.strictEqual(usage.status, 200);
+  const usageBody = await usage.json();
+  assert.strictEqual(usageBody.ok, true);
+  assert.strictEqual(usageBody.service, "gpt");
+
+  const stats = await fetch(`${baseUrl}/api/gpt/stats`, { headers: authHeaders });
+  assert.strictEqual(stats.status, 200);
+  const statsBody = await stats.json();
+  assert.strictEqual(statsBody.totalQueries, 1);
+  assert.ok(Array.isArray(statsBody.users));
+
+  const calendar = await fetch(`${baseUrl}/api/user-store/calendar`, { headers: authHeaders });
+  assert.strictEqual(calendar.status, 200);
+  assert.strictEqual((await calendar.json()).rev, 0);
+
+  const publicUpdate = await fetch(`${baseUrl}/api/public/update`);
+  assert.strictEqual(publicUpdate.status, 200);
+  assert.strictEqual(typeof (await publicUpdate.json()).version, "string");
 
   const wrong = await fetch(`${baseUrl}/api/account/verify-password`, {
     method: "POST",
@@ -160,7 +212,7 @@ test("密码复核: 不签发新会话, 错误密码拒绝, 正确密码保留�
   assert.deepStrictEqual(await correct.json().then((body) => body.ok), true);
 
   const stillLoggedIn = await fetch(`${baseUrl}/api/users`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: authHeaders,
   });
   assert.strictEqual(stillLoggedIn.status, 200, "密码复核不应替换或注销当前会话");
 

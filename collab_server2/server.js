@@ -5,6 +5,20 @@ const crypto = require("node:crypto");
 const { URL } = require("node:url");
 const { WebSocketServer } = require("ws");
 
+process.on("uncaughtException", (err) => {
+  try {
+    console.error("[collab] uncaughtException:", (err && err.stack) || err);
+  } catch {
+    // 控制台不可写时只能忽略，避免异常处理器再次抛错。
+  }
+});
+process.on("unhandledRejection", (err) => {
+  try {
+    console.error("[collab] unhandledRejection:", (err && err.stack) || err);
+  } catch {
+    // 控制台不可写时只能忽略，避免异常处理器再次抛错。
+  }
+});
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number.parseInt(process.env.PORT || "8088", 10);
 const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, "data", "users.json");
@@ -13,14 +27,16 @@ const CHAT_HISTORY_FILE =
   process.env.CHAT_HISTORY_FILE || path.join(__dirname, "data", "chat_history.json");
 const CLIENT_BOOTSTRAP_FILE =
   process.env.CLIENT_BOOTSTRAP_FILE || path.join(__dirname, "data", "client_bootstrap.json");
-// 组队(共享)日历持久化文件: 房间(subnetKey)维度的团队事件 (含 RSVP)。
+const RELEASES_DIR = process.env.RELEASES_DIR || path.join(__dirname, "data", "releases");
+// v1.0.2 新增: 组队日历 / 个人云端存储 (按群隔离, 各群通过 env 指向各自 data 目录)。
 const CALENDARS_FILE = process.env.CALENDARS_FILE || path.join(__dirname, "data", "calendars.json");
-// 个人云端存储: 按用户隔离的个人日历 / 待办备忘 (多端同步 + 乐观并发版本号防覆盖)。
 const USER_STORES_FILE =
   process.env.USER_STORES_FILE || path.join(__dirname, "data", "user_stores.json");
-// 团队专注(番茄钟)排名: 按用户按天聚合专注分钟/番茄数。
 const FOCUS_FILE = process.env.FOCUS_FILE || path.join(__dirname, "data", "focus_stats.json");
-const RELEASES_DIR = process.env.RELEASES_DIR || path.join(__dirname, "data", "releases");
+const DEV_TOKEN = process.env.DEV_TOKEN || "";
+const RELEASE_STORE = process.env.RELEASE_STORE || path.join(__dirname, "release_shared");
+const SHARED_RELEASE_FILE =
+  process.env.SHARED_RELEASE_FILE || path.join(RELEASE_STORE, "release.json");
 const SESSION_TTL_MS = Number.parseInt(process.env.SESSION_TTL_MS || `${24 * 60 * 60 * 1000}`, 10);
 const HISTORY_MAX = Number.parseInt(process.env.HISTORY_MAX || "2000", 10);
 const MAX_AVATAR_LENGTH = Number.parseInt(process.env.MAX_AVATAR_LENGTH || `${150 * 1024}`, 10);
@@ -37,36 +53,48 @@ const RECALL_EDITABLE_WINDOW_MS = Number.parseInt(
   process.env.RECALL_EDITABLE_WINDOW_MS || `${7 * 24 * 60 * 60 * 1000}`,
   10,
 );
-// CORS 来源: 默认 "*"。内嵌 Electron 客户端 origin 不固定, 且鉴权用 header 里的 Bearer token (不依赖 cookie),
-// 通配 origin 的实际风险有限; 部署到受控环境时可用 CORS_ORIGIN 收紧到具体来源。
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
-// 登录限流: 同一 IP 连续失败 LOGIN_MAX_FAILS 次后锁定 LOGIN_LOCK_MS 毫秒, 防暴力撞库。
 const LOGIN_MAX_FAILS = Number.parseInt(process.env.LOGIN_MAX_FAILS || "10", 10);
 const LOGIN_LOCK_MS = Number.parseInt(process.env.LOGIN_LOCK_MS || `${15 * 60 * 1000}`, 10);
 const SERVER_SENDER_BOOTSTRAP = {
   proxy_server:
     process.env.SHAREGPT_SENDER_PROXY_SERVER ||
+    process.env.CHATPORTAL_SENDER_PROXY_SERVER ||
     process.env.SENDER_PROXY_SERVER ||
     process.env.PROXY_SERVER ||
     "",
   proxy_port:
     process.env.SHAREGPT_SENDER_PROXY_PORT ||
+    process.env.CHATPORTAL_SENDER_PROXY_PORT ||
     process.env.SENDER_PROXY_PORT ||
     process.env.PROXY_PORT ||
     "",
   proxy_uuid:
     process.env.SHAREGPT_SENDER_PROXY_UUID ||
+    process.env.CHATPORTAL_SENDER_PROXY_UUID ||
     process.env.SENDER_PROXY_UUID ||
     process.env.PROXY_UUID ||
     "",
   socks_listen_port:
-    process.env.SHAREGPT_SENDER_SOCKS_PORT || process.env.SENDER_SOCKS_PORT || "1080",
+    process.env.SHAREGPT_SENDER_SOCKS_PORT ||
+    process.env.CHATPORTAL_SENDER_SOCKS_PORT ||
+    process.env.SENDER_SOCKS_PORT ||
+    "1080",
   fallback_mode:
-    process.env.SHAREGPT_SENDER_FALLBACK_MODE || process.env.SENDER_FALLBACK_MODE || "system_proxy",
+    process.env.SHAREGPT_SENDER_FALLBACK_MODE ||
+    process.env.CHATPORTAL_SENDER_FALLBACK_MODE ||
+    process.env.SENDER_FALLBACK_MODE ||
+    "system_proxy",
   fallback_local_port:
-    process.env.SHAREGPT_SENDER_FALLBACK_LOCAL_PORT || process.env.SENDER_FALLBACK_LOCAL_PORT || "",
+    process.env.SHAREGPT_SENDER_FALLBACK_LOCAL_PORT ||
+    process.env.CHATPORTAL_SENDER_FALLBACK_LOCAL_PORT ||
+    process.env.SENDER_FALLBACK_LOCAL_PORT ||
+    "",
   target_domains:
-    process.env.SHAREGPT_SENDER_TARGET_DOMAINS || process.env.SENDER_TARGET_DOMAINS || "",
+    process.env.SHAREGPT_SENDER_TARGET_DOMAINS ||
+    process.env.CHATPORTAL_SENDER_TARGET_DOMAINS ||
+    process.env.SENDER_TARGET_DOMAINS ||
+    "",
 };
 
 const DEFAULT_TARGET_DOMAINS = [
@@ -77,6 +105,7 @@ const DEFAULT_TARGET_DOMAINS = [
   "oaiusercontent.com",
   "gravatar.com",
   "cloudflare.com",
+  "ipwho.is",
   "wp.com",
   "gemini.google.com",
   "google.com",
@@ -88,9 +117,15 @@ const DEFAULT_TARGET_DOMAINS = [
 
 const sessions = new Map();
 const adminSessions = new Map();
+const devSessions = new Map();
 const wsClients = new Set();
 const wsByToken = new Map();
-const loginAttempts = new Map(); // ip -> { fails, lockUntil } 登录失败限流状态
+const loginAttempts = new Map();
+// 删除本地网页登录数据前的密码复核只接受已登录会话；失败次数按 token 单独限流，
+// 不改变旧客户端的登录、聊天或其它接口行为。
+const passwordVerifyAttempts = new Map();
+const PASSWORD_VERIFY_MAX_FAILS = 5;
+const PASSWORD_VERIFY_LOCK_MS = 15 * 60 * 1000;
 
 function safeEnvText(value) {
   return String(value || "").trim();
@@ -162,16 +197,9 @@ function normalizeUserRecord(record) {
     bio,
     isAdmin: Boolean(record?.isAdmin),
     disabled: Boolean(record?.disabled),
+    chatDisabled: Boolean(record?.chatDisabled),
     lastClient: normalizeClientInfo(record?.lastClient),
   };
-}
-
-// 原子写 JSON: 先写同目录临时文件再 rename, 避免写一半被 kill 导致主数据文件 (users/chat 等) 损坏。
-function writeJsonAtomic(file, obj) {
-  const data = JSON.stringify(obj, null, 2);
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
-  fs.writeFileSync(tmp, data, "utf-8");
-  fs.renameSync(tmp, file);
 }
 
 function ensureUsersFile() {
@@ -193,7 +221,7 @@ function loadUserStore() {
 }
 
 function saveUserStore(store) {
-  writeJsonAtomic(USERS_FILE, store);
+  fs.writeFileSync(USERS_FILE, JSON.stringify(store, null, 2), "utf-8");
 }
 
 function ensureGptUsageFile() {
@@ -360,12 +388,73 @@ function loadClientBootstrap(req = null) {
 
 function saveClientBootstrap(payload) {
   const normalized = normalizeBootstrapPayload(payload);
-  writeJsonAtomic(CLIENT_BOOTSTRAP_FILE, normalized);
+  fs.writeFileSync(CLIENT_BOOTSTRAP_FILE, JSON.stringify(normalized, null, 2), "utf-8");
   return normalized;
 }
 
 function ensureReleasesDir() {
   fs.mkdirSync(RELEASES_DIR, { recursive: true });
+}
+
+function ensureReleaseStore() {
+  fs.mkdirSync(RELEASE_STORE, { recursive: true });
+}
+function loadSharedRelease() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(SHARED_RELEASE_FILE, "utf-8"));
+    return {
+      version: safeText(raw.version),
+      notes: safeText(raw.notes),
+      publishedAt: safeText(raw.publishedAt),
+      windows: {
+        fileName: safeText(raw && raw.windows && raw.windows.fileName),
+      },
+      macos: { fileName: safeText(raw && raw.macos && raw.macos.fileName) },
+    };
+  } catch {
+    return {
+      version: "",
+      notes: "",
+      publishedAt: "",
+      windows: { fileName: "" },
+      macos: { fileName: "" },
+    };
+  }
+}
+function saveSharedRelease(rel) {
+  ensureReleaseStore();
+  const next = {
+    version: safeText(rel.version),
+    notes: safeText(rel.notes),
+    publishedAt: safeText(rel.publishedAt) || nowIso(),
+    windows: { fileName: safeText(rel && rel.windows && rel.windows.fileName) },
+    macos: { fileName: safeText(rel && rel.macos && rel.macos.fileName) },
+  };
+  fs.writeFileSync(SHARED_RELEASE_FILE, JSON.stringify(next, null, 2), "utf-8");
+  return next;
+}
+function sharedReleaseUpdateForClient(req) {
+  const rel = loadSharedRelease();
+  const base = getBaseUrl(req);
+  const dl = (fileName) =>
+    fileName && base ? base + "/downloads/" + encodeURIComponent(fileName) : "";
+  return {
+    version: rel.version,
+    notes: rel.notes,
+    publishedAt: rel.publishedAt,
+    windows: { url: dl(rel.windows.fileName), fileName: rel.windows.fileName },
+    macos: { url: dl(rel.macos.fileName), fileName: rel.macos.fileName },
+  };
+}
+function requireDevSession(req, res) {
+  const token = extractBearer(req);
+  const s = devSessions.get(token);
+  if (!s || s.expiresAt < Date.now()) {
+    if (s) devSessions.delete(token);
+    sendText(res, 401, "developer session required");
+    return null;
+  }
+  return s;
 }
 
 function normalizeAttachment(record) {
@@ -515,7 +604,7 @@ function saveChatHistoryStore(items) {
   if (history.length > HISTORY_MAX) {
     history.splice(0, history.length - HISTORY_MAX);
   }
-  writeJsonAtomic(CHAT_HISTORY_FILE, { history });
+  fs.writeFileSync(CHAT_HISTORY_FILE, JSON.stringify({ history }, null, 2), "utf-8");
 }
 
 const history = loadChatHistoryStore();
@@ -540,7 +629,7 @@ function saveGptUsageStore(store) {
   if (events.length > GPT_USAGE_MAX) {
     events.splice(0, events.length - GPT_USAGE_MAX);
   }
-  writeJsonAtomic(GPT_USAGE_FILE, { events });
+  fs.writeFileSync(GPT_USAGE_FILE, JSON.stringify({ events }, null, 2), "utf-8");
 }
 
 function recordGptUsage(username, count = 1) {
@@ -555,213 +644,174 @@ function recordGptUsage(username, count = 1) {
   saveGptUsageStore(usageStore);
 }
 
-// ===== 组队(共享)日历: 房间(subnetKey)维度的团队事件 =====
-// 数据模型 TeamEvent {
-//   id, subnetKey, title, description?, location?, start(ISO), end(ISO), allDay,
-//   organizer(username), attendees:[{username, displayName, rsvp}], color?,
-//   createdBy, createdAt, updatedAt
-// }
-// 持久化镜像聊天历史: ensure -> load(normalize) -> writeJsonAtomic。
-
-const CALENDAR_RSVP_VALUES = ["needs_action", "accept", "decline", "tentative"];
-
-function ensureCalendarsFile() {
-  fs.mkdirSync(path.dirname(CALENDARS_FILE), { recursive: true });
-  if (!fs.existsSync(CALENDARS_FILE)) {
-    fs.writeFileSync(CALENDARS_FILE, JSON.stringify({ events: [] }, null, 2), "utf-8");
-  }
+// 多服务 (gpt/gemini/claude) 使用统计: 各自独立存储文件, 与 GPT 同目录。
+function serviceUsageFile(service) {
+  if (service === "gpt") return GPT_USAGE_FILE;
+  return path.join(path.dirname(GPT_USAGE_FILE), service + "_usage.json");
 }
-
-function normalizeRsvp(value) {
-  const v = safeText(value);
-  return CALENDAR_RSVP_VALUES.includes(v) ? v : "needs_action";
-}
-
-function normalizeAttendee(record) {
-  const username = safeText(record?.username);
-  if (!username) return null;
-  return {
-    username,
-    displayName: safeText(record?.displayName) || username,
-    rsvp: normalizeRsvp(record?.rsvp),
-  };
-}
-
-function normalizeTeamEvent(record) {
-  const id = safeText(record?.id);
-  const title = safeText(record?.title).slice(0, 200);
-  const start = safeText(record?.start);
-  const end = safeText(record?.end);
-  if (!id || !start) return null;
-  const attendees = Array.isArray(record?.attendees)
-    ? record.attendees.map(normalizeAttendee).filter(Boolean)
-    : [];
-  // 同名去重 (后者覆盖前者)。
-  const dedupAttendees = [];
-  const seen = new Set();
-  for (const a of attendees) {
-    if (seen.has(a.username)) {
-      const idx = dedupAttendees.findIndex((x) => x.username === a.username);
-      if (idx >= 0) dedupAttendees[idx] = a;
-      continue;
-    }
-    seen.add(a.username);
-    dedupAttendees.push(a);
-  }
-  return {
-    id,
-    subnetKey: safeText(record?.subnetKey),
-    title,
-    description: safeText(record?.description).slice(0, 2000),
-    location: safeText(record?.location).slice(0, 200),
-    start,
-    end: end || start,
-    allDay: Boolean(record?.allDay),
-    organizer: safeText(record?.organizer),
-    attendees: dedupAttendees,
-    color: safeText(record?.color).slice(0, 32),
-    createdBy: safeText(record?.createdBy),
-    createdAt: safeText(record?.createdAt) || nowIso(),
-    updatedAt: safeText(record?.updatedAt) || nowIso(),
-  };
-}
-
-function loadCalendarStore() {
-  ensureCalendarsFile();
+function loadUsageStoreFile(file) {
   try {
-    const raw = JSON.parse(fs.readFileSync(CALENDARS_FILE, "utf-8"));
+    const raw = JSON.parse(fs.readFileSync(file, "utf-8"));
     const events = Array.isArray(raw.events)
-      ? raw.events.map(normalizeTeamEvent).filter(Boolean)
+      ? raw.events.map(normalizeUsageEvent).filter((item) => item.username)
       : [];
     return { events };
   } catch {
     return { events: [] };
   }
 }
-
-function saveCalendarStore(store) {
-  const events = Array.isArray(store?.events)
-    ? store.events.map(normalizeTeamEvent).filter(Boolean)
+function saveUsageStoreFile(file, store) {
+  const events = Array.isArray(store && store.events)
+    ? store.events.map(normalizeUsageEvent).filter((item) => item.username)
     : [];
-  writeJsonAtomic(CALENDARS_FILE, { events });
+  if (events.length > GPT_USAGE_MAX) events.splice(0, events.length - GPT_USAGE_MAX);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ events }, null, 2), "utf-8");
+}
+function recordServiceUsage(service, username, count = 1) {
+  const u = safeText(username);
+  if (!u) return;
+  const file = serviceUsageFile(service);
+  const store = loadUsageStoreFile(file);
+  store.events.push({
+    username: u,
+    timestamp: nowIso(),
+    count: Math.max(1, Number.parseInt(String(count || "1"), 10) || 1),
+  });
+  saveUsageStoreFile(file, store);
+}
+function buildServiceUsageStats(service, fromRaw, toRaw) {
+  const events = loadUsageStoreFile(serviceUsageFile(service)).events;
+  return buildGptUsageStats(events, fromRaw, toRaw);
 }
 
-function eventsForSubnet(subnetKey) {
-  return loadCalendarStore().events.filter((e) => e.subnetKey === subnetKey);
-}
-
-// —— 个人云端存储 (按用户隔离: 日历 / 待办 / 笔记 / 浏览器环境策略) ——
-// 结构: { stores: { [username]: { [kind]: {rev,updatedAt,data} } } }
-// rev 为单调递增整数, 用于乐观并发: 客户端写入须带 baseRev=当前 rev, 不匹配则拒绝(防止老版本覆盖新版本)。
-const USER_STORE_KINDS = new Set(["calendar", "tasks", "notes", "browser-privacy"]);
-
-function loadUserStores() {
+// 用户反馈建议存储。
+const FEEDBACK_FILE =
+  process.env.FEEDBACK_FILE || path.join(path.dirname(GPT_USAGE_FILE), "feedback.json");
+const FEEDBACK_MAX = 5000;
+function loadFeedbackStore() {
   try {
-    if (!fs.existsSync(USER_STORES_FILE)) return { stores: {} };
-    const raw = JSON.parse(fs.readFileSync(USER_STORES_FILE, "utf8"));
-    return raw && typeof raw.stores === "object" && raw.stores ? raw : { stores: {} };
+    const raw = JSON.parse(fs.readFileSync(FEEDBACK_FILE, "utf-8"));
+    return { items: Array.isArray(raw.items) ? raw.items : [] };
   } catch {
-    return { stores: {} };
+    return { items: [] };
   }
 }
-
-function saveUserStores(store) {
-  writeJsonAtomic(USER_STORES_FILE, { stores: store?.stores || {} });
+function saveFeedbackStore(store) {
+  const items = Array.isArray(store && store.items) ? store.items : [];
+  if (items.length > FEEDBACK_MAX) items.splice(0, items.length - FEEDBACK_MAX);
+  fs.mkdirSync(path.dirname(FEEDBACK_FILE), { recursive: true });
+  fs.writeFileSync(FEEDBACK_FILE, JSON.stringify({ items }, null, 2), "utf-8");
+}
+let feedbackSeq = 0;
+function addFeedback(entry) {
+  const store = loadFeedbackStore();
+  feedbackSeq += 1;
+  const item = {
+    id: String(Date.now()) + "-" + String(feedbackSeq),
+    username: safeText(entry.username),
+    displayName: safeText(entry.displayName) || safeText(entry.username),
+    text: safeText(entry.text).slice(0, 2000),
+    version: safeText(entry.version).slice(0, 60),
+    platform: safeText(entry.platform).slice(0, 60),
+    createdAt: nowIso(),
+  };
+  store.items.push(item);
+  saveFeedbackStore(store);
+  return item;
 }
 
-function getUserStoreEntry(stores, username, kind) {
-  const u = stores.stores[username];
-  const e = u && u[kind];
-  return e && typeof e === "object" && Number.isInteger(e.rev)
-    ? e
-    : { rev: 0, updatedAt: "", data: null };
-}
-
-// 纯函数: 对 stores 做一次乐观并发写入。baseRev 必须等于当前 rev, 否则返回冲突(不修改 stores)。
-// 返回 { ok, conflict?, rev, updatedAt, data }; ok 时 stores 已就地更新(调用方负责持久化)。
-function putUserStore(stores, username, kind, baseRev, data) {
-  const entry = getUserStoreEntry(stores, username, kind);
-  if (baseRev !== entry.rev) {
+// "会用到但没走代理"的域名上报聚合 (客户端代理检测自动上报; 管理端查看以维护内置清单)。
+const PROXY_MISSING_FILE =
+  process.env.PROXY_MISSING_FILE || path.join(path.dirname(GPT_USAGE_FILE), "proxy_missing.json");
+const PROXY_MISSING_MAX = 2000;
+function loadProxyMissingStore() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(PROXY_MISSING_FILE, "utf-8"));
     return {
-      ok: false,
-      conflict: true,
-      rev: entry.rev,
-      updatedAt: entry.updatedAt,
-      data: entry.data,
+      domains: raw && typeof raw.domains === "object" && raw.domains ? raw.domains : {},
     };
-  }
-  const next = { rev: entry.rev + 1, updatedAt: nowIso(), data };
-  stores.stores[username] = stores.stores[username] || {};
-  stores.stores[username][kind] = next;
-  return { ok: true, rev: next.rev, updatedAt: next.updatedAt, data };
-}
-
-// 把负载实时下发给同一用户的其它在线端 (按 username 匹配, 排除发起端 token)。
-function broadcastToUser(username, payload, exceptToken) {
-  for (const client of wsClients) {
-    if (client.username !== username) continue;
-    if (exceptToken && client.token === exceptToken) continue;
-    sendToClient(client, payload);
-  }
-}
-
-// —— 团队专注(番茄钟)排名 —— 结构: { daily: { [username]: { [YYYY-MM-DD]: { minutes, count } } } }
-function focusDateStr(d = new Date()) {
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-function loadFocusStore() {
-  try {
-    if (!fs.existsSync(FOCUS_FILE)) return { daily: {} };
-    const raw = JSON.parse(fs.readFileSync(FOCUS_FILE, "utf8"));
-    return raw && typeof raw.daily === "object" && raw.daily ? raw : { daily: {} };
   } catch {
-    return { daily: {} };
+    return { domains: {} };
   }
 }
-function saveFocusStore(store) {
-  writeJsonAtomic(FOCUS_FILE, { daily: store?.daily || {} });
-}
-function reportFocus(username, minutes, count) {
-  const store = loadFocusStore();
-  const date = focusDateStr();
-  const u = (store.daily[username] = store.daily[username] || {});
-  const d = (u[date] = u[date] || { minutes: 0, count: 0 });
-  d.minutes += Math.max(0, Math.min(600, Number(minutes) || 0));
-  d.count += Math.max(0, Math.min(50, Number(count) || 0));
-  saveFocusStore(store);
-  return d;
-}
-function focusLeaderboard(range) {
-  const store = loadFocusStore();
-  const days = new Set();
-  if (range === "week") {
-    const now = new Date();
-    for (let i = 0; i < 7; i++) {
-      const dd = new Date(now);
-      dd.setDate(now.getDate() - i);
-      days.add(focusDateStr(dd));
-    }
-  } else {
-    days.add(focusDateStr());
+function saveProxyMissingStore(store) {
+  const domains = store && typeof store.domains === "object" ? store.domains : {};
+  const keys = Object.keys(domains);
+  if (keys.length > PROXY_MISSING_MAX) {
+    keys.sort((a, b) =>
+      String(domains[a].lastSeen || "").localeCompare(String(domains[b].lastSeen || "")),
+    );
+    for (const k of keys.slice(0, keys.length - PROXY_MISSING_MAX)) delete domains[k];
   }
-  const rows = [];
-  for (const [username, byDate] of Object.entries(store.daily)) {
-    let minutes = 0;
-    let count = 0;
-    for (const [date, v] of Object.entries(byDate)) {
-      if (days.has(date)) {
-        minutes += v.minutes || 0;
-        count += v.count || 0;
-      }
-    }
-    if (minutes > 0 || count > 0) {
-      const prof = getPublicProfile(username);
-      rows.push({ username, displayName: prof.displayName || username, minutes, count });
-    }
+  fs.mkdirSync(path.dirname(PROXY_MISSING_FILE), { recursive: true });
+  fs.writeFileSync(PROXY_MISSING_FILE, JSON.stringify({ domains }, null, 2), "utf-8");
+}
+function recordMissingDomains(username, domains, version) {
+  const list = Array.isArray(domains) ? domains : [];
+  const clean = [];
+  for (const d of list) {
+    const host = safeText(d).toLowerCase().slice(0, 120);
+    if (host && /^[a-z0-9.-]+$/.test(host)) clean.push(host);
+    if (clean.length >= 50) break;
   }
-  rows.sort((a, b) => b.minutes - a.minutes || b.count - a.count);
-  return rows.slice(0, 50);
+  if (!clean.length) return;
+  const store = loadProxyMissingStore();
+  const now = nowIso();
+  const u = safeText(username);
+  const v = safeText(version).slice(0, 60);
+  for (const host of clean) {
+    const e = store.domains[host] || {
+      count: 0,
+      firstSeen: now,
+      lastSeen: now,
+      reporters: [],
+      versions: [],
+    };
+    e.count = (Number(e.count) || 0) + 1;
+    e.lastSeen = now;
+    if (u && Array.isArray(e.reporters) && !e.reporters.includes(u)) {
+      e.reporters.push(u);
+      if (e.reporters.length > 50) e.reporters.shift();
+    }
+    if (v && Array.isArray(e.versions) && !e.versions.includes(v)) {
+      e.versions.push(v);
+      if (e.versions.length > 20) e.versions.shift();
+    }
+    store.domains[host] = e;
+  }
+  saveProxyMissingStore(store);
+}
+
+// 机场节点 (管理端从 Clash 节点转换成 sing-box outbound 后下发; 按群存一份)。
+const AIRPORT_FILE =
+  process.env.AIRPORT_FILE || path.join(path.dirname(GPT_USAGE_FILE), "airport.json");
+function loadAirport() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(AIRPORT_FILE, "utf-8"));
+    const outbound = raw && raw.outbound && typeof raw.outbound === "object" ? raw.outbound : null;
+    return {
+      name: safeText(raw && raw.name),
+      outbound,
+      updatedAt: safeText(raw && raw.updatedAt),
+    };
+  } catch {
+    return { name: "", outbound: null, updatedAt: "" };
+  }
+}
+function saveAirport(name, outbound) {
+  const next = {
+    name: safeText(name).slice(0, 120),
+    outbound: outbound && typeof outbound === "object" ? outbound : null,
+    updatedAt: nowIso(),
+  };
+  fs.mkdirSync(path.dirname(AIRPORT_FILE), { recursive: true });
+  fs.writeFileSync(AIRPORT_FILE, JSON.stringify(next, null, 2), "utf-8");
+  return next;
+}
+function airportForClient() {
+  const a = loadAirport();
+  return a.outbound ? { name: a.name, outbound: a.outbound } : null;
 }
 
 function findUser(username) {
@@ -803,7 +853,6 @@ function normalizeIp(rawIp) {
   return raw;
 }
 
-// 登录限流辅助: 按 IP 记失败次数, 达到阈值后锁定一段时间。
 function loginLockState(ip) {
   const rec = loginAttempts.get(ip);
   if (rec && rec.lockUntil && rec.lockUntil > Date.now()) {
@@ -811,6 +860,7 @@ function loginLockState(ip) {
   }
   return { locked: false, retryAfterMs: 0 };
 }
+
 function recordLoginFail(ip) {
   const rec = loginAttempts.get(ip) || { fails: 0, lockUntil: 0 };
   rec.fails += 1;
@@ -820,6 +870,7 @@ function recordLoginFail(ip) {
   }
   loginAttempts.set(ip, rec);
 }
+
 function clearLoginFails(ip) {
   loginAttempts.delete(ip);
 }
@@ -914,6 +965,7 @@ function activeUsers() {
   const list = [];
   const map = getOnlineClientMap();
   for (const [username, client] of map.entries()) {
+    if (client.chatDisabled) continue;
     list.push({
       username,
       displayName: safeText(client.displayName) || username,
@@ -935,7 +987,7 @@ function buildUserDirectory() {
   const onlineMap = getOnlineClientMap();
 
   const users = store.users
-    .filter((item) => !item.disabled)
+    .filter((item) => !item.disabled && !item.chatDisabled)
     .map((user) => {
       const onlineClient = onlineMap.get(user.username);
       return {
@@ -979,11 +1031,23 @@ function getPublicProfile(username) {
     avatar: safeText(user.avatar),
     avatarKind: safeText(user.avatarKind) || inferAvatarKind(user.avatar),
     bio: safeText(user.bio),
+    isAdmin: Boolean(user.isAdmin),
+    chatDisabled: Boolean(user.chatDisabled),
   };
 }
 
+const CHAT_DISABLED_BLOCK_TYPES = new Set([
+  "chat",
+  "chat_typing",
+  "chat_read",
+  "chat_recall",
+  "chat_edit",
+  "history",
+  "history_sync",
+]);
 function sendToClient(client, payload) {
   if (!client || client.readyState !== client.OPEN) return;
+  if (client.chatDisabled && payload && CHAT_DISABLED_BLOCK_TYPES.has(payload.type)) return;
   client.send(JSON.stringify(payload));
 }
 
@@ -1062,6 +1126,7 @@ function createUserRecord(username, password, extra = {}) {
     displayName: safeText(extra.displayName) || normalized,
     isAdmin: Boolean(extra.isAdmin),
     disabled: Boolean(extra.disabled),
+    chatDisabled: Boolean(extra.chatDisabled),
     createdAt: safeText(extra.createdAt) || now,
     updatedAt: now,
   });
@@ -1098,6 +1163,7 @@ function adminUserSummary(user) {
     bio: safeText(user.bio),
     isAdmin: Boolean(user.isAdmin),
     disabled: Boolean(user.disabled),
+    chatDisabled: Boolean(user.chatDisabled),
     online: Boolean(onlineClient),
     client: onlineClient
       ? normalizeClientInfo(onlineClient.clientInfo)
@@ -1133,7 +1199,10 @@ function serveReleaseDownload(req, res, pathname) {
     sendText(res, 404, "Not Found");
     return true;
   }
-  const filePath = path.join(RELEASES_DIR, safeName);
+  let filePath = path.join(RELEASE_STORE, safeName);
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    filePath = path.join(RELEASES_DIR, safeName);
+  }
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
     sendText(res, 404, "Not Found");
     return true;
@@ -1141,7 +1210,7 @@ function serveReleaseDownload(req, res, pathname) {
   res.writeHead(200, {
     "Content-Type": "application/octet-stream",
     "Content-Length": fs.statSync(filePath).size,
-    "Content-Disposition": `attachment; filename="${safeName}"`,
+    "Content-Disposition": `attachment; filename="${safeName.replace(/[^ -~]+/g, "_")}"; filename*=UTF-8''${encodeURIComponent(safeName)}`,
     "Access-Control-Allow-Origin": CORS_ORIGIN,
   });
   fs.createReadStream(filePath).pipe(res);
@@ -1337,7 +1406,7 @@ function parseRangeBoundary(rawValue, endOfDay = false) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function buildGptUsageStats(fromRaw, toRaw) {
+function buildGptUsageStats(usageEvents, fromRaw, toRaw) {
   const fromDate = parseRangeBoundary(fromRaw, false);
   const toDate = parseRangeBoundary(toRaw, true);
 
@@ -1351,11 +1420,10 @@ function buildGptUsageStats(fromRaw, toRaw) {
     throw new Error("开始时间不能晚于结束时间");
   }
 
-  const usageStore = loadGptUsageStore();
   const fromMs = fromDate ? fromDate.getTime() : Number.NEGATIVE_INFINITY;
   const toMs = toDate ? toDate.getTime() : Number.POSITIVE_INFINITY;
 
-  const filteredEvents = usageStore.events.filter((item) => {
+  const filteredEvents = (Array.isArray(usageEvents) ? usageEvents : []).filter((item) => {
     const ts = new Date(item.timestamp).getTime();
     if (!Number.isFinite(ts)) return false;
     return ts >= fromMs && ts <= toMs;
@@ -1396,6 +1464,216 @@ function buildGptUsageStats(fromRaw, toRaw) {
     users,
     serverTime: nowIso(),
   };
+}
+
+// ===== v1.0.2 新增辅助: 原子写 / 组队日历 / 个人云端存储 / 单用户多端广播 =====
+// 原子写 JSON: 先写临时文件再 rename, 避免写一半被 kill 损坏主数据文件。
+function writeJsonAtomic(file, obj) {
+  const data = JSON.stringify(obj, null, 2);
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmp, data, "utf-8");
+  fs.renameSync(tmp, file);
+}
+
+const CALENDAR_RSVP_VALUES = ["needs_action", "accept", "decline", "tentative"];
+
+function ensureCalendarsFile() {
+  fs.mkdirSync(path.dirname(CALENDARS_FILE), { recursive: true });
+  if (!fs.existsSync(CALENDARS_FILE)) {
+    fs.writeFileSync(CALENDARS_FILE, JSON.stringify({ events: [] }, null, 2), "utf-8");
+  }
+}
+
+function normalizeRsvp(value) {
+  const v = safeText(value);
+  return CALENDAR_RSVP_VALUES.includes(v) ? v : "needs_action";
+}
+
+function normalizeAttendee(record) {
+  const username = safeText(record?.username);
+  if (!username) return null;
+  return {
+    username,
+    displayName: safeText(record?.displayName) || username,
+    rsvp: normalizeRsvp(record?.rsvp),
+  };
+}
+
+function normalizeTeamEvent(record) {
+  const id = safeText(record?.id);
+  const title = safeText(record?.title).slice(0, 200);
+  const start = safeText(record?.start);
+  const end = safeText(record?.end);
+  if (!id || !start) return null;
+  const attendees = Array.isArray(record?.attendees)
+    ? record.attendees.map(normalizeAttendee).filter(Boolean)
+    : [];
+  const dedupAttendees = [];
+  const seen = new Set();
+  for (const a of attendees) {
+    if (seen.has(a.username)) {
+      const idx = dedupAttendees.findIndex((x) => x.username === a.username);
+      if (idx >= 0) dedupAttendees[idx] = a;
+      continue;
+    }
+    seen.add(a.username);
+    dedupAttendees.push(a);
+  }
+  return {
+    id,
+    subnetKey: safeText(record?.subnetKey),
+    title,
+    description: safeText(record?.description).slice(0, 2000),
+    location: safeText(record?.location).slice(0, 200),
+    start,
+    end: end || start,
+    allDay: Boolean(record?.allDay),
+    organizer: safeText(record?.organizer),
+    attendees: dedupAttendees,
+    color: safeText(record?.color).slice(0, 32),
+    createdBy: safeText(record?.createdBy),
+    createdAt: safeText(record?.createdAt) || nowIso(),
+    updatedAt: safeText(record?.updatedAt) || nowIso(),
+  };
+}
+
+function loadCalendarStore() {
+  ensureCalendarsFile();
+  try {
+    const raw = JSON.parse(fs.readFileSync(CALENDARS_FILE, "utf-8"));
+    const events = Array.isArray(raw.events)
+      ? raw.events.map(normalizeTeamEvent).filter(Boolean)
+      : [];
+    return { events };
+  } catch {
+    return { events: [] };
+  }
+}
+
+function saveCalendarStore(store) {
+  const events = Array.isArray(store?.events)
+    ? store.events.map(normalizeTeamEvent).filter(Boolean)
+    : [];
+  writeJsonAtomic(CALENDARS_FILE, { events });
+}
+
+function eventsForSubnet(subnetKey) {
+  return loadCalendarStore().events.filter((e) => e.subnetKey === subnetKey);
+}
+
+// 个人云端存储 (按用户隔离: calendar / tasks)。rev 单调递增, 写入须带 baseRev=当前 rev, 防止老版本覆盖新版本。
+const USER_STORE_KINDS = new Set(["calendar", "tasks", "notes", "browser-privacy"]);
+
+function loadUserStores() {
+  try {
+    if (!fs.existsSync(USER_STORES_FILE)) return { stores: {} };
+    const raw = JSON.parse(fs.readFileSync(USER_STORES_FILE, "utf8"));
+    return raw && typeof raw.stores === "object" && raw.stores ? raw : { stores: {} };
+  } catch {
+    return { stores: {} };
+  }
+}
+
+function saveUserStores(store) {
+  writeJsonAtomic(USER_STORES_FILE, { stores: store?.stores || {} });
+}
+
+function getUserStoreEntry(stores, username, kind) {
+  const u = stores.stores[username];
+  const e = u && u[kind];
+  return e && typeof e === "object" && Number.isInteger(e.rev)
+    ? e
+    : { rev: 0, updatedAt: "", data: null };
+}
+
+function putUserStore(stores, username, kind, baseRev, data) {
+  const entry = getUserStoreEntry(stores, username, kind);
+  if (baseRev !== entry.rev) {
+    return {
+      ok: false,
+      conflict: true,
+      rev: entry.rev,
+      updatedAt: entry.updatedAt,
+      data: entry.data,
+    };
+  }
+  const next = { rev: entry.rev + 1, updatedAt: nowIso(), data };
+  stores.stores[username] = stores.stores[username] || {};
+  stores.stores[username][kind] = next;
+  return { ok: true, rev: next.rev, updatedAt: next.updatedAt, data };
+}
+
+// 把负载实时下发给同一用户的其它在线端 (按 username 匹配, 排除发起端 token)。
+function broadcastToUser(username, payload, exceptToken) {
+  for (const client of wsClients) {
+    if (client.username !== username) continue;
+    if (exceptToken && client.token === exceptToken) continue;
+    sendToClient(client, payload);
+  }
+}
+
+// —— 团队专注(番茄钟)排名: { daily: { [username]: { [YYYY-MM-DD]: { minutes, count } } } } ——
+function focusDateStr(d = new Date()) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function loadFocusStore() {
+  try {
+    if (!fs.existsSync(FOCUS_FILE)) return { daily: {} };
+    const raw = JSON.parse(fs.readFileSync(FOCUS_FILE, "utf8"));
+    return raw && typeof raw.daily === "object" && raw.daily ? raw : { daily: {} };
+  } catch {
+    return { daily: {} };
+  }
+}
+function saveFocusStore(store) {
+  writeJsonAtomic(FOCUS_FILE, { daily: store?.daily || {} });
+}
+function reportFocus(username, minutes, count) {
+  const store = loadFocusStore();
+  const date = focusDateStr();
+  const u = (store.daily[username] = store.daily[username] || {});
+  const d = (u[date] = u[date] || { minutes: 0, count: 0 });
+  d.minutes += Math.max(0, Math.min(600, Number(minutes) || 0));
+  d.count += Math.max(0, Math.min(50, Number(count) || 0));
+  saveFocusStore(store);
+  return d;
+}
+function focusLeaderboard(range) {
+  const store = loadFocusStore();
+  const days = new Set();
+  if (range === "week") {
+    const now = new Date();
+    for (let i = 0; i < 7; i++) {
+      const dd = new Date(now);
+      dd.setDate(now.getDate() - i);
+      days.add(focusDateStr(dd));
+    }
+  } else {
+    days.add(focusDateStr());
+  }
+  const rows = [];
+  for (const [username, byDate] of Object.entries(store.daily)) {
+    let minutes = 0,
+      count = 0;
+    for (const [date, v] of Object.entries(byDate)) {
+      if (days.has(date)) {
+        minutes += v.minutes || 0;
+        count += v.count || 0;
+      }
+    }
+    if (minutes > 0 || count > 0) {
+      const prof = getPublicProfile(username);
+      rows.push({
+        username,
+        displayName: prof.displayName || username,
+        minutes,
+        count,
+      });
+    }
+  }
+  rows.sort((a, b) => b.minutes - a.minutes || b.count - a.count);
+  return rows.slice(0, 50);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -1527,8 +1805,8 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 本地网页登录数据属于高风险删除操作：客户端在执行前必须让当前协作账号重输密码。
-  // 此端点只复核密码，不签发新 token，也不会挤掉当前登录会话。
+  // v1.0.5：高风险的本地网页数据清理前复核当前协作账号密码。
+  // 这是纯新增接口，不签发新 token、不会挤掉现有会话，也不改变任何旧接口响应。
   if (req.method === "POST" && pathname === "/api/account/verify-password") {
     const token = extractBearer(req);
     const currentSession = resolveSessionByToken(token);
@@ -1537,21 +1815,36 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     try {
-      const remoteIp = normalizeIp(req.socket?.remoteAddress);
-      const lock = loginLockState(remoteIp);
-      if (lock.locked) {
-        sendText(res, 429, `密码错误次数过多，请 ${Math.ceil(lock.retryAfterMs / 1000)} 秒后再试`);
+      const now = Date.now();
+      const attempts = passwordVerifyAttempts.get(token);
+      if (attempts?.lockUntil > now) {
+        sendText(
+          res,
+          429,
+          `密码错误次数过多，请 ${Math.ceil((attempts.lockUntil - now) / 1000)} 秒后再试`,
+        );
         return;
       }
+      if (attempts?.lockUntil) passwordVerifyAttempts.delete(token);
+
       const payload = safeParseJson(await readBody(req)) || {};
       const password = String(payload.password || "");
       const { user } = findUser(currentSession.username);
-      if (!password || !user || user.disabled || !verifyPassword(user, password)) {
-        recordLoginFail(remoteIp);
+      if (!password || !user || !verifyPassword(user, password)) {
+        const previous = passwordVerifyAttempts.get(token) || {
+          fails: 0,
+          lockUntil: 0,
+        };
+        const fails = previous.fails + 1;
+        passwordVerifyAttempts.set(token, {
+          fails: fails >= PASSWORD_VERIFY_MAX_FAILS ? 0 : fails,
+          lockUntil: fails >= PASSWORD_VERIFY_MAX_FAILS ? now + PASSWORD_VERIFY_LOCK_MS : 0,
+        });
         sendText(res, 401, "密码错误");
         return;
       }
-      clearLoginFails(remoteIp);
+
+      passwordVerifyAttempts.delete(token);
       sendJson(res, 200, { ok: true, verifiedAt: nowIso() });
     } catch (err) {
       sendText(res, 500, err.message || "密码验证失败");
@@ -1597,20 +1890,12 @@ const server = http.createServer(async (req, res) => {
       const payload = safeParseJson(body);
       const username = safeText(payload?.username);
       const password = String(payload?.password || "");
-      const remoteIp = normalizeIp(req.socket?.remoteAddress);
-      const lock = loginLockState(remoteIp);
-      if (lock.locked) {
-        sendText(res, 429, `登录失败次数过多，请 ${Math.ceil(lock.retryAfterMs / 1000)} 秒后再试`);
-        return;
-      }
       const { user } = findUser(username);
 
       if (!user || !user.isAdmin || user.disabled || !verifyPassword(user, password)) {
-        recordLoginFail(remoteIp);
         sendText(res, 401, "管理员账号或密码错误");
         return;
       }
-      clearLoginFails(remoteIp);
 
       const token = makeToken();
       const now = Date.now();
@@ -1757,6 +2042,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (typeof payload.disabled !== "undefined") user.disabled = Boolean(payload.disabled);
       if (typeof payload.isAdmin !== "undefined") user.isAdmin = Boolean(payload.isAdmin);
+      if (typeof payload.chatDisabled !== "undefined")
+        user.chatDisabled = Boolean(payload.chatDisabled);
       if (nextPassword) {
         const salt = crypto.randomBytes(16).toString("hex");
         user.salt = salt;
@@ -1849,6 +2136,91 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && pathname === "/api/dev/login") {
+    const body = await readBody(req);
+    const payload = safeParseJson(body) || {};
+    const key = String(payload.key || payload.token || "");
+    if (!DEV_TOKEN || key !== DEV_TOKEN) {
+      sendText(res, 401, "developer key invalid");
+      return;
+    }
+    const token = makeToken();
+    devSessions.set(token, { expiresAt: Date.now() + SESSION_TTL_MS });
+    sendJson(res, 200, { token, release: loadSharedRelease() });
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/dev/logout") {
+    devSessions.delete(extractBearer(req));
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/api/dev/release") {
+    if (!requireDevSession(req, res)) return;
+    sendJson(res, 200, { release: loadSharedRelease() });
+    return;
+  }
+
+  if (req.method === "PUT" && pathname === "/api/dev/release") {
+    if (!requireDevSession(req, res)) return;
+    const body = await readBody(req);
+    const payload = safeParseJson(body) || {};
+    const cur = loadSharedRelease();
+    const next = saveSharedRelease({
+      version: typeof payload.version !== "undefined" ? safeText(payload.version) : cur.version,
+      notes: typeof payload.notes !== "undefined" ? safeText(payload.notes) : cur.notes,
+      publishedAt: cur.publishedAt,
+      windows: cur.windows,
+      macos: cur.macos,
+    });
+    sendJson(res, 200, { ok: true, release: next });
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/dev/releases/upload") {
+    if (!requireDevSession(req, res)) return;
+    try {
+      ensureReleaseStore();
+      const platformKey = safeText(
+        reqUrl.searchParams.get("platform") || req.headers["x-update-platform"],
+      );
+      if (!["windows", "macos"].includes(platformKey)) {
+        sendText(res, 400, "missing platform");
+        return;
+      }
+      const requestedName = safeDownloadName(
+        reqUrl.searchParams.get("fileName") || req.headers["x-file-name"],
+      );
+      if (!requestedName) {
+        sendText(res, 400, "missing fileName");
+        return;
+      }
+      const bodyBuf = await readRawBody(req, 512 * 1024 * 1024);
+      fs.writeFileSync(path.join(RELEASE_STORE, requestedName), bodyBuf);
+      const cur = loadSharedRelease();
+      const next = saveSharedRelease({
+        version:
+          safeText(reqUrl.searchParams.get("version") || req.headers["x-update-version"]) ||
+          cur.version,
+        notes:
+          safeText(reqUrl.searchParams.get("notes") || req.headers["x-update-notes"]) || cur.notes,
+        publishedAt: nowIso(),
+        windows: platformKey === "windows" ? { fileName: requestedName } : cur.windows,
+        macos: platformKey === "macos" ? { fileName: requestedName } : cur.macos,
+      });
+      sendJson(res, 200, {
+        ok: true,
+        fileName: requestedName,
+        release: next,
+        update: sharedReleaseUpdateForClient(req),
+      });
+    } catch (err) {
+      sendText(res, 400, (err && err.message) || "upload failed");
+    }
+    return;
+  }
+
   if (req.method === "GET" && pathname === "/api/client/bootstrap") {
     const token = extractBearer(req);
     const session = resolveSessionByToken(token);
@@ -1859,6 +2231,8 @@ const server = http.createServer(async (req, res) => {
 
     sendJson(res, 200, {
       ...loadClientBootstrap(req),
+      update: sharedReleaseUpdateForClient(req),
+      airport: airportForClient(),
       fetchedAt: nowIso(),
     });
     return;
@@ -1936,73 +2310,189 @@ const server = http.createServer(async (req, res) => {
 
       saveUserStore(store);
       broadcastPresence();
-      sendJson(res, 200, { ok: true, profile: getPublicProfile(session.username) });
+      sendJson(res, 200, {
+        ok: true,
+        profile: getPublicProfile(session.username),
+      });
     } catch (err) {
       sendText(res, 500, err.message || "更新头像失败");
     }
     return;
   }
 
-  if (req.method === "POST" && pathname === "/api/gpt/usage") {
+  {
+    const usageMatch = pathname.match(/^\/api\/(gpt|gemini|claude)\/usage$/);
+    if (req.method === "POST" && usageMatch) {
+      const token = extractBearer(req);
+      const session = resolveSessionByToken(token);
+      if (!session) {
+        sendText(res, 401, "未授权");
+        return;
+      }
+      try {
+        const body = await readBody(req, 32 * 1024);
+        const payload = safeParseJson(body) || {};
+        const count = Math.max(
+          1,
+          Math.min(20, Number.parseInt(String(payload?.count || "1"), 10) || 1),
+        );
+        recordServiceUsage(usageMatch[1], session.username, count);
+        sendJson(res, 200, {
+          ok: true,
+          service: usageMatch[1],
+          username: session.username,
+          count,
+          recordedAt: nowIso(),
+        });
+      } catch (err) {
+        sendText(res, 500, err.message || "记录使用次数失败");
+      }
+      return;
+    }
+    const statsMatch = pathname.match(/^\/api\/(gpt|gemini|claude)\/stats$/);
+    if (req.method === "GET" && statsMatch) {
+      const token = extractBearer(req);
+      const session = resolveSessionByToken(token);
+      if (!session) {
+        sendText(res, 401, "未授权");
+        return;
+      }
+      try {
+        const stats = buildServiceUsageStats(
+          statsMatch[1],
+          reqUrl.searchParams.get("from"),
+          reqUrl.searchParams.get("to"),
+        );
+        sendJson(res, 200, stats);
+      } catch (err) {
+        sendText(res, 400, err.message || "查询使用统计失败");
+      }
+      return;
+    }
+  }
+
+  // 免鉴权: 登录页「发现新版本」提醒用 (返回共享发布库最新版本信息)。
+  if (req.method === "GET" && pathname === "/api/public/update") {
+    sendJson(res, 200, sharedReleaseUpdateForClient(req));
+    return;
+  }
+
+  // 用户反馈建议: 登录用户提交。
+  if (req.method === "POST" && pathname === "/api/feedback") {
     const token = extractBearer(req);
     const session = resolveSessionByToken(token);
     if (!session) {
       sendText(res, 401, "未授权");
       return;
     }
-
     try {
-      const body = await readBody(req, 32 * 1024);
+      const body = await readBody(req, 64 * 1024);
       const payload = safeParseJson(body) || {};
-      const count = Math.max(
-        1,
-        Math.min(20, Number.parseInt(String(payload?.count || "1"), 10) || 1),
-      );
-      recordGptUsage(session.username, count);
+      const text = safeText(payload.text);
+      if (!text) {
+        sendText(res, 400, "反馈内容不能为空");
+        return;
+      }
+      const prof = getPublicProfile(session.username);
+      const item = addFeedback({
+        username: session.username,
+        displayName: prof.displayName,
+        text,
+        version: payload.version,
+        platform: payload.platform,
+      });
+      sendJson(res, 200, { ok: true, id: item.id });
+    } catch (err) {
+      sendText(res, 500, err.message || "提交反馈失败");
+    }
+    return;
+  }
 
+  // 管理员查看反馈 (最新在前)。
+  if (req.method === "GET" && pathname === "/api/admin/feedback") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    const items = loadFeedbackStore().items.slice().reverse();
+    sendJson(res, 200, { feedback: items });
+    return;
+  }
+
+  // 客户端上报"会用到但没走代理"的域名 (登录用户)。
+  if (req.method === "POST" && pathname === "/api/proxy/missing") {
+    const token = extractBearer(req);
+    const session = resolveSessionByToken(token);
+    if (!session) {
+      sendText(res, 401, "未授权");
+      return;
+    }
+    try {
+      const body = await readBody(req, 64 * 1024);
+      const payload = safeParseJson(body) || {};
+      recordMissingDomains(session.username, payload.domains, payload.version);
+      sendJson(res, 200, { ok: true });
+    } catch (err) {
+      sendText(res, 500, err.message || "上报失败");
+    }
+    return;
+  }
+
+  // 管理员查看上报的缺失域名 (按出现次数倒序)。
+  if (req.method === "GET" && pathname === "/api/admin/proxy-missing") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    const store = loadProxyMissingStore();
+    const domains = Object.keys(store.domains)
+      .map((host) => ({ host, ...store.domains[host] }))
+      .sort(
+        (a, b) =>
+          b.count - a.count || String(b.lastSeen || "").localeCompare(String(a.lastSeen || "")),
+      );
+    sendJson(res, 200, { domains });
+    return;
+  }
+
+  // 管理员: 查看 / 设置机场节点 (sing-box outbound)。
+  if (req.method === "GET" && pathname === "/api/admin/airport") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    sendJson(res, 200, loadAirport());
+    return;
+  }
+  if ((req.method === "PUT" || req.method === "POST") && pathname === "/api/admin/airport") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    try {
+      const body = await readBody(req, 256 * 1024);
+      const payload = safeParseJson(body) || {};
+      const outbound =
+        payload.outbound && typeof payload.outbound === "object" ? payload.outbound : null;
+      const saved = saveAirport(payload.name, outbound);
       sendJson(res, 200, {
         ok: true,
-        username: session.username,
-        count,
-        recordedAt: nowIso(),
+        airport: {
+          name: saved.name,
+          outbound: saved.outbound,
+          updatedAt: saved.updatedAt,
+        },
       });
     } catch (err) {
-      sendText(res, 500, err.message || "记录 GPT 使用次数失败");
+      sendText(res, 500, err.message || "保存机场节点失败");
     }
     return;
   }
 
-  if (req.method === "GET" && pathname === "/api/gpt/stats") {
-    const token = extractBearer(req);
-    const session = resolveSessionByToken(token);
-    if (!session) {
-      sendText(res, 401, "未授权");
-      return;
-    }
-
-    try {
-      const stats = buildGptUsageStats(
-        reqUrl.searchParams.get("from"),
-        reqUrl.searchParams.get("to"),
-      );
-      sendJson(res, 200, stats);
-    } catch (err) {
-      sendText(res, 400, err.message || "查询 GPT 使用统计失败");
-    }
-    return;
-  }
-
-  // ===== 组队(共享)日历 REST =====
-  // 鉴权统一: 复用聊天 token (extractBearer + resolveSessionByToken)。
-  // 房间维度: 一律以 session.subnetKey 落库, 忽略客户端传入的 scope (同聊天信任模型)。
-  // 变更后通过 WS broadcastToSubnet 广播给同房间在线客户端实时更新。
+  // ===== 组队(共享)日历 REST (v1.0.2) =====
+  // 鉴权复用聊天 token; 一律以 session.subnetKey 落库; 变更经 WS broadcastToSubnet 实时下发。
   if (pathname === "/api/team-calendar/events" && req.method === "GET") {
     const session = resolveSessionByToken(extractBearer(req));
     if (!session) {
       sendText(res, 401, "未授权");
       return;
     }
-    sendJson(res, 200, { events: eventsForSubnet(session.subnetKey), serverTime: nowIso() });
+    sendJson(res, 200, {
+      events: eventsForSubnet(session.subnetKey),
+      serverTime: nowIso(),
+    });
     return;
   }
 
@@ -2024,16 +2514,19 @@ const server = http.createServer(async (req, res) => {
       const event = normalizeTeamEvent({
         ...payload,
         id: crypto.randomUUID(),
-        subnetKey: session.subnetKey, // 服务端盖章
+        subnetKey: session.subnetKey,
         title,
-        organizer: session.username, // 组织者 = 创建者
+        organizer: session.username,
         createdBy: session.username,
         createdAt: nowIso(),
         updatedAt: nowIso(),
       });
       store.events.push(event);
       saveCalendarStore(store);
-      broadcastToSubnet(session.subnetKey, { type: "calendar_event_created", event });
+      broadcastToSubnet(session.subnetKey, {
+        type: "calendar_event_created",
+        event,
+      });
       sendJson(res, 200, { event });
     } catch (err) {
       sendText(res, 500, err.message || "创建事件失败");
@@ -2041,7 +2534,6 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // /api/team-calendar/events/:id  (PATCH / DELETE) 以及 .../:id/rsvp (POST)
   if (pathname.startsWith("/api/team-calendar/events/")) {
     const session = resolveSessionByToken(extractBearer(req));
     if (!session) {
@@ -2068,7 +2560,6 @@ const server = http.createServer(async (req, res) => {
         if (existing) {
           existing.rsvp = status;
         } else {
-          // 允许房间成员主动响应即使未被显式邀请。
           event.attendees.push({
             username: session.username,
             displayName: session.displayName || session.username,
@@ -2077,7 +2568,10 @@ const server = http.createServer(async (req, res) => {
         }
         event.updatedAt = nowIso();
         saveCalendarStore(store);
-        broadcastToSubnet(session.subnetKey, { type: "calendar_event_updated", event });
+        broadcastToSubnet(session.subnetKey, {
+          type: "calendar_event_updated",
+          event,
+        });
         sendJson(res, 200, { event });
       } catch (err) {
         sendText(res, 500, err.message || "更新 RSVP 失败");
@@ -2097,7 +2591,6 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const prev = store.events[idx];
-        // MVP: 组织者或任意房间成员可编辑; 关键字段(id/subnetKey/organizer/createdBy/createdAt)不可被客户端改。
         const merged = normalizeTeamEvent({
           ...prev,
           ...payload,
@@ -2110,7 +2603,10 @@ const server = http.createServer(async (req, res) => {
         });
         store.events[idx] = merged;
         saveCalendarStore(store);
-        broadcastToSubnet(session.subnetKey, { type: "calendar_event_updated", event: merged });
+        broadcastToSubnet(session.subnetKey, {
+          type: "calendar_event_updated",
+          event: merged,
+        });
         sendJson(res, 200, { event: merged });
       } catch (err) {
         sendText(res, 500, err.message || "编辑事件失败");
@@ -2127,14 +2623,16 @@ const server = http.createServer(async (req, res) => {
         sendText(res, 404, "事件不存在");
         return;
       }
-      // 仅组织者可删除。
       if (store.events[idx].organizer !== session.username) {
         sendText(res, 403, "只有组织者可以删除事件");
         return;
       }
       store.events.splice(idx, 1);
       saveCalendarStore(store);
-      broadcastToSubnet(session.subnetKey, { type: "calendar_event_deleted", id: eventId });
+      broadcastToSubnet(session.subnetKey, {
+        type: "calendar_event_deleted",
+        id: eventId,
+      });
       sendJson(res, 200, { ok: true, id: eventId });
       return;
     }
@@ -2156,7 +2654,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET") {
       const entry = getUserStoreEntry(loadUserStores(), session.username, kind);
-      sendJson(res, 200, { rev: entry.rev, updatedAt: entry.updatedAt, data: entry.data });
+      sendJson(res, 200, {
+        rev: entry.rev,
+        updatedAt: entry.updatedAt,
+        data: entry.data,
+      });
       return;
     }
 
@@ -2170,14 +2672,12 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const stores = loadUserStores();
-        // 乐观并发: baseRev 必须等于服务端当前 rev, 否则拒绝, 防止老版本覆盖新版本。
         const result = putUserStore(stores, session.username, kind, baseRev, data);
         if (!result.ok) {
           sendJson(res, 409, result);
           return;
         }
         saveUserStores(stores);
-        // 实时下发给该用户其它在线端 (排除发起端)。
         broadcastToUser(
           session.username,
           {
@@ -2189,7 +2689,11 @@ const server = http.createServer(async (req, res) => {
           },
           token,
         );
-        sendJson(res, 200, { ok: true, rev: result.rev, updatedAt: result.updatedAt });
+        sendJson(res, 200, {
+          ok: true,
+          rev: result.rev,
+          updatedAt: result.updatedAt,
+        });
       } catch (err) {
         sendText(res, 500, err.message || "保存失败");
       }
@@ -2197,7 +2701,7 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // 团队专注(番茄钟)排名: 上报会话 + 群内排行。鉴权复用聊天 token。
+  // 团队专注(番茄钟)排名。
   if (pathname === "/api/focus/report" && req.method === "POST") {
     const session = resolveSessionByToken(extractBearer(req));
     if (!session) {
@@ -2247,6 +2751,8 @@ server.on("upgrade", (request, socket, head) => {
   wss.handleUpgrade(request, socket, head, (ws) => {
     ws.token = token;
     ws.username = session.username;
+    const _chatUser = findUser(session.username);
+    ws.chatDisabled = Boolean(_chatUser && _chatUser.user && _chatUser.user.chatDisabled);
     ws.displayName = session.displayName || session.username;
     ws.avatar = session.avatar || "";
     ws.avatarKind = session.avatarKind || inferAvatarKind(session.avatar);
@@ -2679,14 +3185,6 @@ wss.on("connection", (ws) => {
   });
 });
 
-process.on("uncaughtException", (err) => {
-  console.error(`[collab] ${nowIso()} uncaughtException:`, (err && err.stack) || err);
-});
-process.on("unhandledRejection", (reason) => {
-  console.error(`[collab] ${nowIso()} unhandledRejection:`, (reason && reason.stack) || reason);
-});
-
-// 仅作为主入口运行时才监听端口并起定时器; 被 require (如单元测试) 时只导出可测函数, 不起服务。
 if (require.main === module) {
   setInterval(cleanupExpiredSessions, 60 * 1000);
   server.listen(PORT, HOST, () => {
