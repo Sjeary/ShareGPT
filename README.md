@@ -125,8 +125,8 @@ npm run dist:admin:win      # 管理控制台
 
 **发布新版本 / 自建更新源**（维护者 / fork）：应用以 **GitHub Releases** 为自动更新源（参考 [cc-switch](https://github.com/farion1231/cc-switch)，不经过任何自建服务器；Windows 用 NSIS + [electron-updater](https://www.electron.build/auto-update) 原地无感更新）。
 
-1. 改 `package.json` 版本号 → 构建上面的 `dist:win:sender`（产出 NSIS 安装包与自动更新清单 `latest.yml`）与 `dist:mac:sender`（产出 `.dmg`）。
-2. 在自己的 GitHub 仓库建 Release（tag `v<版本号>`），上传 `.exe`、**`latest.yml`（Windows 自动更新必需）**、`.dmg`；可用 `gh release create` 或 electron-builder `--publish`。
+1. 改 `package.json` 版本号 → 完整桌面版执行 `npm run dist:win:installer`（NSIS）和 `npm run dist:mac`；拆分发送端才使用 `dist:win:sender` / `dist:mac:sender`。
+2. Windows 构建后必须执行 `npm run verify:release-win`；在自己的 GitHub 仓库建 Release（tag `v<版本号>`），上传 NSIS `.exe`、`latest.yml`、对应的 `.exe.blockmap` 和 `.dmg`。portable 只用于本地自测，不作为更新包。
 3. 更新源由 `package.json` 的 `homepage` / `repository` 决定——fork 后改成你自己的仓库即可。macOS 未做 Apple 签名时为下载安装包方式。
 
 **目录结构**

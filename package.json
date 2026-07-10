@@ -30,6 +30,7 @@
     "typecheck:main": "tsc -p src/main/jsconfig.json",
     "verify:browser-privacy": "electron scripts/verify-browser-privacy.js",
     "verify:browser-privacy-ui": "npm run build:next && node scripts/verify-browser-privacy-ui.js",
+    "verify:release-win": "node scripts/verify-win-release.js",
     "prepare:assets": "node scripts/prepare-assets.mjs all",
     "build:next": "npm --prefix src/renderer-next install && npm --prefix src/renderer-next run build",
     "dev": "node scripts/prepare-assets.mjs all && npm exec -- electron .",

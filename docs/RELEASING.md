@@ -54,6 +54,11 @@ npm --prefix admin_console/ui run build    # 管理端（如有改动）
 
 ### 4) 打包
 
+> **正式 Windows Release 只能使用 `dist:win:installer`。** `dist:win` 是 portable
+> 自测包；它同样是完整封装的单文件 EXE，但不是安装包，不生成自动更新所需的
+> `latest.yml` / `.blockmap`。两条命令默认写入同名 `sharegpt-<version>.exe`，所以最后执行的
+> 命令决定该文件究竟是哪一种，不能只看文件名。
+
 ```bash
 # Windows 便携版（快速本地自测，无 latest.yml、不参与自动更新）
 npm run dist:win              # → release/sharegpt-<version>.exe
@@ -68,6 +73,34 @@ npm run dist:mac              # → dmg
 - 二进制依赖 `build/bin/`（sing-box、frpc），由 `prepare-assets` 校验/准备。
 - 未签名：Windows 首次运行会触发 SmartScreen，需「更多信息 → 仍要运行」。
 
+#### Windows 产物身份与体积验收
+
+`1.0.6` 同一提交、同一 `win-unpacked` 内容的实测对照如下；数值只作为本次诊断基线，
+后续版本会随代码和二进制更新变化：
+
+| 目标        | 命令                         |        字节 | Windows 显示 | 自动更新文件                   |
+| ----------- | ---------------------------- | ----------: | -----------: | ------------------------------ |
+| portable    | `npm run dist:win`           |  92,114,714 |    87.85 MiB | 无                             |
+| NSIS 安装包 | `npm run dist:win:installer` | 102,559,502 |    97.81 MiB | `latest.yml` + `.exe.blockmap` |
+
+因此“比上一版小约 10 MiB”首先要核对目标类型，不能直接判定为漏文件。portable 仍包含
+`app.asar`、`sing-box.exe` 和 `frpc.exe`；它缺少的是安装/卸载与 electron-updater 的 NSIS
+发布层。正式发布前在 Windows 构建机执行：
+
+```bash
+npm run dist:win:installer
+npm run verify:release-win
+```
+
+`verify:release-win` 必须返回 `target: "nsis"` 和 `ok: true`。它会检查：
+
+- 安装包、`latest.yml`、`.exe.blockmap` 均存在且版本/文件大小相互匹配；
+- `win-unpacked/resources/app.asar` 存在；
+- `sing-box.exe`、`frpc.exe` 已进入安装内容，且 SHA-256 与固定清单一致。
+
+若同一目录还要保留 portable，请在构建 NSIS 前把它明确改名为
+`sharegpt-<version>-portable.exe`；不要让 portable 覆盖正式安装包。
+
 ### 5) 推送代码 + CI
 
 - 推送到 `main` 或开 PR；CI 自动跑第 1 步的校验。确保绿。
@@ -76,7 +109,7 @@ npm run dist:mac              # → dmg
 
 1. 打 tag：`git tag vX.Y.Z && git push origin vX.Y.Z`。
 2. 在 GitHub 新建 Release，选该 tag，**上传**：
-   - Windows NSIS 安装包（`.exe`）+ `latest.yml`；
+   - Windows NSIS 安装包（`.exe`）+ `latest.yml` + 对应的 `.exe.blockmap`；
    - （如有）macOS `.dmg`。
 3. Release notes 可直接引用 `CHANGELOG.md` 对应小节；可选/必需更新在此说明。
 4. 发布后，客户端下次检查即可读到 `latest.yml` 并按版本提示/更新。
@@ -85,4 +118,5 @@ npm run dist:mac              # → dmg
 
 - **asar pitfall**：不要在仓库根目录 `npx asar extract-file <app.asar> package.json`——会把 `package.json` 写到当前目录、覆盖真实文件。要解到临时目录。
 - `latest.yml` 必须随安装包一起上传到同一个 Release，否则自动更新读不到。
+- `.exe.blockmap` 必须与安装包同版本、同名上传，否则差分更新会退化或失败。
 - 便携版（portable）不产生 `latest.yml`，不能用于自动更新，仅供本地自测。
