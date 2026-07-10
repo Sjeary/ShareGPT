@@ -5,6 +5,11 @@ const { SocksProxyAgent } = require("socks-proxy-agent");
 const AI_KINDS = new Set(["gpt", "gemini", "claude"]);
 const ENVIRONMENT_MODES = new Set(["system", "us", "proxy"]);
 const GEOLOCATION_MODES = new Set(["disabled", "proxy"]);
+const ENVIRONMENT_BOOTSTRAP_URL =
+  "data:text/html;charset=utf-8,%3Cmeta%20charset%3Dutf-8%3E%3Cstyle%3Ehtml%2Cbody%7Bmargin%3A0%3Bheight%3A100%25%3Bbackground%3A%230b1220%7D%3C%2Fstyle%3E";
+const TRANSIENT_AI_LOAD_CODES = new Set([-7, -21, -100, -101, -102, -105, -106, -111, -118, -130]);
+const TRANSIENT_AI_LOAD_NAMES =
+  /ERR_(?:TIMED_OUT|NETWORK_CHANGED|CONNECTION_(?:CLOSED|RESET|REFUSED|TIMED_OUT)|NAME_NOT_RESOLVED|INTERNET_DISCONNECTED|TUNNEL_CONNECTION_FAILED|PROXY_CONNECTION_FAILED)/i;
 
 /** @type {any} */
 const DEFAULT_BROWSER_PRIVACY_SETTINGS = Object.freeze({
@@ -74,6 +79,34 @@ function normalizeAcceptLanguages(value, locale) {
       /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})?(?:;q=0(?:\.\d{1,3})?|;q=1(?:\.0{1,3})?)?$/.test(item),
     );
   return entries.length ? [...new Set(entries)].join(",") : `${locale},en`;
+}
+
+function isTransientAiLoadError(error) {
+  const code = Number(error?.code ?? error?.errno);
+  if (Number.isFinite(code) && TRANSIENT_AI_LOAD_CODES.has(code)) return true;
+  return TRANSIENT_AI_LOAD_NAMES.test(String(error?.message || error || ""));
+}
+
+async function loadUrlWithTransientRetry(loadUrl, options = {}) {
+  if (typeof loadUrl !== "function") throw new Error("网页加载函数不可用");
+  const retries = Math.max(0, Math.min(4, Number.parseInt(String(options.retries ?? 2), 10) || 0));
+  const wait =
+    typeof options.wait === "function"
+      ? options.wait
+      : (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs));
+  const retryDelays = Array.isArray(options.retryDelays)
+    ? options.retryDelays
+    : [350, 900, 1600, 2400];
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await loadUrl();
+    } catch (error) {
+      if (attempt >= retries || !isTransientAiLoadError(error)) throw error;
+      const delayMs = Math.max(0, Number(retryDelays[attempt]) || 0);
+      await wait(delayMs);
+    }
+  }
 }
 
 function normalizeBrowserPrivacySettings(raw = {}) {
@@ -257,9 +290,7 @@ async function applyEnvironmentToWebContents({
   // 新建 WebContentsView 在首次导航前没有可接收 CDP 命令的 renderer target。
   // 先加载完全本地的空文档，再套环境覆盖，之后才允许调用方访问真实网站。
   if (typeof webContents.getURL === "function" && !safeText(webContents.getURL())) {
-    await webContents.loadURL(
-      "data:text/html,<meta charset=utf-8><title>environment bootstrap</title>",
-    );
+    await webContents.loadURL(ENVIRONMENT_BOOTSTRAP_URL);
   }
 
   const debuggerApi = webContents.debugger;
@@ -459,6 +490,9 @@ module.exports = {
   syncedBrowserPrivacyPayload,
   mergeSyncedBrowserPrivacy,
   runtimeEnvironment,
+  ENVIRONMENT_BOOTSTRAP_URL,
+  isTransientAiLoadError,
+  loadUrlWithTransientRetry,
   applyEnvironmentToWebContents,
   clearAiSessionData,
   parseCloudflareTrace,

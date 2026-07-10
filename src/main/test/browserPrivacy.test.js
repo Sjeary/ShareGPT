@@ -5,6 +5,8 @@ const {
   syncedBrowserPrivacyPayload,
   mergeSyncedBrowserPrivacy,
   runtimeEnvironment,
+  ENVIRONMENT_BOOTSTRAP_URL,
+  loadUrlWithTransientRetry,
   applyEnvironmentToWebContents,
   clearAiSessionData,
   normalizeDetectedEnvironment,
@@ -147,9 +149,12 @@ test("出口检测必须由两条链路确认同一个 IP", async () => {
 
 test("环境应用会设置语言、时区、地理位置和 WebRTC 防泄漏策略", async () => {
   const commands = [];
+  const bootstrapUrls = [];
   let webRtcPolicy = "default";
   const webContents = {
     isDestroyed: () => false,
+    getURL: () => "",
+    loadURL: async (url) => bootstrapUrls.push(url),
     setWebRTCIPHandlingPolicy: (value) => {
       webRtcPolicy = value;
     },
@@ -186,11 +191,44 @@ test("环境应用会设置语言、时区、地理位置和 WebRTC 防泄漏策
   });
   assert.deepStrictEqual(userAgents[0], ["Chrome test", "en-US,en"]);
   assert.strictEqual(result.webRtcPolicy, "disable_non_proxied_udp");
+  assert.deepStrictEqual(bootstrapUrls, [ENVIRONMENT_BOOTSTRAP_URL]);
+  assert.doesNotMatch(
+    decodeURIComponent(ENVIRONMENT_BOOTSTRAP_URL),
+    /environment bootstrap|title/i,
+  );
   assert.deepStrictEqual(commands[2], [
     "Emulation.setTimezoneOverride",
     { timezoneId: "America/Los_Angeles" },
   ]);
   assert.strictEqual(commands.at(-1)[0], "Emulation.setGeolocationOverride");
+});
+
+test("AI 页面瞬时超时会重试，永久错误不会循环请求", async () => {
+  let attempts = 0;
+  const waits = [];
+  const result = await loadUrlWithTransientRetry(
+    async () => {
+      attempts += 1;
+      if (attempts < 3) {
+        throw Object.assign(new Error("ERR_TIMED_OUT (-7)"), { code: -7 });
+      }
+      return "loaded";
+    },
+    { retries: 2, wait: async (delayMs) => waits.push(delayMs) },
+  );
+  assert.strictEqual(result, "loaded");
+  assert.strictEqual(attempts, 3);
+  assert.deepStrictEqual(waits, [350, 900]);
+
+  let permanentAttempts = 0;
+  await assert.rejects(
+    loadUrlWithTransientRetry(async () => {
+      permanentAttempts += 1;
+      throw new Error("ERR_ACCESS_DENIED");
+    }),
+    /ERR_ACCESS_DENIED/,
+  );
+  assert.strictEqual(permanentAttempts, 1);
 });
 
 test("单个会话清理覆盖浏览数据、认证、网络、代码和 DNS 缓存", async () => {

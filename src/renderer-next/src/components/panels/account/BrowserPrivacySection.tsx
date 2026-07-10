@@ -19,13 +19,13 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import { useAiStore, type AiKind } from '@/store/useAiStore'
 import type {
   BrowserEnvironmentMode,
   BrowserEnvironmentSettings,
   BrowserGeolocationMode,
   BrowserPrivacySettings,
 } from '@/types/settings'
-import type { AiKind } from '@/store/useAiStore'
 
 const PROVIDERS: Array<{ kind: AiKind; label: string; description: string }> = [
   { kind: 'gpt', label: 'ChatGPT', description: '只清除 ChatGPT 网页分区' },
@@ -184,6 +184,7 @@ export function BrowserPrivacySection() {
         serverUrl,
         token: activeToken,
       })
+      useAiStore.getState().setFeedback(target, '')
       await useAppStore.getState().reloadSettings()
       const label = PROVIDERS.find((item) => item.kind === target)?.label || target
       toast.success(`${label} 的 Cookie、登录状态和本地网页记录已清除`)

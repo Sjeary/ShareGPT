@@ -283,7 +283,24 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       } catch {
         /* ignore */
       }
-      if (!cancelled && senderRunning) await ensureWorkspace()
+      if (!cancelled && senderRunning) {
+        try {
+          const store = useAiStore.getState()
+          if (!store.tabsByKind[kind].length) {
+            const created = (await api.createAiView(kind, {
+              lastUrl: homeUrlFor(kind),
+            })) as AiEventPayload
+            if (!cancelled) applyAiTabsPayload(kind, created)
+            // activeTabId 更新会触发下面的 effect，再统一执行 ensure，避免并发初始化同一视图。
+            return
+          }
+          await ensureWorkspace()
+        } catch (err) {
+          if (!cancelled) {
+            setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+          }
+        }
+      }
     })()
     return () => {
       cancelled = true

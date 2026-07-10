@@ -246,6 +246,11 @@ export function useAiEvents() {
       }
 
       if (payload?.type === 'dom-ready') {
+        const store = useAiStore.getState()
+        const tabId = safeText(payload.tabId)
+        if (!tabId || tabId === store.activeTabIdByKind[kind]) {
+          store.setFeedback(kind, '')
+        }
         installQueryTracker(kind, safeText(payload.tabId))
       }
     })

@@ -20,6 +20,7 @@ const {
   clearAiSessionData,
   detectProxyEnvironment,
   isAiKind,
+  loadUrlWithTransientRetry,
   normalizeBrowserPrivacySettings,
   runtimeEnvironment,
 } = require("./browserPrivacy");
@@ -666,13 +667,25 @@ function createElectronApp(baseMode = "all") {
     const privacySettings = normalizeBrowserPrivacySettings(
       backend?.loadSettings()?.browserPrivacy,
     );
-    return applyEnvironmentToWebContents({
-      webContents: workspace.view.webContents,
-      targetSession,
-      privacySettings,
-      defaultUserAgent: workspace.userAgent || app.userAgentFallback,
-      systemLanguages: app.getPreferredSystemLanguages?.() || [app.getLocale?.() || "en-US"],
-    });
+    workspace.environmentBootstrapping = true;
+    try {
+      return await applyEnvironmentToWebContents({
+        webContents: workspace.view.webContents,
+        targetSession,
+        privacySettings,
+        defaultUserAgent: workspace.userAgent || app.userAgentFallback,
+        systemLanguages: app.getPreferredSystemLanguages?.() || [app.getLocale?.() || "en-US"],
+      });
+    } finally {
+      workspace.environmentBootstrapping = false;
+    }
+  }
+
+  function isWorkspaceDocumentAllowed(workspace) {
+    const currentUrl = safeText(workspace?.view?.webContents?.getURL?.());
+    return Boolean(
+      currentUrl && isAllowedUrlForHosts(currentUrl, workspace?.policy?.allowedHosts || []),
+    );
   }
 
   function getAiStatePayload(workspace) {
@@ -887,20 +900,28 @@ function createElectronApp(baseMode = "all") {
     });
   }
 
-  function loadAiWorkspaceUrl(workspace, rawUrl) {
+  async function loadAiWorkspaceUrl(workspace, rawUrl) {
     const targetUrl = normalizeAiWorkspaceUrl(workspace, rawUrl) || workspace.policy.homeUrl;
-    return workspace.view.webContents
-      .loadURL(targetUrl, htmlNavigationOptions(workspace))
-      .catch((err) => {
-        // ChatGPT 登录重定向链常在途中止(ERR_ABORTED / -3), 页面实际已正常加载,
-        // 属良性, 不应作为加载失败上报。仅吞此类中止, 其余错误照常抛出。
-        const message = String((err && (err.message || err)) || "");
-        const code = err && (err.code || err.errno);
-        if (code === -3 || code === "ERR_ABORTED" || /ERR_ABORTED|\(-3\)/i.test(message)) {
-          return;
-        }
-        throw err;
-      });
+    workspace.managedNavigationCount = (workspace.managedNavigationCount || 0) + 1;
+    try {
+      return await loadUrlWithTransientRetry(() =>
+        workspace.view.webContents
+          .loadURL(targetUrl, htmlNavigationOptions(workspace))
+          .catch((err) => {
+            // ChatGPT 登录重定向链常在途中止(ERR_ABORTED / -3), 页面实际已正常加载,
+            // 属良性, 不应作为加载失败上报。仅吞此类中止, 其余错误照常抛出。
+            const message = String((err && (err.message || err)) || "");
+            const code = err && (err.code || err.errno);
+            if (code === -3 || code === "ERR_ABORTED" || /ERR_ABORTED|\(-3\)/i.test(message)) {
+              return;
+            }
+            throw err;
+          }),
+      );
+    } finally {
+      workspace.managedNavigationCount = Math.max(0, (workspace.managedNavigationCount || 1) - 1);
+      workspace.suppressLoadErrorsUntil = Date.now() + 250;
+    }
   }
 
   function bindAiWorkspaceEvents(workspace) {
@@ -975,22 +996,25 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("did-start-loading", () => {
+      if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
       workspace.loading = true;
-      workspace.initialized = true;
       emitAiState(workspace, "did-start-loading");
     });
 
     wc.on("dom-ready", () => {
+      if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
       emitAiState(workspace, "dom-ready");
     });
 
     wc.on("did-stop-loading", () => {
+      if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
       workspace.loading = false;
       workspace.initialized = true;
       emitAiState(workspace, "did-stop-loading");
     });
 
     wc.on("did-finish-load", () => {
+      if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
       if (workspace.kind !== "gpt") return;
       void detectRawChatGptDocument(wc)
         .then((isRawDocument) => {
@@ -1028,6 +1052,13 @@ function createElectronApp(baseMode = "all") {
 
     wc.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
       if (Number(errorCode) === -3) return;
+      if (
+        workspace.environmentBootstrapping ||
+        workspace.managedNavigationCount > 0 ||
+        Date.now() < (workspace.suppressLoadErrorsUntil || 0)
+      ) {
+        return;
+      }
       workspace.loading = false;
       emitAiEvent(workspace.kind, "did-fail-load", {
         ...getAiStatePayload(workspace),
@@ -1038,6 +1069,12 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("did-navigate", (_event, url) => {
+      if (
+        workspace.environmentBootstrapping ||
+        !isAllowedUrlForHosts(url, workspace.policy.allowedHosts)
+      ) {
+        return;
+      }
       if (isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) {
         workspace.lastUrl = normalizeAiWorkspaceUrl(workspace, url);
       }
@@ -1046,6 +1083,12 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("did-navigate-in-page", (_event, url) => {
+      if (
+        workspace.environmentBootstrapping ||
+        !isAllowedUrlForHosts(url, workspace.policy.allowedHosts)
+      ) {
+        return;
+      }
       if (isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) {
         workspace.lastUrl = normalizeAiWorkspaceUrl(workspace, url);
       }
@@ -1054,6 +1097,7 @@ function createElectronApp(baseMode = "all") {
 
     wc.on("page-title-updated", (event, title) => {
       event.preventDefault();
+      if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
       workspace.title = normalizeAiTabTitle(title, workspace.defaultTitle);
       emitTabsChanged(workspace.kind);
     });
@@ -1266,6 +1310,9 @@ function createElectronApp(baseMode = "all") {
       proxySignature: "",
       userAgent: "",
       rawDocumentRecoveryAttempted: false,
+      environmentBootstrapping: false,
+      managedNavigationCount: 0,
+      suppressLoadErrorsUntil: 0,
     };
 
     bindAiWorkspaceEvents(workspace);
@@ -1666,7 +1713,7 @@ function createElectronApp(baseMode = "all") {
         !workspace.initialized ||
         !isAllowedUrlForHosts(currentWorkspaceUrl, workspace.policy.allowedHosts)
       ) {
-        workspace.initialized = true;
+        workspace.initialized = false;
         workspace.loading = true;
         workspace.lastUrl = targetUrl;
         emitAiState(workspace, "did-start-loading", { url: targetUrl });
