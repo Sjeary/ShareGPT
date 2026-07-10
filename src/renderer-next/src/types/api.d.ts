@@ -22,6 +22,81 @@ export interface AiProxyReport {
   hosts?: AiProxyHost[]
 }
 
+export interface BrowserFingerprintSnapshot {
+  schemaVersion: 1
+  kind: 'gpt' | 'gemini' | 'claude'
+  capturedAt: string
+  appVersion: string
+  hostPlatform: string
+  digest: string
+  page: {
+    origin: string
+    capturedAt: string
+    browserHash: string
+    locale: {
+      language: string
+      languages: string[]
+      timezone: string
+      timezoneOffset: number
+    }
+    navigator: {
+      userAgent: string
+      platform: string
+      vendor: string
+      cookieEnabled: boolean
+      webdriver: boolean
+      hardwareConcurrency: number | null
+      deviceMemory: number | null
+      maxTouchPoints: number
+      userAgentData: {
+        brands: Array<{ brand: string; version: string }>
+        mobile: boolean
+        platform: string
+        highEntropy: Record<string, unknown>
+      } | null
+    }
+    screen: Record<string, number | null>
+    graphics: {
+      webglVendor: string
+      webglRenderer: string
+      webglVersion: string
+      canvasHash: string
+    }
+    audio: { hash: string; sampleRate: number | null }
+    fonts: { available: string[]; count: number; hash: string }
+    media: {
+      audioInputs: number
+      audioOutputs: number
+      videoInputs: number
+      labelsExposed: boolean
+    }
+    webRtc: { candidateTypes: string[]; hostCandidates: number; localIpExposed: boolean }
+  }
+  network: {
+    ip?: string
+    asn?: string
+    organization?: string
+    isp?: string
+    domain?: string
+    countryCode?: string
+    country?: string
+    region?: string
+    city?: string
+    timezone?: string
+    security?: { proxy: boolean; vpn: boolean; tor: boolean; hosting: boolean }
+    error?: string
+  } | null
+  sessionProxy: string
+  sessionProxied: boolean
+  webRtcPolicy: string
+  profile: {
+    preset: string
+    enabled: boolean
+    localIdHash: string
+    rebuiltAt: string
+  }
+}
+
 // 本地功能存储的文件壳 (具体条目类型见各功能 store)。
 export interface CalendarStoreFile {
   version?: number
@@ -180,13 +255,33 @@ export interface ShareGptApi {
     kind: 'gpt' | 'gemini' | 'claude'
     clearedAt: string
     homeUrl: string
+    beforeSnapshot?: BrowserFingerprintSnapshot | null
   }>
+  rebuildAiBrowserProfile: (
+    kind: 'gpt' | 'gemini' | 'claude',
+    confirmation: { password: string; serverUrl: string; token: string },
+  ) => Promise<{
+    ok: boolean
+    kind: 'gpt' | 'gemini' | 'claude'
+    rebuiltAt: string
+    partition: string
+    homeUrl: string
+    beforeSnapshot?: BrowserFingerprintSnapshot | null
+  }>
+  captureBrowserFingerprint: (
+    kind: 'gpt' | 'gemini' | 'claude',
+    tabId?: string,
+  ) => Promise<BrowserFingerprintSnapshot>
   applyBrowserPrivacy: () => Promise<{
     ok: boolean
     results: Array<{ kind: string; tabId: string; ok: boolean; message?: string }>
   }>
   detectProxyEnvironment: () => Promise<{
     ip: string
+    asn?: string
+    organization?: string
+    isp?: string
+    domain?: string
     countryCode: string
     country: string
     region: string
@@ -196,6 +291,7 @@ export interface ShareGptApi {
     longitude: number
     accuracy: number
     checkedAt: string
+    security?: { proxy: boolean; vpn: boolean; tor: boolean; hosting: boolean }
   }>
   executeAiJavaScript: (payload: unknown) => Promise<unknown>
 

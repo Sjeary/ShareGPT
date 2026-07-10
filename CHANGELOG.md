@@ -7,6 +7,34 @@
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-07-10
+
+> **网页可见信息表盘更新**：把 AI 网页实际看到的网络、浏览器、硬件与图形摘要集中展示，并加入可选的本机资料重建和稳定标准化。建议升级。
+
+### 新增
+
+- **网页可见信息表盘**：分别采集 ChatGPT、Claude、Gemini 当前页面实际可见的出口 IP、ASN、国家、时区、语言、WebRTC、UA、Client Hints、CPU、内存、屏幕、触控、WebGL/GPU、Canvas、Audio、字体和媒体设备摘要。
+- **环境矛盾提示**：直接标出出口时区与网页时区不一致、会话未确认使用 SOCKS、WebRTC 防泄漏策略未生效、本地 IP 候选和 `navigator.webdriver` 等问题。
+- **清除前后对比**：清除网页登录数据或重建资料环境前自动保留摘要；重新打开网页并刷新后，可逐项查看 19 个字段的变化。
+- **Mac / Windows 对端对比**：快照可复制为 JSON，并在另一台设备手动导入，比较同一同步配置下仍存在的系统、硬件和图形差异；快照不会自动上传。
+- **按服务重建资料环境**：ChatGPT、Claude、Gemini 可分别清理旧分区并切换到新的本机持久化分区，避免旧站点存储继续沿用；操作仍需当前协作账号密码复核。
+- **可选稳定标准化**：默认关闭；开启后可使用均衡预设或美国 Windows 预设，稳定 CPU/内存档位、屏幕/DPR、触控、Canvas/Audio 摘要等网页可见值。
+
+### 改进
+
+- ChatGPT、Claude、Gemini 的侧栏与网页工作区改用各自品牌轮廓图标，深浅色主题下保持一致可读。
+
+### 隐私与兼容
+
+- 采集只保存摘要和哈希，不保存 Canvas 原图、音频样本或媒体设备 ID；本机资料 ID、网页审计快照和清除记录不参与跨设备同步。
+- 同步数据继续使用兼容 1.0.5 及更早客户端的现有载荷版本；旧客户端会忽略新增字段，服务器无需新增接口。
+- 标准化不能改变真实出口 IP，也不承诺隐藏代理、绕过网站风控或让不同物理设备绝对不可区分；表盘用于发现并逐项减少明显矛盾。
+
+### 验证
+
+- 新增主进程单元测试，覆盖设置归一化、Windows UA/Client Hints、稳定注入、资料分区轮换和摘要生成。
+- 新增真实 Electron/Chromium 指纹测试，验证标准化后的平台、CPU、内存、屏幕、媒体设备及 Canvas/Audio 摘要。
+
 ## [1.0.5] - 2026-07-10
 
 > **隐私与环境更新**：新增按服务清理网页登录数据、浏览器环境配置、代理出口同步与跨设备配置同步。建议升级。
@@ -151,7 +179,8 @@
 
 - 更早的 5.x 为测试版本，不在此正式记录。
 
-[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.5...HEAD
+[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.6...HEAD
+[1.0.6]: https://github.com/Sjeary/ShareGPT/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/Sjeary/ShareGPT/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/Sjeary/ShareGPT/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/Sjeary/ShareGPT/compare/v1.0.2...v1.0.3

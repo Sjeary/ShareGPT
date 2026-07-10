@@ -24,6 +24,13 @@ const {
   normalizeBrowserPrivacySettings,
   runtimeEnvironment,
 } = require("./browserPrivacy");
+const {
+  collectPageFingerprint,
+  snapshotDigest,
+  newLocalProfile,
+  normalizeAiPartition,
+  partitionForProfile,
+} = require("./browserFingerprint");
 
 // 记录每个 AI 会话(按 partition)实际访问过的主机名, 供「代理检测」展示页面流量去向。
 // 在 configureAiSession 内通过 webRequest 被动收集 (每个 partition 仅装一次)。
@@ -172,8 +179,13 @@ function applyStableUserDataPath(appInstance) {
   appInstance.setPath("userData", stableUserDataDir);
 }
 
-async function flushAiSessionStorage() {
-  const partitions = Object.values(AI_WORKSPACE_POLICIES).map((policy) => policy.partition);
+async function flushAiSessionStorage(extraPartitions = []) {
+  const partitions = [
+    ...new Set([
+      ...Object.values(AI_WORKSPACE_POLICIES).map((policy) => policy.partition),
+      ...extraPartitions.map((partition) => safeText(partition)).filter(Boolean),
+    ]),
+  ];
   await Promise.all(
     partitions.map(async (partition) => {
       try {
@@ -419,8 +431,8 @@ function htmlNavigationOptions(workspace) {
       "Upgrade-Insecure-Requests: 1",
     ].join("\r\n"),
   };
-  if (workspace?.userAgent) {
-    options.userAgent = workspace.userAgent;
+  if (workspace?.appliedUserAgent || workspace?.userAgent) {
+    options.userAgent = workspace.appliedUserAgent || workspace.userAgent;
   }
   return options;
 }
@@ -562,7 +574,52 @@ function createElectronApp(baseMode = "all") {
   }
 
   function getAiPolicy(kind) {
-    return AI_WORKSPACE_POLICIES[safeText(kind)] || null;
+    const targetKind = safeText(kind);
+    const base = AI_WORKSPACE_POLICIES[targetKind];
+    if (!base) return null;
+    const configured = safeText(backend?.loadSettings()?.[targetKind]?.partition);
+    const partition = normalizeAiPartition(targetKind, configured || base.partition);
+    return { ...base, partition };
+  }
+
+  function getAiStoragePartitions() {
+    return Object.keys(AI_WORKSPACE_POLICIES)
+      .map((kind) => getAiPolicy(kind)?.partition)
+      .filter(Boolean);
+  }
+
+  async function verifyBrowserDestructiveAction(payload) {
+    const password = String(payload?.password || "");
+    const token = safeText(payload?.token);
+    const requestedServerUrl = safeText(payload?.serverUrl).replace(/\/+$/, "");
+    const savedServerUrl = safeText(backend.loadSettings()?.collab?.server_url).replace(/\/+$/, "");
+    if (!password || !token || !requestedServerUrl || requestedServerUrl !== savedServerUrl) {
+      throw new Error("请重新输入当前协作账号密码确认");
+    }
+    let verifyUrl;
+    try {
+      verifyUrl = new URL(`${requestedServerUrl}/api/account/verify-password`);
+    } catch {
+      throw new Error("协作服务器地址无效");
+    }
+    if (verifyUrl.protocol !== "http:" && verifyUrl.protocol !== "https:") {
+      throw new Error("协作服务器地址无效");
+    }
+    const verifyResponse = await electronNet.fetch(verifyUrl.toString(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ password }),
+    });
+    if (!verifyResponse.ok) {
+      const message = safeText(await verifyResponse.text().catch(() => ""));
+      if (verifyResponse.status === 404) {
+        throw new Error("协作服务器版本过旧，暂不支持删除前密码复核");
+      }
+      throw new Error(message || `密码验证失败（${verifyResponse.status}）`);
+    }
   }
 
   function workspaceKey(kind, tabId = "") {
@@ -669,16 +726,102 @@ function createElectronApp(baseMode = "all") {
     );
     workspace.environmentBootstrapping = true;
     try {
-      return await applyEnvironmentToWebContents({
+      const applied = await applyEnvironmentToWebContents({
         webContents: workspace.view.webContents,
         targetSession,
         privacySettings,
         defaultUserAgent: workspace.userAgent || app.userAgentFallback,
         systemLanguages: app.getPreferredSystemLanguages?.() || [app.getLocale?.() || "en-US"],
+        kind: workspace.kind,
       });
+      workspace.appliedUserAgent =
+        applied.userAgent || workspace.userAgent || app.userAgentFallback;
+      return applied;
     } finally {
       workspace.environmentBootstrapping = false;
     }
+  }
+
+  async function captureWorkspaceFingerprint(kind, tabId = "", options = {}) {
+    const targetKind = safeText(kind);
+    if (!isAiKind(targetKind)) throw new Error("不支持的 AI 服务");
+    const workspace =
+      getWorkspace(targetKind, safeText(tabId)) ||
+      getWorkspace(targetKind, activeTabIdByKind[targetKind]);
+    if (!workspace || workspace.view.webContents.isDestroyed()) {
+      throw new Error("请先打开该服务的网页，再采集可见信息");
+    }
+
+    const wc = workspace.view.webContents;
+    const currentUrl = safeText(wc.getURL()) || workspace.lastUrl || workspace.policy.homeUrl;
+    if (!isAllowedUrlForHosts(currentUrl, workspace.policy.allowedHosts)) {
+      throw new Error("网页仍在初始化，请等待页面打开后再采集");
+    }
+    const targetSession = session.fromPartition(workspace.policy.partition);
+    const pagePromise = collectPageFingerprint(wc);
+    const networkPromise = (() => {
+      const port = Number(backend?.activeSocksPort);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return Promise.resolve(null);
+      return detectProxyEnvironment(port).catch((error) => ({
+        error: safeText(error?.message || error),
+      }));
+    })();
+    const proxyPromise = targetSession
+      .resolveProxy(currentUrl)
+      .then((value) => safeText(value))
+      .catch(() => "");
+    const [page, network, sessionProxy] = await Promise.all([
+      pagePromise,
+      networkPromise,
+      proxyPromise,
+    ]);
+
+    const settings = backend.loadSettings();
+    const privacy = normalizeBrowserPrivacySettings(settings.browserPrivacy);
+    const localProfile = privacy.localProfiles[targetKind];
+    const snapshot = {
+      schemaVersion: 1,
+      kind: targetKind,
+      capturedAt: new Date().toISOString(),
+      appVersion: app.getVersion(),
+      hostPlatform: process.platform,
+      page,
+      network,
+      sessionProxy,
+      sessionProxied: /socks/i.test(sessionProxy),
+      webRtcPolicy: wc.getWebRTCIPHandlingPolicy(),
+      profile: {
+        preset: privacy.fingerprint.preset,
+        enabled: privacy.fingerprint.enabled,
+        localIdHash: snapshotDigest({ profile: localProfile }).slice(0, 12),
+        rebuiltAt: localProfile.rebuiltAt,
+      },
+    };
+    snapshot.digest = snapshotDigest(snapshot);
+
+    if (options.save !== false) {
+      privacy.audit.current[targetKind] = snapshot;
+      settings.browserPrivacy = privacy;
+      backend.saveSettings(settings);
+    }
+    return snapshot;
+  }
+
+  async function rememberBeforeClear(kind) {
+    const targetKind = safeText(kind);
+    const settings = backend.loadSettings();
+    const privacy = normalizeBrowserPrivacySettings(settings.browserPrivacy);
+    let snapshot = null;
+    try {
+      snapshot = await captureWorkspaceFingerprint(targetKind, "", { save: false });
+    } catch {
+      // 页面可能未打开或仍在导航；此时回退到最后一次已保存的当前快照。
+    }
+    privacy.audit.beforeClear[targetKind] = snapshot || privacy.audit.current[targetKind] || null;
+    privacy.audit.current[targetKind] = null;
+    settings.browserPrivacy = privacy;
+    backend.saveSettings(settings);
+    return privacy.audit.beforeClear[targetKind];
   }
 
   function isWorkspaceDocumentAllowed(workspace) {
@@ -1309,6 +1452,7 @@ function createElectronApp(baseMode = "all") {
       title: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
       proxySignature: "",
       userAgent: "",
+      appliedUserAgent: "",
       rawDocumentRecoveryAttempted: false,
       environmentBootstrapping: false,
       managedNavigationCount: 0,
@@ -1531,7 +1675,7 @@ function createElectronApp(baseMode = "all") {
           };
           const onDownloaded = async () => {
             cleanup();
-            await flushAiSessionStorage().catch(() => {});
+            await flushAiSessionStorage(getAiStoragePartitions()).catch(() => {});
             try {
               backend && backend.createUpdateBackup("before-autoupdate");
             } catch (_e) {
@@ -1571,7 +1715,7 @@ function createElectronApp(baseMode = "all") {
       if (!filePath) {
         throw new Error("缺少更新包路径");
       }
-      await flushAiSessionStorage();
+      await flushAiSessionStorage(getAiStoragePartitions());
       const backup = backend.createUpdateBackup("before-open-update");
       const result = await shell.openPath(filePath);
       if (result) {
@@ -1739,40 +1883,8 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("ai:data-clear", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
-      const password = String(payload?.password || "");
-      const token = safeText(payload?.token);
-      const requestedServerUrl = safeText(payload?.serverUrl).replace(/\/+$/, "");
-      const savedServerUrl = safeText(backend.loadSettings()?.collab?.server_url).replace(
-        /\/+$/,
-        "",
-      );
-      if (!password || !token || !requestedServerUrl || requestedServerUrl !== savedServerUrl) {
-        throw new Error("请重新输入当前协作账号密码确认");
-      }
-      let verifyUrl;
-      try {
-        verifyUrl = new URL(`${requestedServerUrl}/api/account/verify-password`);
-      } catch {
-        throw new Error("协作服务器地址无效");
-      }
-      if (verifyUrl.protocol !== "http:" && verifyUrl.protocol !== "https:") {
-        throw new Error("协作服务器地址无效");
-      }
-      const verifyResponse = await electronNet.fetch(verifyUrl.toString(), {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ password }),
-      });
-      if (!verifyResponse.ok) {
-        const message = safeText(await verifyResponse.text().catch(() => ""));
-        if (verifyResponse.status === 404) {
-          throw new Error("协作服务器版本过旧，暂不支持删除前密码复核");
-        }
-        throw new Error(message || `密码验证失败（${verifyResponse.status}）`);
-      }
+      await verifyBrowserDestructiveAction(payload);
+      const beforeSnapshot = await rememberBeforeClear(kind);
       const policy = getAiPolicy(kind);
       await closeWorkspacesForKind(kind);
       const targetSession = session.fromPartition(policy.partition);
@@ -1789,7 +1901,46 @@ function createElectronApp(baseMode = "all") {
         last_url: policy.homeUrl,
       };
       backend.saveSettings(settings);
-      return { ok: true, kind, clearedAt, homeUrl: policy.homeUrl };
+      return { ok: true, kind, clearedAt, homeUrl: policy.homeUrl, beforeSnapshot };
+    });
+
+    ipcMain.handle("ai:profile-rebuild", async (_event, payload) => {
+      const kind = safeText(payload?.kind);
+      if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
+      await verifyBrowserDestructiveAction(payload);
+      const beforeSnapshot = await rememberBeforeClear(kind);
+      const oldPolicy = getAiPolicy(kind);
+      await closeWorkspacesForKind(kind);
+      const oldSession = session.fromPartition(oldPolicy.partition);
+      await clearAiSessionData(oldSession);
+      aiContactedHostsByPartition.get(oldPolicy.partition)?.clear();
+
+      const settings = backend.loadSettings();
+      const privacy = normalizeBrowserPrivacySettings(settings.browserPrivacy);
+      const profile = newLocalProfile(kind);
+      const partition = partitionForProfile(kind, profile);
+      privacy.localProfiles[kind] = profile;
+      privacy.lastClearedAt[kind] = profile.rebuiltAt;
+      privacy.audit.current[kind] = null;
+      settings.browserPrivacy = privacy;
+      settings[kind] = {
+        ...(settings[kind] || {}),
+        partition,
+        last_url: oldPolicy.homeUrl,
+      };
+      backend.saveSettings(settings);
+      return {
+        ok: true,
+        kind,
+        rebuiltAt: profile.rebuiltAt,
+        partition,
+        homeUrl: oldPolicy.homeUrl,
+        beforeSnapshot,
+      };
+    });
+
+    ipcMain.handle("browser-privacy:capture", async (_event, payload) => {
+      return captureWorkspaceFingerprint(payload?.kind, payload?.tabId);
     });
 
     ipcMain.handle("browser-privacy:apply", async () => {

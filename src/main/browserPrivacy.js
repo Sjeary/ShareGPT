@@ -1,6 +1,14 @@
 const https = require("node:https");
 const net = require("node:net");
 const { SocksProxyAgent } = require("socks-proxy-agent");
+const {
+  DEFAULT_FINGERPRINT_SETTINGS,
+  DEFAULT_LOCAL_PROFILES,
+  normalizeFingerprintSettings,
+  normalizeLocalProfiles,
+  buildFingerprintInjectionSource,
+  userAgentOverride,
+} = require("./browserFingerprint");
 
 const AI_KINDS = new Set(["gpt", "gemini", "claude"]);
 const ENVIRONMENT_MODES = new Set(["system", "us", "proxy"]);
@@ -10,6 +18,7 @@ const ENVIRONMENT_BOOTSTRAP_URL =
 const TRANSIENT_AI_LOAD_CODES = new Set([-7, -21, -100, -101, -102, -105, -106, -111, -118, -130]);
 const TRANSIENT_AI_LOAD_NAMES =
   /ERR_(?:TIMED_OUT|NETWORK_CHANGED|CONNECTION_(?:CLOSED|RESET|REFUSED|TIMED_OUT)|NAME_NOT_RESOLVED|INTERNET_DISCONNECTED|TUNNEL_CONNECTION_FAILED|PROXY_CONNECTION_FAILED)/i;
+const fingerprintScriptIds = new WeakMap();
 
 /** @type {any} */
 const DEFAULT_BROWSER_PRIVACY_SETTINGS = Object.freeze({
@@ -37,6 +46,12 @@ const DEFAULT_BROWSER_PRIVACY_SETTINGS = Object.freeze({
     gpt: "",
     gemini: "",
     claude: "",
+  },
+  fingerprint: structuredClone(DEFAULT_FINGERPRINT_SETTINGS),
+  localProfiles: structuredClone(DEFAULT_LOCAL_PROFILES),
+  audit: {
+    current: { gpt: null, gemini: null, claude: null },
+    beforeClear: { gpt: null, gemini: null, claude: null },
   },
 });
 
@@ -79,6 +94,17 @@ function normalizeAcceptLanguages(value, locale) {
       /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})?(?:;q=0(?:\.\d{1,3})?|;q=1(?:\.0{1,3})?)?$/.test(item),
     );
   return entries.length ? [...new Set(entries)].join(",") : `${locale},en`;
+}
+
+function safeAuditSnapshot(value) {
+  if (!value || typeof value !== "object") return null;
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized.length > 200_000) return null;
+    return JSON.parse(serialized);
+  } catch {
+    return null;
+  }
 }
 
 function isTransientAiLoadError(error) {
@@ -126,6 +152,13 @@ function normalizeBrowserPrivacySettings(raw = {}) {
   /** @type {any} */
   const lastClearedInput =
     input.lastClearedAt && typeof input.lastClearedAt === "object" ? input.lastClearedAt : {};
+  const auditInput = input.audit && typeof input.audit === "object" ? input.audit : {};
+  const currentAudit =
+    auditInput.current && typeof auditInput.current === "object" ? auditInput.current : {};
+  const beforeClearAudit =
+    auditInput.beforeClear && typeof auditInput.beforeClear === "object"
+      ? auditInput.beforeClear
+      : {};
 
   return {
     version: /** @type {1} */ (1),
@@ -155,6 +188,21 @@ function normalizeBrowserPrivacySettings(raw = {}) {
       gemini: safeText(lastClearedInput.gemini, 40),
       claude: safeText(lastClearedInput.claude, 40),
     },
+    fingerprint: normalizeFingerprintSettings(input.fingerprint),
+    // 资料环境 ID 与审计快照只保存在本机；跨设备只同步 fingerprint 策略。
+    localProfiles: normalizeLocalProfiles(input.localProfiles),
+    audit: {
+      current: {
+        gpt: safeAuditSnapshot(currentAudit.gpt),
+        gemini: safeAuditSnapshot(currentAudit.gemini),
+        claude: safeAuditSnapshot(currentAudit.claude),
+      },
+      beforeClear: {
+        gpt: safeAuditSnapshot(beforeClearAudit.gpt),
+        gemini: safeAuditSnapshot(beforeClearAudit.gemini),
+        claude: safeAuditSnapshot(beforeClearAudit.claude),
+      },
+    },
   };
 }
 
@@ -175,6 +223,7 @@ function syncedBrowserPrivacyPayload(raw) {
         ? {}
         : { timezone: normalized.environment.timezone }),
     },
+    fingerprint: normalized.fingerprint,
   };
 }
 
@@ -203,11 +252,14 @@ function mergeSyncedBrowserPrivacy(localRaw, remoteRaw) {
       geolocationMode: remoteEnvironment.geolocationMode,
       autoSyncFromProxy: remoteEnvironment.autoSyncFromProxy,
     },
+    fingerprint: remoteRaw?.fingerprint || local.fingerprint,
   });
   return {
     ...remote,
     syncEnabled: local.syncEnabled,
     lastClearedAt: local.lastClearedAt,
+    localProfiles: local.localProfiles,
+    audit: local.audit,
     environment: {
       ...remote.environment,
       // 节点派生信息只在检测它的设备保留。
@@ -268,6 +320,7 @@ async function applyEnvironmentToWebContents({
   privacySettings,
   defaultUserAgent,
   systemLanguages,
+  kind,
 }) {
   if (!webContents || webContents.isDestroyed?.()) {
     throw new Error("网页视图不可用");
@@ -282,7 +335,11 @@ async function applyEnvironmentToWebContents({
   const activeLanguages = environment.overridden
     ? environment.acceptLanguages
     : fallbackLanguages || "en-US";
-  const activeUserAgent = safeText(defaultUserAgent, 500) || targetSession.getUserAgent();
+  const normalizedPrivacy = normalizeBrowserPrivacySettings(privacySettings);
+  const profile = normalizedPrivacy.localProfiles?.[kind] || { id: "", rebuiltAt: "" };
+  const requestedUserAgent = safeText(defaultUserAgent, 500) || targetSession.getUserAgent();
+  const fingerprintUa = userAgentOverride(requestedUserAgent, normalizedPrivacy.fingerprint);
+  const activeUserAgent = fingerprintUa.userAgent || requestedUserAgent;
 
   targetSession.setUserAgent(activeUserAgent, activeLanguages);
   webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
@@ -298,11 +355,23 @@ async function applyEnvironmentToWebContents({
     debuggerApi.attach("1.3");
   }
 
-  // 仅覆盖语言环境；不伪造操作系统、硬件或高熵 User-Agent Client Hints。
-  await sendDebuggerCommand(debuggerApi, "Emulation.setUserAgentOverride", {
+  const userAgentParams = {
     userAgent: activeUserAgent,
     acceptLanguage: activeLanguages,
-  });
+    ...(fingerprintUa.userAgentMetadata
+      ? { userAgentMetadata: fingerprintUa.userAgentMetadata }
+      : {}),
+  };
+  try {
+    await sendDebuggerCommand(debuggerApi, "Emulation.setUserAgentOverride", userAgentParams);
+  } catch (error) {
+    if (!fingerprintUa.userAgentMetadata) throw error;
+    // 旧 Chromium 若不接受完整 metadata，至少保留 UA 与语言覆盖。
+    await sendDebuggerCommand(debuggerApi, "Emulation.setUserAgentOverride", {
+      userAgent: activeUserAgent,
+      acceptLanguage: activeLanguages,
+    });
+  }
   await sendDebuggerCommand(debuggerApi, "Emulation.setTimezoneOverride", {
     timezoneId: environment.overridden ? environment.timezone : "",
   });
@@ -319,8 +388,33 @@ async function applyEnvironmentToWebContents({
     await sendDebuggerCommand(debuggerApi, "Emulation.clearGeolocationOverride");
   }
 
+  const previousScriptId = fingerprintScriptIds.get(webContents);
+  if (previousScriptId) {
+    await sendDebuggerCommand(debuggerApi, "Page.removeScriptToEvaluateOnNewDocument", {
+      identifier: previousScriptId,
+    }).catch(() => undefined);
+  }
+  const fingerprintSource = buildFingerprintInjectionSource(
+    normalizedPrivacy.fingerprint,
+    profile.id,
+    kind,
+  );
+  const registered = await sendDebuggerCommand(
+    debuggerApi,
+    "Page.addScriptToEvaluateOnNewDocument",
+    { source: fingerprintSource },
+  );
+  if (registered?.identifier) fingerprintScriptIds.set(webContents, registered.identifier);
+  // 设置变化时立即更新当前页面；包装器内部读取动态配置，不会重复叠加。
+  if (typeof webContents.executeJavaScript === "function") {
+    await webContents.executeJavaScript(fingerprintSource, true).catch(() => undefined);
+  }
+
   return {
     ...environment,
+    userAgent: activeUserAgent,
+    fingerprint: normalizedPrivacy.fingerprint,
+    profileId: profile.id || "",
     webRtcPolicy: webContents.getWebRTCIPHandlingPolicy(),
   };
 }
@@ -451,6 +545,16 @@ function normalizeDetectedEnvironment(geo, trace) {
     country: safeText(geo.country, 80),
     region: safeText(geo.region, 80),
     city: safeText(geo.city, 80),
+    asn: safeText(geo?.connection?.asn, 40),
+    organization: safeText(geo?.connection?.org, 120),
+    isp: safeText(geo?.connection?.isp, 120),
+    domain: safeText(geo?.connection?.domain, 120),
+    security: {
+      proxy: Boolean(geo?.security?.proxy),
+      vpn: Boolean(geo?.security?.vpn),
+      tor: Boolean(geo?.security?.tor),
+      hosting: Boolean(geo?.security?.hosting),
+    },
     timezone,
     latitude,
     longitude,

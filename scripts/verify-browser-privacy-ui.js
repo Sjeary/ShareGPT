@@ -162,6 +162,17 @@ async function main() {
       3,
       "must expose one clear action per provider",
     );
+    const providerRebuildButtons = window.getByRole("button", {
+      name: "重建资料环境",
+      exact: true,
+    });
+    assert.strictEqual(
+      await providerRebuildButtons.count(),
+      3,
+      "must expose one profile rebuild action per provider",
+    );
+    await window.getByText("稳定指纹标准化", { exact: true }).waitFor({ state: "visible" });
+    await window.getByText("网页可见信息表盘", { exact: true }).waitFor({ state: "attached" });
     assert.strictEqual(
       await window.getByRole("button", { name: /全部.*清除|清除.*全部/ }).count(),
       0,
@@ -195,6 +206,13 @@ async function main() {
     await dialog.waitFor({ state: "hidden" });
     assert.doesNotMatch((await claudeRow.textContent()) || "", /从未清除/);
 
+    await claudeRow.getByRole("button", { name: "重建资料环境", exact: true }).click();
+    await dialog.getByText("重建 Claude 浏览器资料环境", { exact: true }).waitFor();
+    await dialog.locator("#browser-clear-password").fill(PASSWORD);
+    await dialog.getByRole("button", { name: "验证密码并重建", exact: true }).click();
+    await window.getByText(/Claude 已切换到全新的浏览器资料环境/).waitFor();
+    await dialog.waitFor({ state: "hidden" });
+
     const syncedPrivacy = await waitForSyncedPrivacy(path.join(tempDir, "user_stores.json"));
     const localOnlyFields = [
       "sourceIp",
@@ -215,6 +233,9 @@ async function main() {
       );
     }
     assert.strictEqual(Object.hasOwn(syncedPrivacy, "lastClearedAt"), false);
+    assert.strictEqual(typeof syncedPrivacy.fingerprint, "object");
+    assert.strictEqual(Object.hasOwn(syncedPrivacy, "localProfiles"), false);
+    assert.strictEqual(Object.hasOwn(syncedPrivacy, "audit"), false);
 
     await window.screenshot({ path: screenshotPath, fullPage: true });
     assert.deepStrictEqual(pageErrors, [], `renderer page errors: ${pageErrors.join("; ")}`);
@@ -227,12 +248,17 @@ async function main() {
       `${JSON.stringify(
         {
           ok: true,
-          version: "1.0.5",
+          version: "1.0.6",
           fixture: baseUrl,
           providerClearActions: 3,
+          providerProfileRebuildActions: 3,
           clearAllAction: false,
           wrongPasswordRejected: true,
           correctPasswordClearedClaudePartition: true,
+          correctPasswordRebuiltClaudeProfile: true,
+          fingerprintDashboardPresent: true,
+          fingerprintPolicySynced: true,
+          fingerprintSnapshotsSynced: false,
           syncedNodeDetectionFields: false,
           aiWebsitesVisited: false,
           blockedNonLocalRequests: blockedRequests.length,

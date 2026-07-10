@@ -1,5 +1,14 @@
 import { useState } from 'react'
-import { Globe2, Loader2, MapPinOff, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react'
+import {
+  Fingerprint,
+  Globe2,
+  Loader2,
+  MapPinOff,
+  RefreshCw,
+  RotateCcw,
+  ShieldCheck,
+  Trash2,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -20,9 +29,11 @@ import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useAiStore, type AiKind } from '@/store/useAiStore'
+import { BrowserFingerprintDashboard } from './BrowserFingerprintDashboard'
 import type {
   BrowserEnvironmentMode,
   BrowserEnvironmentSettings,
+  BrowserFingerprintSettings,
   BrowserGeolocationMode,
   BrowserPrivacySettings,
 } from '@/types/settings'
@@ -57,7 +68,10 @@ export function BrowserPrivacySection() {
   const patchSection = useAppStore((state) => state.patchSection)
   const token = useAuthStore((state) => state.token)
   const identity = useChatStore((state) => state.identity)
-  const [clearTarget, setClearTarget] = useState<AiKind | null>(null)
+  const [destructiveAction, setDestructiveAction] = useState<{
+    kind: AiKind
+    mode: 'clear' | 'rebuild'
+  } | null>(null)
   const [password, setPassword] = useState('')
   const [clearing, setClearing] = useState(false)
   const [syncingExit, setSyncingExit] = useState(false)
@@ -88,6 +102,21 @@ export function BrowserPrivacySection() {
       },
       apply,
     )
+  }
+
+  async function patchFingerprint(patch: Partial<BrowserFingerprintSettings>): Promise<void> {
+    const current = useAppStore.getState().settings?.browserPrivacy
+    if (!current) return
+    try {
+      await savePrivacy({
+        ...current,
+        updatedAt: new Date().toISOString(),
+        fingerprint: { ...current.fingerprint, ...patch },
+      })
+      toast.success('稳定指纹配置已应用到网页环境')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '稳定指纹配置保存失败')
+    }
   }
 
   async function changeMode(mode: BrowserEnvironmentMode): Promise<void> {
@@ -168,31 +197,33 @@ export function BrowserPrivacySection() {
   }
 
   async function verifyPassword(): Promise<void> {
-    if (!clearTarget || !password || clearing) return
+    if (!destructiveAction || !password || clearing) return
     const serverUrl = trimServerUrl(identity.serverUrl)
     const activeToken = token || identity.token
     if (!serverUrl || !activeToken) {
-      toast.error('协作账号登录已失效，请重新登录后再清除')
+      toast.error('协作账号登录已失效，请重新登录后再执行此操作')
       return
     }
 
     setClearing(true)
     try {
-      const target = clearTarget
-      await api.clearAiBrowserData(target, {
-        password,
-        serverUrl,
-        token: activeToken,
-      })
+      const { kind: target, mode } = destructiveAction
+      const confirmation = { password, serverUrl, token: activeToken }
+      if (mode === 'rebuild') await api.rebuildAiBrowserProfile(target, confirmation)
+      else await api.clearAiBrowserData(target, confirmation)
       useAiStore.getState().setFeedback(target, '')
       await useAppStore.getState().reloadSettings()
       const label = PROVIDERS.find((item) => item.kind === target)?.label || target
-      toast.success(`${label} 的 Cookie、登录状态和本地网页记录已清除`)
-      setClearTarget(null)
+      toast.success(
+        mode === 'rebuild'
+          ? `${label} 已切换到全新的浏览器资料环境`
+          : `${label} 的 Cookie、登录状态和本地网页记录已清除`,
+      )
+      setDestructiveAction(null)
       setPassword('')
     } catch (error) {
       setPassword('')
-      toast.error(error instanceof Error ? error.message : '清除网页登录数据失败')
+      toast.error(error instanceof Error ? error.message : '浏览器资料操作失败')
     } finally {
       setClearing(false)
     }
@@ -231,18 +262,31 @@ export function BrowserPrivacySection() {
                     {provider.description} · {formatWhen(privacy.lastClearedAt[provider.kind])}
                   </p>
                 </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => {
-                    setPassword('')
-                    setClearTarget(provider.kind)
-                  }}
-                >
-                  <Trash2 />
-                  清除
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => {
+                      setPassword('')
+                      setDestructiveAction({ kind: provider.kind, mode: 'clear' })
+                    }}
+                  >
+                    <Trash2 />
+                    清除
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setPassword('')
+                      setDestructiveAction({ kind: provider.kind, mode: 'rebuild' })
+                    }}
+                  >
+                    <RotateCcw />
+                    重建资料环境
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
@@ -340,12 +384,62 @@ export function BrowserPrivacySection() {
               </div>
             )}
 
+            <Separator />
+
+            <div className="grid gap-3">
+              <div>
+                <p className="flex items-center gap-2 text-sm font-medium">
+                  <Fingerprint className="size-4" /> 稳定指纹标准化
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  统一 CPU、内存、屏幕、DPR、触控以及 Canvas/Audio 摘要；美国 Windows
+                  预设还会统一平台、Client Hints、WebGL 与媒体设备摘要。
+                </p>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <Label htmlFor="browser-fingerprint-enabled">启用稳定指纹配置</Label>
+                  <p className="text-xs text-muted-foreground">
+                    默认关闭；开启后对三个 AI 网页使用同一套目标参数，每个服务保留独立资料 ID。
+                  </p>
+                </div>
+                <Switch
+                  id="browser-fingerprint-enabled"
+                  checked={privacy.fingerprint.enabled}
+                  onCheckedChange={(checked) => void patchFingerprint({ enabled: checked })}
+                />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="browser-fingerprint-preset">标准化预设</Label>
+                <select
+                  id="browser-fingerprint-preset"
+                  value={privacy.fingerprint.preset}
+                  disabled={!privacy.fingerprint.enabled}
+                  onChange={(event) =>
+                    void patchFingerprint({
+                      preset: event.target.value as BrowserFingerprintSettings['preset'],
+                    })
+                  }
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <option value="balanced">兼容模式：保留真实系统平台与 GPU</option>
+                  <option value="us-windows">美国桌面：Windows 10 x64 标准环境</option>
+                </select>
+              </div>
+              <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                目标参数：{privacy.fingerprint.hardwareConcurrency} 核 ·{' '}
+                {privacy.fingerprint.deviceMemory} GB · {privacy.fingerprint.screenWidth}×
+                {privacy.fingerprint.screenHeight} · DPR {privacy.fingerprint.devicePixelRatio}
+                。标准化用于减少差异，不承诺绕过网站风控；若登录验证异常可随时关闭。
+              </div>
+            </div>
+
             <div className="flex items-center justify-between gap-3">
               <div>
                 <Label htmlFor="browser-privacy-sync">跨设备同步环境配置</Label>
                 <p className="text-xs text-muted-foreground">
-                  只同步语言、美国预设时区和位置策略；每台设备单独检测当前代理节点。不上传
-                  Cookie、密码、网页登录态、出口 IP、位置检测结果或清理记录。
+                  只同步语言、美国预设时区、位置策略和指纹标准化参数；每台设备单独检测当前代理节点。不上传
+                  Cookie、密码、网页登录态、出口 IP、资料环境 ID、可见信息快照或清理记录。
                 </p>
               </div>
               <Switch
@@ -371,12 +465,14 @@ export function BrowserPrivacySection() {
         </CardContent>
       </Card>
 
+      <BrowserFingerprintDashboard privacy={privacy} />
+
       <Dialog
-        open={clearTarget !== null}
+        open={destructiveAction !== null}
         onOpenChange={(open) => {
           if (clearing) return
           if (!open) {
-            setClearTarget(null)
+            setDestructiveAction(null)
             setPassword('')
           }
         }}
@@ -384,10 +480,15 @@ export function BrowserPrivacySection() {
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>
-              清除 {PROVIDERS.find((item) => item.kind === clearTarget)?.label || ''} 网页数据
+              {destructiveAction?.mode === 'rebuild' ? '重建' : '清除'}{' '}
+              {PROVIDERS.find((item) => item.kind === destructiveAction?.kind)?.label || ''}
+              {destructiveAction?.mode === 'rebuild' ? ' 浏览器资料环境' : ' 网页数据'}
             </DialogTitle>
             <DialogDescription>
-              该服务的网页标签会关闭，Cookie、登录状态和本地网页记录将永久删除。请输入当前协作账号密码确认。
+              {destructiveAction?.mode === 'rebuild'
+                ? '该服务会关闭全部网页标签、清除现有登录数据，并切换到新的持久化分区和本机资料 ID。'
+                : '该服务的网页标签会关闭，Cookie、登录状态和本地网页记录将永久删除。'}
+              请输入当前协作账号密码确认。
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
@@ -410,7 +511,7 @@ export function BrowserPrivacySection() {
               variant="outline"
               disabled={clearing}
               onClick={() => {
-                setClearTarget(null)
+                setDestructiveAction(null)
                 setPassword('')
               }}
             >
@@ -422,8 +523,20 @@ export function BrowserPrivacySection() {
               disabled={!password || clearing}
               onClick={() => void verifyPassword()}
             >
-              {clearing ? <Loader2 className="animate-spin" /> : <Trash2 />}
-              {clearing ? '验证并清除中…' : '验证密码并清除'}
+              {clearing ? (
+                <Loader2 className="animate-spin" />
+              ) : destructiveAction?.mode === 'rebuild' ? (
+                <RotateCcw />
+              ) : (
+                <Trash2 />
+              )}
+              {clearing
+                ? destructiveAction?.mode === 'rebuild'
+                  ? '验证并重建中…'
+                  : '验证并清除中…'
+                : destructiveAction?.mode === 'rebuild'
+                  ? '验证密码并重建'
+                  : '验证密码并清除'}
             </Button>
           </DialogFooter>
         </DialogContent>

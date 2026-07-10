@@ -91,6 +91,29 @@ export interface BrowserEnvironmentSettings {
   sourceUpdatedAt: string
 }
 
+export type BrowserFingerprintPreset = 'balanced' | 'us-windows'
+
+export interface BrowserFingerprintSettings {
+  enabled: boolean
+  preset: BrowserFingerprintPreset
+  hardwareConcurrency: number
+  deviceMemory: number
+  screenWidth: number
+  screenHeight: number
+  availableHeight: number
+  devicePixelRatio: number
+  colorDepth: number
+  maxTouchPoints: number
+  canvasNoise: boolean
+  audioNoise: boolean
+  mediaDevices: 'preserve' | 'empty'
+}
+
+export interface BrowserLocalProfile {
+  id: string
+  rebuiltAt: string
+}
+
 export interface BrowserPrivacySettings {
   version: 1
   syncEnabled: boolean
@@ -98,6 +121,13 @@ export interface BrowserPrivacySettings {
   environment: BrowserEnvironmentSettings
   // 每台设备独立记录，帮助用户确认本机何时清过哪个服务；不会上传。
   lastClearedAt: Record<'gpt' | 'gemini' | 'claude', string>
+  // 只同步标准化策略；本机资料环境 ID 与审计快照不会上传。
+  fingerprint: BrowserFingerprintSettings
+  localProfiles: Record<'gpt' | 'gemini' | 'claude', BrowserLocalProfile>
+  audit: {
+    current: Record<'gpt' | 'gemini' | 'claude', Record<string, unknown> | null>
+    beforeClear: Record<'gpt' | 'gemini' | 'claude', Record<string, unknown> | null>
+  }
 }
 
 export interface AppSettings {

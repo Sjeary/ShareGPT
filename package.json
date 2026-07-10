@@ -1,6 +1,6 @@
 {
   "name": "sharegpt-desktop",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "ShareGPT desktop client with built-in messaging and embedded ChatGPT, Gemini and Claude web access (Gemini/Claude optional).",
   "main": "src/main/main.js",
   "author": "Sjeary",
@@ -23,7 +23,7 @@
     "sing-box"
   ],
   "scripts": {
-    "test": "node --test collab_server2/test/server.test.js src/main/test/browserPrivacy.test.js",
+    "test": "node --test collab_server2/test/server.test.js src/main/test/*.test.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",

@@ -16,6 +16,7 @@ interface SyncedBrowserPrivacy {
     BrowserPrivacySettings['environment'],
     'mode' | 'locale' | 'acceptLanguages' | 'geolocationMode' | 'autoSyncFromProxy'
   > & { timezone?: string }
+  fingerprint?: BrowserPrivacySettings['fingerprint']
 }
 
 function stable(value: unknown): string {
@@ -38,6 +39,7 @@ function syncPayload(settings: BrowserPrivacySettings): SyncedBrowserPrivacy {
       autoSyncFromProxy: settings.environment.autoSyncFromProxy,
       ...(settings.environment.mode === 'proxy' ? {} : { timezone: settings.environment.timezone }),
     },
+    fingerprint: settings.fingerprint,
   }
 }
 
@@ -120,12 +122,18 @@ async function applyRemote(remote: SyncedBrowserPrivacy): Promise<void> {
         : {}),
     },
     lastClearedAt: local.lastClearedAt,
+    fingerprint:
+      remote.fingerprint && typeof remote.fingerprint === 'object'
+        ? { ...local.fingerprint, ...remote.fingerprint }
+        : local.fingerprint,
+    localProfiles: local.localProfiles,
+    audit: local.audit,
   })
   await api.applyBrowserPrivacy().catch(() => undefined)
 }
 
-// 同步“浏览器环境策略”，不上传 Cookie、网页登录态、缓存、密码、代理凭据、出口检测结果
-// 或本机清理记录。每台设备在 proxy 模式下都必须从自己的当前节点重新检测。
+// 同步浏览器环境与指纹标准化策略，不上传 Cookie、网页登录态、缓存、密码、代理凭据、
+// 出口检测结果、本机资料 ID、网页审计快照或清理记录。proxy 模式在每台设备重新检测。
 export function useBrowserPrivacySync(): void {
   const serverUrl = useChatStore((state) => state.identity.serverUrl)
   const token = useChatStore((state) => state.identity.token)

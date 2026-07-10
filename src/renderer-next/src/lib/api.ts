@@ -66,6 +66,16 @@ const fallback = {
     clearedAt: '',
     homeUrl: '',
   }),
+  rebuildAiBrowserProfile: async () => ({
+    ok: false,
+    kind: 'gpt',
+    rebuiltAt: '',
+    partition: '',
+    homeUrl: '',
+  }),
+  captureBrowserFingerprint: async () => {
+    throw new Error('仅桌面客户端支持网页可见信息采集')
+  },
   applyBrowserPrivacy: async () => ({ ok: false, results: [] }),
   detectProxyEnvironment: async () => {
     throw new Error('仅桌面客户端支持出口环境检测')

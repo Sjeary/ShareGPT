@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.0.6',
+    date: '2026-07-10',
+    highlights: [
+      '新增「网页可见信息表盘」：分别展示 ChatGPT、Claude、Gemini 实际看到的出口网络、时区语言、WebRTC、浏览器、硬件、WebGL/GPU、Canvas、Audio、字体与媒体设备摘要。',
+      '清除或重建资料环境前自动保留摘要；支持清除前后逐项对比，也可手动导入另一台 Mac / Windows 的快照检查同配置差异。',
+      '新增按服务「重建资料环境」：清理旧网站数据后切换到新的本机持久化分区；操作仍需当前协作账号密码复核。',
+      '新增默认关闭的稳定指纹标准化；用于减少明显环境矛盾，不承诺隐藏代理、绕过网站风控或让不同设备绝对不可区分。',
+    ],
+  },
+  {
     version: '1.0.5',
     date: '2026-07-10',
     highlights: [

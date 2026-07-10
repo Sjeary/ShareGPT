@@ -8,15 +8,14 @@ import {
   Minimize2,
   Home,
   RotateCw,
-  Bot,
-  Sparkles,
-  Asterisk,
   ShieldCheck,
   ShieldAlert,
   ShieldX,
   Loader2,
   X,
+  type LucideIcon,
 } from 'lucide-react'
+import { ChatGPTIcon, ClaudeIcon, GeminiIcon } from '@/components/icons/AiBrandIcons'
 import { PanelScaffold } from '@/components/panels/PanelScaffold'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -65,13 +64,13 @@ function normalizeUrlFor(kind: AiKind, url: string): string {
 interface AiMeta {
   title: string
   hint: string
-  icon: typeof Bot
+  icon: LucideIcon
 }
 
 const META: Record<AiKind, AiMeta> = {
-  gpt: { title: 'ChatGPT', hint: '内嵌 ChatGPT 网页 · 经代理访问', icon: Bot },
-  gemini: { title: 'Gemini', hint: '内嵌 Gemini 网页 · 经代理访问', icon: Sparkles },
-  claude: { title: 'Claude', hint: '内嵌 Claude 网页 · 经代理访问', icon: Asterisk },
+  gpt: { title: 'ChatGPT', hint: '内嵌 ChatGPT 网页 · 经代理访问', icon: ChatGPTIcon },
+  gemini: { title: 'Gemini', hint: '内嵌 Gemini 网页 · 经代理访问', icon: GeminiIcon },
+  claude: { title: 'Claude', hint: '内嵌 Claude 网页 · 经代理访问', icon: ClaudeIcon },
 }
 
 // 共享 AI 网页工作区。GPT / Gemini 完全同构: 控制条 + 多标签 + 原生 view 宿主 + 遮罩。

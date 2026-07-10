@@ -74,6 +74,10 @@ contextBridge.exposeInMainWorld("api", {
   checkAiProxy: (kind, tabId) => ipcRenderer.invoke("ai:proxy-check", { kind, tabId }),
   clearAiBrowserData: (kind, confirmation) =>
     ipcRenderer.invoke("ai:data-clear", { kind, ...(confirmation || {}) }),
+  rebuildAiBrowserProfile: (kind, confirmation) =>
+    ipcRenderer.invoke("ai:profile-rebuild", { kind, ...(confirmation || {}) }),
+  captureBrowserFingerprint: (kind, tabId) =>
+    ipcRenderer.invoke("browser-privacy:capture", { kind, tabId }),
   applyBrowserPrivacy: () => ipcRenderer.invoke("browser-privacy:apply"),
   detectProxyEnvironment: () => ipcRenderer.invoke("browser-privacy:detect-proxy-environment"),
   executeAiJavaScript: (payload) => ipcRenderer.invoke("ai:execute-javascript", payload),
