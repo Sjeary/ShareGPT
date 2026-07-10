@@ -87,6 +87,11 @@ npm run dist:mac              # → dmg
 `app.asar`、`sing-box.exe` 和 `frpc.exe`；它缺少的是安装/卸载与 electron-updater 的 NSIS
 发布层。正式发布前在 Windows 构建机执行：
 
+本次检查还发现 `win-unpacked/resources/bin/sing-box`（无 `.exe`）是约 34 MB 的非 Windows
+冗余文件，因为 `extraResources` 当前会复制整个 `build/bin`。它不影响功能，也进一步说明此次
+小包不是漏掉 Windows 核心资产。以后若清理跨平台冗余，必须单独提交、重新验证并更新这里的
+体积基线，不能把预期缩小误判为构建缺失。
+
 ```bash
 npm run dist:win:installer
 npm run verify:release-win
