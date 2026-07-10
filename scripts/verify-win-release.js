@@ -46,7 +46,7 @@ if (declaredSize !== installer.size) {
 const checksumFile = path.join(root, "build", "bin", "checksums.json");
 const checksums = JSON.parse(fs.readFileSync(checksumFile, "utf8"));
 for (const [label, asset] of [
-  ["singbox", singBox],
+  ["sing-box", singBox],
   ["frpc", frpc],
 ]) {
   const expected = String(checksums?.[label]?.windows?.sha256 || "").toLowerCase();
