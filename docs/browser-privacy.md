@@ -19,7 +19,7 @@
 
 “重建资料环境”在完成上述清理后，还会为目标服务生成新的本机资料 ID，并切换到新的持久化分区。旧分区不再挂载，但其它 AI 服务仍保持原分区和登录状态。
 
-Electron 31.7.7 在 macOS 上调用 `session.clearData()` 清理含 Service Worker 的已关闭分区会发生原生崩溃。当前实现使用逐项 `clearStorageData()` 加独立缓存 API；本地 Chromium 回归测试覆盖这些数据类型。
+早期 Electron 31.7.7 在 macOS 上调用 `session.clearData()` 清理含 Service Worker 的已关闭分区会发生原生崩溃。当前运行时已升级到 Electron 43.1.0，仍保留经过回归验证的逐项 `clearStorageData()` 加独立缓存 API；本地 Chromium 回归测试覆盖这些数据类型。
 
 ## 环境配置
 
@@ -39,6 +39,11 @@ Electron 31.7.7 在 macOS 上调用 `session.clearData()` 清理含 Service Work
 - Mac / Windows 差异比较采用手动导出/导入 JSON，不自动上传网页指纹快照；导入数据只存在当前界面内存中。
 
 ## 可选稳定指纹标准化
+
+默认使用“兼容模式”，保留当前主机真实的 macOS/Windows 平台、UA、字体、GPU 与架构。
+为了避免跨平台矛盾，macOS 与 Linux 会把旧版本同步下来的 `us-windows` 预设自动降级为
+兼容模式；Windows 预设只允许在 Windows 主机上使用。国家、语言、时区与出口节点属于
+独立的环境设置，不应通过伪装操作系统来表达。
 
 - 默认关闭，关闭时不修改网页看到的操作系统、硬件、Canvas、Audio 或媒体设备信息。
 - `balanced` 保留真实 OS/UA/WebGL 和媒体设备，只把 CPU、内存档位、屏幕、DPR、触控以及 Canvas/Audio 摘要稳定到当前资料环境。

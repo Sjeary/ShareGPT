@@ -392,8 +392,8 @@ export function BrowserPrivacySection() {
                   <Fingerprint className="size-4" /> 稳定指纹标准化
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  统一 CPU、内存、屏幕、DPR、触控以及 Canvas/Audio 摘要；美国 Windows
-                  预设还会统一平台、Client Hints、WebGL 与媒体设备摘要。
+                  统一 CPU、内存、屏幕、DPR、触控以及 Canvas/Audio 摘要，同时保留本机的
+                  macOS/Windows 平台、UA、字体、GPU 与架构，减少相互矛盾的信息。
                 </p>
               </div>
               <div className="flex items-center justify-between gap-3">
@@ -423,7 +423,9 @@ export function BrowserPrivacySection() {
                   className="h-9 rounded-md border border-input bg-background px-3 text-sm outline-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <option value="balanced">兼容模式：保留真实系统平台与 GPU</option>
-                  <option value="us-windows">美国桌面：Windows 10 x64 标准环境</option>
+                  {api.platform === 'win32' && (
+                    <option value="us-windows">Windows 标准环境（仅限 Windows 本机）</option>
+                  )}
                 </select>
               </div>
               <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">

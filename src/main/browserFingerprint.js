@@ -258,9 +258,18 @@ function numberInRange(value, min, max, fallback) {
   return Number.isFinite(number) && number >= min && number <= max ? number : fallback;
 }
 
-function normalizeFingerprintSettings(raw = {}) {
+/**
+ * @param {Record<string, any>} raw
+ * @param {NodeJS.Platform | string} hostPlatform
+ */
+function normalizeFingerprintSettings(raw = {}, hostPlatform = process.platform) {
   const input = /** @type {Record<string, any>} */ (raw && typeof raw === "object" ? raw : {});
-  const preset = FINGERPRINT_PRESETS.has(input.preset) ? input.preset : "balanced";
+  const requestedPreset = FINGERPRINT_PRESETS.has(input.preset) ? input.preset : "balanced";
+  // 平台伪装很容易制造互相矛盾的信号（例如 macOS 的字体、媒体栈与 TLS 行为，
+  // 却搭配 Windows UA/Client Hints）。旧版本同步过来的 Windows 预设只允许在
+  // Windows 主机上继续使用；macOS/Linux 自动回落到保留本机平台的兼容模式。
+  const preset =
+    requestedPreset === "us-windows" && hostPlatform !== "win32" ? "balanced" : requestedPreset;
   const mediaDevices = input.mediaDevices === "empty" ? "empty" : "preserve";
   return {
     enabled: input.enabled === true,
@@ -297,8 +306,8 @@ function normalizeLocalProfiles(raw = {}) {
   );
 }
 
-function profileRuntimeConfig(settings, profileId, kind) {
-  const normalized = normalizeFingerprintSettings(settings);
+function profileRuntimeConfig(settings, profileId, kind, hostPlatform = process.platform) {
+  const normalized = normalizeFingerprintSettings(settings, hostPlatform);
   const usWindows = normalized.preset === "us-windows";
   return {
     ...normalized,
@@ -313,8 +322,13 @@ function profileRuntimeConfig(settings, profileId, kind) {
   };
 }
 
-function buildFingerprintInjectionSource(settings, profileId, kind) {
-  const config = profileRuntimeConfig(settings, profileId, kind);
+function buildFingerprintInjectionSource(
+  settings,
+  profileId,
+  kind,
+  hostPlatform = process.platform,
+) {
+  const config = profileRuntimeConfig(settings, profileId, kind, hostPlatform);
   return `(() => {
     const next = ${JSON.stringify(config)};
     const marker = Symbol.for('sharegpt.fingerprint.standardizer.v1');
@@ -438,8 +452,8 @@ function buildFingerprintInjectionSource(settings, profileId, kind) {
   })();`;
 }
 
-function userAgentOverride(activeUserAgent, settings) {
-  const normalized = normalizeFingerprintSettings(settings);
+function userAgentOverride(activeUserAgent, settings, hostPlatform = process.platform) {
+  const normalized = normalizeFingerprintSettings(settings, hostPlatform);
   const original = safeText(activeUserAgent, 600);
   if (!normalized.enabled || normalized.preset !== "us-windows") {
     return { userAgent: original, userAgentMetadata: null };

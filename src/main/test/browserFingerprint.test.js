@@ -32,6 +32,7 @@ test("美国 Windows 预设生成一致的 UA 与高熵 Client Hints", () => {
   const result = userAgentOverride(
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126.0.6478.0 Safari/537.36",
     { enabled: true, preset: "us-windows" },
+    "win32",
   );
   assert.match(result.userAgent, /Windows NT 10\.0; Win64; x64/);
   assert.strictEqual(result.userAgentMetadata.platform, "Windows");
@@ -40,11 +41,28 @@ test("美国 Windows 预设生成一致的 UA 与高熵 Client Hints", () => {
   assert.strictEqual(result.userAgentMetadata.fullVersion, "126.0.6478.0");
 });
 
+test("非 Windows 主机收到旧 Windows 预设时回落为本机兼容模式", () => {
+  for (const hostPlatform of ["darwin", "linux"]) {
+    const normalized = normalizeFingerprintSettings(
+      { enabled: true, preset: "us-windows" },
+      hostPlatform,
+    );
+    assert.strictEqual(normalized.preset, "balanced");
+    const result = userAgentOverride(
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/150.0.0.0 Safari/537.36",
+      normalized,
+    );
+    assert.match(result.userAgent, /Macintosh/);
+    assert.strictEqual(result.userAgentMetadata, null);
+  }
+});
+
 test("注入脚本不包含原始设备 ID，并按单服务资料 ID 稳定生成", () => {
   const source = buildFingerprintInjectionSource(
     { enabled: true, preset: "us-windows" },
     "gpt-test-profile",
     "gpt",
+    "win32",
   );
   assert.match(source, /gpt-test-profile/);
   assert.match(source, /hardwareConcurrency/);
@@ -56,6 +74,7 @@ test("注入脚本不包含原始设备 ID，并按单服务资料 ID 稳定生�
       { enabled: true, preset: "us-windows" },
       "gpt-test-profile",
       "gpt",
+      "win32",
     ),
   );
 });
