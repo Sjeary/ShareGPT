@@ -34,11 +34,18 @@ const singBox = requiredFile(
 );
 const frpc = requiredFile(path.join(releaseDir, "win-unpacked", "resources", "bin", "frpc.exe"));
 
-const localCacheEntries = asar
-  .listPackage(appAsar.filePath)
-  .filter((entry) => /(^|[\\/])\.npm-cache([\\/]|$)/.test(entry));
+const packagedEntries = asar.listPackage(appAsar.filePath);
+const localCacheEntries = packagedEntries.filter((entry) =>
+  /(^|[\\/])\.npm-cache([\\/]|$)/.test(entry),
+);
 if (localCacheEntries.length > 0) {
   throw new Error(`app.asar 包含本机 npm 缓存：${localCacheEntries[0]}`);
+}
+const rendererIndex = packagedEntries.some(
+  (entry) => entry.replace(/\\/g, "/").replace(/^\/+/, "") === "src/renderer-next/dist/index.html",
+);
+if (!rendererIndex) {
+  throw new Error("app.asar 缺少 renderer 入口：src/renderer-next/dist/index.html");
 }
 
 const latestText = fs.readFileSync(latest.filePath, "utf8");
@@ -86,6 +93,7 @@ process.stdout.write(
       packagedResources: {
         appAsarBytes: appAsar.size,
         npmCacheEntries: localCacheEntries.length,
+        rendererIndex,
         singBoxBytes: singBox.size,
         frpcBytes: frpc.size,
       },

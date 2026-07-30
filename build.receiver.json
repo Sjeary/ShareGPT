@@ -2,7 +2,7 @@
   "appId": "com.sjeary.sharegpt.desktop.receiver",
   "productName": "ShareGPT 出口",
   "asar": true,
-  "files": ["src/**/*", "package.json"],
+  "files": ["src/**/*", "!src/**/.npm-cache{,/**/*}", "package.json"],
   "extraResources": [
     {
       "from": "build/bin",

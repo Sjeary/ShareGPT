@@ -168,7 +168,7 @@ Electron `43.1.0`：
 
 ### 7.2 Windows x64（2026-07-31）
 
-- Node `24.14.0`、Electron `43.1.0`：`npm test` 21/21、主进程类型检查和 renderer 构建通过。
+- Node `24.14.0`、Electron `43.1.0`：`npm test` 22/22、主进程类型检查和 renderer 构建通过。
 - 真实 Electron 隐私清理与 UI 验证通过；未访问真实 AI 网站。
 - NSIS、`latest.yml`、`.blockmap`、sing-box/frpc SHA-256 校验通过；打包主程序版本为 `43.1.0`。
 - 发布校验确认 renderer 入口存在，且 ASAR 不包含任何本机 `.npm-cache`。

@@ -24,6 +24,7 @@ app
       await window.loadURL(
         "data:text/html;charset=utf-8,<html><body>fingerprint-test</body></html>",
       );
+      const nativePlatform = await window.webContents.executeJavaScript("navigator.platform", true);
       await window.webContents.executeJavaScript(
         buildFingerprintInjectionSource(
           { enabled: true, preset: "us-windows" },
@@ -35,18 +36,36 @@ app
       const snapshot = await collectPageFingerprint(window.webContents);
       assert.strictEqual(snapshot.navigator.hardwareConcurrency, 8);
       assert.strictEqual(snapshot.navigator.deviceMemory, 8);
-      assert.strictEqual(snapshot.navigator.platform, "Win32");
+      assert.strictEqual(
+        snapshot.navigator.platform,
+        process.platform === "win32" ? "Win32" : nativePlatform,
+      );
       assert.strictEqual(snapshot.screen.width, 1920);
       assert.strictEqual(snapshot.screen.height, 1080);
       assert.strictEqual(snapshot.screen.devicePixelRatio, 1);
-      assert.strictEqual(snapshot.media.audioInputs, 0);
-      assert.strictEqual(snapshot.media.videoInputs, 0);
       assert.match(snapshot.graphics.canvasHash, /^[a-f0-9]{64}$/);
       assert.match(snapshot.browserHash, /^[a-f0-9]{64}$/);
+
+      await window.webContents.executeJavaScript(
+        buildFingerprintInjectionSource(
+          { enabled: true, preset: "us-windows" },
+          "integration-profile",
+          "gpt",
+          "win32",
+        ),
+        true,
+      );
+      const windowsSnapshot = await collectPageFingerprint(window.webContents);
+      assert.strictEqual(windowsSnapshot.navigator.platform, "Win32");
+      assert.strictEqual(windowsSnapshot.media.audioInputs, 0);
+      assert.strictEqual(windowsSnapshot.media.videoInputs, 0);
       process.stdout.write(
         `${JSON.stringify({
           ok: true,
+          hostPlatform: process.platform,
+          nativePlatform,
           platform: snapshot.navigator.platform,
+          windowsHelperPlatform: windowsSnapshot.navigator.platform,
           cpu: snapshot.navigator.hardwareConcurrency,
           memory: snapshot.navigator.deviceMemory,
           screen: snapshot.screen,

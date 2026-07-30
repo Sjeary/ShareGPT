@@ -4,6 +4,7 @@
   "asar": true,
   "files": [
     "src/**/*",
+    "!src/**/.npm-cache{,/**/*}",
     "!src/renderer-next/node_modules/**",
     "!src/renderer-next/src/**",
     "!src/renderer-next/public/**",
