@@ -3,6 +3,7 @@ release/
 release_sender/
 release_sender_*/
 release_receiver/
+/release_validation_*/
 *.log
 build/bin/*
 !build/bin/

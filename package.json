@@ -53,6 +53,7 @@
     "dist:admin:mac": "npm --prefix admin_console run dist:mac"
   },
   "devDependencies": {
+    "@electron/asar": "3.4.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^20.19.43",
     "electron": "43.1.0",
@@ -69,6 +70,7 @@
     "asar": true,
     "files": [
       "src/**/*",
+      "!src/**/.npm-cache{,/**/*}",
       "!src/renderer-next/node_modules/**",
       "!src/renderer-next/src/**",
       "!src/renderer-next/public/**",
