@@ -169,14 +169,13 @@ sudo chmod 750 /var/lib/sharegpt-collab /etc/sharegpt-collab
 
 ```bash
 sudo -u sharegpt git clone https://github.com/Sjeary/ShareGPT.git /opt/sharegpt/source
+sudo -u sharegpt git -C /opt/sharegpt/source checkout de1e286
 sudo -u sharegpt npm --prefix /opt/sharegpt/source/collab_server2 ci --omit=dev
 ```
 
-部署时建议固定到你验证过的 tag，而不是永远跟随 `main`：
-
-```bash
-sudo -u sharegpt git -C /opt/sharegpt/source checkout v1.0.6
-```
+部署时必须先切到你验证过的不可变 tag 或提交，再安装该版本的依赖，不能永远跟随 `main`。
+`de1e286` 是当前 1.0.6 代码基线；截至 2026-07-31，仓库还没有 `v1.0.6` tag，因此不要执行
+`checkout v1.0.6`。维护者补建并核验 tag 后，可以把上面的提交替换为该 tag。
 
 正式暴露服务前执行生产依赖审计：
 
@@ -184,7 +183,7 @@ sudo -u sharegpt git -C /opt/sharegpt/source checkout v1.0.6
 sudo -u sharegpt npm --prefix /opt/sharegpt/source/collab_server2 audit --omit=dev
 ```
 
-若出现 high/critical，不要忽略后直接上线；应选择包含修复的 release/提交，重新执行 `npm ci`、服务端测试和兼容验证。`v1.0.6` 是本文对应的协议版本示例，不代表其依赖会永久保持无漏洞。
+若出现 high/critical，不要忽略后直接上线；应选择包含修复的 release/提交，重新执行 `npm ci`、服务端测试和兼容验证。`de1e286` 是本文对应的 1.0.6 代码基线，不代表其依赖会永久保持无漏洞。
 
 ## 6. 创建后端环境文件
 
@@ -739,6 +738,8 @@ flowchart LR
 ```bash
 sudo apt install -y curl jq tar coreutils
 
+FRP_BINARY="${FRP_BINARY:-frps}"
+
 case "$(uname -m)" in
   x86_64) FRP_ARCH=amd64 ;;
   aarch64|arm64) FRP_ARCH=arm64 ;;
@@ -754,17 +755,23 @@ FRP_SHA_URL="$(curl -fsSL "$FRP_API" \
   | jq -r '.assets[] | select(.name == "frp_sha256_checksums.txt") | .browser_download_url')"
 
 test -n "$FRP_URL" && test -n "$FRP_SHA_URL"
-curl -fL --retry 3 "$FRP_URL" -o /tmp/frp.tar.gz
-curl -fL --retry 3 "$FRP_SHA_URL" -o /tmp/frp_sha256_checksums.txt
+FRP_TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$FRP_TMP_DIR"' EXIT
+curl -fL --retry 3 "$FRP_URL" -o "$FRP_TMP_DIR/frp.tar.gz"
+curl -fL --retry 3 "$FRP_SHA_URL" -o "$FRP_TMP_DIR/frp_sha256_checksums.txt"
 
 FRP_FILE="$(basename "$FRP_URL")"
-FRP_EXPECTED_SHA="$(awk -v f="$FRP_FILE" '$2 == f { print $1 }' /tmp/frp_sha256_checksums.txt)"
+FRP_EXPECTED_SHA="$(awk -v f="$FRP_FILE" '$2 == f { print $1 }' "$FRP_TMP_DIR/frp_sha256_checksums.txt")"
 test -n "$FRP_EXPECTED_SHA"
-printf '%s  %s\n' "$FRP_EXPECTED_SHA" /tmp/frp.tar.gz | sha256sum -c -
+printf '%s  %s\n' "$FRP_EXPECTED_SHA" "$FRP_TMP_DIR/frp.tar.gz" | sha256sum -c -
 
-tar -xzf /tmp/frp.tar.gz -C /tmp
-sudo install -m 0755 "$(find /tmp -path '*/frps' -type f | head -n 1)" /usr/local/bin/frps
-frps --version
+tar -xzf "$FRP_TMP_DIR/frp.tar.gz" -C "$FRP_TMP_DIR"
+FRP_SOURCE="$(find "$FRP_TMP_DIR" -path "*/$FRP_BINARY" -type f -print -quit)"
+test -n "$FRP_SOURCE"
+sudo install -m 0755 "$FRP_SOURCE" "/usr/local/bin/$FRP_BINARY"
+"$FRP_BINARY" --version
+rm -rf "$FRP_TMP_DIR"
+trap - EXIT
 ```
 
 创建用户和目录：
@@ -925,7 +932,15 @@ sudo ss -lntp | grep -E ':(7890|18080)\b'
 
 ## 19. 在树莓派安装并配置 frpc
 
-安装步骤与第 17 节相同，但最后安装的是 `frpc`：
+先在**树莓派本机**设置目标二进制，然后完整执行第 17 节的下载、SHA-256 校验和安装代码块：
+
+```bash
+export FRP_BINARY=frpc
+```
+
+该代码块会按树莓派架构下载到独立临时目录，并只安装刚刚校验过的 `frpc`。ARM64 树莓派会自动
+得到 `FRP_ARCH=arm64`；不要把公网服务器下载的 amd64 二进制复制到 ARM 树莓派。安装完成后再
+创建运行用户和目录：
 
 ```bash
 sudo useradd --system --home /var/lib/frp --create-home --shell /usr/sbin/nologin frp
@@ -933,12 +948,10 @@ sudo mkdir -p /etc/frp /var/lib/frp
 sudo chown -R frp:frp /var/lib/frp
 sudo chown root:frp /etc/frp
 sudo chmod 750 /etc/frp /var/lib/frp
-
-sudo install -m 0755 "$(find /tmp -path '*/frpc' -type f | head -n 1)" /usr/local/bin/frpc
 frpc --version
 ```
 
-如果用户已经存在，`useradd` 会提示已存在，可以跳过该行继续。若树莓派上还没下载 frp 压缩包，先在**树莓派本机**重新执行第 17 节的下载、SHA-256 校验和解压命令；ARM64 树莓派会自动得到 `FRP_ARCH=arm64`。不要把公网服务器下载的 amd64 二进制复制到 ARM 树莓派。
+如果用户已经存在，`useradd` 会提示已存在，可以跳过该行继续。
 
 编辑 `/etc/frp/frpc.toml`：
 
@@ -1339,7 +1352,7 @@ curl --proxy socks5h://127.0.0.1:1081 https://api.ipify.org; echo
 - 云安全组未开放 80/443；
 - Caddy 证书申请失败；
 - Caddyfile 域名写错；
-- `CORS_ORIGIN` 与实际 `https://` 地址不一致。
+- Caddy `reverse_proxy` 的上游地址或端口不是实际的 `127.0.0.1:<协作端口>`。
 
 ### 客户端提示“连接端口必须为数字”或“连接身份码为空”
 
@@ -1430,7 +1443,8 @@ network-online → mihomo → sharegpt-relay(sing-box) → frpc
 - 独立端口；
 - 独立数据目录；
 - 独立域名；
-- 独立 `CORS_ORIGIN`；
+- 明确且一致的 CORS 策略；1.0.6 Electron 客户端按第 6 节保留 `CORS_ORIGIN=*`，不能填写
+  各实例自己的公网 HTTPS URL；
 - 最好使用独立管理员账号和 VMess UUID。
 
 示例：

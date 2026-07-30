@@ -1,16 +1,18 @@
 # ShareGPT 实施、验证与运维历史
 
-> 更新日期：2026-07-12。本文是维护总账，记录已经落地的功能、实际验证证据、部署原则、构建经验和待办。
+> 更新日期：2026-07-31。本文是维护总账，记录已经落地的功能、实际验证证据、部署原则、构建经验和待办。
 > 面向维护者；面向用户的版本变化以 [`CHANGELOG.md`](../CHANGELOG.md) 为准，逐次发布步骤以
 > [`RELEASING.md`](RELEASING.md) 为准。
 
 ## 1. 当前状态
 
-- Git 基线：`main` / `v1.0.6`，基线提交 `de1e286`。
+- Git 已发布代码基线：`main`，版本 `1.0.6`，基线提交 `de1e286`。仓库当前没有
+  `v1.0.6` tag；在补建 tag 前，部署说明必须使用这个不可变提交，不能引用不存在的 tag。
 - 已发布版本：`1.0.6`。
-- 当前工作区还有一组 **1.0.7 候选改动**：macOS 强制保留原生平台，以及 Electron 从
-  `31.7.7` 升到 `43.1.0`。根 `package.json` 暂时仍写 `1.0.6`，因此不得把新构建覆盖到
-  已发布的 `v1.0.6` Release；发布前必须先升为 `1.0.7`，重建 Mac/Windows 产物。
+- `codex/chore-electron43-cross-platform` 分支承载一组 **1.0.7 候选改动**：macOS 强制保留
+  原生平台，以及 Electron 从 `31.7.7` 升到 `43.1.0`。根 `package.json` 暂时仍写 `1.0.6`，
+  因此不得把候选构建覆盖到已发布的 1.0.6 资产；发布前必须先升为 `1.0.7`，重建
+  Mac/Windows 产物。
 - 协作后端的新增隐私配置使用现有增量载荷；老客户端会忽略未知字段，不能为了新功能破坏
   `1.0.5` 及更早客户端的登录、聊天、配置和更新接口。
 - 真实密码、SSH 私钥、Cookie、Token、付款资料、代理订阅和节点密钥不得进入本文、Git、
@@ -73,7 +75,7 @@
 
 ### 3.4 1.0.7 候选：macOS 原生平台与 Electron 43
 
-当前工作区已实现、尚未发布：
+候选分支已实现、尚未发布：
 
 - macOS/Linux 收到旧版同步的 `us-windows` 预设时，运行时自动回落到 `balanced`。
 - macOS 设置页不再提供 Windows 预设；Windows 主机仍可读取旧配置，保证配置兼容。
@@ -127,7 +129,7 @@
 
 - 正式命令：`npm run dist:mac`。
 - 当前只构建 Apple Silicon `arm64` DMG；未配置 Developer ID，因此是未正式签名/未公证包。
-- 2026-07-12 的 Electron 43 本地验证包：`release/ShareGPT-1.0.6-arm64.dmg`，约 133 MB，
+- 2026-07-12 曾生成 Electron 43 本地验证包：`release/ShareGPT-1.0.6-arm64.dmg`，约 133 MB，
   SHA-256 为 `aa517a967d2c4ddc03f876e9e4f6aea3a77d97e6ae886c6974ead266531e52a1`。
 - 该文件是本地验证产物，不应覆盖已发布的 1.0.6；升 1.0.7 后必须重新构建并生成新校验值。
 
@@ -139,12 +141,18 @@
   不是应用资源必然丢失。精确基线和检查项见 [`RELEASING.md`](RELEASING.md)。
 - 每次正式 Windows 构建后必须运行 `npm run verify:release-win`，返回 `target: "nsis"` 和
   `ok: true`；Mac 结果不能代替 Windows 验证。
-- Electron 43 尚未在 Windows 构建机完成本轮构建，因此 1.0.7 发布前仍需拉取相同提交，使用
-  Node 22.12+ 重装依赖、运行测试并重建 NSIS。
+- 2026-07-31 已在 Windows x64、Node `24.14.0` 上完成 Electron `43.1.0` 候选构建；隔离
+  NSIS 为 `126179299` bytes，SHA-256 为
+  `074f225016ed7feef17c60e42bf43b78c74d2f5e8d926767d79a2edacce9ff09`，ASAR 中本机
+  `.npm-cache` 条目为 0。
+- 该文件仍使用 `1.0.6` 名称，只是本地验证证据，不能上传或替换已发布资产；升到 `1.0.7`
+  后必须从发布提交重新构建并记录新校验值。
 
 ## 7. 已执行的验证与验收标准
 
-2026-07-12、Electron 43.1.0、macOS arm64：
+### 7.1 macOS arm64（2026-07-12）
+
+Electron `43.1.0`：
 
 - `npm test`：21/21 通过，覆盖旧客户端兼容、密码复核、隐私设置、分区清理、资料轮换和重试。
 - `npm run typecheck:main`：通过。
@@ -157,6 +165,13 @@
 - `hdiutil verify`：DMG 校验有效；包内 Electron Framework 版本确认为 `43.1.0`。
 - `npm audit --omit=dev`：生产依赖 0 漏洞。旧 `electron-builder 24.13.3` 的开发构建依赖仍有
   audit 告警，需随构建链升级处理，不能把“生产依赖 0”写成“所有依赖 0”。
+
+### 7.2 Windows x64（2026-07-31）
+
+- Node `24.14.0`、Electron `43.1.0`：`npm test` 21/21、主进程类型检查和 renderer 构建通过。
+- 真实 Electron 隐私清理与 UI 验证通过；未访问真实 AI 网站。
+- NSIS、`latest.yml`、`.blockmap`、sing-box/frpc SHA-256 校验通过；打包主程序版本为 `43.1.0`。
+- 发布校验确认 renderer 入口存在，且 ASAR 不包含任何本机 `.npm-cache`。
 
 ## 8. 已踩过的坑与固定处理方式
 
@@ -181,10 +196,9 @@
 
 1. 将应用版本定为 `1.0.7`，更新 `CHANGELOG.md` 和应用内更新日志。
 2. 在 Mac 重新运行全部校验并构建正式 1.0.7 DMG，记录大小、SHA-256 和签名状态。
-3. Windows 拉取同一提交，使用 Node 22.12+ 安装依赖；运行测试、UI/隐私验证、NSIS 构建和
-   `verify:release-win`，记录 Electron 43 后的新体积基线。
+3. Windows 拉取升版后的同一发布提交，使用 Node 22.12+ 安装依赖；重新运行测试、UI/隐私
+   验证、NSIS 构建和 `verify:release-win`，记录正式 1.0.7 的体积与 SHA-256。
 4. 单独解决 electron-builder 26 依赖扫描停滞；成功前不把版本升级写入正式构建流程。
-5. 提交时只包含明确范围内文件，保留用户已有的 `README.md`、`docs/RECEIVER.md` 和
-   `docs/SELF_HOSTING.md` 修改，不覆盖无关工作。
+5. 提交时只包含明确范围内文件；提交前复核 diff、凭据扫描、锁文件一致性和双平台证据。
 6. 发布新 tag 和 Release；Windows 必须同时上传 NSIS、`latest.yml`、`.blockmap`，Mac 上传 DMG。
 7. 用旧客户端验证兼容、用新客户端验证新增功能；确认后再逐实例增量更新协作后端。
