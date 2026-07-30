@@ -3,6 +3,8 @@
 > 面向**管理员 / 自建者**。普通用户只需装客户端、登录即用，与本文无关。
 > 本文只讲 **Linux / Ubuntu CLI** 形式。文中所有 IP、端口、令牌、UUID、订阅均为**占位符**，请换成你自己的，且**切勿公开**。
 > （对应代码里的 `receiver` 模式 / `buildReceiverFiles`。）
+>
+> **本文是旧版出口链路速查。第一次部署请改读 [`SELF_HOSTING.md`](SELF_HOSTING.md)**：新教程还包含协作后端 HTTPS、Caddy、管理员初始化、公网服务器直出、FRP TOML、树莓派、机场节点分发、备份恢复和分层排错。FRP 官方已将 INI 标为弃用，因此新的手工 Linux 部署以 `SELF_HOSTING.md` 的 TOML 配置为准。
 
 ## 这是什么
 

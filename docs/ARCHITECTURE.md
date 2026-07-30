@@ -49,3 +49,11 @@ flowchart LR
 - 路径可经环境变量覆盖（`USERS_FILE` / `CHAT_HISTORY_FILE` / …），多群部署即指向不同目录。
 
 > 内部草稿/历史设计文档见 [`docs/dev/`](dev/)。
+
+## 继续维护
+
+- 已实施功能、验证证据、服务器增量更新原则和踩坑记录：
+  [`IMPLEMENTATION_HISTORY.md`](IMPLEMENTATION_HISTORY.md)
+- 每次发布的构建与资产清单：[`RELEASING.md`](RELEASING.md)
+- 浏览器数据清理、环境配置和网页可见信息边界：[`browser-privacy.md`](browser-privacy.md)
+- 从空服务器开始自托管：[`SELF_HOSTING.md`](SELF_HOSTING.md)
