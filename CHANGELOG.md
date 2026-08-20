@@ -21,7 +21,7 @@
 
 - Windows 正式发布校验扩展到 NSIS 身份、`latest.yml`、`.blockmap`、渲染入口、Electron 版本以及 sing-box/frpc 固定校验值。
 - 构建配置明确排除渲染层本机 `.npm-cache`，发布检查会在缓存意外进入 ASAR 时直接失败。
-- 更新 `ip-address` 与 `js-yaml` 的安全修复版本，消除当前生产依赖审计中的高危告警。
+- 更新 `ip-address`、`js-yaml` 与 `ws` 的安全修复版本，消除当前生产依赖审计中的高危告警。
 
 ### 验证
 
