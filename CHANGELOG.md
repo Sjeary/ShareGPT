@@ -7,6 +7,25 @@
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-08-20
+
+> **Claude 网页入口更新**：需要验证码、登录或授权页面时，可从 Claude 工具栏按需打开网页；输入区默认隐藏，不影响日常对话视野。建议使用 Claude 网页的用户升级。
+
+### 新增
+
+- Claude 顶部工具栏新增“打开网页”按钮，点击后才展开网址输入区；提交成功、再次点击或按 `Esc` 后自动收起。
+- 输入的 HTTP/HTTPS 地址会在新的内部标签页打开，继续复用当前 Claude 会话代理，并保留后退、前进、刷新和多标签操作。
+
+### 安全与隐私
+
+- 只有从该入口显式创建的 Claude 网页标签可访问任意 HTTP/HTTPS 地址；普通 Claude 标签及 ChatGPT、Gemini 标签继续使用原有域名白名单。
+- 拒绝 `file:`、`javascript:`、`data:` 等非网页协议；手动输入的验证链接不写入持久化 `last_url`，外部页面也不会获得地理位置等敏感网页权限。
+
+### 修复与验证
+
+- 修复创建网页标签时重复初始化可能触发 `ERR_ABORTED` 的竞态。
+- 新增 URL 协议/权限单元测试，以及默认隐藏、按需展开、打开新标签后自动收起的 Electron UI 回归测试。
+
 ## [1.0.7] - 2026-08-20
 
 > **运行时与跨平台兼容更新**：升级 Electron/Chromium，修复 Mac 继承旧版 Windows 环境预设后的平台矛盾，并加强双平台正式包校验。建议升级。
@@ -200,7 +219,8 @@
 
 - 更早的 5.x 为测试版本，不在此正式记录。
 
-[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.7...HEAD
+[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.8...HEAD
+[1.0.8]: https://github.com/Sjeary/ShareGPT/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/Sjeary/ShareGPT/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/Sjeary/ShareGPT/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/Sjeary/ShareGPT/compare/v1.0.4...v1.0.5
