@@ -92,7 +92,12 @@ async function main() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-privacy-ui-"));
   const userDataDir = path.join(tempDir, "user-data");
   const screenshotPath = path.join(tempDir, "browser-privacy-account.png");
-  const claudeScreenshotPath = path.join(tempDir, "claude-address-bar.png");
+  const claudeScreenshotPath = path.join(tempDir, "claude-web-action.png");
+  const claudeExpandedScreenshotPath = path.join(tempDir, "claude-web-action-expanded.png");
+  const upstreamSocksPort = Number.parseInt(
+    String(process.env.SHAREGPT_TEST_UPSTREAM_SOCKS_PORT || ""),
+    10,
+  );
   const port = await reservePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const usersFile = path.join(tempDir, "users.json");
@@ -241,30 +246,74 @@ async function main() {
 
     await window.screenshot({ path: screenshotPath, fullPage: true });
 
+    if (Number.isInteger(upstreamSocksPort) && upstreamSocksPort > 0) {
+      const localSenderPort = await reservePort();
+      await window.evaluate(
+        ({ socksPort, upstreamPort }) =>
+          window.api.startSender({
+            socks_listen_port: String(socksPort),
+            fallback_mode: "direct",
+            proxy_mode: "airport",
+            airport_name: "Local UI verification chain",
+            airport_outbound: {
+              type: "socks",
+              server: "127.0.0.1",
+              server_port: upstreamPort,
+            },
+            target_domains: "claude.ai",
+          }),
+        { socksPort: localSenderPort, upstreamPort: upstreamSocksPort },
+      );
+    }
+
     await window.locator('[data-tour="nav-claude"]').click();
     const claudeAddressInput = window.getByTestId("claude-address-input");
-    await claudeAddressInput.waitFor({ state: "visible" });
     assert.strictEqual(
-      await claudeAddressInput.isDisabled(),
-      true,
-      "Claude address input must stay disabled while the sender proxy is stopped",
+      await claudeAddressInput.count(),
+      0,
+      "Claude address input must stay hidden until the user opens it",
     );
     const openWebPageButton = window.getByRole("button", {
-      name: "在新标签页打开",
+      name: "打开网页",
       exact: true,
     });
-    assert.strictEqual(
-      await openWebPageButton.isDisabled(),
-      true,
-      "Claude open-page action must stay disabled while the sender proxy is stopped",
-    );
+    const interactiveClaudeCheck = Number.isInteger(upstreamSocksPort) && upstreamSocksPort > 0;
+    if (interactiveClaudeCheck) {
+      const deadline = Date.now() + 5000;
+      while (!(await openWebPageButton.isEnabled()) && Date.now() < deadline) {
+        await window.waitForTimeout(100);
+      }
+      assert.strictEqual(
+        await openWebPageButton.isEnabled(),
+        true,
+        "Claude open-page action must become available after the sender starts",
+      );
+      await openWebPageButton.click();
+      await claudeAddressInput.waitFor({ state: "visible" });
+      await window.screenshot({ path: claudeExpandedScreenshotPath, fullPage: true });
+      await claudeAddressInput.fill(`${baseUrl}/api/health`);
+      await window.getByRole("button", { name: "在新标签页打开", exact: true }).click();
+      await claudeAddressInput.waitFor({ state: "detached" });
+    } else {
+      assert.strictEqual(
+        await openWebPageButton.isDisabled(),
+        true,
+        "Claude open-page action must stay disabled while the sender proxy is stopped",
+      );
+    }
     await window.screenshot({ path: claudeScreenshotPath, fullPage: true });
 
     assert.deepStrictEqual(pageErrors, [], `renderer page errors: ${pageErrors.join("; ")}`);
-    assert.ok(
-      blockedRequests.every((url) => !/claude\.ai|chatgpt\.com|gemini\.google\.com/i.test(url)),
-      `an AI website was requested: ${blockedRequests.join(", ")}`,
+    const aiWebsiteRequests = blockedRequests.filter((url) =>
+      /claude\.ai|chatgpt\.com|gemini\.google\.com/i.test(url),
     );
+    if (!interactiveClaudeCheck) {
+      assert.deepStrictEqual(
+        aiWebsiteRequests,
+        [],
+        `an AI website was requested: ${blockedRequests.join(", ")}`,
+      );
+    }
 
     process.stdout.write(
       `${JSON.stringify(
@@ -282,11 +331,14 @@ async function main() {
           fingerprintPolicySynced: true,
           fingerprintSnapshotsSynced: false,
           syncedNodeDetectionFields: false,
-          aiWebsitesVisited: false,
+          aiWebsitesVisited: aiWebsiteRequests.length > 0,
           blockedNonLocalRequests: blockedRequests.length,
           screenshot: screenshotPath,
-          claudeAddressBarPresent: true,
-          claudeAddressBarScreenshot: claudeScreenshotPath,
+          claudeWebActionPresent: true,
+          claudeAddressInputHiddenByDefault: true,
+          claudeAddressInputToggled: interactiveClaudeCheck,
+          claudeWebActionScreenshot: claudeScreenshotPath,
+          claudeExpandedScreenshot: interactiveClaudeCheck ? claudeExpandedScreenshotPath : null,
         },
         null,
         2,

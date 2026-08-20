@@ -104,6 +104,11 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
   const addressInputRef = useRef<HTMLInputElement>(null)
   const [addressValue, setAddressValue] = useState('')
+  const [webAddressOpen, setWebAddressOpen] = useState(false)
+
+  useEffect(() => {
+    if (!senderRunning) setWebAddressOpen(false)
+  }, [senderRunning])
 
   useEffect(() => {
     if (kind !== 'claude' || document.activeElement === addressInputRef.current) return
@@ -111,16 +116,24 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   }, [kind, activeTabId, activeTab?.allowExternalBrowsing, activeTab?.url])
 
   useEffect(() => {
-    if (kind !== 'claude') return
+    if (kind !== 'claude' || !senderRunning) return
     const focusAddressBar = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'l') return
       event.preventDefault()
-      addressInputRef.current?.focus()
-      addressInputRef.current?.select()
+      setWebAddressOpen(true)
     }
     window.addEventListener('keydown', focusAddressBar)
     return () => window.removeEventListener('keydown', focusAddressBar)
-  }, [kind])
+  }, [kind, senderRunning])
+
+  useEffect(() => {
+    if (!webAddressOpen) return
+    const frame = window.requestAnimationFrame(() => {
+      addressInputRef.current?.focus()
+      addressInputRef.current?.select()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [webAddressOpen])
 
   // 代理检测面板 (展示该页面流量是否全部经代理)。作为宿主上方的可折叠块渲染,
   // 这样不会被原生 webview 盖住 (centered Dialog 会被原生 view 覆盖)。
@@ -393,12 +406,12 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       })) as AiEventPayload
       applyAiTabsPayload(kind, payload)
       setAddressValue(url)
+      setWebAddressOpen(false)
       setFeedback(kind, '')
-      if (senderRunning) await ensureWorkspace()
     } catch (err) {
       setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
     }
-  }, [kind, addressValue, senderRunning, ensureWorkspace, setFeedback])
+  }, [kind, addressValue, setFeedback])
 
   const switchTab = useCallback(
     async (tabId: string) => {
@@ -429,7 +442,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   )
 
   // 运行态 / 遮罩内容变化时, 重新同步宿主定位。
-  const overlayKey = `${senderRunning}|${activeTabId}|${view.initialized}|${proxyOpen}|${proxyReport?.hosts?.length ?? 0}|${feedback.text ? 1 : 0}`
+  const overlayKey = `${senderRunning}|${activeTabId}|${view.initialized}|${webAddressOpen}|${proxyOpen}|${proxyReport?.hosts?.length ?? 0}|${feedback.text ? 1 : 0}`
   const overlayRef = useRef(overlayKey)
   useEffect(() => {
     if (overlayRef.current !== overlayKey) {
@@ -533,6 +546,20 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           />
 
           <div className="ml-auto flex shrink-0 items-center gap-1">
+            {kind === 'claude' && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn('size-8', webAddressOpen && 'bg-accent text-accent-foreground')}
+                title={webAddressOpen ? '收起网址输入' : '打开网页'}
+                aria-label={webAddressOpen ? '收起网址输入' : '打开网页'}
+                aria-pressed={webAddressOpen}
+                disabled={!senderRunning}
+                onClick={() => setWebAddressOpen((open) => !open)}
+              >
+                <Globe2 className="size-4" />
+              </Button>
+            )}
             <Badge
               variant="outline"
               title="当前代理方式（统一梯子 / 服务器下发的机场节点）"
@@ -600,12 +627,15 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           </div>
         </div>
 
-        {kind === 'claude' && (
+        {kind === 'claude' && webAddressOpen && (
           <form
             className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/20 px-3 py-1.5"
             onSubmit={(event) => {
               event.preventDefault()
               void openWebPage()
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setWebAddressOpen(false)
             }}
           >
             <Globe2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />

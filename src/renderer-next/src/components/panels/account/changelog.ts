@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.0.8',
+    date: '2026-08-20',
+    highlights: [
+      'Claude 工具栏新增按需打开网页入口，可在新的内部标签页访问验证码、登录或授权链接；输入区默认完全隐藏，不占用页面空间。',
+      '手动网页标签仅接受 HTTP/HTTPS 地址，继续通过当前本地代理访问；普通 Claude、ChatGPT 和 Gemini 标签仍保留原有域名白名单。',
+      '验证链接不会写入持久化页面记录，外部网页也不会获得地理位置等敏感网页权限。',
+      '修复创建网页标签时重复初始化可能导致 ERR_ABORTED 的问题，并补充默认隐藏与真实代理链路 UI 回归测试。',
+    ],
+  },
+  {
     version: '1.0.7',
     date: '2026-08-20',
     highlights: [
