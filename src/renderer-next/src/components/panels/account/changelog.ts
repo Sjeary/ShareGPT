@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.0.7',
+    date: '2026-08-20',
+    highlights: [
+      '升级到 Electron 43.1.0（Chromium 150），更新客户端运行时并继续保留现有账号、聊天记录、配置和网页登录态。',
+      '修复跨设备同步旧版 Windows 环境预设后，Mac 可能错误伪装成 Windows 的问题；Mac 现在始终保留真实系统平台、架构、字体和图形信息。',
+      '加强 Windows 正式安装包校验，确保 NSIS、自动更新元数据、内置代理组件和渲染资源完整，并阻止本机 npm 缓存进入安装包。',
+      '更新受影响的生产依赖，修复代理地址解析与 YAML 处理相关的安全问题。',
+    ],
+  },
+  {
     version: '1.0.6',
     date: '2026-07-10',
     highlights: [

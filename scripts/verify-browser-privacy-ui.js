@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { _electron: electron } = require("playwright");
+const { version: APP_VERSION } = require("../package.json");
 
 // UI 集成自测：启动临时协作服务器和隔离的 Electron 用户目录，所有允许的网络请求都只能
 // 指向 127.0.0.1。测试不会创建 AI 网页标签，因此不会访问 ChatGPT、Gemini 或 Claude。
@@ -248,7 +249,7 @@ async function main() {
       `${JSON.stringify(
         {
           ok: true,
-          version: "1.0.6",
+          version: APP_VERSION,
           fixture: baseUrl,
           providerClearActions: 3,
           providerProfileRebuildActions: 3,

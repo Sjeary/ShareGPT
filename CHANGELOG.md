@@ -7,6 +7,27 @@
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-08-20
+
+> **运行时与跨平台兼容更新**：升级 Electron/Chromium，修复 Mac 继承旧版 Windows 环境预设后的平台矛盾，并加强双平台正式包校验。建议升级。
+
+### 变更
+
+- Electron 固定升级到 `43.1.0`（Chromium 150）；开发和打包环境最低要求提升到 Node.js `22.12.0`。
+- macOS/Linux 收到旧版同步的 `us-windows` 预设时自动回落到均衡预设；Windows 继续兼容已有配置。
+- Mac 设置页不再提供 Windows 环境预设，并始终保留真实 macOS 平台、UA、架构、字体和图形信息；国家、语言与时区仍可独立配置。
+
+### 发布与安全
+
+- Windows 正式发布校验扩展到 NSIS 身份、`latest.yml`、`.blockmap`、渲染入口、Electron 版本以及 sing-box/frpc 固定校验值。
+- 构建配置明确排除渲染层本机 `.npm-cache`，发布检查会在缓存意外进入 ASAR 时直接失败。
+- 更新 `ip-address` 与 `js-yaml` 的安全修复版本，消除当前生产依赖审计中的高危告警。
+
+### 验证
+
+- 新增跨平台配置回归测试，覆盖非 Windows 主机降级旧预设、Mac 隐藏 Windows 选项及原生平台信息保留。
+- Electron 隐私清理、UI 流程和指纹标准化继续通过真实 Chromium 集成测试；正式产物按同一发布提交分别在 Apple Silicon Mac 与 Windows x64 构建。
+
 ## [1.0.6] - 2026-07-10
 
 > **网页可见信息表盘更新**：把 AI 网页实际看到的网络、浏览器、硬件与图形摘要集中展示，并加入可选的本机资料重建和稳定标准化。建议升级。
@@ -179,7 +200,8 @@
 
 - 更早的 5.x 为测试版本，不在此正式记录。
 
-[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.6...HEAD
+[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.7...HEAD
+[1.0.7]: https://github.com/Sjeary/ShareGPT/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/Sjeary/ShareGPT/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/Sjeary/ShareGPT/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/Sjeary/ShareGPT/compare/v1.0.3...v1.0.4
