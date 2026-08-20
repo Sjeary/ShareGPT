@@ -68,6 +68,22 @@ export const CLAUDE_ALLOWED_HOSTS = [
   'intercomcdn.com',
 ]
 
+export function normalizeHttpUrl(rawUrl: string, options: { assumeHttps?: boolean } = {}): string {
+  let value = String(rawUrl || '').trim()
+  if (!value) return ''
+  if (options.assumeHttps && !/^[a-z][a-z\d+.-]*:/i.test(value)) {
+    value = `https://${value}`
+  }
+
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return ''
+    return url.toString()
+  } catch {
+    return ''
+  }
+}
+
 export function isAllowedUrlForHosts(rawUrl: string, allowedHosts: string[]): boolean {
   try {
     const url = new URL(String(rawUrl || ''))

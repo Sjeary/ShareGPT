@@ -12,6 +12,7 @@ export interface AiEventPayload {
   initialized?: boolean
   canGoBack?: boolean
   canGoForward?: boolean
+  allowExternalBrowsing?: boolean
   // tabs-changed
   tabs?: AiTabPayload[]
   activeTabId?: string
@@ -34,6 +35,7 @@ export interface AiTabPayload {
   initialized?: boolean
   canGoBack?: boolean
   canGoForward?: boolean
+  allowExternalBrowsing?: boolean
 }
 
 // ai:ensure / ai:sync-host 返回的单视图状态。
@@ -46,6 +48,7 @@ export interface AiStatePayload {
   initialized?: boolean
   canGoBack?: boolean
   canGoForward?: boolean
+  allowExternalBrowsing?: boolean
 }
 
 export interface SyncHostBounds {
