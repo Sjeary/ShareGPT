@@ -31,6 +31,7 @@ const {
   normalizeAiPartition,
   partitionForProfile,
 } = require("./browserFingerprint");
+const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
 
 // 记录每个 AI 会话(按 partition)实际访问过的主机名, 供「代理检测」展示页面流量去向。
 // 在 configureAiSession 内通过 webRequest 被动收集 (每个 partition 仅装一次)。
@@ -337,26 +338,8 @@ function buildClipboardAttachmentPayload() {
   return null;
 }
 
-function isAllowedUrlForHosts(rawUrl, allowedHosts) {
-  try {
-    const url = new URL(String(rawUrl || ""));
-    if (!/^https?:$/i.test(url.protocol)) return false;
-    return allowedHosts.some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`));
-  } catch {
-    return false;
-  }
-}
-
 function normalizeExternalUrl(rawUrl) {
-  try {
-    const url = new URL(String(rawUrl || "").trim());
-    if (!/^https?:$/i.test(url.protocol)) {
-      return "";
-    }
-    return url.toString();
-  } catch {
-    return "";
-  }
+  return normalizeHttpUrl(rawUrl);
 }
 
 // 把 Sec-CH-UA / Sec-CH-UA-Full-Version-List 里的 "Electron" 品牌洗成真实 Chrome:
@@ -754,7 +737,7 @@ function createElectronApp(baseMode = "all") {
 
     const wc = workspace.view.webContents;
     const currentUrl = safeText(wc.getURL()) || workspace.lastUrl || workspace.policy.homeUrl;
-    if (!isAllowedUrlForHosts(currentUrl, workspace.policy.allowedHosts)) {
+    if (!isWorkspaceUrlAllowed(workspace, currentUrl)) {
       throw new Error("网页仍在初始化，请等待页面打开后再采集");
     }
     const targetSession = session.fromPartition(workspace.policy.partition);
@@ -826,15 +809,13 @@ function createElectronApp(baseMode = "all") {
 
   function isWorkspaceDocumentAllowed(workspace) {
     const currentUrl = safeText(workspace?.view?.webContents?.getURL?.());
-    return Boolean(
-      currentUrl && isAllowedUrlForHosts(currentUrl, workspace?.policy?.allowedHosts || []),
-    );
+    return Boolean(currentUrl && isWorkspaceUrlAllowed(workspace, currentUrl));
   }
 
   function getAiStatePayload(workspace) {
     const wc = workspace.view.webContents;
     const currentUrl = safeText(wc.getURL()) || workspace.lastUrl || workspace.policy.homeUrl;
-    if (currentUrl && isAllowedUrlForHosts(currentUrl, workspace.policy.allowedHosts)) {
+    if (currentUrl && isWorkspaceUrlAllowed(workspace, currentUrl)) {
       workspace.lastUrl = currentUrl;
     }
 
@@ -856,6 +837,7 @@ function createElectronApp(baseMode = "all") {
       initialized: Boolean(workspace.initialized),
       canGoBack: Boolean(canGoBack),
       canGoForward: Boolean(canGoForward),
+      allowExternalBrowsing: Boolean(workspace.allowExternalBrowsing),
     };
   }
 
@@ -923,6 +905,7 @@ function createElectronApp(baseMode = "all") {
     const workspace = getOrCreateAiWorkspace(targetKind, safeText(options.tabId), {
       title: safeText(options.title),
       lastUrl: safeText(options.lastUrl),
+      allowExternalBrowsing: Boolean(options.allowExternalBrowsing),
     });
 
     const order = tabOrderByKind[targetKind];
@@ -1044,7 +1027,11 @@ function createElectronApp(baseMode = "all") {
   }
 
   async function loadAiWorkspaceUrl(workspace, rawUrl) {
-    const targetUrl = normalizeAiWorkspaceUrl(workspace, rawUrl) || workspace.policy.homeUrl;
+    const normalizedUrl = normalizeHttpUrl(rawUrl);
+    if (!normalizedUrl || !isWorkspaceUrlAllowed(workspace, normalizedUrl)) {
+      throw new Error("不允许加载该页面");
+    }
+    const targetUrl = normalizeAiWorkspaceUrl(workspace, normalizedUrl);
     workspace.managedNavigationCount = (workspace.managedNavigationCount || 0) + 1;
     try {
       return await loadUrlWithTransientRetry(() =>
@@ -1071,7 +1058,7 @@ function createElectronApp(baseMode = "all") {
     const wc = workspace.view.webContents;
 
     wc.setWindowOpenHandler(({ url }) => {
-      if (isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) {
+      if (isWorkspaceUrlAllowed(workspace, url)) {
         const targetUrl = normalizeAiWorkspaceUrl(workspace, url);
         workspace.loading = true;
         workspace.initialized = true;
@@ -1093,7 +1080,7 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("will-navigate", (event, url) => {
-      if (isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) {
+      if (isWorkspaceUrlAllowed(workspace, url)) {
         const targetUrl = normalizeAiWorkspaceUrl(workspace, url);
         if (targetUrl === url) return;
         event.preventDefault();
@@ -1116,7 +1103,7 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("will-redirect", (event, url) => {
-      if (isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) {
+      if (isWorkspaceUrlAllowed(workspace, url)) {
         const targetUrl = normalizeAiWorkspaceUrl(workspace, url);
         if (targetUrl === url) return;
         event.preventDefault();
@@ -1212,13 +1199,10 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("did-navigate", (_event, url) => {
-      if (
-        workspace.environmentBootstrapping ||
-        !isAllowedUrlForHosts(url, workspace.policy.allowedHosts)
-      ) {
+      if (workspace.environmentBootstrapping || !isWorkspaceUrlAllowed(workspace, url)) {
         return;
       }
-      if (isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) {
+      if (isWorkspaceUrlAllowed(workspace, url)) {
         workspace.lastUrl = normalizeAiWorkspaceUrl(workspace, url);
       }
       workspace.initialized = true;
@@ -1226,13 +1210,10 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("did-navigate-in-page", (_event, url) => {
-      if (
-        workspace.environmentBootstrapping ||
-        !isAllowedUrlForHosts(url, workspace.policy.allowedHosts)
-      ) {
+      if (workspace.environmentBootstrapping || !isWorkspaceUrlAllowed(workspace, url)) {
         return;
       }
-      if (isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) {
+      if (isWorkspaceUrlAllowed(workspace, url)) {
         workspace.lastUrl = normalizeAiWorkspaceUrl(workspace, url);
       }
       emitAiState(workspace, "did-navigate-in-page", { url });
@@ -1448,6 +1429,7 @@ function createElectronApp(baseMode = "all") {
       loading: false,
       visible: false,
       lastUrl: safeText(options.lastUrl) || policy.homeUrl,
+      allowExternalBrowsing: targetKind === "claude" && Boolean(options.allowExternalBrowsing),
       defaultTitle: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
       title: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
       proxySignature: "",
@@ -1770,6 +1752,7 @@ function createElectronApp(baseMode = "all") {
       const workspace = createTabWorkspace(kind, {
         title: safeText(payload?.title),
         lastUrl: safeText(payload?.lastUrl),
+        allowExternalBrowsing: Boolean(payload?.allowExternalBrowsing),
       });
       activeTabIdByKind[kind] = workspace.id;
       syncActiveWorkspace(kind);
@@ -1809,6 +1792,7 @@ function createElectronApp(baseMode = "all") {
       }
       const workspace = getOrCreateAiWorkspace(kind, requestedTabId || activeTabIdByKind[kind], {
         lastUrl: safeText(payload?.lastUrl),
+        allowExternalBrowsing: Boolean(payload?.allowExternalBrowsing),
       });
       if (!activeTabIdByKind[kind]) {
         activeTabIdByKind[kind] = workspace.id;
@@ -1845,18 +1829,15 @@ function createElectronApp(baseMode = "all") {
       const targetUrl =
         normalizeAiWorkspaceUrl(
           workspace,
-          isAllowedUrlForHosts(lastUrl, workspace.policy.allowedHosts)
+          isWorkspaceUrlAllowed(workspace, lastUrl)
             ? lastUrl
-            : isAllowedUrlForHosts(homeUrl, workspace.policy.allowedHosts)
+            : isWorkspaceUrlAllowed(workspace, homeUrl)
               ? homeUrl
               : workspace.policy.homeUrl,
         ) || workspace.policy.homeUrl;
 
       const currentWorkspaceUrl = safeText(workspace.view.webContents.getURL());
-      if (
-        !workspace.initialized ||
-        !isAllowedUrlForHosts(currentWorkspaceUrl, workspace.policy.allowedHosts)
-      ) {
+      if (!workspace.initialized || !isWorkspaceUrlAllowed(workspace, currentWorkspaceUrl)) {
         workspace.initialized = false;
         workspace.loading = true;
         workspace.lastUrl = targetUrl;
@@ -2063,7 +2044,7 @@ function createElectronApp(baseMode = "all") {
           wc.reload();
           break;
         case "load":
-          if (!isAllowedUrlForHosts(url, workspace.policy.allowedHosts)) {
+          if (!isWorkspaceUrlAllowed(workspace, url)) {
             throw new Error("不允许加载该页面");
           }
           const targetUrl = normalizeAiWorkspaceUrl(workspace, url);

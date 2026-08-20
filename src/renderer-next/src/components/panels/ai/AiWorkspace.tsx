@@ -12,12 +12,15 @@ import {
   ShieldAlert,
   ShieldX,
   Loader2,
+  Globe2,
+  ArrowUpRight,
   X,
   type LucideIcon,
 } from 'lucide-react'
 import { ChatGPTIcon, ClaudeIcon, GeminiIcon } from '@/components/icons/AiBrandIcons'
 import { PanelScaffold } from '@/components/panels/PanelScaffold'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { AiProxyReport } from '@/types/api'
@@ -41,6 +44,7 @@ import {
   normalizeGptUrl,
   normalizeGeminiUrl,
   normalizeClaudeUrl,
+  normalizeHttpUrl,
 } from './constants'
 import type { AiEventPayload } from './types'
 
@@ -98,6 +102,25 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const setFeedback = useAiStore((s) => s.setFeedback)
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
+  const addressInputRef = useRef<HTMLInputElement>(null)
+  const [addressValue, setAddressValue] = useState('')
+
+  useEffect(() => {
+    if (kind !== 'claude' || document.activeElement === addressInputRef.current) return
+    setAddressValue(activeTab?.allowExternalBrowsing ? activeTab.url : '')
+  }, [kind, activeTabId, activeTab?.allowExternalBrowsing, activeTab?.url])
+
+  useEffect(() => {
+    if (kind !== 'claude') return
+    const focusAddressBar = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'l') return
+      event.preventDefault()
+      addressInputRef.current?.focus()
+      addressInputRef.current?.select()
+    }
+    window.addEventListener('keydown', focusAddressBar)
+    return () => window.removeEventListener('keydown', focusAddressBar)
+  }, [kind])
 
   // 代理检测面板 (展示该页面流量是否全部经代理)。作为宿主上方的可折叠块渲染,
   // 这样不会被原生 webview 盖住 (centered Dialog 会被原生 view 覆盖)。
@@ -248,7 +271,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       const tab = store.tabsByKind[kind].find((item) => item.id === store.activeTabIdByKind[kind])
       if (!tab) return
       const userAgent = embeddedUserAgent()
-      const lastUrl = normalizeUrlFor(kind, tab.url || homeUrlFor(kind))
+      const lastUrl = tab.allowExternalBrowsing
+        ? normalizeHttpUrl(tab.url)
+        : normalizeUrlFor(kind, tab.url || homeUrlFor(kind))
       const payload = (await api.ensureAiWorkspace({
         kind,
         tabId: tab.id,
@@ -259,6 +284,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         lastUrl,
         userAgent,
         forceReload,
+        allowExternalBrowsing: tab.allowExternalBrowsing,
       })) as AiEventPayload | null
       if (payload && safeText(payload.tabId)) {
         useAiStore.getState().patchTab(kind, safeText(payload.tabId), {
@@ -350,6 +376,29 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
     }
   }, [kind, senderRunning, ensureWorkspace, setFeedback])
+
+  const openWebPage = useCallback(async () => {
+    if (kind !== 'claude') return
+    const url = normalizeHttpUrl(addressValue, { assumeHttps: true })
+    if (!url) {
+      setFeedback(kind, '请输入有效的 HTTP 或 HTTPS 网址', 'error')
+      return
+    }
+
+    try {
+      const payload = (await api.createAiView(kind, {
+        lastUrl: url,
+        title: new URL(url).hostname,
+        allowExternalBrowsing: true,
+      })) as AiEventPayload
+      applyAiTabsPayload(kind, payload)
+      setAddressValue(url)
+      setFeedback(kind, '')
+      if (senderRunning) await ensureWorkspace()
+    } catch (err) {
+      setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+    }
+  }, [kind, addressValue, senderRunning, ensureWorkspace, setFeedback])
 
   const switchTab = useCallback(
     async (tabId: string) => {
@@ -550,6 +599,44 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
             </Button>
           </div>
         </div>
+
+        {kind === 'claude' && (
+          <form
+            className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/20 px-3 py-1.5"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void openWebPage()
+            }}
+          >
+            <Globe2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <Input
+              ref={addressInputRef}
+              data-testid="claude-address-input"
+              type="text"
+              inputMode="url"
+              value={addressValue}
+              onChange={(event) => setAddressValue(event.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              placeholder="输入网址"
+              aria-label="网页地址"
+              disabled={!senderRunning}
+              className="h-8 min-w-0 flex-1 font-mono text-xs"
+            />
+            <Button
+              type="submit"
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              title="在新标签页打开"
+              aria-label="在新标签页打开"
+              disabled={!senderRunning || !addressValue.trim()}
+            >
+              <ArrowUpRight className="size-4" />
+            </Button>
+          </form>
+        )}
 
         {/* Claude 提示: 不用就别打开此页, 防止潜在网络问题。可关闭(持久化 ui.claude_notice_dismissed)。 */}
         {kind === 'claude' && !settings?.ui?.claude_notice_dismissed && (

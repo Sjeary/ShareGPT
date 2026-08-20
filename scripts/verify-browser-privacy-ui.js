@@ -92,6 +92,7 @@ async function main() {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-privacy-ui-"));
   const userDataDir = path.join(tempDir, "user-data");
   const screenshotPath = path.join(tempDir, "browser-privacy-account.png");
+  const claudeScreenshotPath = path.join(tempDir, "claude-address-bar.png");
   const port = await reservePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const usersFile = path.join(tempDir, "users.json");
@@ -239,6 +240,26 @@ async function main() {
     assert.strictEqual(Object.hasOwn(syncedPrivacy, "audit"), false);
 
     await window.screenshot({ path: screenshotPath, fullPage: true });
+
+    await window.locator('[data-tour="nav-claude"]').click();
+    const claudeAddressInput = window.getByTestId("claude-address-input");
+    await claudeAddressInput.waitFor({ state: "visible" });
+    assert.strictEqual(
+      await claudeAddressInput.isDisabled(),
+      true,
+      "Claude address input must stay disabled while the sender proxy is stopped",
+    );
+    const openWebPageButton = window.getByRole("button", {
+      name: "在新标签页打开",
+      exact: true,
+    });
+    assert.strictEqual(
+      await openWebPageButton.isDisabled(),
+      true,
+      "Claude open-page action must stay disabled while the sender proxy is stopped",
+    );
+    await window.screenshot({ path: claudeScreenshotPath, fullPage: true });
+
     assert.deepStrictEqual(pageErrors, [], `renderer page errors: ${pageErrors.join("; ")}`);
     assert.ok(
       blockedRequests.every((url) => !/claude\.ai|chatgpt\.com|gemini\.google\.com/i.test(url)),
@@ -264,6 +285,8 @@ async function main() {
           aiWebsitesVisited: false,
           blockedNonLocalRequests: blockedRequests.length,
           screenshot: screenshotPath,
+          claudeAddressBarPresent: true,
+          claudeAddressBarScreenshot: claudeScreenshotPath,
         },
         null,
         2,

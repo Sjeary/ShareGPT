@@ -12,6 +12,7 @@ import {
   normalizeGptUrl,
   normalizeGeminiUrl,
   normalizeClaudeUrl,
+  normalizeHttpUrl,
 } from './constants'
 import type { AiEventPayload, AiTabPayload } from './types'
 
@@ -68,10 +69,14 @@ function persistLastUrl(section: AiKind, url: string) {
 function normalizeTab(kind: AiKind, item: AiTabPayload): AiTab | null {
   const id = safeText(item?.id || item?.tabId)
   if (!id) return null
+  const allowExternalBrowsing = kind === 'claude' && Boolean(item.allowExternalBrowsing)
   return {
     id,
     title: safeText(item?.title) || defaultTitleFor(kind),
-    url: normalizeUrlFor(kind, safeText(item?.url)),
+    url: allowExternalBrowsing
+      ? normalizeHttpUrl(safeText(item?.url)) || normalizeClaudeUrl('')
+      : normalizeUrlFor(kind, safeText(item?.url)),
+    allowExternalBrowsing,
     webviewInitialized: Boolean(item?.initialized),
     webviewLoading: Boolean(item?.loading),
     canGoBack: Boolean(item?.canGoBack),
@@ -104,8 +109,17 @@ function applyState(kind: AiKind, payload: AiEventPayload) {
   const store = useAiStore.getState()
   const tabId = safeText(payload.tabId) || store.activeTabIdByKind[kind]
   if (!tabId) return
+  const currentTab = store.tabsByKind[kind].find((item) => item.id === tabId)
+  const allowExternalBrowsing =
+    kind === 'claude' &&
+    (typeof payload.allowExternalBrowsing === 'boolean'
+      ? payload.allowExternalBrowsing
+      : Boolean(currentTab?.allowExternalBrowsing))
 
   const patch: Partial<AiTab> = {}
+  if (typeof payload.allowExternalBrowsing === 'boolean') {
+    patch.allowExternalBrowsing = allowExternalBrowsing
+  }
   if (typeof payload.initialized === 'boolean') patch.webviewInitialized = payload.initialized
   if (typeof payload.loading === 'boolean') patch.webviewLoading = payload.loading
   if (typeof payload.canGoBack === 'boolean') patch.canGoBack = payload.canGoBack
@@ -115,12 +129,19 @@ function applyState(kind: AiKind, payload: AiEventPayload) {
   if (nextTitle) patch.title = nextTitle
 
   const nextUrl = safeText(payload.url)
-  if (nextUrl && isAllowedUrlFor(kind, nextUrl)) patch.url = normalizeUrlFor(kind, nextUrl)
+  const normalizedUrl = allowExternalBrowsing
+    ? normalizeHttpUrl(nextUrl)
+    : isAllowedUrlFor(kind, nextUrl)
+      ? normalizeUrlFor(kind, nextUrl)
+      : ''
+  if (normalizedUrl) patch.url = normalizedUrl
 
   if (Object.keys(patch).length) store.patchTab(kind, tabId, patch)
 
   // 旧 rememberGptUrl/rememberGeminiUrl: 仅活动标签的 url 变更写回 last_url。
-  if (patch.url && tabId === store.activeTabIdByKind[kind]) persistLastUrl(kind, patch.url)
+  if (patch.url && tabId === store.activeTabIdByKind[kind] && !allowExternalBrowsing) {
+    persistLastUrl(kind, patch.url)
+  }
 }
 
 // 解析注入脚本通过 console.log 发回的查询事件 (按 kind 校验各自的标记)。

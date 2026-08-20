@@ -10,6 +10,7 @@ export interface AiTab {
   id: string
   title: string
   url: string
+  allowExternalBrowsing: boolean
   webviewInitialized: boolean
   webviewLoading: boolean
   canGoBack: boolean
