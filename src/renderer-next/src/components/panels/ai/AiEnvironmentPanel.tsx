@@ -21,11 +21,15 @@ interface Props {
 
 export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }: Props) {
   const [environmentName, setEnvironmentName] = useState('')
+  const [newRouteId, setNewRouteId] = useState('')
   const [checkingId, setCheckingId] = useState('')
   const environments = settings.environments.filter((environment) => environment.kind === kind)
+  const selectedNewRouteId = routes.some((route) => route.id === newRouteId)
+    ? newRouteId
+    : routes[0]?.id || ''
 
   async function addEnvironment() {
-    const routeId = routes[0]?.id
+    const routeId = selectedNewRouteId
     if (!routeId) {
       toast.error('当前没有可用的内置 sing-box 线路')
       return
@@ -164,6 +168,19 @@ export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }
             placeholder={`${KIND_LABEL[kind]} 新环境名称`}
             className="h-8 min-w-0 flex-1"
           />
+          <select
+            value={selectedNewRouteId}
+            aria-label="新环境内置网络线路"
+            className="h-8 min-w-44 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            disabled={!routes.length}
+            onChange={(event) => setNewRouteId(event.target.value)}
+          >
+            {routes.map((route) => (
+              <option key={route.id} value={route.id}>
+                {route.name}
+              </option>
+            ))}
+          </select>
           <Button
             size="sm"
             variant="outline"
