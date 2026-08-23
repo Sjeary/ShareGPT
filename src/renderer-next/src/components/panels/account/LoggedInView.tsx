@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -38,6 +38,7 @@ import { compareVersions, checkGithubUpdate } from './bootstrap'
 import { CHANGELOG } from './changelog'
 import type { CollabSettings } from '@/types/settings'
 import { BrowserPrivacySection } from './BrowserPrivacySection'
+import { normalizeAdvancedAiSettings } from '@/lib/aiEnvironments'
 
 // 协作通知开关项 (对应 collab.notify_* 字段)。
 const NOTIFY_FIELDS: ReadonlyArray<{
@@ -498,6 +499,8 @@ export function LoggedInView() {
   const setShowClaude = useAppStore((s) => s.setShowClaude)
   const hiddenNav = useAppStore((s) => s.hiddenNav)
   const setNavHidden = useAppStore((s) => s.setNavHidden)
+  const advancedAiRaw = useAppStore((s) => s.settings?.advancedAi)
+  const advancedAi = useMemo(() => normalizeAdvancedAiSettings(advancedAiRaw), [advancedAiRaw])
   const profile = useAuthStore((s) => s.profile)
   const { logout } = useAuth()
 
@@ -662,6 +665,28 @@ export function LoggedInView() {
               </p>
             </div>
             <Switch id="ui-show-claude" checked={showClaude} onCheckedChange={setShowClaude} />
+          </div>
+
+          <Separator className="my-1" />
+
+          <div className="flex items-center justify-between gap-3 py-1.5">
+            <div className="min-w-0">
+              <Label htmlFor="advanced-ai-environments" className="cursor-pointer">
+                多账号与多出口环境
+              </Label>
+              <p className="truncate text-xs text-muted-foreground">
+                开启后可为 ChatGPT、Claude 和 Gemini 创建独立登录环境并分配网络线路。
+              </p>
+            </div>
+            <Switch
+              id="advanced-ai-environments"
+              checked={advancedAi.enabled}
+              onCheckedChange={(enabled) =>
+                void patchSection('advancedAi', { ...advancedAi, enabled }).catch(() =>
+                  toast.error('保存高级功能设置失败'),
+                )
+              }
+            />
           </div>
 
           <Separator className="my-1" />

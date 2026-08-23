@@ -137,6 +137,13 @@ const PUBLIC_DEFAULT_SETTINGS = {
     proxy_port: "1080",
   },
   browserPrivacy: structuredClone(DEFAULT_BROWSER_PRIVACY_SETTINGS),
+  advancedAi: {
+    version: 1,
+    enabled: false,
+    environments: [],
+    routes: [],
+    activeByKind: { gpt: "", gemini: "", claude: "" },
+  },
   ui: {
     setup_guide_dismissed: false,
     theme: "dark",
@@ -187,6 +194,20 @@ function mergeSettings(base, override = {}) {
         ...(overridePrivacy.lastClearedAt || {}),
       },
     }),
+    advancedAi: {
+      ...(base.advancedAi || {}),
+      ...(override.advancedAi || {}),
+      environments: Array.isArray(override.advancedAi?.environments)
+        ? override.advancedAi.environments
+        : base.advancedAi?.environments || [],
+      routes: Array.isArray(override.advancedAi?.routes)
+        ? override.advancedAi.routes
+        : base.advancedAi?.routes || [],
+      activeByKind: {
+        ...(base.advancedAi?.activeByKind || {}),
+        ...(override.advancedAi?.activeByKind || {}),
+      },
+    },
     ui: { ...base.ui, ...(override.ui || {}) },
   };
 }

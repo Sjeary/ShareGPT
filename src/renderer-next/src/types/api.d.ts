@@ -15,6 +15,9 @@ export interface AiProxyReport {
   tabId?: string
   currentUrl?: string
   socksEndpoint?: string
+  proxyMode?: 'sender' | 'system' | 'direct' | 'socks5'
+  proxyLabel?: string
+  expectedProxy?: boolean
   sessionProxy?: string
   sessionProxied?: boolean
   proxyCount?: number
@@ -243,6 +246,9 @@ export interface ShareGptApi {
   switchAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
   closeAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
   ensureAiWorkspace: (payload: unknown) => Promise<unknown>
+  activateAiEnvironment: (payload: unknown) => Promise<unknown>
+  deleteAiEnvironment: (payload: unknown) => Promise<unknown>
+  checkAiEnvironmentEgress: (payload: unknown) => Promise<unknown>
   syncAiViewHost: (payload: unknown) => Promise<unknown>
   navigateAiWorkspace: (payload: unknown) => Promise<unknown>
   // 代理检测: 检查该 AI 页面流量是否全部经发送代理 (梯子)。

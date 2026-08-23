@@ -65,6 +65,7 @@ function trimServerUrl(value: string): string {
 
 export function BrowserPrivacySection() {
   const privacy = useAppStore((state) => state.settings?.browserPrivacy)
+  const advancedAiEnabled = useAppStore((state) => state.settings?.advancedAi?.enabled === true)
   const patchSection = useAppStore((state) => state.patchSection)
   const token = useAuthStore((state) => state.token)
   const identity = useChatStore((state) => state.identity)
@@ -247,8 +248,9 @@ export function BrowserPrivacySection() {
             <div>
               <p className="text-sm font-medium">网页登录数据</p>
               <p className="text-xs text-muted-foreground">
-                分别清除对应网页的 Cookie、缓存、LocalStorage、IndexedDB 和 Service Worker；不会删除
-                ShareGPT 的聊天、笔记或日历。
+                {advancedAiEnabled
+                  ? '高级模式下请在对应 AI 页删除单个环境；下方普通资料分区操作暂时停用。'
+                  : '分别清除对应网页的 Cookie、缓存、LocalStorage、IndexedDB 和 Service Worker；不会删除 ShareGPT 的聊天、笔记或日历。'}
               </p>
             </div>
             {PROVIDERS.map((provider) => (
@@ -259,7 +261,8 @@ export function BrowserPrivacySection() {
                 <div>
                   <p className="text-sm font-medium">{provider.label}</p>
                   <p className="text-xs text-muted-foreground">
-                    {provider.description} · {formatWhen(privacy.lastClearedAt[provider.kind])}
+                    {advancedAiEnabled ? '高级环境请单独管理' : provider.description} ·{' '}
+                    {formatWhen(privacy.lastClearedAt[provider.kind])}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -267,6 +270,8 @@ export function BrowserPrivacySection() {
                     size="sm"
                     variant="outline"
                     className="text-destructive hover:text-destructive"
+                    disabled={advancedAiEnabled}
+                    title={advancedAiEnabled ? '请在对应 AI 页删除需要清理的环境' : undefined}
                     onClick={() => {
                       setPassword('')
                       setDestructiveAction({ kind: provider.kind, mode: 'clear' })
@@ -278,6 +283,8 @@ export function BrowserPrivacySection() {
                   <Button
                     size="sm"
                     variant="outline"
+                    disabled={advancedAiEnabled}
+                    title={advancedAiEnabled ? '请先关闭高级多环境功能' : undefined}
                     onClick={() => {
                       setPassword('')
                       setDestructiveAction({ kind: provider.kind, mode: 'rebuild' })

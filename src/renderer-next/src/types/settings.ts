@@ -69,6 +69,32 @@ export interface UiSettings {
   onboarding_done: boolean
 }
 
+export type AdvancedAiRouteMode = 'sender' | 'system' | 'direct' | 'socks5'
+
+export interface AdvancedAiRoute {
+  id: string
+  name: string
+  mode: AdvancedAiRouteMode
+  host?: string
+  port?: number
+}
+
+export interface AdvancedAiEnvironment {
+  id: string
+  kind: 'gpt' | 'gemini' | 'claude'
+  name: string
+  routeId: string
+  createdAt: string
+}
+
+export interface AdvancedAiSettings {
+  version: 1
+  enabled: boolean
+  environments: AdvancedAiEnvironment[]
+  routes: AdvancedAiRoute[]
+  activeByKind: Record<'gpt' | 'gemini' | 'claude', string>
+}
+
 export type BrowserEnvironmentMode = 'system' | 'us' | 'proxy'
 export type BrowserGeolocationMode = 'disabled' | 'proxy'
 
@@ -138,6 +164,7 @@ export interface AppSettings {
   gemini: Record<string, unknown>
   claude: Record<string, unknown>
   browserPrivacy: BrowserPrivacySettings
+  advancedAi: AdvancedAiSettings
   ui: Partial<UiSettings>
 }
 

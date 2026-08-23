@@ -32,6 +32,11 @@ const {
   partitionForProfile,
 } = require("./browserFingerprint");
 const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
+const {
+  normalizeAiEnvironmentId,
+  normalizeAiProxyRoute,
+  partitionForAiEnvironment,
+} = require("./aiEnvironments");
 
 // 记录每个 AI 会话(按 partition)实际访问过的主机名, 供「代理检测」展示页面流量去向。
 // 在 configureAiSession 内通过 webRequest 被动收集 (每个 partition 仅装一次)。
@@ -556,19 +561,83 @@ function createElectronApp(baseMode = "all") {
     mainWindow.focus();
   }
 
-  function getAiPolicy(kind) {
+  function getConfiguredAiEnvironment(kind, environmentId) {
+    const targetKind = safeText(kind);
+    const targetEnvironmentId = normalizeAiEnvironmentId(environmentId);
+    if (!targetEnvironmentId) return null;
+    const advanced = backend?.loadSettings()?.advancedAi;
+    if (!advanced?.enabled || !Array.isArray(advanced.environments)) {
+      throw new Error("高级 AI 环境尚未开启");
+    }
+    const environment = advanced.environments.find(
+      (item) =>
+        normalizeAiEnvironmentId(item?.id) === targetEnvironmentId &&
+        safeText(item?.kind) === targetKind,
+    );
+    if (!environment) throw new Error("AI 环境不存在或不属于当前服务");
+    return { ...environment, id: targetEnvironmentId };
+  }
+
+  function getAiPolicy(kind, environmentId = "") {
     const targetKind = safeText(kind);
     const base = AI_WORKSPACE_POLICIES[targetKind];
     if (!base) return null;
+    const targetEnvironmentId = normalizeAiEnvironmentId(environmentId);
+    if (targetEnvironmentId) {
+      getConfiguredAiEnvironment(targetKind, targetEnvironmentId);
+      return {
+        ...base,
+        partition: partitionForAiEnvironment(targetKind, targetEnvironmentId),
+      };
+    }
     const configured = safeText(backend?.loadSettings()?.[targetKind]?.partition);
     const partition = normalizeAiPartition(targetKind, configured || base.partition);
     return { ...base, partition };
   }
 
+  function getWorkspaceProxyRoute(kind, environmentId, sender) {
+    const targetEnvironmentId = normalizeAiEnvironmentId(environmentId);
+    if (!targetEnvironmentId) {
+      return normalizeAiProxyRoute({ mode: "sender", label: "当前统一代理" }, sender);
+    }
+    const environment = getConfiguredAiEnvironment(kind, targetEnvironmentId);
+    const advanced = backend.loadSettings().advancedAi || {};
+    const routeId = safeText(environment.routeId) || "sender";
+    const builtIn = {
+      sender: { mode: "sender", label: "当前统一代理" },
+      system: { mode: "system", label: "系统代理" },
+      direct: { mode: "direct", label: "直连" },
+    }[routeId];
+    const configured = Array.isArray(advanced.routes)
+      ? advanced.routes.find((route) => safeText(route?.id) === routeId)
+      : null;
+    if (!builtIn && !configured) throw new Error("环境绑定的代理线路不存在");
+    return normalizeAiProxyRoute(
+      builtIn || {
+        mode: configured.mode,
+        label: safeText(configured.name),
+        host: configured.host,
+        port: configured.port,
+      },
+      sender,
+    );
+  }
+
   function getAiStoragePartitions() {
-    return Object.keys(AI_WORKSPACE_POLICIES)
+    const legacy = Object.keys(AI_WORKSPACE_POLICIES)
       .map((kind) => getAiPolicy(kind)?.partition)
       .filter(Boolean);
+    const advanced = backend?.loadSettings()?.advancedAi;
+    const isolated = Array.isArray(advanced?.environments)
+      ? advanced.environments.flatMap((environment) => {
+          try {
+            return [partitionForAiEnvironment(environment?.kind, environment?.id)];
+          } catch {
+            return [];
+          }
+        })
+      : [];
+    return [...new Set([...legacy, ...isolated])];
   }
 
   async function verifyBrowserDestructiveAction(payload) {
@@ -743,7 +812,13 @@ function createElectronApp(baseMode = "all") {
     const targetSession = session.fromPartition(workspace.policy.partition);
     const pagePromise = collectPageFingerprint(wc);
     const networkPromise = (() => {
-      const port = Number(backend?.activeSocksPort);
+      const port = Number(
+        workspace.proxyMode === "socks5"
+          ? workspace.proxyPort
+          : workspace.proxyMode === "sender"
+            ? workspace.proxyPort || backend?.activeSocksPort
+            : 0,
+      );
       if (!Number.isInteger(port) || port < 1 || port > 65535) return Promise.resolve(null);
       return detectProxyEnvironment(port).catch((error) => ({
         error: safeText(error?.message || error),
@@ -838,6 +913,9 @@ function createElectronApp(baseMode = "all") {
       canGoBack: Boolean(canGoBack),
       canGoForward: Boolean(canGoForward),
       allowExternalBrowsing: Boolean(workspace.allowExternalBrowsing),
+      environmentId: safeText(workspace.environmentId),
+      proxyMode: safeText(workspace.proxyMode),
+      proxyLabel: safeText(workspace.proxyLabel),
     };
   }
 
@@ -906,6 +984,7 @@ function createElectronApp(baseMode = "all") {
       title: safeText(options.title),
       lastUrl: safeText(options.lastUrl),
       allowExternalBrowsing: Boolean(options.allowExternalBrowsing),
+      environmentId: safeText(options.environmentId),
     });
 
     const order = tabOrderByKind[targetKind];
@@ -1387,6 +1466,10 @@ function createElectronApp(baseMode = "all") {
     const targetTabId = safeText(tabId) || `${targetKind}-${++aiTabCounter}`;
     const existing = getWorkspace(targetKind, targetTabId);
     if (existing) {
+      const requestedEnvironmentId = normalizeAiEnvironmentId(options.environmentId);
+      if (safeText(existing.environmentId) !== requestedEnvironmentId) {
+        throw new Error("目标标签不属于当前 AI 环境");
+      }
       return existing;
     }
 
@@ -1394,7 +1477,8 @@ function createElectronApp(baseMode = "all") {
       throw new Error("主窗口尚未就绪");
     }
 
-    const policy = getAiPolicy(targetKind);
+    const environmentId = normalizeAiEnvironmentId(options.environmentId);
+    const policy = getAiPolicy(targetKind, environmentId);
     if (!policy) {
       throw new Error("不支持的 AI 工作区");
     }
@@ -1422,6 +1506,7 @@ function createElectronApp(baseMode = "all") {
     const workspace = {
       id: targetTabId,
       kind: targetKind,
+      environmentId,
       policy,
       view,
       attached: false,
@@ -1433,6 +1518,9 @@ function createElectronApp(baseMode = "all") {
       defaultTitle: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
       title: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
       proxySignature: "",
+      proxyMode: "sender",
+      proxyLabel: "当前统一代理",
+      proxyPort: null,
       userAgent: "",
       appliedUserAgent: "",
       rawDocumentRecoveryAttempted: false,
@@ -1753,6 +1841,7 @@ function createElectronApp(baseMode = "all") {
         title: safeText(payload?.title),
         lastUrl: safeText(payload?.lastUrl),
         allowExternalBrowsing: Boolean(payload?.allowExternalBrowsing),
+        environmentId: safeText(payload?.environmentId),
       });
       activeTabIdByKind[kind] = workspace.id;
       syncActiveWorkspace(kind);
@@ -1784,8 +1873,47 @@ function createElectronApp(baseMode = "all") {
       return closeTabWorkspace(kind, payload?.tabId);
     });
 
+    ipcMain.handle("ai:environment-activate", async (_event, payload) => {
+      const kind = safeText(payload?.kind);
+      if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
+      const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
+      if (environmentId) getConfiguredAiEnvironment(kind, environmentId);
+      await closeWorkspacesForKind(kind);
+      return { ok: true, kind, environmentId };
+    });
+
+    ipcMain.handle("ai:environment-delete", async (_event, payload) => {
+      const kind = safeText(payload?.kind);
+      const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
+      if (!isAiKind(kind) || !environmentId) throw new Error("AI 环境标识不合法");
+      getConfiguredAiEnvironment(kind, environmentId);
+      const targetLoaded = listWorkspaces(kind).some(
+        (workspace) => safeText(workspace.environmentId) === environmentId,
+      );
+      if (targetLoaded) await closeWorkspacesForKind(kind);
+      const partition = partitionForAiEnvironment(kind, environmentId);
+      await clearAiSessionData(session.fromPartition(partition));
+      aiContactedHostsByPartition.get(partition)?.clear();
+      return { ok: true, kind, environmentId };
+    });
+
+    ipcMain.handle("ai:environment-egress-check", async (_event, payload) => {
+      const kind = safeText(payload?.kind);
+      if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
+      const sender = {
+        host: "127.0.0.1",
+        port: Number(backend?.activeSocksPort),
+      };
+      const route = getWorkspaceProxyRoute(kind, payload?.environmentId, sender);
+      if (route.mode !== "sender" && route.mode !== "socks5") {
+        throw new Error("系统代理和直连模式请在页面打开后查看代理检测");
+      }
+      return { route: route.label, ...(await detectProxyEnvironment(route.port)) };
+    });
+
     ipcMain.handle("ai:ensure", async (_event, payload) => {
       const kind = safeText(payload?.kind);
+      const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
       const requestedTabId = safeText(payload?.tabId);
       if (!requestedTabId && !activeTabIdByKind[kind]) {
         return null;
@@ -1793,32 +1921,45 @@ function createElectronApp(baseMode = "all") {
       const workspace = getOrCreateAiWorkspace(kind, requestedTabId || activeTabIdByKind[kind], {
         lastUrl: safeText(payload?.lastUrl),
         allowExternalBrowsing: Boolean(payload?.allowExternalBrowsing),
+        environmentId,
       });
       if (!activeTabIdByKind[kind]) {
         activeTabIdByKind[kind] = workspace.id;
       }
-      const host = safeText(payload?.host || "127.0.0.1") || "127.0.0.1";
-      const port = Number.parseInt(String(payload?.port || "1080"), 10);
+      const sender = {
+        host: safeText(payload?.host || "127.0.0.1") || "127.0.0.1",
+        port: Number.parseInt(String(payload?.port || "1080"), 10),
+      };
+      const route = getWorkspaceProxyRoute(kind, environmentId, sender);
       const userAgent = sanitizeEmbeddedUserAgent(payload?.userAgent);
       const homeUrl = safeText(payload?.homeUrl);
       const lastUrl = safeText(payload?.lastUrl);
       const forceReload = Boolean(payload?.forceReload);
 
-      if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        throw new Error("内嵌页面代理端口不合法");
-      }
-
       const targetSession = session.fromPartition(workspace.policy.partition);
       configureAiSession(targetSession, workspace.policy);
 
-      const proxySignature = `${host}:${port}`;
+      const proxySignature =
+        route.mode === "sender" || route.mode === "socks5"
+          ? `${route.host}:${route.port}`
+          : route.mode;
       if (workspace.proxySignature !== proxySignature) {
-        await targetSession.setProxy({
-          proxyRules: `socks5://${host}:${port}`,
-          proxyBypassRules: "",
-        });
+        if (route.mode === "sender" || route.mode === "socks5") {
+          await targetSession.setProxy({
+            proxyRules: `socks5://${route.host}:${route.port}`,
+            proxyBypassRules: "",
+          });
+        } else if (route.mode === "direct") {
+          await targetSession.setProxy({ mode: "direct" });
+        } else {
+          await targetSession.setProxy({ mode: "system" });
+        }
+        await targetSession.closeAllConnections();
         workspace.proxySignature = proxySignature;
       }
+      workspace.proxyMode = route.mode;
+      workspace.proxyLabel = route.label;
+      workspace.proxyPort = route.port || null;
 
       if (userAgent) {
         workspace.userAgent = userAgent;
@@ -2002,7 +2143,11 @@ function createElectronApp(baseMode = "all") {
           : Array.isArray(DEFAULT_TARGET_DOMAINS)
             ? DEFAULT_TARGET_DOMAINS
             : [];
-      const viaProxy = (host) => suffixes.some((s) => host === s || host.endsWith(`.${s}`));
+      const viaProxy = (host) => {
+        if (workspace.proxyMode === "socks5") return true;
+        if (workspace.proxyMode !== "sender") return false;
+        return suffixes.some((s) => host === s || host.endsWith(`.${s}`));
+      };
 
       const hosts = [...hostSet]
         .filter(Boolean)
@@ -2015,6 +2160,9 @@ function createElectronApp(baseMode = "all") {
         tabId: safeText(workspace.id),
         currentUrl,
         socksEndpoint: safeText(workspace.proxySignature),
+        proxyMode: safeText(workspace.proxyMode),
+        proxyLabel: safeText(workspace.proxyLabel),
+        expectedProxy: workspace.proxyMode === "sender" || workspace.proxyMode === "socks5",
         sessionProxy,
         sessionProxied,
         proxyCount: hosts.filter((h) => h.via === "proxy").length,

@@ -57,6 +57,11 @@ const fallback = {
   switchAiView: async () => undefined,
   closeAiView: async () => undefined,
   ensureAiWorkspace: async () => undefined,
+  activateAiEnvironment: async () => ({ ok: true }),
+  deleteAiEnvironment: async () => ({ ok: true }),
+  checkAiEnvironmentEgress: async () => {
+    throw new Error('仅桌面客户端支持出口检测')
+  },
   syncAiViewHost: async () => undefined,
   navigateAiWorkspace: async () => undefined,
   checkAiProxy: async () => ({ ok: false, reason: 'unavailable' }),

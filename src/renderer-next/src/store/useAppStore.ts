@@ -136,6 +136,13 @@ const EMPTY_SETTINGS: AppSettings = {
       beforeClear: { gpt: null, gemini: null, claude: null },
     },
   },
+  advancedAi: {
+    version: 1,
+    enabled: false,
+    environments: [],
+    routes: [],
+    activeByKind: { gpt: '', gemini: '', claude: '' },
+  },
   ui: {},
 }
 
