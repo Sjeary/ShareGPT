@@ -1,8 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  hasCompleteUnifiedProxy,
+  internalAiProxyRoutes,
   normalizeAiEnvironmentId,
-  normalizeAiProxyRoute,
+  normalizeAiRouteId,
   partitionForAiEnvironment,
 } = require("../aiEnvironments");
 
@@ -25,32 +27,52 @@ test("高级 AI 环境拒绝可造成 partition 混淆的标识", () => {
   assert.throws(() => partitionForAiEnvironment("unknown", "env-work"), /环境标识/);
 });
 
-test("高级线路支持当前代理、直连、系统代理和本机 SOCKS5", () => {
-  assert.deepEqual(
-    normalizeAiProxyRoute({ mode: "sender", label: "统一代理" }, { host: "127.0.0.1", port: 1080 }),
-    { mode: "sender", label: "统一代理", host: "127.0.0.1", port: 1080 },
-  );
-  assert.deepEqual(normalizeAiProxyRoute({ mode: "direct" }), {
-    mode: "direct",
-    label: "直连",
-  });
-  assert.deepEqual(normalizeAiProxyRoute({ mode: "system" }), {
-    mode: "system",
-    label: "系统代理",
-  });
-  assert.deepEqual(
-    normalizeAiProxyRoute({ mode: "socks5", host: "localhost", port: "7897", label: "美国" }),
-    { mode: "socks5", label: "美国", host: "localhost", port: 7897 },
-  );
+test("高级环境只接受内置 sing-box 线路标识", () => {
+  assert.equal(normalizeAiRouteId("internal-unified"), "internal-unified");
+  assert.equal(normalizeAiRouteId("internal-airport"), "internal-airport");
+  assert.equal(normalizeAiRouteId("socks5"), "internal-unified");
+  assert.equal(normalizeAiRouteId("route-user-input"), "internal-unified");
 });
 
-test("高级 SOCKS5 线路拒绝远程主机和非法端口", () => {
-  assert.throws(
-    () => normalizeAiProxyRoute({ mode: "socks5", host: "proxy.example.com", port: 1080 }),
-    /只允许本机/,
+test("内置 sing-box 为统一代理和下发节点生成独立回环入口", () => {
+  const sender = {
+    proxy_server: "proxy.example.com",
+    proxy_port: "443",
+    proxy_uuid: "00000000-0000-4000-8000-000000000000",
+    socks_listen_port: "1080",
+    airport_name: "管理员节点",
+    airport_outbound: { type: "shadowsocks", server: "airport.example.com" },
+  };
+  assert.equal(hasCompleteUnifiedProxy(sender), true);
+  assert.deepEqual(internalAiProxyRoutes(sender), [
+    {
+      id: "internal-unified",
+      label: "内置统一代理",
+      mode: "singbox",
+      host: "127.0.0.1",
+      port: 1081,
+      inboundTag: "ai-unified-in",
+      outboundTag: "proxy-unified",
+    },
+    {
+      id: "internal-airport",
+      label: "内置节点 · 管理员节点",
+      mode: "singbox",
+      host: "127.0.0.1",
+      port: 1082,
+      inboundTag: "ai-airport-in",
+      outboundTag: "proxy-airport",
+    },
+  ]);
+});
+
+test("内置线路忽略不完整出站并安全处理端口上界", () => {
+  assert.deepEqual(
+    internalAiProxyRoutes({
+      socks_listen_port: "65535",
+      airport_outbound: { type: "socks", server: "managed.example.com" },
+    }).map((route) => ({ id: route.id, host: route.host, port: route.port })),
+    [{ id: "internal-airport", host: "127.0.0.1", port: 65533 }],
   );
-  assert.throws(
-    () => normalizeAiProxyRoute({ mode: "socks5", host: "127.0.0.1", port: 70000 }),
-    /端口不合法/,
-  );
+  assert.throws(() => internalAiProxyRoutes({ socks_listen_port: "0" }), /监听端口/);
 });

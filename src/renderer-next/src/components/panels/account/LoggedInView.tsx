@@ -502,6 +502,7 @@ export function LoggedInView() {
   const advancedAiRaw = useAppStore((s) => s.settings?.advancedAi)
   const advancedAi = useMemo(() => normalizeAdvancedAiSettings(advancedAiRaw), [advancedAiRaw])
   const profile = useAuthStore((s) => s.profile)
+  const advancedAiAllowed = Boolean(profile?.isAdmin || profile?.advancedAiAllowed)
   const { logout } = useAuth()
 
   const [loggingOut, setLoggingOut] = useState(false)
@@ -669,27 +670,31 @@ export function LoggedInView() {
 
           <Separator className="my-1" />
 
-          <div className="flex items-center justify-between gap-3 py-1.5">
-            <div className="min-w-0">
-              <Label htmlFor="advanced-ai-environments" className="cursor-pointer">
-                多账号与多出口环境
-              </Label>
-              <p className="truncate text-xs text-muted-foreground">
-                开启后可为 ChatGPT、Claude 和 Gemini 创建独立登录环境并分配网络线路。
-              </p>
-            </div>
-            <Switch
-              id="advanced-ai-environments"
-              checked={advancedAi.enabled}
-              onCheckedChange={(enabled) =>
-                void patchSection('advancedAi', { ...advancedAi, enabled }).catch(() =>
-                  toast.error('保存高级功能设置失败'),
-                )
-              }
-            />
-          </div>
+          {advancedAiAllowed && (
+            <>
+              <div className="flex items-center justify-between gap-3 py-1.5">
+                <div className="min-w-0">
+                  <Label htmlFor="advanced-ai-environments" className="cursor-pointer">
+                    高级 AI 环境
+                  </Label>
+                  <p className="truncate text-xs text-muted-foreground">
+                    多账号隔离与内置 sing-box 线路分配
+                  </p>
+                </div>
+                <Switch
+                  id="advanced-ai-environments"
+                  checked={advancedAi.enabled}
+                  onCheckedChange={(enabled) =>
+                    void patchSection('advancedAi', { ...advancedAi, enabled }).catch(() =>
+                      toast.error('保存高级功能设置失败'),
+                    )
+                  }
+                />
+              </div>
 
-          <Separator className="my-1" />
+              <Separator className="my-1" />
+            </>
+          )}
 
           {/* 隐藏其它内容入口 (ChatGPT / 日历 / 待办 / 笔记 / 专注): 关闭对应开关即从导航栏隐藏。 */}
           {HIDEABLE_NAV.map((n) => (

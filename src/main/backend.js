@@ -11,6 +11,7 @@ const {
   DEFAULT_BROWSER_PRIVACY_SETTINGS,
   normalizeBrowserPrivacySettings,
 } = require("./browserPrivacy");
+const { hasCompleteUnifiedProxy, internalAiProxyRoutes } = require("./aiEnvironments");
 
 // 自动更新源 = GitHub Releases (参考 cc-switch 的做法)。仓库地址从 package.json 推导,
 // fork 的人只要改 package.json 的 homepage/repository 就指向自己的仓库, 不写死任何自建服务器。
@@ -141,7 +142,6 @@ const PUBLIC_DEFAULT_SETTINGS = {
     version: 1,
     enabled: false,
     environments: [],
-    routes: [],
     activeByKind: { gpt: "", gemini: "", claude: "" },
   },
   ui: {
@@ -200,9 +200,6 @@ function mergeSettings(base, override = {}) {
       environments: Array.isArray(override.advancedAi?.environments)
         ? override.advancedAi.environments
         : base.advancedAi?.environments || [],
-      routes: Array.isArray(override.advancedAi?.routes)
-        ? override.advancedAi.routes
-        : base.advancedAi?.routes || [],
       activeByKind: {
         ...(base.advancedAi?.activeByKind || {}),
         ...(override.advancedAi?.activeByKind || {}),
@@ -546,6 +543,7 @@ class Backend {
     // 当前运行中的发送端 SOCKS 端口 / 实际走代理的域名后缀集合 (供更新代理、代理检测分类复用)。
     this.activeSocksPort = null;
     this.activeProxiedSuffixes = null;
+    this.activeAiProxyRoutes = [];
   }
 
   // 当前发送端配置里「走代理(梯子)」的域名后缀集合。路由规则(buildSenderConfig)与
@@ -1384,6 +1382,7 @@ class Backend {
   getStatus() {
     return {
       senderRunning: !!this.senderProcess,
+      aiProxyRoutes: this.activeAiProxyRoutes.map(({ id, label }) => ({ id, label })),
       receiverFrpcRunning: !!this.receiverFrpc,
       receiverSingboxRunning: !!this.receiverSingbox,
     };
@@ -1414,7 +1413,10 @@ class Backend {
     // 若无条件清空会把刚起的新进程引用一起抹掉(导致状态显示已停、且无法再正常 stop)。
     child.on("error", (err) => {
       this.log(source, `进程启动失败：${err.message || err}`);
-      if (source === "sender" && this.senderProcess === child) this.senderProcess = null;
+      if (source === "sender" && this.senderProcess === child) {
+        this.senderProcess = null;
+        this.activeAiProxyRoutes = [];
+      }
       if (source === "receiver-frpc" && this.receiverFrpc === child) this.receiverFrpc = null;
       if (source === "receiver-singbox" && this.receiverSingbox === child)
         this.receiverSingbox = null;
@@ -1423,7 +1425,10 @@ class Backend {
 
     child.on("exit", (code) => {
       this.log(source, `进程退出，code=${code}`);
-      if (source === "sender" && this.senderProcess === child) this.senderProcess = null;
+      if (source === "sender" && this.senderProcess === child) {
+        this.senderProcess = null;
+        this.activeAiProxyRoutes = [];
+      }
       if (source === "receiver-frpc" && this.receiverFrpc === child) this.receiverFrpc = null;
       if (source === "receiver-singbox" && this.receiverSingbox === child)
         this.receiverSingbox = null;
@@ -1485,6 +1490,7 @@ class Backend {
     this.senderProcess = null;
     this.activeSocksPort = null;
     this.activeProxiedSuffixes = null;
+    this.activeAiProxyRoutes = [];
     this.emitStatus();
   }
 
@@ -1528,8 +1534,16 @@ class Backend {
     this.senderProcess = null;
     this.activeSocksPort = null;
     this.activeProxiedSuffixes = null;
+    this.activeAiProxyRoutes = [];
     this.emitStatus();
     await this.stopChildAndWait(child, "sender");
+  }
+
+  getAiProxyRoute(routeId) {
+    const target = String(routeId || "").trim();
+    const route =
+      this.activeAiProxyRoutes.find((item) => item.id === target) || this.activeAiProxyRoutes[0];
+    return route ? { ...route } : null;
   }
 
   stopReceiver() {
@@ -1548,14 +1562,18 @@ class Backend {
   buildSenderConfig(sender) {
     const listenPort = toListenPort(sender.socks_listen_port, "本地SOCKS监听端口");
     const fallbackMode = sender.fallback_mode === "direct" ? "direct" : "system_proxy";
-    // 代理出站方式 (可选): "unified" = 内置统一 VMess 梯子(默认); "airport" = 服务器下发的机场节点。
-    // 机场模式下 sender.airport_outbound 已是一份 sing-box outbound (由管理端从 Clash 节点转换)。
+    // 普通模式仍按 proxy_mode 选择默认出站；高级 AI 环境会通过同一 sing-box 的专用入站，
+    // 分别固定到统一代理或管理员下发节点，避免再启动外部代理进程或暴露端口配置。
     const proxyMode = sender.proxy_mode === "airport" ? "airport" : "unified";
+    const hasUnified = hasCompleteUnifiedProxy(sender);
     const airportOutbound =
       sender.airport_outbound && typeof sender.airport_outbound === "object"
         ? sender.airport_outbound
         : null;
-    const useAirport = proxyMode === "airport" && airportOutbound;
+    if (proxyMode === "unified" && !hasUnified) throw new Error("统一代理配置不完整");
+    if (proxyMode === "airport" && !airportOutbound) throw new Error("管理员尚未下发机场节点");
+    const selectedProxyTag = proxyMode === "airport" ? "proxy-airport" : "proxy-unified";
+    const aiProxyRoutes = internalAiProxyRoutes(sender);
     // 测试用「全部流量走代理」: 除私有 IP 直连外, 所有流量(含 DNS)都走 proxy(梯子),
     // 不再只走 target_domains 清单。用于抓取页面到底访问了哪些域名 (仅管理员可开)。
     const routeAll =
@@ -1566,13 +1584,10 @@ class Backend {
     const uniqueDomains = this.proxiedDomainSuffixes(sender);
     const domainSuffix = uniqueDomains;
 
-    // "proxy" 出站: 机场模式用下发节点(强制 tag=proxy); 否则用统一 VMess 梯子。
-    // 两种方式都挂在 tag="proxy" 上, 路由/DNS 规则不变, 所有命中流量统一从此出站。
-    const proxyOutbound = useAirport
-      ? { ...airportOutbound, tag: "proxy" }
-      : {
+    const unifiedOutbound = hasUnified
+      ? {
           type: "vmess",
-          tag: "proxy",
+          tag: "proxy-unified",
           server: String(sender.proxy_server || "").trim(),
           server_port: toInt(sender.proxy_port, "公网端口"),
           uuid: String(sender.proxy_uuid || "").trim(),
@@ -1583,14 +1598,19 @@ class Backend {
             max_early_data: 2048,
             early_data_header_name: "Sec-WebSocket-Protocol",
           },
-        };
+        }
+      : null;
+    const managedAirportOutbound = airportOutbound
+      ? { ...airportOutbound, tag: "proxy-airport" }
+      : null;
 
     const outbounds = [
-      proxyOutbound,
+      unifiedOutbound,
+      managedAirportOutbound,
       { type: "direct", tag: "direct" },
       { type: "block", tag: "block" },
       { type: "dns", tag: "dns_out" },
-    ];
+    ].filter(Boolean);
 
     if (fallbackMode === "system_proxy") {
       outbounds.splice(1, 0, {
@@ -1604,7 +1624,7 @@ class Backend {
     // 机场节点的 server 常是只在系统/本地 DNS 才能解析的特殊域名(如机场 GTM 域名),
     // 公共 DoH(Aliyun/1.1.1.1)解析不了。这里强制用 dns_local(系统 DNS, 同 Clash 行为)解析它,
     // 否则会出现 "DNS query loopback" 或解析失败导致整条机场链路连不上。
-    const airportServer = useAirport ? String(airportOutbound.server || "").trim() : "";
+    const airportServer = airportOutbound ? String(airportOutbound.server || "").trim() : "";
     const airportDnsRule =
       airportServer && /[a-zA-Z]/.test(airportServer) && !airportServer.includes(":")
         ? [{ domain: [airportServer], server: "dns_local" }]
@@ -1619,7 +1639,7 @@ class Backend {
             address: "https://1.1.1.1/dns-query",
             address_resolver: "dns_resolver",
             strategy: "ipv4_only",
-            detour: "proxy",
+            detour: selectedProxyTag,
           },
           {
             tag: "dns_direct",
@@ -1654,25 +1674,37 @@ class Backend {
           sniff: true,
           sniff_override_destination: true,
         },
+        ...aiProxyRoutes.map((route) => ({
+          type: "socks",
+          tag: route.inboundTag,
+          listen: route.host,
+          listen_port: route.port,
+          sniff: true,
+          sniff_override_destination: true,
+        })),
       ],
       outbounds,
       route: {
         rules: [
           { protocol: "dns", outbound: "dns_out" },
-          // 全部走代理时不需要域名清单规则; 否则按 target_domains 命中走 proxy。
+          ...aiProxyRoutes.map((route) => ({
+            inbound: [route.inboundTag],
+            outbound: route.outboundTag,
+          })),
+          // 全部走代理时不需要域名清单规则; 否则按 target_domains 命中当前默认出站。
           ...(routeAll || !uniqueDomains.length
             ? []
             : [
                 {
                   domain: uniqueDomains,
                   domain_suffix: domainSuffix,
-                  outbound: "proxy",
+                  outbound: selectedProxyTag,
                 },
               ]),
           { ip_is_private: true, outbound: "direct" },
-          { outbound: routeAll ? "proxy" : fallbackMode },
+          { outbound: routeAll ? selectedProxyTag : fallbackMode },
         ],
-        final: routeAll ? "proxy" : fallbackMode,
+        final: routeAll ? selectedProxyTag : fallbackMode,
         auto_detect_interface: true,
       },
     };
@@ -1749,6 +1781,7 @@ class Backend {
     this.senderProcess = this.spawnProcess("sender", singboxPath, ["run", "-c", configPath]);
     // 记下本机 SOCKS 端口, 供"更新检查"经代理走出口 (github 已在路由清单里)。
     this.activeSocksPort = Number(settings.socks_listen_port) || null;
+    this.activeAiProxyRoutes = internalAiProxyRoutes(settings);
     // 记下「当前运行中的配置」实际走代理的域名后缀, 供代理检测按真实路由分类
     // (而非写死的内置清单), 加入域名并重启后检测才会从"回落"翻到"已走代理"。
     this.activeProxiedSuffixes = this.proxiedDomainSuffixes(settings);

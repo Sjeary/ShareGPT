@@ -69,14 +69,10 @@ export interface UiSettings {
   onboarding_done: boolean
 }
 
-export type AdvancedAiRouteMode = 'sender' | 'system' | 'direct' | 'socks5'
-
 export interface AdvancedAiRoute {
   id: string
   name: string
-  mode: AdvancedAiRouteMode
-  host?: string
-  port?: number
+  mode: 'singbox'
 }
 
 export interface AdvancedAiEnvironment {
@@ -91,7 +87,6 @@ export interface AdvancedAiSettings {
   version: 1
   enabled: boolean
   environments: AdvancedAiEnvironment[]
-  routes: AdvancedAiRoute[]
   activeByKind: Record<'gpt' | 'gemini' | 'claude', string>
 }
 
@@ -173,5 +168,6 @@ export type ServiceState = 'stopped' | 'starting' | 'running' | 'error'
 export interface StatusPayload {
   sender?: ServiceState | string
   receiver?: ServiceState | string
+  aiProxyRoutes?: Array<{ id: string; label: string }>
   [k: string]: unknown
 }

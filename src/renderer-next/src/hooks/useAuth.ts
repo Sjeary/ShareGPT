@@ -33,7 +33,13 @@ export interface LoginParams {
 
 interface LoginResponse {
   token?: string
-  profile?: { avatar?: string; displayName?: string; isAdmin?: boolean; chatDisabled?: boolean }
+  profile?: {
+    avatar?: string
+    displayName?: string
+    isAdmin?: boolean
+    advancedAiAllowed?: boolean
+    chatDisabled?: boolean
+  }
   // 登录响应可携带初始历史/在线名录, 用于 WS 建连前即时灌入 (旧 performCollabLogin ~4593)。
   history?: unknown
   users?: unknown
@@ -145,17 +151,15 @@ async function fetchClientBootstrap(
   // 自动更新已改为查询 GitHub Releases (见 LoggedInView 更新区 / 登录页提示), 不再从服务器读取版本信息。
   // 本机 sender 不完整时用服务器下发补全。
   await applySenderBootstrapConfig(payload.sender)
-  // 机场节点: 服务器下发了节点就用最新的覆盖本机 (管理端可随时更新)。
-  // 不改 proxy_mode —— 是否启用机场由用户在发送端设置里自己选。
-  if (payload.airport && payload.airport.outbound) {
-    await useAppStore
-      .getState()
-      .patchSection('sender', {
-        airport_outbound: payload.airport.outbound,
-        airport_name: payload.airport.name,
-      })
-      .catch(() => undefined)
-  }
+  // 管理端节点是权威配置：更新时覆盖，撤销时也清掉本机旧副本。
+  // 不改 proxy_mode；若当前选中的节点被撤销，发送端启动校验会要求切回统一代理。
+  await useAppStore
+    .getState()
+    .patchSection('sender', {
+      airport_outbound: payload.airport?.outbound || null,
+      airport_name: payload.airport?.name || '',
+    })
+    .catch(() => undefined)
   return payload
 }
 
@@ -206,6 +210,7 @@ export function useAuth() {
         displayName: (payload.profile?.displayName ?? '').trim() || cleanedUser,
         avatar: (payload.profile?.avatar ?? '').trim(),
         isAdmin: Boolean(payload.profile?.isAdmin),
+        advancedAiAllowed: Boolean(payload.profile?.isAdmin || payload.profile?.advancedAiAllowed),
         chatDisabled: Boolean(payload.profile?.chatDisabled),
       }
 

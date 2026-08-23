@@ -196,6 +196,7 @@ function normalizeUserRecord(record) {
     avatarKind,
     bio,
     isAdmin: Boolean(record?.isAdmin),
+    advancedAiAllowed: Boolean(record?.advancedAiAllowed),
     disabled: Boolean(record?.disabled),
     chatDisabled: Boolean(record?.chatDisabled),
     lastClient: normalizeClientInfo(record?.lastClient),
@@ -1032,6 +1033,7 @@ function getPublicProfile(username) {
     avatarKind: safeText(user.avatarKind) || inferAvatarKind(user.avatar),
     bio: safeText(user.bio),
     isAdmin: Boolean(user.isAdmin),
+    advancedAiAllowed: Boolean(user.isAdmin || user.advancedAiAllowed),
     chatDisabled: Boolean(user.chatDisabled),
   };
 }
@@ -1125,6 +1127,7 @@ function createUserRecord(username, password, extra = {}) {
     bio: safeText(extra.bio).slice(0, 200),
     displayName: safeText(extra.displayName) || normalized,
     isAdmin: Boolean(extra.isAdmin),
+    advancedAiAllowed: Boolean(extra.advancedAiAllowed),
     disabled: Boolean(extra.disabled),
     chatDisabled: Boolean(extra.chatDisabled),
     createdAt: safeText(extra.createdAt) || now,
@@ -1162,6 +1165,7 @@ function adminUserSummary(user) {
     avatarKind: safeText(user.avatarKind) || inferAvatarKind(user.avatar),
     bio: safeText(user.bio),
     isAdmin: Boolean(user.isAdmin),
+    advancedAiAllowed: Boolean(user.isAdmin || user.advancedAiAllowed),
     disabled: Boolean(user.disabled),
     chatDisabled: Boolean(user.chatDisabled),
     online: Boolean(onlineClient),
@@ -2042,6 +2046,8 @@ const server = http.createServer(async (req, res) => {
       }
       if (typeof payload.disabled !== "undefined") user.disabled = Boolean(payload.disabled);
       if (typeof payload.isAdmin !== "undefined") user.isAdmin = Boolean(payload.isAdmin);
+      if (typeof payload.advancedAiAllowed !== "undefined")
+        user.advancedAiAllowed = Boolean(payload.advancedAiAllowed);
       if (typeof payload.chatDisabled !== "undefined")
         user.chatDisabled = Boolean(payload.chatDisabled);
       if (nextPassword) {

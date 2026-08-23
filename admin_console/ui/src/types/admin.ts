@@ -21,6 +21,7 @@ export interface AdminUser {
   avatar?: string
   bio?: string
   isAdmin: boolean
+  advancedAiAllowed: boolean
   disabled: boolean
   // 禁止使用协作聊天: 该用户无聊天入口、不收消息、别人发他也不弹窗。
   chatDisabled?: boolean

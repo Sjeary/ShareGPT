@@ -23,6 +23,7 @@ interface CreateUserInput {
   avatar: string
   bio: string
   isAdmin: boolean
+  advancedAiAllowed: boolean
   chatDisabled?: boolean
 }
 
@@ -32,6 +33,7 @@ interface SaveUserInput {
   avatar?: string
   bio?: string
   isAdmin?: boolean
+  advancedAiAllowed?: boolean
   disabled?: boolean
   chatDisabled?: boolean
 }

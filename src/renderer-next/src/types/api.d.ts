@@ -15,7 +15,7 @@ export interface AiProxyReport {
   tabId?: string
   currentUrl?: string
   socksEndpoint?: string
-  proxyMode?: 'sender' | 'system' | 'direct' | 'socks5'
+  proxyMode?: 'sender' | 'singbox'
   proxyLabel?: string
   expectedProxy?: boolean
   sessionProxy?: string

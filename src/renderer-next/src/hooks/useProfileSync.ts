@@ -35,7 +35,7 @@ export function useProfileSync() {
       const displayName = safeText(incoming.displayName) || prevProfile?.displayName || username
       const avatar = safeText(incoming.avatar) || prevProfile?.avatar || ''
 
-      useAuthStore.getState().setProfile({ username, displayName, avatar })
+      useAuthStore.getState().setProfile({ ...prevProfile, username, displayName, avatar })
       useChatStore.getState().setIdentity({ displayName, avatar })
       void useAppStore.getState().patchSection('collab', { last_avatar: avatar })
     })

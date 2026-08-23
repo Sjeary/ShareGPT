@@ -28,6 +28,7 @@ import type { AiProxyReport } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { useAiStore } from '@/store/useAiStore'
+import { useAuthStore } from '@/store/useAuthStore'
 import type { AiKind } from '@/store/useAiStore'
 import { isSenderRunning } from '@/components/panels/service/helpers'
 import { api } from '@/lib/api'
@@ -49,7 +50,11 @@ import {
 } from './constants'
 import type { AiEventPayload } from './types'
 import { AiEnvironmentPanel } from './AiEnvironmentPanel'
-import { normalizeAdvancedAiSettings, routeForEnvironment } from '@/lib/aiEnvironments'
+import {
+  availableAiRoutes,
+  normalizeAdvancedAiSettings,
+  routeForEnvironment,
+} from '@/lib/aiEnvironments'
 import type { AdvancedAiSettings, AppSettings } from '@/types/settings'
 
 function safeText(value: unknown): string {
@@ -89,19 +94,28 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const settings = useAppStore((s) => s.settings)
   const sidebarHidden = useAppStore((s) => s.sidebarHidden)
   const toggleSidebarHidden = useAppStore((s) => s.toggleSidebarHidden)
+  const advancedAiAllowed = useAuthStore((s) =>
+    Boolean(s.profile?.isAdmin || s.profile?.advancedAiAllowed),
+  )
   const senderRunning = isSenderRunning(status)
   const advancedAi = useMemo(
     () => normalizeAdvancedAiSettings(settings?.advancedAi),
     [settings?.advancedAi],
   )
+  const advancedMode = advancedAiAllowed && advancedAi.enabled
+  const availableRoutes = useMemo(() => availableAiRoutes(settings?.sender), [settings?.sender])
   const environments = advancedAi.environments.filter((environment) => environment.kind === kind)
-  const activeEnvironment = advancedAi.enabled
+  const activeEnvironment = advancedMode
     ? environments.find((environment) => environment.id === advancedAi.activeByKind[kind]) || null
     : null
   const environmentId = activeEnvironment?.id || ''
-  const activeRoute = routeForEnvironment(advancedAi, activeEnvironment)
-  const networkReady = advancedAi.enabled
-    ? Boolean(activeEnvironment) && (activeRoute.mode !== 'sender' || senderRunning)
+  const activeRoute = routeForEnvironment(availableRoutes, activeEnvironment)
+  const activeRouteIds = new Set(
+    Array.isArray(status.aiProxyRoutes) ? status.aiProxyRoutes.map((route) => route.id) : [],
+  )
+  const networkReady = advancedMode
+    ? Boolean(activeEnvironment && activeRoute && activeRouteIds.has(activeRoute.id)) &&
+      senderRunning
     : senderRunning
   const [environmentPanelOpen, setEnvironmentPanelOpen] = useState(false)
 
@@ -243,7 +257,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     [proxyReport],
   )
   useEffect(() => {
-    if (activeRoute.mode !== 'sender') return
+    if (advancedMode) return
     if (!fallbackDomains.length) return
     const sender = useAppStore.getState().settings?.sender
     const existing = new Set(sender?.auto_domains ?? [])
@@ -259,7 +273,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       toReport.forEach((d) => reportedDomainsRef.current.add(d))
       void reportMissingDomains(toReport)
     }
-  }, [activeRoute.mode, fallbackDomains])
+  }, [advancedMode, fallbackDomains])
 
   // 一键加入并重启 singbox: 用已持久化(含 auto_domains)的发送端配置重启, 使新域名即时走代理。
   const applyMissingDomains = useCallback(async () => {
@@ -292,9 +306,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   // 当前代理方式标识: 统一梯子 / 机场节点(下发)。
   const airportMode =
     settings?.sender?.proxy_mode === 'airport' && Boolean(settings?.sender?.airport_outbound)
-  const proxyModeLabel = advancedAi.enabled
+  const proxyModeLabel = advancedMode
     ? activeEnvironment
-      ? activeRoute.name
+      ? activeRoute?.name || '无可用内置线路'
       : '未选择环境'
     : airportMode
       ? `机场${settings?.sender?.airport_name ? ' · ' + safeText(settings.sender.airport_name) : ''}`
@@ -309,12 +323,8 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     lastUrl: activeTab?.url ?? '',
   }
 
-  const proxyHost =
-    activeRoute.mode === 'socks5' ? activeRoute.host || GPT_PROXY_HOST : GPT_PROXY_HOST
-  const proxyPort =
-    activeRoute.mode === 'socks5'
-      ? String(activeRoute.port || '')
-      : resolveProxyPort(settings?.sender?.socks_listen_port)
+  const proxyHost = GPT_PROXY_HOST
+  const proxyPort = resolveProxyPort(settings?.sender?.socks_listen_port)
 
   // 宿主可见 = 代理运行中 (面板已激活由 Shell 的条件渲染保证)。
   const hostVisible = networkReady
@@ -337,7 +347,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       const payload = (await api.ensureAiWorkspace({
         kind,
         tabId: tab.id,
-        partition: advancedAi.enabled ? undefined : partitionFor(kind),
+        partition: advancedMode ? undefined : partitionFor(kind),
         environmentId,
         host: proxyHost,
         port: proxyPort,
@@ -356,12 +366,12 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         })
       }
     },
-    [kind, networkReady, proxyHost, proxyPort, advancedAi.enabled, environmentId],
+    [kind, networkReady, proxyHost, proxyPort, advancedMode, environmentId],
   )
 
   // 面板激活 / 代理就绪时: 拉取标签列表并 ensure 工作区。
-  const environmentRuntimeKey = advancedAi.enabled
-    ? `${environmentId}:${activeRoute.id}:${activeRoute.port || ''}`
+  const environmentRuntimeKey = advancedMode
+    ? `${environmentId}:${activeRoute?.id || 'unavailable'}`
     : 'legacy'
 
   useEffect(() => {
@@ -510,7 +520,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   const Icon = meta.icon
   const runtimeLabel =
-    advancedAi.enabled && !activeEnvironment
+    advancedMode && !activeEnvironment
       ? '暂无环境'
       : !networkReady
         ? '等待线路'
@@ -524,7 +534,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   const overlay = resolveOverlay(kind, {
     networkReady,
-    hasEnvironment: !advancedAi.enabled || Boolean(activeEnvironment),
+    advancedMode,
+    hasEnvironment: !advancedMode || Boolean(activeEnvironment),
+    hasRoute: !advancedMode || Boolean(activeRoute),
     routeLabel: proxyModeLabel,
     hasTab: Boolean(activeTabId),
     initialized: view.initialized,
@@ -536,7 +548,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     <PanelScaffold
       icon={Icon}
       title={meta.title}
-      hint={advancedAi.enabled ? `独立环境 · ${proxyModeLabel}` : meta.hint}
+      hint={advancedMode ? `独立环境 · ${proxyModeLabel}` : meta.hint}
       scrollable={false}
       toolbar={
         <Badge variant="outline" className="gap-1.5">
@@ -608,7 +620,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           />
 
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            {advancedAi.enabled && (
+            {advancedMode && (
               <>
                 {environments.length > 0 && (
                   <select
@@ -724,10 +736,11 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           </div>
         </div>
 
-        {advancedAi.enabled && environmentPanelOpen && (
+        {advancedMode && environmentPanelOpen && (
           <AiEnvironmentPanel
             kind={kind}
             settings={advancedAi}
+            routes={availableRoutes}
             onChange={saveAdvancedAi}
             onClose={() => setEnvironmentPanelOpen(false)}
           />
@@ -916,7 +929,7 @@ function ProxyReportPanel({
       <div className="mb-2 flex items-center gap-2">
         <SummaryIcon className={`size-4 shrink-0 ${summaryColor}`} />
         <span className="text-sm font-medium">代理检测</span>
-        {report?.socksEndpoint && dedicatedProxy && (
+        {report?.socksEndpoint && senderRoute && (
           <Badge variant="outline" className="font-mono text-[11px]">
             出口 socks5://{report.socksEndpoint}
           </Badge>
@@ -1037,7 +1050,9 @@ function resolveOverlay(
   kind: AiKind,
   args: {
     networkReady: boolean
+    advancedMode: boolean
     hasEnvironment: boolean
+    hasRoute: boolean
     routeLabel: string
     hasTab: boolean
     initialized: boolean
@@ -1045,8 +1060,17 @@ function resolveOverlay(
     proxyPort: string
   },
 ): { title: string; text: string } | null {
-  const { networkReady, hasEnvironment, routeLabel, hasTab, initialized, proxyHost, proxyPort } =
-    args
+  const {
+    networkReady,
+    advancedMode,
+    hasEnvironment,
+    hasRoute,
+    routeLabel,
+    hasTab,
+    initialized,
+    proxyHost,
+    proxyPort,
+  } = args
   const label = kind === 'gpt' ? 'ChatGPT' : kind === 'claude' ? 'Claude' : 'Gemini'
 
   if (!hasEnvironment) {
@@ -1056,10 +1080,19 @@ function resolveOverlay(
     }
   }
 
+  if (!hasRoute) {
+    return {
+      title: '没有可用的内置线路',
+      text: '请先配置统一代理或由管理员下发节点，然后重新开启内置代理。',
+    }
+  }
+
   if (!networkReady) {
     return {
       title: '当前线路尚未就绪',
-      text: `${routeLabel} 使用 ${proxyHost}:${proxyPort}。请先启动对应的本机代理。`,
+      text: advancedMode
+        ? `${routeLabel} 由 ShareGPT 内置 sing-box 提供，请先在「网络 / 代理」中开启代理。`
+        : `${routeLabel} 使用 ${proxyHost}:${proxyPort}。请先启动对应的本机代理。`,
     }
   }
 

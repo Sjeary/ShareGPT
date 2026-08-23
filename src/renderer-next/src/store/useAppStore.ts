@@ -140,7 +140,6 @@ const EMPTY_SETTINGS: AppSettings = {
     version: 1,
     enabled: false,
     environments: [],
-    routes: [],
     activeByKind: { gpt: '', gemini: '', claude: '' },
   },
   ui: {},

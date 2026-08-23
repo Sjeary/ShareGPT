@@ -65,7 +65,11 @@ function trimServerUrl(value: string): string {
 
 export function BrowserPrivacySection() {
   const privacy = useAppStore((state) => state.settings?.browserPrivacy)
-  const advancedAiEnabled = useAppStore((state) => state.settings?.advancedAi?.enabled === true)
+  const advancedAiConfigured = useAppStore((state) => state.settings?.advancedAi?.enabled === true)
+  const advancedAiAllowed = useAuthStore((state) =>
+    Boolean(state.profile?.isAdmin || state.profile?.advancedAiAllowed),
+  )
+  const advancedAiEnabled = advancedAiConfigured && advancedAiAllowed
   const patchSection = useAppStore((state) => state.patchSection)
   const token = useAuthStore((state) => state.token)
   const identity = useChatStore((state) => state.identity)

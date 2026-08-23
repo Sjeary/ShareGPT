@@ -184,6 +184,7 @@ export function UsersPanel() {
                     </span>
                     {u.online && <Badge className="bg-success text-white">在线</Badge>}
                     {u.isAdmin && <Badge variant="secondary">管理员</Badge>}
+                    {!u.isAdmin && u.advancedAiAllowed && <Badge variant="outline">高级 AI</Badge>}
                     {u.disabled && <Badge variant="destructive">已禁用</Badge>}
                     {u.chatDisabled && <Badge variant="outline">禁聊天</Badge>}
                   </div>
@@ -255,6 +256,7 @@ function EditUserCard({
   const [avatar, setAvatar] = useState(user?.avatar || '')
   const [bio, setBio] = useState(user?.bio || '')
   const [isAdmin, setIsAdmin] = useState(Boolean(user?.isAdmin))
+  const [advancedAiAllowed, setAdvancedAiAllowed] = useState(Boolean(user?.advancedAiAllowed))
   const [disabled, setDisabled] = useState(Boolean(user?.disabled))
   const [chatDisabled, setChatDisabled] = useState(Boolean(user?.chatDisabled))
   const [busy, setBusy] = useState(false)
@@ -269,6 +271,7 @@ function EditUserCard({
         avatar,
         bio,
         isAdmin,
+        advancedAiAllowed,
         disabled,
         chatDisabled,
       })
@@ -326,6 +329,19 @@ function EditUserCard({
           <Label className="cursor-default">管理员</Label>
           <Switch checked={isAdmin} onCheckedChange={setIsAdmin} />
         </div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <Label className="cursor-default">允许高级 AI 环境</Label>
+            <p className="truncate text-xs text-muted-foreground">
+              多账号隔离环境和内置 sing-box 线路分配
+            </p>
+          </div>
+          <Switch
+            checked={isAdmin || advancedAiAllowed}
+            disabled={isAdmin}
+            onCheckedChange={setAdvancedAiAllowed}
+          />
+        </div>
         <div className="flex items-center justify-between">
           <Label className="cursor-default">禁用账号</Label>
           <Switch checked={disabled} onCheckedChange={setDisabled} />
@@ -358,6 +374,7 @@ function CreateUserCard({
     avatar: string
     bio: string
     isAdmin: boolean
+    advancedAiAllowed: boolean
     chatDisabled: boolean
   }) => Promise<AdminUser | null>
 }) {
@@ -367,6 +384,7 @@ function CreateUserCard({
   const [avatar, setAvatar] = useState('')
   const [bio, setBio] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
+  const [advancedAiAllowed, setAdvancedAiAllowed] = useState(false)
   const [chatDisabled, setChatDisabled] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -384,6 +402,7 @@ function CreateUserCard({
         avatar,
         bio,
         isAdmin,
+        advancedAiAllowed,
         chatDisabled,
       })
       toast.success(`已创建用户 ${created?.username || username}`)
@@ -393,6 +412,7 @@ function CreateUserCard({
       setAvatar('')
       setBio('')
       setIsAdmin(false)
+      setAdvancedAiAllowed(false)
       setChatDisabled(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -433,6 +453,19 @@ function CreateUserCard({
         <div className="flex items-center justify-between">
           <Label className="cursor-default">赋予管理员权限</Label>
           <Switch checked={isAdmin} onCheckedChange={setIsAdmin} />
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <Label className="cursor-default">允许高级 AI 环境</Label>
+            <p className="truncate text-xs text-muted-foreground">
+              多账号隔离环境和内置 sing-box 线路分配
+            </p>
+          </div>
+          <Switch
+            checked={isAdmin || advancedAiAllowed}
+            disabled={isAdmin}
+            onCheckedChange={setAdvancedAiAllowed}
+          />
         </div>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">

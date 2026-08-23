@@ -85,6 +85,14 @@ test("safeParseJson: 合法返回对象, 非法返回 null", () => {
   assert.deepStrictEqual(srv.safeParseJson(""), {}); // 空串按 "{}" 处理 -> {}
 });
 
+test("高级 AI 权限在用户记录中显式归一化", () => {
+  assert.strictEqual(
+    srv.normalizeUserRecord({ username: "allowed", advancedAiAllowed: true }).advancedAiAllowed,
+    true,
+  );
+  assert.strictEqual(srv.normalizeUserRecord({ username: "normal" }).advancedAiAllowed, false);
+});
+
 test("putUserStore: 乐观并发 — baseRev 不匹配则拒绝, 防止老版本覆盖新版本", () => {
   const stores = { stores: {} };
 
@@ -130,6 +138,26 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
           passwordHash: srv.hashPassword(password, salt, 120000, "sha256"),
           iterations: 120000,
           digest: "sha256",
+          advancedAiAllowed: true,
+          disabled: false,
+        },
+        {
+          username: "normal-user",
+          displayName: "Normal User",
+          salt,
+          passwordHash: srv.hashPassword(password, salt, 120000, "sha256"),
+          iterations: 120000,
+          digest: "sha256",
+          disabled: false,
+        },
+        {
+          username: "admin-user",
+          displayName: "Admin User",
+          salt,
+          passwordHash: srv.hashPassword(password, salt, 120000, "sha256"),
+          iterations: 120000,
+          digest: "sha256",
+          isAdmin: true,
           disabled: false,
         },
       ],
@@ -159,8 +187,23 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
     body: JSON.stringify({ username: "verify-user", password }),
   });
   assert.strictEqual(login.status, 200);
-  const { token } = await login.json();
+  const loginBody = await login.json();
+  const { token } = loginBody;
+  assert.strictEqual(loginBody.profile.advancedAiAllowed, true);
   const authHeaders = { Authorization: `Bearer ${token}` };
+
+  for (const [username, allowed] of [
+    ["normal-user", false],
+    ["admin-user", true],
+  ]) {
+    const permissionLogin = await fetch(`${baseUrl}/api/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    assert.strictEqual(permissionLogin.status, 200);
+    assert.strictEqual((await permissionLogin.json()).profile.advancedAiAllowed, allowed);
+  }
 
   const profile = await fetch(`${baseUrl}/api/profile`, { headers: authHeaders });
   assert.strictEqual(profile.status, 200);

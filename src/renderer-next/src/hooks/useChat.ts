@@ -478,7 +478,13 @@ export function useChat() {
         }
         const payload = (await res.json().catch(() => null)) as {
           token?: string
-          profile?: { avatar?: string; displayName?: string }
+          profile?: {
+            avatar?: string
+            displayName?: string
+            isAdmin?: boolean
+            advancedAiAllowed?: boolean
+            chatDisabled?: boolean
+          }
         } | null
         if (!payload?.token) throw new Error('登录未成功')
         const displayName = (payload.profile?.displayName ?? '').trim() || username
@@ -486,7 +492,16 @@ export function useChat() {
         // 写回运行期会话 (不动 setAuthed/持久化设置, 仅刷新 token)。
         setSession({
           token: payload.token,
-          profile: { username, displayName, avatar },
+          profile: {
+            username,
+            displayName,
+            avatar,
+            isAdmin: Boolean(payload.profile?.isAdmin),
+            advancedAiAllowed: Boolean(
+              payload.profile?.isAdmin || payload.profile?.advancedAiAllowed,
+            ),
+            chatDisabled: Boolean(payload.profile?.chatDisabled),
+          },
           password,
         })
         useChatStore.getState().setIdentity({

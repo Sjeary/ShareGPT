@@ -11,6 +11,8 @@ export interface AuthProfile {
   avatar: string
   // 是否为管理员 (服务端 /api/login 的 profile 下发)。用于门控仅管理员可用的功能。
   isAdmin?: boolean
+  // 是否获管理员授权使用高级 AI 多环境；管理员始终视为已授权。
+  advancedAiAllowed?: boolean
   // 是否被禁止使用协作聊天 (管理员设置): 隐藏聊天入口、不收消息、不弹通知。
   chatDisabled?: boolean
 }

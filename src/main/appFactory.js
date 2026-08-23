@@ -34,7 +34,7 @@ const {
 const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
 const {
   normalizeAiEnvironmentId,
-  normalizeAiProxyRoute,
+  normalizeAiRouteId,
   partitionForAiEnvironment,
 } = require("./aiEnvironments");
 
@@ -598,29 +598,23 @@ function createElectronApp(baseMode = "all") {
   function getWorkspaceProxyRoute(kind, environmentId, sender) {
     const targetEnvironmentId = normalizeAiEnvironmentId(environmentId);
     if (!targetEnvironmentId) {
-      return normalizeAiProxyRoute({ mode: "sender", label: "当前统一代理" }, sender);
+      const port = Number.parseInt(String(sender?.port || ""), 10);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        throw new Error("内嵌页面代理端口不合法");
+      }
+      return {
+        id: "sender",
+        mode: "sender",
+        label: "当前统一代理",
+        host: "127.0.0.1",
+        port,
+      };
     }
     const environment = getConfiguredAiEnvironment(kind, targetEnvironmentId);
-    const advanced = backend.loadSettings().advancedAi || {};
-    const routeId = safeText(environment.routeId) || "sender";
-    const builtIn = {
-      sender: { mode: "sender", label: "当前统一代理" },
-      system: { mode: "system", label: "系统代理" },
-      direct: { mode: "direct", label: "直连" },
-    }[routeId];
-    const configured = Array.isArray(advanced.routes)
-      ? advanced.routes.find((route) => safeText(route?.id) === routeId)
-      : null;
-    if (!builtIn && !configured) throw new Error("环境绑定的代理线路不存在");
-    return normalizeAiProxyRoute(
-      builtIn || {
-        mode: configured.mode,
-        label: safeText(configured.name),
-        host: configured.host,
-        port: configured.port,
-      },
-      sender,
-    );
+    const routeId = normalizeAiRouteId(environment.routeId);
+    const route = backend.getAiProxyRoute(routeId);
+    if (!route) throw new Error("所选内置线路未启动，请重启内置代理后再试");
+    return route;
   }
 
   function getAiStoragePartitions() {
@@ -813,7 +807,7 @@ function createElectronApp(baseMode = "all") {
     const pagePromise = collectPageFingerprint(wc);
     const networkPromise = (() => {
       const port = Number(
-        workspace.proxyMode === "socks5"
+        workspace.proxyMode === "singbox"
           ? workspace.proxyPort
           : workspace.proxyMode === "sender"
             ? workspace.proxyPort || backend?.activeSocksPort
@@ -1905,9 +1899,6 @@ function createElectronApp(baseMode = "all") {
         port: Number(backend?.activeSocksPort),
       };
       const route = getWorkspaceProxyRoute(kind, payload?.environmentId, sender);
-      if (route.mode !== "sender" && route.mode !== "socks5") {
-        throw new Error("系统代理和直连模式请在页面打开后查看代理检测");
-      }
       return { route: route.label, ...(await detectProxyEnvironment(route.port)) };
     });
 
@@ -1939,21 +1930,12 @@ function createElectronApp(baseMode = "all") {
       const targetSession = session.fromPartition(workspace.policy.partition);
       configureAiSession(targetSession, workspace.policy);
 
-      const proxySignature =
-        route.mode === "sender" || route.mode === "socks5"
-          ? `${route.host}:${route.port}`
-          : route.mode;
+      const proxySignature = `${route.host}:${route.port}`;
       if (workspace.proxySignature !== proxySignature) {
-        if (route.mode === "sender" || route.mode === "socks5") {
-          await targetSession.setProxy({
-            proxyRules: `socks5://${route.host}:${route.port}`,
-            proxyBypassRules: "",
-          });
-        } else if (route.mode === "direct") {
-          await targetSession.setProxy({ mode: "direct" });
-        } else {
-          await targetSession.setProxy({ mode: "system" });
-        }
+        await targetSession.setProxy({
+          proxyRules: `socks5://${route.host}:${route.port}`,
+          proxyBypassRules: "",
+        });
         await targetSession.closeAllConnections();
         workspace.proxySignature = proxySignature;
       }
@@ -2144,7 +2126,7 @@ function createElectronApp(baseMode = "all") {
             ? DEFAULT_TARGET_DOMAINS
             : [];
       const viaProxy = (host) => {
-        if (workspace.proxyMode === "socks5") return true;
+        if (workspace.proxyMode === "singbox") return true;
         if (workspace.proxyMode !== "sender") return false;
         return suffixes.some((s) => host === s || host.endsWith(`.${s}`));
       };
@@ -2162,7 +2144,7 @@ function createElectronApp(baseMode = "all") {
         socksEndpoint: safeText(workspace.proxySignature),
         proxyMode: safeText(workspace.proxyMode),
         proxyLabel: safeText(workspace.proxyLabel),
-        expectedProxy: workspace.proxyMode === "sender" || workspace.proxyMode === "socks5",
+        expectedProxy: workspace.proxyMode === "sender" || workspace.proxyMode === "singbox",
         sessionProxy,
         sessionProxied,
         proxyCount: hosts.filter((h) => h.via === "proxy").length,

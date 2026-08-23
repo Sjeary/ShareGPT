@@ -1,5 +1,5 @@
 const AI_KINDS = new Set(["gpt", "gemini", "claude"]);
-const AI_PROXY_MODES = new Set(["sender", "system", "direct", "socks5"]);
+const INTERNAL_AI_ROUTE_IDS = new Set(["internal-unified", "internal-airport"]);
 
 function safeText(value, maxLength = 120) {
   return String(value ?? "")
@@ -21,42 +21,62 @@ function partitionForAiEnvironment(kind, environmentId) {
   return `persist:sharegpt-ai-${targetKind}-${targetEnvironmentId}`;
 }
 
-function normalizeLoopbackHost(value) {
-  const host = safeText(value || "127.0.0.1", 80).toLowerCase();
-  if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]") {
-    return host === "[::1]" ? "::1" : host;
-  }
-  return "";
+function normalizeAiRouteId(value) {
+  const id = safeText(value, 48).toLowerCase();
+  return INTERNAL_AI_ROUTE_IDS.has(id) ? id : "internal-unified";
 }
 
-function normalizeAiProxyRoute(raw, sender = {}) {
-  const mode = AI_PROXY_MODES.has(safeText(raw?.mode, 16)) ? safeText(raw.mode, 16) : "sender";
-  const label = safeText(raw?.label, 60);
-  if (mode === "direct" || mode === "system") {
-    return { mode, label: label || (mode === "direct" ? "直连" : "系统代理") };
-  }
+function hasCompleteUnifiedProxy(sender = {}) {
+  const port = Number.parseInt(String(sender.proxy_port || ""), 10);
+  return Boolean(
+    safeText(sender.proxy_server, 240) &&
+    Number.isInteger(port) &&
+    port >= 1 &&
+    port <= 65535 &&
+    safeText(sender.proxy_uuid, 160),
+  );
+}
 
-  const fallbackPort = mode === "sender" ? sender.port : raw?.port;
-  const port = Number.parseInt(String(fallbackPort || ""), 10);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(mode === "sender" ? "请先配置有效的统一代理端口" : "SOCKS5 端口不合法");
+function internalAiProxyRoutes(sender = {}) {
+  const listenPort = Number.parseInt(String(sender.socks_listen_port || ""), 10);
+  if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
+    throw new Error("本地 SOCKS 监听端口不合法");
   }
+  const useForwardOffsets = listenPort <= 65533;
+  const unifiedPort = useForwardOffsets ? listenPort + 1 : listenPort - 1;
+  const airportPort = useForwardOffsets ? listenPort + 2 : listenPort - 2;
+  const routes = [];
 
-  const host = normalizeLoopbackHost(mode === "sender" ? sender.host : raw?.host);
-  if (!host) {
-    throw new Error("高级线路当前只允许本机 SOCKS5 端点");
+  if (hasCompleteUnifiedProxy(sender)) {
+    routes.push({
+      id: "internal-unified",
+      label: "内置统一代理",
+      mode: "singbox",
+      host: "127.0.0.1",
+      port: unifiedPort,
+      inboundTag: "ai-unified-in",
+      outboundTag: "proxy-unified",
+    });
   }
-
-  return {
-    mode,
-    label: label || (mode === "sender" ? "当前统一代理" : `SOCKS5 :${port}`),
-    host,
-    port,
-  };
+  if (sender.airport_outbound && typeof sender.airport_outbound === "object") {
+    const airportName = safeText(sender.airport_name, 80);
+    routes.push({
+      id: "internal-airport",
+      label: airportName ? `内置节点 · ${airportName}` : "内置机场节点",
+      mode: "singbox",
+      host: "127.0.0.1",
+      port: airportPort,
+      inboundTag: "ai-airport-in",
+      outboundTag: "proxy-airport",
+    });
+  }
+  return routes;
 }
 
 module.exports = {
+  hasCompleteUnifiedProxy,
+  internalAiProxyRoutes,
   normalizeAiEnvironmentId,
-  normalizeAiProxyRoute,
+  normalizeAiRouteId,
   partitionForAiEnvironment,
 };
