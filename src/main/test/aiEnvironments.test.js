@@ -6,6 +6,7 @@ const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   partitionForAiEnvironment,
+  scaleAiHostBounds,
   shouldCloseAiWorkspacesForEnvironment,
 } = require("../aiEnvironments");
 
@@ -41,6 +42,21 @@ test("重复激活同一高级环境时保留网页，仅环境真正变化时�
   assert.equal(shouldCloseAiWorkspacesForEnvironment(current, "env-personal"), true);
   assert.equal(shouldCloseAiWorkspacesForEnvironment([], "env-work"), false);
   assert.equal(shouldCloseAiWorkspacesForEnvironment([{ environmentId: "" }], ""), false);
+});
+
+test("外层缩放后的宿主矩形会换算为 Electron 原生视图坐标", () => {
+  assert.deepEqual(scaleAiHostBounds({ x: 213, y: 149, width: 967, height: 611 }, 0.8), {
+    x: 170,
+    y: 119,
+    width: 774,
+    height: 489,
+  });
+  assert.deepEqual(scaleAiHostBounds({ x: 10, y: 20, width: 30, height: 40 }, 1), {
+    x: 10,
+    y: 20,
+    width: 30,
+    height: 40,
+  });
 });
 
 test("内置 sing-box 为统一代理和下发节点生成独立回环入口", () => {

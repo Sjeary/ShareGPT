@@ -33,6 +33,18 @@ function shouldCloseAiWorkspacesForEnvironment(workspaces, environmentId) {
   );
 }
 
+function scaleAiHostBounds(bounds, zoomFactor) {
+  const scale = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+  const source = bounds && typeof bounds === "object" ? bounds : {};
+  const number = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+  return {
+    x: Math.round(number(source.x) * scale),
+    y: Math.round(number(source.y) * scale),
+    width: Math.max(1, Math.round(number(source.width) * scale)),
+    height: Math.max(1, Math.round(number(source.height) * scale)),
+  };
+}
+
 function hasCompleteUnifiedProxy(sender = {}) {
   const port = Number.parseInt(String(sender.proxy_port || ""), 10);
   return Boolean(
@@ -86,5 +98,6 @@ module.exports = {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   partitionForAiEnvironment,
+  scaleAiHostBounds,
   shouldCloseAiWorkspacesForEnvironment,
 };

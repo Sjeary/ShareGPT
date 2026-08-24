@@ -98,6 +98,10 @@ export function Shell() {
   useEffect(() => {
     const unsubscribe = api.onAppEvent((payload: unknown) => {
       const route = (payload ?? {}) as NotificationRoute
+      if (safeText(route.type) === 'ai-zoom-changed') {
+        window.dispatchEvent(new Event('resize'))
+        return
+      }
       if (safeText(route.type) !== 'notification-click') return
 
       const scope = safeText(route.scope) === 'private' ? 'private' : 'subnet'

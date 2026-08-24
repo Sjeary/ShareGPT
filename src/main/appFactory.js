@@ -36,6 +36,7 @@ const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   partitionForAiEnvironment,
+  scaleAiHostBounds,
   shouldCloseAiWorkspacesForEnvironment,
 } = require("./aiEnvironments");
 
@@ -518,22 +519,32 @@ function createElectronApp(baseMode = "all") {
     return "";
   }
 
-  function adjustWorkspaceZoom(workspace, action) {
-    const wc = workspace?.view?.webContents;
-    if (!wc || wc.isDestroyed()) return false;
-    if (action === "reset") {
-      wc.setZoomLevel(0);
-      return true;
-    }
+  function adjustAppZoom(action) {
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+    const shell = mainWindow.webContents;
+    if (!shell || shell.isDestroyed()) return false;
+    const current = shell.getZoomLevel();
     const delta = action === "in" ? 0.5 : action === "out" ? -0.5 : 0;
-    if (!delta) return false;
-    const next = Math.max(AI_ZOOM_MIN, Math.min(AI_ZOOM_MAX, wc.getZoomLevel() + delta));
-    wc.setZoomLevel(next);
-    return true;
-  }
+    const next =
+      action === "reset" ? 0 : Math.max(AI_ZOOM_MIN, Math.min(AI_ZOOM_MAX, current + delta));
+    if (action !== "reset" && !delta) return false;
 
-  function activeAiWorkspace() {
-    return activeAiKind ? getWorkspace(activeAiKind, activeTabIdByKind[activeAiKind]) : null;
+    // getBoundingClientRect 使用外层页面的 CSS 像素，而 WebContentsView 需要窗口 DIP。
+    // 缩放期间先摘下原生层，等待渲染层用新倍率重新同步边界，避免中间帧盖住工具栏。
+    for (const workspace of aiWorkspaces.values()) {
+      detachWorkspaceView(workspace);
+      const wc = workspace?.view?.webContents;
+      if (wc && !wc.isDestroyed()) wc.setZoomLevel(next);
+    }
+    for (const kind of Object.keys(hostStateByKind)) {
+      hostStateByKind[kind] = {
+        visible: hostStateByKind[kind].visible,
+        bounds: null,
+      };
+    }
+    shell.setZoomLevel(next);
+    emitAppEvent("ai-zoom-changed", { zoomLevel: next });
+    return true;
   }
 
   function setActiveAiKind(rawKind) {
@@ -1116,13 +1127,9 @@ function createElectronApp(baseMode = "all") {
       return false;
     }
 
+    const shellZoomFactor = mainWindow?.webContents?.getZoomFactor?.() || 1;
     attachWorkspaceView(workspace);
-    workspace.view.setBounds({
-      x: Math.round(bounds.x),
-      y: Math.round(bounds.y),
-      width: Math.max(1, Math.round(bounds.width)),
-      height: Math.max(1, Math.round(bounds.height)),
-    });
+    workspace.view.setBounds(scaleAiHostBounds(bounds, shellZoomFactor));
     workspace.view.setVisible(true);
     return true;
   }
@@ -1362,7 +1369,7 @@ function createElectronApp(baseMode = "all") {
       const zoomAction = aiZoomAction(input);
       if (zoomAction) {
         event.preventDefault();
-        adjustWorkspaceZoom(workspace, zoomAction);
+        adjustAppZoom(zoomAction);
       }
     });
 
@@ -1370,7 +1377,7 @@ function createElectronApp(baseMode = "all") {
     // 否则同一次操作会缩放两级，并可能让原生视图与 ShareGPT 外壳边界失配。
     wc.on("zoom-changed", (event, zoomDirection) => {
       event.preventDefault();
-      adjustWorkspaceZoom(workspace, zoomDirection === "in" ? "in" : "out");
+      adjustAppZoom(zoomDirection === "in" ? "in" : "out");
     });
 
     // 浏览器式右键菜单: 内嵌 AI 网页(WebContentsView)默认没有上下文菜单,
@@ -1548,6 +1555,7 @@ function createElectronApp(baseMode = "all") {
     };
 
     bindAiWorkspaceEvents(workspace);
+    view.webContents.setZoomLevel(mainWindow.webContents.getZoomLevel());
     view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
     view.setVisible(false);
     aiWorkspaces.set(workspaceKey(targetKind, workspace.id), workspace);
@@ -1652,7 +1660,7 @@ function createElectronApp(baseMode = "all") {
       const zoomAction = aiZoomAction(input);
       if (zoomAction) {
         event.preventDefault();
-        adjustWorkspaceZoom(activeAiWorkspace(), zoomAction);
+        adjustAppZoom(zoomAction);
         return;
       }
       if (
@@ -1671,7 +1679,7 @@ function createElectronApp(baseMode = "all") {
     });
     mainWindow.webContents.on("zoom-changed", (event, zoomDirection) => {
       event.preventDefault();
-      adjustWorkspaceZoom(activeAiWorkspace(), zoomDirection === "in" ? "in" : "out");
+      adjustAppZoom(zoomDirection === "in" ? "in" : "out");
     });
     mainWindow.webContents.setZoomLevel(0);
     if (process.platform === "darwin") {
