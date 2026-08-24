@@ -63,6 +63,12 @@ export function Shell() {
   const hideSidebar =
     sidebarHidden && (active === 'gpt' || active === 'gemini' || active === 'claude')
 
+  // 原生 AI 视图始终浮在 DOM 之上；导航变化时再次同步当前 kind，覆盖任何异步卸载竞态。
+  useEffect(() => {
+    const aiKind = active === 'gpt' || active === 'gemini' || active === 'claude' ? active : ''
+    void api.setActiveAiKind(aiKind).catch(() => undefined)
+  }, [active])
+
   // [MEDIUM] 全局日志订阅: 应用级单次挂载 (登录后 Shell 常驻),
   // 启动即采集, 早期/后台日志不因 LogsPanel 未挂载而丢失。订阅实现见 logs 域 useLogStream。
   useLogStream()

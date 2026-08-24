@@ -26,6 +26,13 @@ function normalizeAiRouteId(value) {
   return INTERNAL_AI_ROUTE_IDS.has(id) ? id : "internal-unified";
 }
 
+function shouldCloseAiWorkspacesForEnvironment(workspaces, environmentId) {
+  const targetEnvironmentId = normalizeAiEnvironmentId(environmentId);
+  return (Array.isArray(workspaces) ? workspaces : []).some(
+    (workspace) => normalizeAiEnvironmentId(workspace?.environmentId) !== targetEnvironmentId,
+  );
+}
+
 function hasCompleteUnifiedProxy(sender = {}) {
   const port = Number.parseInt(String(sender.proxy_port || ""), 10);
   return Boolean(
@@ -79,4 +86,5 @@ module.exports = {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   partitionForAiEnvironment,
+  shouldCloseAiWorkspacesForEnvironment,
 };

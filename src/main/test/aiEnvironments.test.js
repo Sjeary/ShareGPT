@@ -6,6 +6,7 @@ const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   partitionForAiEnvironment,
+  shouldCloseAiWorkspacesForEnvironment,
 } = require("../aiEnvironments");
 
 test("高级 AI 环境为每个服务和环境生成独立 partition", () => {
@@ -32,6 +33,14 @@ test("高级环境只接受内置 sing-box 线路标识", () => {
   assert.equal(normalizeAiRouteId("internal-airport"), "internal-airport");
   assert.equal(normalizeAiRouteId("socks5"), "internal-unified");
   assert.equal(normalizeAiRouteId("route-user-input"), "internal-unified");
+});
+
+test("重复激活同一高级环境时保留网页，仅环境真正变化时关闭", () => {
+  const current = [{ environmentId: "env-work" }, { environmentId: "env-work" }];
+  assert.equal(shouldCloseAiWorkspacesForEnvironment(current, "env-work"), false);
+  assert.equal(shouldCloseAiWorkspacesForEnvironment(current, "env-personal"), true);
+  assert.equal(shouldCloseAiWorkspacesForEnvironment([], "env-work"), false);
+  assert.equal(shouldCloseAiWorkspacesForEnvironment([{ environmentId: "" }], ""), false);
 });
 
 test("内置 sing-box 为统一代理和下发节点生成独立回环入口", () => {

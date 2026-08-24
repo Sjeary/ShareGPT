@@ -245,6 +245,7 @@ export interface ShareGptApi {
   createAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
   switchAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
   closeAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
+  setActiveAiKind: (kind: 'gpt' | 'gemini' | 'claude' | '') => Promise<unknown>
   ensureAiWorkspace: (payload: unknown) => Promise<unknown>
   activateAiEnvironment: (payload: unknown) => Promise<unknown>
   deleteAiEnvironment: (payload: unknown) => Promise<unknown>

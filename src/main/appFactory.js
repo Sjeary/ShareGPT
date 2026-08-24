@@ -36,6 +36,7 @@ const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   partitionForAiEnvironment,
+  shouldCloseAiWorkspacesForEnvironment,
 } = require("./aiEnvironments");
 
 // 记录每个 AI 会话(按 partition)实际访问过的主机名, 供「代理检测」展示页面流量去向。
@@ -496,12 +497,54 @@ function createElectronApp(baseMode = "all") {
   // GPT 与 Gemini 均支持多标签: 标签顺序 / 活动标签 / 宿主矩形 均按 kind 索引。
   const tabOrderByKind = { gpt: [], gemini: [], claude: [] };
   const activeTabIdByKind = { gpt: "", gemini: "", claude: "" };
+  let activeAiKind = "";
   let aiTabCounter = 0;
   const hostStateByKind = {
     gpt: { visible: false, bounds: null },
     gemini: { visible: false, bounds: null },
     claude: { visible: false, bounds: null },
   };
+  const AI_ZOOM_MIN = -3;
+  const AI_ZOOM_MAX = 5;
+
+  function aiZoomAction(input) {
+    if (input?.type !== "keyDown" || (!input.control && !input.meta) || input.alt) {
+      return "";
+    }
+    const key = safeText(input.key).toLowerCase();
+    if (key === "=" || key === "+") return "in";
+    if (key === "-" || key === "_") return "out";
+    if (key === "0") return "reset";
+    return "";
+  }
+
+  function adjustWorkspaceZoom(workspace, action) {
+    const wc = workspace?.view?.webContents;
+    if (!wc || wc.isDestroyed()) return false;
+    if (action === "reset") {
+      wc.setZoomLevel(0);
+      return true;
+    }
+    const delta = action === "in" ? 0.5 : action === "out" ? -0.5 : 0;
+    if (!delta) return false;
+    const next = Math.max(AI_ZOOM_MIN, Math.min(AI_ZOOM_MAX, wc.getZoomLevel() + delta));
+    wc.setZoomLevel(next);
+    return true;
+  }
+
+  function activeAiWorkspace() {
+    return activeAiKind ? getWorkspace(activeAiKind, activeTabIdByKind[activeAiKind]) : null;
+  }
+
+  function setActiveAiKind(rawKind) {
+    const nextKind = isAiKind(safeText(rawKind)) ? safeText(rawKind) : "";
+    if (nextKind === activeAiKind) return activeAiKind;
+    activeAiKind = nextKind;
+    for (const workspace of aiWorkspaces.values()) {
+      detachWorkspaceView(workspace);
+    }
+    return activeAiKind;
+  }
 
   function emitAiEvent(kind, type, payload = {}) {
     if (!mainWindow || mainWindow.isDestroyed()) return null;
@@ -960,12 +1003,12 @@ function createElectronApp(baseMode = "all") {
     const activeWorkspace = getWorkspace(targetKind, activeTabIdByKind[targetKind]);
 
     for (const workspace of listWorkspaces(targetKind)) {
-      if (workspace.id !== activeTabIdByKind[targetKind]) {
+      if (targetKind !== activeAiKind || workspace.id !== activeTabIdByKind[targetKind]) {
         detachWorkspaceView(workspace);
       }
     }
 
-    if (!activeWorkspace) {
+    if (!activeWorkspace || targetKind !== activeAiKind) {
       return false;
     }
 
@@ -1069,11 +1112,7 @@ function createElectronApp(baseMode = "all") {
     workspace.visible = visible;
 
     if (!visible || !bounds || bounds.width <= 0 || bounds.height <= 0) {
-      if (workspace.kind === "gpt") {
-        detachWorkspaceView(workspace);
-      } else {
-        detachWorkspaceView(workspace);
-      }
+      detachWorkspaceView(workspace);
       return false;
     }
 
@@ -1303,17 +1342,8 @@ function createElectronApp(baseMode = "all") {
       emitAiEvent(workspace.kind, "console-message", { message: String(message || "") });
     });
 
-    // 缩放级别上下限 (zoomLevel 每级约 1.2x); 与 Ctrl+滚轮 / Ctrl+加减 共用。
-    const ZOOM_MIN = -3;
-    const ZOOM_MAX = 5;
-    const adjustZoom = (delta) => {
-      if (wc.isDestroyed()) return;
-      const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, wc.getZoomLevel() + delta));
-      wc.setZoomLevel(next);
-    };
-
     // F11: 嵌入的 AI 网页获得焦点时, 渲染层收不到键盘事件; 在此拦截 F11 切换窗口全屏。
-    // 另: Ctrl + 加/减/0 缩放内嵌网页 (浏览器习惯)。
+    // 另: Ctrl/Cmd + 加/减/0 只缩放当前内嵌网页，不允许影响 ShareGPT 外壳布局。
     wc.on("before-input-event", (event, input) => {
       if (
         input.type === "keyDown" &&
@@ -1329,24 +1359,18 @@ function createElectronApp(baseMode = "all") {
         }
         return;
       }
-      if (input.type === "keyDown" && (input.control || input.meta) && !input.alt) {
-        if (input.key === "=" || input.key === "+") {
-          event.preventDefault();
-          adjustZoom(0.5);
-        } else if (input.key === "-") {
-          event.preventDefault();
-          adjustZoom(-0.5);
-        } else if (input.key === "0") {
-          event.preventDefault();
-          if (!wc.isDestroyed()) wc.setZoomLevel(0);
-        }
+      const zoomAction = aiZoomAction(input);
+      if (zoomAction) {
+        event.preventDefault();
+        adjustWorkspaceZoom(workspace, zoomAction);
       }
     });
 
-    // Ctrl + 鼠标滚轮缩放内嵌 AI 网页 (Chrome 习惯)。WebContentsView 默认不应用缩放,
-    // 用户用 Ctrl+滚轮请求时触发 zoom-changed, 这里按方向增减缩放级别。
-    wc.on("zoom-changed", (_event, zoomDirection) => {
-      adjustZoom(zoomDirection === "in" ? 0.5 : -0.5);
+    // Ctrl/Cmd + 鼠标滚轮会先触发 Chromium 默认缩放；必须 preventDefault 后再应用一次，
+    // 否则同一次操作会缩放两级，并可能让原生视图与 ShareGPT 外壳边界失配。
+    wc.on("zoom-changed", (event, zoomDirection) => {
+      event.preventDefault();
+      adjustWorkspaceZoom(workspace, zoomDirection === "in" ? "in" : "out");
     });
 
     // 浏览器式右键菜单: 内嵌 AI 网页(WebContentsView)默认没有上下文菜单,
@@ -1548,6 +1572,7 @@ function createElectronApp(baseMode = "all") {
     activeTabIdByKind.gpt = "";
     activeTabIdByKind.gemini = "";
     activeTabIdByKind.claude = "";
+    activeAiKind = "";
     configuredAiPartitions.clear();
   }
 
@@ -1621,8 +1646,15 @@ function createElectronApp(baseMode = "all") {
     });
 
     attachWindowGuards(mainWindow);
-    // F11 切换全屏 (主窗口 chrome 获得焦点时; AI 网页获得焦点时由各 view 的 before-input-event 处理)。
+    // 主窗口获得焦点时也把缩放快捷键转发给当前 AI 网页。否则 Chromium 会缩放
+    // ShareGPT 外壳，导致 DOM 坐标与原生 WebContentsView 的 DIP 边界不再一致。
     mainWindow.webContents.on("before-input-event", (event, input) => {
+      const zoomAction = aiZoomAction(input);
+      if (zoomAction) {
+        event.preventDefault();
+        adjustWorkspaceZoom(activeAiWorkspace(), zoomAction);
+        return;
+      }
       if (
         input.type === "keyDown" &&
         input.key === "F11" &&
@@ -1637,6 +1669,11 @@ function createElectronApp(baseMode = "all") {
         }
       }
     });
+    mainWindow.webContents.on("zoom-changed", (event, zoomDirection) => {
+      event.preventDefault();
+      adjustWorkspaceZoom(activeAiWorkspace(), zoomDirection === "in" ? "in" : "out");
+    });
+    mainWindow.webContents.setZoomLevel(0);
     if (process.platform === "darwin") {
       mainWindow.setWindowButtonVisibility(true);
     }
@@ -1819,7 +1856,13 @@ function createElectronApp(baseMode = "all") {
       return openExternalUrl(url);
     });
 
-    // 标签管理 (GPT / Gemini 通用, 由 payload.kind 区分)。
+    // 原生 WebContentsView 位于渲染层之上，必须由当前导航页做全局门控；
+    // 仅靠组件卸载时的异步隐藏通知会产生竞态，导致旧 Claude/GPT 盖住其它页面。
+    ipcMain.handle("ai:set-active-kind", (_event, payload) => {
+      return { activeKind: setActiveAiKind(payload?.kind) };
+    });
+
+    // 标签管理 (GPT / Gemini / Claude 通用, 由 payload.kind 区分)。
     ipcMain.handle("ai-tabs:list", (_event, payload) => {
       const kind = safeText(payload?.kind) || "gpt";
       const active = getWorkspace(kind, activeTabIdByKind[kind]);
@@ -1872,8 +1915,10 @@ function createElectronApp(baseMode = "all") {
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
       const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
       if (environmentId) getConfiguredAiEnvironment(kind, environmentId);
-      await closeWorkspacesForKind(kind);
-      return { ok: true, kind, environmentId };
+      const workspaces = listWorkspaces(kind);
+      const changed = shouldCloseAiWorkspacesForEnvironment(workspaces, environmentId);
+      if (changed) await closeWorkspacesForKind(kind);
+      return { ok: true, kind, environmentId, changed };
     });
 
     ipcMain.handle("ai:environment-delete", async (_event, payload) => {
@@ -2078,6 +2123,11 @@ function createElectronApp(baseMode = "all") {
       const bounds = payload?.bounds;
       const visible = Boolean(payload?.visible);
       if (hostStateByKind[kind]) {
+        if (kind !== activeAiKind) {
+          hostStateByKind[kind] = { bounds: null, visible: false };
+          for (const workspace of listWorkspaces(kind)) detachWorkspaceView(workspace);
+          return false;
+        }
         hostStateByKind[kind] = { bounds, visible };
         return syncActiveWorkspace(kind);
       }

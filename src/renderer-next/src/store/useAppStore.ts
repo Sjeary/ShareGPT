@@ -147,7 +147,11 @@ const EMPTY_SETTINGS: AppSettings = {
 
 export const useAppStore = create<AppState>((set, get) => ({
   active: 'service',
-  setActive: (key) => set({ active: key }),
+  setActive: (key) => {
+    const aiKind = key === 'gpt' || key === 'gemini' || key === 'claude' ? key : ''
+    void api.setActiveAiKind(aiKind).catch(() => undefined)
+    set({ active: key })
+  },
 
   dark: (() => {
     try {

@@ -56,6 +56,7 @@ const fallback = {
   createAiView: async () => undefined,
   switchAiView: async () => undefined,
   closeAiView: async () => undefined,
+  setActiveAiKind: async () => ({ activeKind: '' }),
   ensureAiWorkspace: async () => undefined,
   activateAiEnvironment: async () => ({ ok: true }),
   deleteAiEnvironment: async () => ({ ok: true }),
