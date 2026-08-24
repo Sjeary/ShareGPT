@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import type { LucideIcon } from 'lucide-react'
+import { cn } from '@/lib/utils'
 
 // 面板通用骨架: 顶部标题条 + 内容区。聊天等特殊布局可不用它。
 export function PanelScaffold({
@@ -23,16 +24,23 @@ export function PanelScaffold({
 }) {
   return (
     <section className="flex min-w-0 flex-1 flex-col">
-      {!hideHeader && (
-        <div className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-6">
-          <Icon className="size-5 text-primary" />
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-base font-semibold leading-tight">{title}</h1>
-            {hint && <p className="truncate text-xs text-muted-foreground">{hint}</p>}
-          </div>
-          {toolbar}
+      <div
+        aria-hidden={hideHeader}
+        className={cn(
+          'flex shrink-0 items-center gap-3 overflow-hidden px-6',
+          'transition-[height,opacity,border-color] duration-200 ease-out motion-reduce:transition-none',
+          hideHeader
+            ? 'pointer-events-none h-0 border-b border-transparent opacity-0'
+            : 'h-14 border-b border-border opacity-100',
+        )}
+      >
+        <Icon className="size-5 text-primary" />
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-base font-semibold leading-tight">{title}</h1>
+          {hint && <p className="truncate text-xs text-muted-foreground">{hint}</p>}
         </div>
-      )}
+        {toolbar}
+      </div>
       <div
         className={scrollable ? 'min-h-0 flex-1 overflow-auto' : 'min-h-0 flex-1 overflow-hidden'}
       >

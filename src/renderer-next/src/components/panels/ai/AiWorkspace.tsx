@@ -4,6 +4,8 @@ import {
   ArrowRight,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelTopClose,
+  PanelTopOpen,
   Maximize2,
   Minimize2,
   Home,
@@ -94,6 +96,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const settings = useAppStore((s) => s.settings)
   const sidebarHidden = useAppStore((s) => s.sidebarHidden)
   const toggleSidebarHidden = useAppStore((s) => s.toggleSidebarHidden)
+  const aiHeaderHidden = useAppStore((s) => s.aiHeaderHidden)
+  const setAiHeaderHidden = useAppStore((s) => s.setAiHeaderHidden)
+  const toggleAiHeaderHidden = useAppStore((s) => s.toggleAiHeaderHidden)
   const advancedAiAllowed = useAuthStore((s) =>
     Boolean(s.profile?.isAdmin || s.profile?.advancedAiAllowed),
   )
@@ -136,14 +141,16 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     [advancedAi, kind, saveAdvancedAi],
   )
 
-  // 隐藏侧栏时按 Esc 快速恢复 (隐藏态持久化, 离开 GPT/Gemini 面板会自动恢复显示, 见 Shell)。
+  // 隐藏侧栏/顶部信息栏时按 Esc 快速恢复；两种隐藏态都持久化。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') useAppStore.getState().setSidebarHidden(false)
+      if (e.key !== 'Escape') return
+      useAppStore.getState().setSidebarHidden(false)
+      setAiHeaderHidden(false)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [setAiHeaderHidden])
 
   const tabs = useAiStore((s) => s.tabsByKind[kind])
   const activeTabId = useAiStore((s) => s.activeTabIdByKind[kind])
@@ -509,7 +516,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   )
 
   // 运行态 / 遮罩内容变化时, 重新同步宿主定位。
-  const overlayKey = `${networkReady}|${environmentId}|${activeTabId}|${view.initialized}|${webAddressOpen}|${proxyOpen}|${environmentPanelOpen}|${proxyReport?.hosts?.length ?? 0}|${feedback.text ? 1 : 0}`
+  const overlayKey = `${networkReady}|${environmentId}|${activeTabId}|${view.initialized}|${webAddressOpen}|${proxyOpen}|${environmentPanelOpen}|${aiHeaderHidden}|${proxyReport?.hosts?.length ?? 0}|${feedback.text ? 1 : 0}`
   const overlayRef = useRef(overlayKey)
   useEffect(() => {
     if (overlayRef.current !== overlayKey) {
@@ -549,6 +556,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       icon={Icon}
       title={meta.title}
       hint={advancedMode ? `独立环境 · ${proxyModeLabel}` : meta.hint}
+      hideHeader={aiHeaderHidden}
       scrollable={false}
       toolbar={
         <Badge variant="outline" className="gap-1.5">
@@ -722,6 +730,20 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
                 <PanelLeftOpen className="size-4" />
               ) : (
                 <PanelLeftClose className="size-4" />
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              title={aiHeaderHidden ? '显示顶部信息栏' : '隐藏顶部信息栏 (按 Esc 恢复)'}
+              aria-label={aiHeaderHidden ? '显示顶部信息栏' : '隐藏顶部信息栏'}
+              onClick={toggleAiHeaderHidden}
+            >
+              {aiHeaderHidden ? (
+                <PanelTopOpen className="size-4" />
+              ) : (
+                <PanelTopClose className="size-4" />
               )}
             </Button>
             <Button

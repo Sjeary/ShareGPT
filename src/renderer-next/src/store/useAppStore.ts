@@ -42,6 +42,11 @@ interface AppState {
   setSidebarHidden: (v: boolean) => void
   toggleSidebarHidden: () => void
 
+  // AI 页顶部信息栏隐藏态；网页工具栏保留，用于随时恢复。
+  aiHeaderHidden: boolean
+  setAiHeaderHidden: (v: boolean) => void
+  toggleAiHeaderHidden: () => void
+
   // 应用信息
   mode: string
   meta: Record<string, unknown>
@@ -335,6 +340,33 @@ export const useAppStore = create<AppState>((set, get) => ({
         /* ignore */
       }
       return { sidebarHidden: next }
+    }),
+
+  aiHeaderHidden: (() => {
+    try {
+      return localStorage.getItem('sharegpt-ai-header-hidden') === '1'
+    } catch {
+      return false
+    }
+  })(),
+  setAiHeaderHidden: (v) =>
+    set(() => {
+      try {
+        localStorage.setItem('sharegpt-ai-header-hidden', v ? '1' : '0')
+      } catch {
+        /* ignore */
+      }
+      return { aiHeaderHidden: v }
+    }),
+  toggleAiHeaderHidden: () =>
+    set((s) => {
+      const next = !s.aiHeaderHidden
+      try {
+        localStorage.setItem('sharegpt-ai-header-hidden', next ? '1' : '0')
+      } catch {
+        /* ignore */
+      }
+      return { aiHeaderHidden: next }
     }),
 
   mode: '',
