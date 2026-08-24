@@ -37,6 +37,12 @@ const fallback = {
     cancel: async () => ({ ok: true }),
   },
   onNotesAiEvent: () => noop,
+  translateText: async () => {
+    throw new Error('仅桌面客户端支持翻译接口')
+  },
+  captureAiPageText: async () => {
+    throw new Error('仅桌面客户端支持整页读取')
+  },
   exportUserData: async () => undefined,
   importUserData: async () => undefined,
   readClipboardAttachment: async () => undefined,

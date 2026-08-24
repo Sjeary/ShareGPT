@@ -160,7 +160,30 @@ export interface AppSettings {
   claude: Record<string, unknown>
   browserPrivacy: BrowserPrivacySettings
   advancedAi: AdvancedAiSettings
+  translation?: TranslationSettings
   ui: Partial<UiSettings>
+}
+
+export type TranslationProvider = 'ai' | 'api' | 'offline'
+
+export interface TranslationSettings {
+  version: 1
+  provider: TranslationProvider
+  sourceLanguage: string
+  targetLanguage: string
+  ai: {
+    baseUrl: string
+    apiKey: string
+    model: string
+    effort: string
+  }
+  api: {
+    baseUrl: string
+    apiKey: string
+  }
+  offline: {
+    baseUrl: string
+  }
 }
 
 export type ServiceState = 'stopped' | 'starting' | 'running' | 'error'

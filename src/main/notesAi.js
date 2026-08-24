@@ -25,7 +25,9 @@ function buildPrompt(mode, text, ctx) {
     case "title":
       return `为下面的内容起一个简洁贴切的标题，只输出标题本身（不加引号）：\n\n${text}`;
     case "translate":
-      return `翻译下面的文字（中文→英文，英文→中文），只输出译文：\n\n${text}`;
+      return ctx && ctx.targetLanguage
+        ? `把下面的文字翻译为${ctx.targetLanguage}，只输出译文：\n\n${text}`
+        : `翻译下面的文字（中文→英文，英文→中文），只输出译文：\n\n${text}`;
     case "tags":
       return `阅读下面的笔记，给出 3-6 个最贴切的中文标签，用逗号分隔，只输出标签本身（不带 # 不解释）：\n\n${text}`;
     case "linkSuggest":

@@ -15,6 +15,7 @@ import {
   ShieldX,
   Loader2,
   Globe2,
+  Languages,
   ArrowUpRight,
   SlidersHorizontal,
   X,
@@ -31,6 +32,7 @@ import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { useAiStore } from '@/store/useAiStore'
 import { useAuthStore } from '@/store/useAuthStore'
+import { useTranslationStore } from '@/store/useTranslationStore'
 import type { AiKind } from '@/store/useAiStore'
 import { isSenderRunning } from '@/components/panels/service/helpers'
 import { api } from '@/lib/api'
@@ -52,6 +54,7 @@ import {
 } from './constants'
 import type { AiEventPayload } from './types'
 import { AiEnvironmentPanel } from './AiEnvironmentPanel'
+import { TranslationPanel } from './TranslationPanel'
 import {
   availableAiRoutes,
   normalizeAdvancedAiSettings,
@@ -154,6 +157,10 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   const tabs = useAiStore((s) => s.tabsByKind[kind])
   const activeTabId = useAiStore((s) => s.activeTabIdByKind[kind])
+  const translationOpen = useTranslationStore(
+    (s) => advancedAiAllowed && s.open && s.kind === kind,
+  )
+  const toggleTranslation = useTranslationStore((s) => s.toggle)
   const feedback = useAiStore((s) => s.feedbackByKind[kind])
   const setFeedback = useAiStore((s) => s.setFeedback)
 
@@ -516,7 +523,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   )
 
   // 运行态 / 遮罩内容变化时, 重新同步宿主定位。
-  const overlayKey = `${networkReady}|${environmentId}|${activeTabId}|${view.initialized}|${webAddressOpen}|${proxyOpen}|${environmentPanelOpen}|${aiHeaderHidden}|${proxyReport?.hosts?.length ?? 0}|${feedback.text ? 1 : 0}`
+  const overlayKey = `${networkReady}|${environmentId}|${activeTabId}|${view.initialized}|${webAddressOpen}|${proxyOpen}|${environmentPanelOpen}|${aiHeaderHidden}|${translationOpen}|${proxyReport?.hosts?.length ?? 0}|${feedback.text ? 1 : 0}`
   const overlayRef = useRef(overlayKey)
   useEffect(() => {
     if (overlayRef.current !== overlayKey) {
@@ -719,6 +726,19 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
                 </span>
               )}
             </Button>
+            {advancedAiAllowed && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn('size-8', translationOpen && 'bg-accent text-accent-foreground')}
+                title={translationOpen ? '关闭翻译侧栏' : '打开翻译侧栏'}
+                aria-label={translationOpen ? '关闭翻译侧栏' : '打开翻译侧栏'}
+                aria-pressed={translationOpen}
+                onClick={() => toggleTranslation(kind, activeTabId)}
+              >
+                <Languages className="size-4" />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon"
@@ -872,17 +892,20 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         )}
 
         {/* 原生 view 宿主 + 遮罩 */}
-        <div className="relative min-h-0 flex-1">
-          <div ref={hostRef} className="absolute inset-0" />
-          {overlay && (
-            <div className="absolute inset-0 flex items-center justify-center bg-background/95 p-6">
-              <div className="max-w-md text-center">
-                <Icon className="mx-auto mb-3 size-10 text-muted-foreground" />
-                <h2 className="mb-1.5 text-base font-semibold">{overlay.title}</h2>
-                <p className="text-sm text-muted-foreground">{overlay.text}</p>
+        <div className="flex min-h-0 flex-1">
+          <div className="relative min-w-0 flex-1">
+            <div ref={hostRef} className="absolute inset-0" />
+            {overlay && (
+              <div className="absolute inset-0 flex items-center justify-center bg-background/95 p-6">
+                <div className="max-w-md text-center">
+                  <Icon className="mx-auto mb-3 size-10 text-muted-foreground" />
+                  <h2 className="mb-1.5 text-base font-semibold">{overlay.title}</h2>
+                  <p className="text-sm text-muted-foreground">{overlay.text}</p>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
+          {translationOpen && <TranslationPanel kind={kind} tabId={activeTabId} />}
         </div>
       </div>
     </PanelScaffold>

@@ -32,6 +32,7 @@ const {
   partitionForProfile,
 } = require("./browserFingerprint");
 const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
+const { translateText } = require("./translation");
 const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
@@ -732,6 +733,36 @@ function createElectronApp(baseMode = "all") {
     const targetTabId = safeText(tabId) || activeTabIdByKind[targetKind];
     if (!targetTabId) return null;
     return aiWorkspaces.get(workspaceKey(targetKind, targetTabId)) || null;
+  }
+
+  async function captureAiPageText(kind, tabId = "") {
+    const workspace = getWorkspace(kind, tabId);
+    const wc = workspace?.view?.webContents;
+    if (!workspace || !wc || wc.isDestroyed()) throw new Error("当前网页尚未打开");
+
+    if (!wc.debugger.isAttached()) wc.debugger.attach("1.3");
+    await wc.debugger.sendCommand("Accessibility.enable");
+    const snapshot = await wc.debugger.sendCommand("Accessibility.getFullAXTree");
+    const chunks = [];
+    let length = 0;
+    let truncated = false;
+    for (const node of Array.isArray(snapshot?.nodes) ? snapshot.nodes : []) {
+      if (node?.ignored || node?.role?.value !== "StaticText") continue;
+      const value = safeText(node?.name?.value).replace(/\s+/g, " ");
+      if (!value || chunks[chunks.length - 1] === value) continue;
+      if (length + value.length + 1 > 30000) {
+        truncated = true;
+        break;
+      }
+      chunks.push(value);
+      length += value.length + 1;
+    }
+    return {
+      title: safeText(workspace.title) || safeText(wc.getTitle()),
+      url: safeText(wc.getURL()),
+      text: chunks.join("\n"),
+      truncated,
+    };
   }
 
   function listWorkspaces(kind) {
@@ -1460,6 +1491,14 @@ function createElectronApp(baseMode = "all") {
       const text = params.selectionText.trim();
       push({ label: "复制", click: () => wc.copy() });
       push({
+        label: "翻译选中文字",
+        click: () =>
+          emitAiEvent(workspace.kind, "translate-selection", {
+            tabId: workspace.id,
+            text: text.slice(0, 30000),
+          }),
+      });
+      push({
         label: "在浏览器中搜索选中文字",
         click: () =>
           void openExternalUrl("https://www.google.com/search?q=" + encodeURIComponent(text)).catch(
@@ -1741,6 +1780,10 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("vault:import", (_event, src) => backend.vault.importFrom(src));
     ipcMain.handle("notes-ai:complete", (_event, req) => backend.notesAi.complete(req));
     ipcMain.handle("notes-ai:cancel", (_event, id) => backend.notesAi.cancel(id));
+    ipcMain.handle("translation:translate", (_event, payload) => translateText(payload));
+    ipcMain.handle("translation:capture-page", (_event, payload) =>
+      captureAiPageText(safeText(payload?.kind), safeText(payload?.tabId)),
+    );
     ipcMain.handle("user-data:export", () => backend.exportUserData());
     ipcMain.handle("user-data:import", () => backend.importUserData());
     ipcMain.handle("clipboard:read-attachment", () => buildClipboardAttachmentPayload());

@@ -3,6 +3,8 @@ import { api } from '@/lib/api'
 import { useAiStore } from '@/store/useAiStore'
 import type { AiKind, AiTab } from '@/store/useAiStore'
 import { useAppStore } from '@/store/useAppStore'
+import { useAuthStore } from '@/store/useAuthStore'
+import { useTranslationStore } from '@/store/useTranslationStore'
 import { registerAiQuery } from './reportGptUsage'
 import {
   AI_QUERY_MARKER,
@@ -232,6 +234,15 @@ export function useAiEvents() {
       const payload = (raw || {}) as AiEventPayload
       const kind = safeText(payload?.kind) as AiKind
       if (kind !== 'gpt' && kind !== 'gemini' && kind !== 'claude') return
+
+      if (payload?.type === 'translate-selection') {
+        const profile = useAuthStore.getState().profile
+        if (!profile?.isAdmin && !profile?.advancedAiAllowed) return
+        useTranslationStore
+          .getState()
+          .openSelection(kind, safeText(payload.tabId), safeText(payload.text))
+        return
+      }
 
       if (payload?.type === 'tabs-changed') {
         applyTabsPayload(kind, payload)

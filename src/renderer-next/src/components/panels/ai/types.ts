@@ -22,6 +22,8 @@ export interface AiEventPayload {
   errorCode?: string | number
   // console-message
   message?: string
+  // translate-selection
+  text?: string
   // external-open-failed
   [k: string]: unknown
 }

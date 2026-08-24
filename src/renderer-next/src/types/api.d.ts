@@ -178,7 +178,12 @@ export interface NotesAiRequest {
   provider: NotesAiProvider
   mode: NotesAiMode
   text: string
-  ctx?: { titles?: string[]; context?: string; instruction?: string }
+  ctx?: {
+    titles?: string[]
+    context?: string
+    instruction?: string
+    targetLanguage?: string
+  }
   instructions?: string
 }
 export interface NotesAiEvent {
@@ -221,6 +226,18 @@ export interface ShareGptApi {
   // 知识库 AI
   notesAi: NotesAiApi
   onNotesAiEvent: (handler: (payload: NotesAiEvent) => void) => Unsubscribe
+  translateText: (payload: {
+    mode: 'api' | 'offline'
+    baseUrl: string
+    apiKey?: string
+    text: string
+    source: string
+    target: string
+  }) => Promise<{ translatedText: string }>
+  captureAiPageText: (
+    kind: 'gpt' | 'gemini' | 'claude',
+    tabId?: string,
+  ) => Promise<{ title: string; url: string; text: string; truncated: boolean }>
   exportUserData: () => Promise<unknown>
   importUserData: () => Promise<unknown>
   readClipboardAttachment: () => Promise<unknown>
