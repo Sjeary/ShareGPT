@@ -197,6 +197,7 @@ function normalizeUserRecord(record) {
     bio,
     isAdmin: Boolean(record?.isAdmin),
     advancedAiAllowed: Boolean(record?.advancedAiAllowed),
+    allowedProxyRouteIds: normalizeProxyRouteIds(record?.allowedProxyRouteIds),
     disabled: Boolean(record?.disabled),
     chatDisabled: Boolean(record?.chatDisabled),
     lastClient: normalizeClientInfo(record?.lastClient),
@@ -787,6 +788,152 @@ function recordMissingDomains(username, domains, version) {
 // 机场节点 (管理端从 Clash 节点转换成 sing-box outbound 后下发; 按群存一份)。
 const AIRPORT_FILE =
   process.env.AIRPORT_FILE || path.join(path.dirname(GPT_USAGE_FILE), "airport.json");
+const PROXY_ROUTES_FILE =
+  process.env.PROXY_ROUTES_FILE || path.join(path.dirname(GPT_USAGE_FILE), "proxy_routes.json");
+const PROXY_ROUTE_HEALTH_FILE =
+  process.env.PROXY_ROUTE_HEALTH_FILE ||
+  path.join(path.dirname(GPT_USAGE_FILE), "proxy_route_health.json");
+const PROXY_ROUTE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+function normalizeProxyRouteId(value) {
+  const id = safeText(value).toLowerCase().slice(0, 64);
+  return PROXY_ROUTE_ID_PATTERN.test(id) ? id : "";
+}
+
+function normalizeProxyRouteIds(value) {
+  return [
+    ...new Set((Array.isArray(value) ? value : []).map(normalizeProxyRouteId).filter(Boolean)),
+  ];
+}
+
+function normalizeProxyRoute(record, options = {}) {
+  const input = record && typeof record === "object" ? record : {};
+  const id = normalizeProxyRouteId(input.id);
+  const outbound =
+    input.outbound && typeof input.outbound === "object" && !Array.isArray(input.outbound)
+      ? { ...input.outbound }
+      : null;
+  if (!id || !outbound || !safeText(outbound.type)) return null;
+  delete outbound.tag;
+  const expected = input.expected && typeof input.expected === "object" ? input.expected : {};
+  return {
+    id,
+    name: safeText(input.name).slice(0, 120) || id,
+    enabled: typeof input.enabled === "undefined" ? true : Boolean(input.enabled),
+    outbound,
+    expected: {
+      ip: safeText(expected.ip).slice(0, 80),
+      countryCode: safeText(expected.countryCode).slice(0, 2).toUpperCase(),
+      asn: safeText(expected.asn).slice(0, 40),
+    },
+    updatedAt: safeText(input.updatedAt) || safeText(options.updatedAt) || nowIso(),
+  };
+}
+
+function legacyAirportRoute() {
+  const airport = loadAirport();
+  return airport.outbound
+    ? normalizeProxyRoute({
+        id: "internal-airport",
+        name: airport.name || "内置机场节点",
+        enabled: true,
+        outbound: airport.outbound,
+        updatedAt: airport.updatedAt,
+      })
+    : null;
+}
+
+function loadProxyRouteCatalog() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(PROXY_ROUTES_FILE, "utf-8"));
+    const routes = (Array.isArray(raw.routes) ? raw.routes : [])
+      .map((route) => normalizeProxyRoute(route))
+      .filter(Boolean);
+    return {
+      version: 1,
+      routes: [...new Map(routes.map((route) => [route.id, route])).values()],
+      updatedAt: safeText(raw.updatedAt),
+    };
+  } catch {
+    const legacy = legacyAirportRoute();
+    return { version: 1, routes: legacy ? [legacy] : [], updatedAt: legacy?.updatedAt || "" };
+  }
+}
+
+function saveProxyRouteCatalog(routes) {
+  const updatedAt = nowIso();
+  const normalized = (Array.isArray(routes) ? routes : [])
+    .map((route) => normalizeProxyRoute(route, { updatedAt }))
+    .filter(Boolean);
+  const unique = [...new Map(normalized.map((route) => [route.id, route])).values()];
+  if (unique.length !== normalized.length) throw new Error("线路 ID 不能重复");
+  if (unique.length > 64) throw new Error("线路数量不能超过 64 条");
+  const catalog = { version: 1, routes: unique, updatedAt };
+  writeJsonAtomic(PROXY_ROUTES_FILE, catalog);
+  return catalog;
+}
+
+function proxyRoutesForUser(username, bootstrap = null) {
+  const { user } = findUser(username);
+  if (!user || (!user.isAdmin && !user.advancedAiAllowed)) return [];
+  const allowed = new Set(normalizeProxyRouteIds(user.allowedProxyRouteIds));
+  const canUse = (id) => user.isAdmin || allowed.has(id);
+  const clientBootstrap = bootstrap || loadClientBootstrap();
+  const sender = clientBootstrap?.sender || {};
+  const routes = [];
+  if (sender.proxy_server && sender.proxy_port && sender.proxy_uuid && canUse("internal-unified")) {
+    routes.push({
+      id: "internal-unified",
+      name: "内置统一代理",
+      enabled: true,
+      kind: "unified",
+      expected: { ip: "", countryCode: "", asn: "" },
+    });
+  }
+  for (const route of loadProxyRouteCatalog().routes) {
+    if (route.enabled && canUse(route.id)) routes.push({ ...route, kind: "managed" });
+  }
+  return routes;
+}
+
+function loadProxyRouteHealth() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(PROXY_ROUTE_HEALTH_FILE, "utf-8"));
+    return { reports: Array.isArray(raw.reports) ? raw.reports : [] };
+  } catch {
+    return { reports: [] };
+  }
+}
+
+function saveProxyRouteHealthReport(username, payload) {
+  const routeId = normalizeProxyRouteId(payload?.routeId);
+  if (!routeId) throw new Error("线路 ID 不合法");
+  const allowed = proxyRoutesForUser(username).some((route) => route.id === routeId);
+  if (!allowed) throw new Error("该用户未获授权使用此线路");
+  const checks = payload?.checks && typeof payload.checks === "object" ? payload.checks : {};
+  const report = {
+    username: safeText(username),
+    routeId,
+    ok: Boolean(payload?.ok),
+    ip: safeText(payload?.ip).slice(0, 80),
+    countryCode: safeText(payload?.countryCode).slice(0, 2).toUpperCase(),
+    asn: safeText(payload?.asn).slice(0, 40),
+    checks: Object.fromEntries(
+      Object.entries(checks)
+        .slice(0, 20)
+        .map(([key, value]) => [safeText(key).slice(0, 50), Boolean(value)]),
+    ),
+    checkedAt: nowIso(),
+  };
+  const store = loadProxyRouteHealth();
+  store.reports = store.reports.filter(
+    (item) => !(item.username === report.username && item.routeId === report.routeId),
+  );
+  store.reports.push(report);
+  if (store.reports.length > 2000) store.reports.splice(0, store.reports.length - 2000);
+  writeJsonAtomic(PROXY_ROUTE_HEALTH_FILE, store);
+  return report;
+}
 function loadAirport() {
   try {
     const raw = JSON.parse(fs.readFileSync(AIRPORT_FILE, "utf-8"));
@@ -810,11 +957,6 @@ function saveAirport(name, outbound) {
   fs.writeFileSync(AIRPORT_FILE, JSON.stringify(next, null, 2), "utf-8");
   return next;
 }
-function airportForClient() {
-  const a = loadAirport();
-  return a.outbound ? { name: a.name, outbound: a.outbound } : null;
-}
-
 function findUser(username) {
   const store = loadUserStore();
   const user = store.users.find((item) => item.username === username && !item.disabled);
@@ -1034,6 +1176,7 @@ function getPublicProfile(username) {
     bio: safeText(user.bio),
     isAdmin: Boolean(user.isAdmin),
     advancedAiAllowed: Boolean(user.isAdmin || user.advancedAiAllowed),
+    allowedProxyRouteIds: normalizeProxyRouteIds(user.allowedProxyRouteIds),
     chatDisabled: Boolean(user.chatDisabled),
   };
 }
@@ -1128,6 +1271,7 @@ function createUserRecord(username, password, extra = {}) {
     displayName: safeText(extra.displayName) || normalized,
     isAdmin: Boolean(extra.isAdmin),
     advancedAiAllowed: Boolean(extra.advancedAiAllowed),
+    allowedProxyRouteIds: normalizeProxyRouteIds(extra.allowedProxyRouteIds),
     disabled: Boolean(extra.disabled),
     chatDisabled: Boolean(extra.chatDisabled),
     createdAt: safeText(extra.createdAt) || now,
@@ -1166,6 +1310,7 @@ function adminUserSummary(user) {
     bio: safeText(user.bio),
     isAdmin: Boolean(user.isAdmin),
     advancedAiAllowed: Boolean(user.isAdmin || user.advancedAiAllowed),
+    allowedProxyRouteIds: normalizeProxyRouteIds(user.allowedProxyRouteIds),
     disabled: Boolean(user.disabled),
     chatDisabled: Boolean(user.chatDisabled),
     online: Boolean(onlineClient),
@@ -2048,6 +2193,8 @@ const server = http.createServer(async (req, res) => {
       if (typeof payload.isAdmin !== "undefined") user.isAdmin = Boolean(payload.isAdmin);
       if (typeof payload.advancedAiAllowed !== "undefined")
         user.advancedAiAllowed = Boolean(payload.advancedAiAllowed);
+      if (typeof payload.allowedProxyRouteIds !== "undefined")
+        user.allowedProxyRouteIds = normalizeProxyRouteIds(payload.allowedProxyRouteIds);
       if (typeof payload.chatDisabled !== "undefined")
         user.chatDisabled = Boolean(payload.chatDisabled);
       if (nextPassword) {
@@ -2235,12 +2382,34 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    const bootstrap = loadClientBootstrap(req);
+    const proxyRoutes = proxyRoutesForUser(session.username, bootstrap);
+    const legacyAirport = proxyRoutes.find((route) => route.id === "internal-airport");
     sendJson(res, 200, {
-      ...loadClientBootstrap(req),
+      ...bootstrap,
       update: sharedReleaseUpdateForClient(req),
-      airport: airportForClient(),
+      airport: legacyAirport
+        ? { name: legacyAirport.name, outbound: legacyAirport.outbound }
+        : null,
+      proxyRoutes,
       fetchedAt: nowIso(),
     });
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/client/proxy-route-health") {
+    const session = resolveSessionByToken(extractBearer(req));
+    if (!session) {
+      sendText(res, 401, "未授权");
+      return;
+    }
+    try {
+      const payload = safeParseJson(await readBody(req, 64 * 1024)) || {};
+      const report = saveProxyRouteHealthReport(session.username, payload);
+      sendJson(res, 200, { ok: true, report });
+    } catch (err) {
+      sendText(res, 403, err.message || "线路健康状态上报失败");
+    }
     return;
   }
 
@@ -2473,6 +2642,21 @@ const server = http.createServer(async (req, res) => {
       const outbound =
         payload.outbound && typeof payload.outbound === "object" ? payload.outbound : null;
       const saved = saveAirport(payload.name, outbound);
+      const current = loadProxyRouteCatalog();
+      const withoutLegacy = current.routes.filter((route) => route.id !== "internal-airport");
+      saveProxyRouteCatalog(
+        saved.outbound
+          ? [
+              ...withoutLegacy,
+              {
+                id: "internal-airport",
+                name: saved.name || "内置机场节点",
+                enabled: true,
+                outbound: saved.outbound,
+              },
+            ]
+          : withoutLegacy,
+      );
       sendJson(res, 200, {
         ok: true,
         airport: {
@@ -2483,6 +2667,35 @@ const server = http.createServer(async (req, res) => {
       });
     } catch (err) {
       sendText(res, 500, err.message || "保存机场节点失败");
+    }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/api/admin/proxy-routes") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    sendJson(res, 200, loadProxyRouteCatalog());
+    return;
+  }
+  if (req.method === "GET" && pathname === "/api/admin/proxy-route-health") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    const reports = loadProxyRouteHealth().reports.sort((a, b) =>
+      String(b.checkedAt || "").localeCompare(String(a.checkedAt || "")),
+    );
+    sendJson(res, 200, { reports });
+    return;
+  }
+  if ((req.method === "PUT" || req.method === "POST") && pathname === "/api/admin/proxy-routes") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    try {
+      const body = await readBody(req, 2 * 1024 * 1024);
+      const payload = safeParseJson(body) || {};
+      const saved = saveProxyRouteCatalog(payload.routes);
+      sendJson(res, 200, { ok: true, ...saved });
+    } catch (err) {
+      sendText(res, 400, err.message || "保存代理线路失败");
     }
     return;
   }
@@ -3210,6 +3423,11 @@ module.exports = {
   clearLoginFails,
   safeParseJson,
   normalizeUserRecord,
+  normalizeProxyRoute,
+  normalizeProxyRouteIds,
+  loadProxyRouteCatalog,
+  saveProxyRouteCatalog,
+  proxyRoutesForUser,
   getUserStoreEntry,
   putUserStore,
 };

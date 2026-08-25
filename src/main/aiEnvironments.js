@@ -1,5 +1,4 @@
 const AI_KINDS = new Set(["gpt", "gemini", "claude"]);
-const INTERNAL_AI_ROUTE_IDS = new Set(["internal-unified", "internal-airport"]);
 
 function safeText(value, maxLength = 120) {
   return String(value ?? "")
@@ -22,8 +21,32 @@ function partitionForAiEnvironment(kind, environmentId) {
 }
 
 function normalizeAiRouteId(value) {
-  const id = safeText(value, 48).toLowerCase();
-  return INTERNAL_AI_ROUTE_IDS.has(id) ? id : "internal-unified";
+  const id = safeText(value, 64).toLowerCase();
+  return /^[a-z0-9][a-z0-9-]{0,63}$/.test(id) ? id : "";
+}
+
+function resolvedProxyMatchesRoute(value, route) {
+  const expectedHost = safeText(route?.host, 255)
+    .replace(/^\[|\]$/g, "")
+    .toLowerCase();
+  const expectedPort = Number.parseInt(String(route?.port || ""), 10);
+  if (
+    !expectedHost ||
+    !Number.isInteger(expectedPort) ||
+    expectedPort < 1 ||
+    expectedPort > 65535
+  ) {
+    return false;
+  }
+
+  return String(value || "")
+    .split(";")
+    .some((entry) => {
+      const match = entry.trim().match(/^SOCKS(?:4|5)?\s+(\[[^\]]+\]|[^\s:]+):(\d+)$/i);
+      if (!match) return false;
+      const host = match[1].replace(/^\[|\]$/g, "").toLowerCase();
+      return host === expectedHost && Number.parseInt(match[2], 10) === expectedPort;
+    });
 }
 
 function shouldCloseAiWorkspacesForEnvironment(workspaces, environmentId) {
@@ -61,43 +84,130 @@ function internalAiProxyRoutes(sender = {}) {
   if (!Number.isInteger(listenPort) || listenPort < 1 || listenPort > 65535) {
     throw new Error("本地 SOCKS 监听端口不合法");
   }
-  const useForwardOffsets = listenPort <= 65533;
-  const unifiedPort = useForwardOffsets ? listenPort + 1 : listenPort - 1;
-  const airportPort = useForwardOffsets ? listenPort + 2 : listenPort - 2;
-  const routes = [];
+  const definitions = [];
+  const authorized = Array.isArray(sender.authorized_proxy_route_ids)
+    ? new Set(sender.authorized_proxy_route_ids.map(normalizeAiRouteId).filter(Boolean))
+    : null;
+  const isAuthorized = (id) => !authorized || authorized.has(id);
 
-  if (hasCompleteUnifiedProxy(sender)) {
-    routes.push({
+  if (hasCompleteUnifiedProxy(sender) && isAuthorized("internal-unified")) {
+    definitions.push({
       id: "internal-unified",
       label: "内置统一代理",
       mode: "singbox",
-      host: "127.0.0.1",
-      port: unifiedPort,
       inboundTag: "ai-unified-in",
       outboundTag: "proxy-unified",
+      dnsTag: "dns_proxy_unified",
+      expected: { ip: "", countryCode: "", asn: "" },
     });
   }
-  if (sender.airport_outbound && typeof sender.airport_outbound === "object") {
-    const airportName = safeText(sender.airport_name, 80);
-    routes.push({
-      id: "internal-airport",
-      label: airportName ? `内置节点 · ${airportName}` : "内置机场节点",
+
+  const managed = Array.isArray(sender.managed_proxy_routes) ? sender.managed_proxy_routes : [];
+  const legacy =
+    sender.airport_outbound && typeof sender.airport_outbound === "object"
+      ? [
+          {
+            id: "internal-airport",
+            name: safeText(sender.airport_name, 80) || "内置机场节点",
+            enabled: true,
+            outbound: sender.airport_outbound,
+          },
+        ]
+      : [];
+  const normalizedManaged = [...managed, ...legacy]
+    .map((record) => {
+      const id = normalizeAiRouteId(record?.id);
+      const outbound =
+        record?.outbound && typeof record.outbound === "object" && !Array.isArray(record.outbound)
+          ? { ...record.outbound }
+          : null;
+      if (!id || !outbound || !safeText(outbound.type, 40) || record?.enabled === false)
+        return null;
+      delete outbound.tag;
+      return {
+        id,
+        name: safeText(record?.name, 80) || id,
+        outbound,
+        expected:
+          record?.expected && typeof record.expected === "object" ? { ...record.expected } : {},
+      };
+    })
+    .filter(Boolean);
+  const uniqueManaged = [...new Map(normalizedManaged.map((route) => [route.id, route])).values()];
+  for (const route of uniqueManaged) {
+    if (route.id === "internal-unified" || !isAuthorized(route.id)) continue;
+    const legacyAirport = route.id === "internal-airport";
+    const sequence = definitions.length;
+    definitions.push({
+      id: route.id,
+      label: `内置节点 · ${route.name}`,
       mode: "singbox",
-      host: "127.0.0.1",
-      port: airportPort,
-      inboundTag: "ai-airport-in",
-      outboundTag: "proxy-airport",
+      inboundTag: legacyAirport ? "ai-airport-in" : `ai-managed-${sequence}-in`,
+      outboundTag: legacyAirport ? "proxy-airport" : `proxy-managed-${sequence}`,
+      dnsTag: legacyAirport ? "dns_proxy_airport" : `dns_proxy_managed_${sequence}`,
+      outbound: { ...route.outbound },
+      expected: { ...route.expected },
     });
   }
-  return routes;
+
+  if (definitions.length > 64) throw new Error("内置代理线路不能超过 64 条");
+  const usedPorts = new Set([listenPort]);
+  const allocatePort = (offset) => {
+    let port = listenPort + offset;
+    if (port > 65535) port = 1024 + (port - 65536);
+    while (usedPorts.has(port)) {
+      port += 1;
+      if (port > 65535) port = 1024;
+    }
+    usedPorts.add(port);
+    return port;
+  };
+  return definitions.map((route, index) => ({
+    ...route,
+    host: "127.0.0.1",
+    port: allocatePort(index + 1),
+  }));
+}
+
+function validateAiRouteIsolation(config, routes) {
+  const inbounds = new Map((config?.inbounds || []).map((entry) => [entry?.tag, entry]));
+  const outbounds = new Map((config?.outbounds || []).map((entry) => [entry?.tag, entry]));
+  const dnsServers = new Map((config?.dns?.servers || []).map((entry) => [entry?.tag, entry]));
+  const dnsRules = Array.isArray(config?.dns?.rules) ? config.dns.rules : [];
+  const routeRules = Array.isArray(config?.route?.rules) ? config.route.rules : [];
+  for (const route of Array.isArray(routes) ? routes : []) {
+    if (!inbounds.has(route.inboundTag)) throw new Error(`线路 ${route.id} 缺少独立入站`);
+    if (!outbounds.has(route.outboundTag)) throw new Error(`线路 ${route.id} 缺少独立出站`);
+    const dnsServer = dnsServers.get(route.dnsTag);
+    if (!dnsServer || dnsServer.detour !== route.outboundTag) {
+      throw new Error(`线路 ${route.id} 的 DNS 未绑定到同一出站`);
+    }
+    const hasDnsRule = dnsRules.some(
+      (rule) =>
+        Array.isArray(rule?.inbound) &&
+        rule.inbound.includes(route.inboundTag) &&
+        rule.server === route.dnsTag,
+    );
+    if (!hasDnsRule) throw new Error(`线路 ${route.id} 缺少独立 DNS 路由`);
+    const hasRouteRule = routeRules.some(
+      (rule) =>
+        Array.isArray(rule?.inbound) &&
+        rule.inbound.includes(route.inboundTag) &&
+        rule.outbound === route.outboundTag,
+    );
+    if (!hasRouteRule) throw new Error(`线路 ${route.id} 缺少强制出站路由`);
+  }
+  return true;
 }
 
 module.exports = {
   hasCompleteUnifiedProxy,
   internalAiProxyRoutes,
+  validateAiRouteIsolation,
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   partitionForAiEnvironment,
+  resolvedProxyMatchesRoute,
   scaleAiHostBounds,
   shouldCloseAiWorkspacesForEnvironment,
 };

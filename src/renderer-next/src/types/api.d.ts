@@ -18,6 +18,7 @@ export interface AiProxyReport {
   proxyMode?: 'sender' | 'singbox'
   proxyLabel?: string
   expectedProxy?: boolean
+  expectedSessionProxy?: string
   sessionProxy?: string
   sessionProxied?: boolean
   proxyCount?: number

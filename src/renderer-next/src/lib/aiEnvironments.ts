@@ -7,7 +7,6 @@ import type {
 import type { AiKind } from '@/store/useAiStore'
 
 const KINDS: AiKind[] = ['gpt', 'gemini', 'claude']
-const INTERNAL_ROUTE_IDS = new Set(['internal-unified', 'internal-airport'])
 
 function text(value: unknown, maxLength = 80): string {
   return String(value ?? '')
@@ -28,16 +27,23 @@ function hasCompleteUnifiedProxy(sender: Partial<SenderSettings>): boolean {
 
 export function availableAiRoutes(sender: Partial<SenderSettings> = {}): AdvancedAiRoute[] {
   const routes: AdvancedAiRoute[] = []
-  if (hasCompleteUnifiedProxy(sender)) {
+  const authorized = Array.isArray(sender.authorized_proxy_route_ids)
+    ? new Set(sender.authorized_proxy_route_ids)
+    : null
+  const isAuthorized = (id: string) => !authorized || authorized.has(id)
+  if (hasCompleteUnifiedProxy(sender) && isAuthorized('internal-unified')) {
     routes.push({ id: 'internal-unified', name: '内置统一代理', mode: 'singbox' })
   }
-  if (sender.airport_outbound && typeof sender.airport_outbound === 'object') {
-    const name = text(sender.airport_name, 80)
-    routes.push({
-      id: 'internal-airport',
-      name: name ? `内置节点 · ${name}` : '内置机场节点',
-      mode: 'singbox',
-    })
+  const managed = Array.isArray(sender.managed_proxy_routes) ? sender.managed_proxy_routes : []
+  const legacy =
+    sender.airport_outbound && typeof sender.airport_outbound === 'object'
+      ? [{ id: 'internal-airport', name: sender.airport_name || '内置机场节点', enabled: true }]
+      : []
+  for (const route of [...managed, ...legacy]) {
+    const id = text(route?.id, 64).toLowerCase()
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id) || route?.enabled === false || !isAuthorized(id))
+      if (routes.some((candidate) => candidate.id === id)) continue
+    routes.push({ id, name: `内置节点 · ${text(route?.name, 80) || id}`, mode: 'singbox' })
   }
   return routes
 }
@@ -55,14 +61,12 @@ export function normalizeAdvancedAiSettings(raw: unknown): AdvancedAiSettings {
           const id = text(item?.id, 48).toLowerCase()
           const kind = text(item?.kind, 16) as AiKind
           if (!/^env-[a-z0-9-]+$/.test(id) || !KINDS.includes(kind)) return null
-          const requestedRouteId = text(item?.routeId, 48).toLowerCase()
+          const requestedRouteId = text(item?.routeId, 64).toLowerCase()
           return {
             id,
             kind,
             name: text(item?.name, 60) || `${kind.toUpperCase()} 环境`,
-            routeId: INTERNAL_ROUTE_IDS.has(requestedRouteId)
-              ? requestedRouteId
-              : 'internal-unified',
+            routeId: /^[a-z0-9][a-z0-9-]{0,63}$/.test(requestedRouteId) ? requestedRouteId : '',
             createdAt: text(item?.createdAt, 40) || new Date().toISOString(),
           }
         })
@@ -91,6 +95,6 @@ export function routeForEnvironment(
   routes: AdvancedAiRoute[],
   environment: AdvancedAiEnvironment | null,
 ): AdvancedAiRoute | null {
-  if (!routes.length) return null
-  return routes.find((route) => route.id === environment?.routeId) || routes[0]
+  if (!routes.length || !environment) return null
+  return routes.find((route) => route.id === environment.routeId) || null
 }

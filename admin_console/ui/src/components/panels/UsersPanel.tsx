@@ -257,6 +257,10 @@ function EditUserCard({
   const [bio, setBio] = useState(user?.bio || '')
   const [isAdmin, setIsAdmin] = useState(Boolean(user?.isAdmin))
   const [advancedAiAllowed, setAdvancedAiAllowed] = useState(Boolean(user?.advancedAiAllowed))
+  const [allowedProxyRouteIds, setAllowedProxyRouteIds] = useState<string[]>(
+    user?.allowedProxyRouteIds || [],
+  )
+  const proxyRoutes = useAdminStore((state) => state.proxyRoutes)
   const [disabled, setDisabled] = useState(Boolean(user?.disabled))
   const [chatDisabled, setChatDisabled] = useState(Boolean(user?.chatDisabled))
   const [busy, setBusy] = useState(false)
@@ -272,6 +276,7 @@ function EditUserCard({
         bio,
         isAdmin,
         advancedAiAllowed,
+        allowedProxyRouteIds,
         disabled,
         chatDisabled,
       })
@@ -342,6 +347,17 @@ function EditUserCard({
             onCheckedChange={setAdvancedAiAllowed}
           />
         </div>
+        {(isAdmin || advancedAiAllowed) && (
+          <RouteAuthorization
+            isAdmin={isAdmin}
+            routes={[
+              { id: 'internal-unified', name: '内置统一代理' },
+              ...proxyRoutes.map((route) => ({ id: route.id, name: route.name })),
+            ]}
+            selected={allowedProxyRouteIds}
+            onChange={setAllowedProxyRouteIds}
+          />
+        )}
         <div className="flex items-center justify-between">
           <Label className="cursor-default">禁用账号</Label>
           <Switch checked={disabled} onCheckedChange={setDisabled} />
@@ -375,6 +391,7 @@ function CreateUserCard({
     bio: string
     isAdmin: boolean
     advancedAiAllowed: boolean
+    allowedProxyRouteIds: string[]
     chatDisabled: boolean
   }) => Promise<AdminUser | null>
 }) {
@@ -385,6 +402,8 @@ function CreateUserCard({
   const [bio, setBio] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
   const [advancedAiAllowed, setAdvancedAiAllowed] = useState(false)
+  const [allowedProxyRouteIds, setAllowedProxyRouteIds] = useState<string[]>([])
+  const proxyRoutes = useAdminStore((state) => state.proxyRoutes)
   const [chatDisabled, setChatDisabled] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -403,6 +422,7 @@ function CreateUserCard({
         bio,
         isAdmin,
         advancedAiAllowed,
+        allowedProxyRouteIds,
         chatDisabled,
       })
       toast.success(`已创建用户 ${created?.username || username}`)
@@ -413,6 +433,7 @@ function CreateUserCard({
       setBio('')
       setIsAdmin(false)
       setAdvancedAiAllowed(false)
+      setAllowedProxyRouteIds([])
       setChatDisabled(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -467,6 +488,17 @@ function CreateUserCard({
             onCheckedChange={setAdvancedAiAllowed}
           />
         </div>
+        {(isAdmin || advancedAiAllowed) && (
+          <RouteAuthorization
+            isAdmin={isAdmin}
+            routes={[
+              { id: 'internal-unified', name: '内置统一代理' },
+              ...proxyRoutes.map((route) => ({ id: route.id, name: route.name })),
+            ]}
+            selected={allowedProxyRouteIds}
+            onChange={setAllowedProxyRouteIds}
+          />
+        )}
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <Label className="cursor-default">禁止协作聊天</Label>
@@ -480,6 +512,48 @@ function CreateUserCard({
         </Button>
       </CardContent>
     </Card>
+  )
+}
+
+function RouteAuthorization({
+  isAdmin,
+  routes,
+  selected,
+  onChange,
+}: {
+  isAdmin: boolean
+  routes: { id: string; name: string }[]
+  selected: string[]
+  onChange: (ids: string[]) => void
+}) {
+  return (
+    <div className="grid gap-2 rounded-md border border-border p-3">
+      <div>
+        <Label className="cursor-default">授权内置线路</Label>
+        <p className="text-xs text-muted-foreground">
+          {isAdmin ? '管理员自动拥有全部启用线路' : '用户只能在勾选的线路之间分配环境'}
+        </p>
+      </div>
+      {routes.map((route) => {
+        const checked = isAdmin || selected.includes(route.id)
+        return (
+          <div key={route.id} className="flex items-center justify-between gap-3">
+            <span className="min-w-0 truncate text-sm">{route.name}</span>
+            <Switch
+              checked={checked}
+              disabled={isAdmin}
+              onCheckedChange={(enabled) =>
+                onChange(
+                  enabled
+                    ? [...new Set([...selected, route.id])]
+                    : selected.filter((id) => id !== route.id),
+                )
+              }
+            />
+          </div>
+        )
+      })}
+    </div>
   )
 }
 

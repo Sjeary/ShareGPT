@@ -67,6 +67,17 @@ export interface BootstrapPayload {
   sender: BootstrapSender
   update: BootstrapUpdate
   airport: BootstrapAirport | null
+  proxyRoutes: BootstrapProxyRoute[]
+  proxyRoutesAuthoritative: boolean
+}
+
+export interface BootstrapProxyRoute {
+  id: string
+  name: string
+  enabled: boolean
+  kind: 'unified' | 'managed'
+  outbound?: Record<string, unknown>
+  expected?: { ip?: string; countryCode?: string; asn?: string }
 }
 
 // 旧 currentUpdatePlatformKey(~225): darwin -> macos, 其余 -> windows。
@@ -97,8 +108,52 @@ export function normalizeBootstrapPayload(raw: unknown): BootstrapPayload {
     airportRaw && airportRaw.outbound && typeof airportRaw.outbound === 'object'
       ? (airportRaw.outbound as Record<string, unknown>)
       : null
+  const proxyRoutesAuthoritative = Array.isArray(payload.proxyRoutes)
+  const proxyRouteItems: unknown[] = proxyRoutesAuthoritative
+    ? (payload.proxyRoutes as unknown[])
+    : []
+  const proxyRoutes = proxyRouteItems
+    .map((item): BootstrapProxyRoute | null => {
+      const route = item && typeof item === 'object' ? (item as Record<string, unknown>) : null
+      const id = safeText(route?.id).toLowerCase()
+      const kind = safeText(route?.kind) === 'unified' ? 'unified' : 'managed'
+      const outbound =
+        route?.outbound && typeof route.outbound === 'object'
+          ? (route.outbound as Record<string, unknown>)
+          : undefined
+      if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id) || (kind === 'managed' && !outbound)) return null
+      const expectedRaw =
+        route?.expected && typeof route.expected === 'object'
+          ? (route.expected as Record<string, unknown>)
+          : {}
+      return {
+        id,
+        name: safeText(route?.name) || id,
+        enabled: route?.enabled !== false,
+        kind,
+        outbound,
+        expected: {
+          ip: safeText(expectedRaw.ip),
+          countryCode: safeText(expectedRaw.countryCode).toUpperCase(),
+          asn: safeText(expectedRaw.asn),
+        },
+      }
+    })
+    .filter((route): route is BootstrapProxyRoute => Boolean(route))
+
+  if (!proxyRoutes.length && airportOutbound) {
+    proxyRoutes.push({
+      id: 'internal-airport',
+      name: safeText(airportRaw?.name) || '内置机场节点',
+      enabled: true,
+      kind: 'managed',
+      outbound: airportOutbound,
+    })
+  }
 
   return {
+    proxyRoutes,
+    proxyRoutesAuthoritative,
     airport: airportOutbound
       ? { name: safeText(airportRaw?.name), outbound: airportOutbound }
       : null,

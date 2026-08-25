@@ -38,6 +38,7 @@ interface LoginResponse {
     displayName?: string
     isAdmin?: boolean
     advancedAiAllowed?: boolean
+    allowedProxyRouteIds?: string[]
     chatDisabled?: boolean
   }
   // 登录响应可携带初始历史/在线名录, 用于 WS 建连前即时灌入 (旧 performCollabLogin ~4593)。
@@ -156,8 +157,27 @@ async function fetchClientBootstrap(
   await useAppStore
     .getState()
     .patchSection('sender', {
-      airport_outbound: payload.airport?.outbound || null,
-      airport_name: payload.airport?.name || '',
+      managed_proxy_routes: payload.proxyRoutes
+        .filter((route) => route.kind === 'managed' && route.outbound)
+        .map((route) => ({
+          id: route.id,
+          name: route.name,
+          enabled: route.enabled,
+          kind: 'managed' as const,
+          outbound: route.outbound || {},
+          expected: route.expected,
+        })),
+      authorized_proxy_route_ids: payload.proxyRoutesAuthoritative
+        ? payload.proxyRoutes.map((route) => route.id)
+        : null,
+      airport_outbound:
+        payload.proxyRoutes.find((route) => route.id === 'internal-airport')?.outbound ||
+        payload.airport?.outbound ||
+        null,
+      airport_name:
+        payload.proxyRoutes.find((route) => route.id === 'internal-airport')?.name ||
+        payload.airport?.name ||
+        '',
     })
     .catch(() => undefined)
   return payload
@@ -211,6 +231,9 @@ export function useAuth() {
         avatar: (payload.profile?.avatar ?? '').trim(),
         isAdmin: Boolean(payload.profile?.isAdmin),
         advancedAiAllowed: Boolean(payload.profile?.isAdmin || payload.profile?.advancedAiAllowed),
+        allowedProxyRouteIds: Array.isArray(payload.profile?.allowedProxyRouteIds)
+          ? payload.profile.allowedProxyRouteIds
+          : [],
         chatDisabled: Boolean(payload.profile?.chatDisabled),
       }
 

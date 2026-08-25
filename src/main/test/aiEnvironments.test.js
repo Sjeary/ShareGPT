@@ -3,9 +3,11 @@ const assert = require("node:assert/strict");
 const {
   hasCompleteUnifiedProxy,
   internalAiProxyRoutes,
+  validateAiRouteIsolation,
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   partitionForAiEnvironment,
+  resolvedProxyMatchesRoute,
   scaleAiHostBounds,
   shouldCloseAiWorkspacesForEnvironment,
 } = require("../aiEnvironments");
@@ -29,11 +31,21 @@ test("高级 AI 环境拒绝可造成 partition 混淆的标识", () => {
   assert.throws(() => partitionForAiEnvironment("unknown", "env-work"), /环境标识/);
 });
 
-test("高级环境只接受内置 sing-box 线路标识", () => {
+test("高级环境接受服务器签发的稳定线路标识并拒绝不安全标识", () => {
   assert.equal(normalizeAiRouteId("internal-unified"), "internal-unified");
   assert.equal(normalizeAiRouteId("internal-airport"), "internal-airport");
-  assert.equal(normalizeAiRouteId("socks5"), "internal-unified");
-  assert.equal(normalizeAiRouteId("route-user-input"), "internal-unified");
+  assert.equal(normalizeAiRouteId("route-managed-03"), "route-managed-03");
+  assert.equal(normalizeAiRouteId("../socks5"), "");
+  assert.equal(normalizeAiRouteId("route_user_input"), "");
+});
+
+test("代理检测必须严格匹配环境指定的 SOCKS 地址和端口", () => {
+  const unified = { host: "127.0.0.1", port: 19875 };
+  assert.equal(resolvedProxyMatchesRoute("SOCKS5 127.0.0.1:19875", unified), true);
+  assert.equal(resolvedProxyMatchesRoute("SOCKS 127.0.0.1:19875; DIRECT", unified), true);
+  assert.equal(resolvedProxyMatchesRoute("SOCKS5 127.0.0.1:19876", unified), false);
+  assert.equal(resolvedProxyMatchesRoute("DIRECT", unified), false);
+  assert.equal(resolvedProxyMatchesRoute("SOCKS5 127.0.0.1:19875", { host: "", port: 0 }), false);
 });
 
 test("重复激活同一高级环境时保留网页，仅环境真正变化时关闭", () => {
@@ -69,26 +81,34 @@ test("内置 sing-box 为统一代理和下发节点生成独立回环入口", (
     airport_outbound: { type: "shadowsocks", server: "airport.example.com" },
   };
   assert.equal(hasCompleteUnifiedProxy(sender), true);
-  assert.deepEqual(internalAiProxyRoutes(sender), [
-    {
-      id: "internal-unified",
-      label: "内置统一代理",
-      mode: "singbox",
-      host: "127.0.0.1",
-      port: 1081,
-      inboundTag: "ai-unified-in",
-      outboundTag: "proxy-unified",
-    },
-    {
-      id: "internal-airport",
-      label: "内置节点 · 管理员节点",
-      mode: "singbox",
-      host: "127.0.0.1",
-      port: 1082,
-      inboundTag: "ai-airport-in",
-      outboundTag: "proxy-airport",
-    },
-  ]);
+  assert.deepEqual(
+    internalAiProxyRoutes(sender).map(({ id, label, host, port, inboundTag, outboundTag }) => ({
+      id,
+      label,
+      host,
+      port,
+      inboundTag,
+      outboundTag,
+    })),
+    [
+      {
+        id: "internal-unified",
+        label: "内置统一代理",
+        host: "127.0.0.1",
+        port: 1081,
+        inboundTag: "ai-unified-in",
+        outboundTag: "proxy-unified",
+      },
+      {
+        id: "internal-airport",
+        label: "内置节点 · 管理员节点",
+        host: "127.0.0.1",
+        port: 1082,
+        inboundTag: "ai-airport-in",
+        outboundTag: "proxy-airport",
+      },
+    ],
+  );
 });
 
 test("内置线路忽略不完整出站并安全处理端口上界", () => {
@@ -97,7 +117,47 @@ test("内置线路忽略不完整出站并安全处理端口上界", () => {
       socks_listen_port: "65535",
       airport_outbound: { type: "socks", server: "managed.example.com" },
     }).map((route) => ({ id: route.id, host: route.host, port: route.port })),
-    [{ id: "internal-airport", host: "127.0.0.1", port: 65533 }],
+    [{ id: "internal-airport", host: "127.0.0.1", port: 1024 }],
   );
   assert.throws(() => internalAiProxyRoutes({ socks_listen_port: "0" }), /监听端口/);
+});
+
+test("多条托管线路动态分配入口且授权撤销后不再生成", () => {
+  const managed = Array.from({ length: 5 }, (_, index) => ({
+    id: `route-${index + 1}`,
+    name: `Route ${index + 1}`,
+    enabled: true,
+    outbound: { type: "socks", server: `route-${index + 1}.example.com`, server_port: 1080 },
+  }));
+  const routes = internalAiProxyRoutes({
+    socks_listen_port: "19874",
+    managed_proxy_routes: managed,
+    authorized_proxy_route_ids: ["route-1", "route-3", "route-5"],
+  });
+  assert.deepEqual(
+    routes.map((route) => route.id),
+    ["route-1", "route-3", "route-5"],
+  );
+  assert.strictEqual(new Set(routes.map((route) => route.port)).size, 3);
+});
+
+test("线路隔离校验要求入站、出站和 DNS detour 完整对应", () => {
+  const route = {
+    id: "route-test",
+    inboundTag: "ai-managed-0-in",
+    outboundTag: "proxy-managed-0",
+    dnsTag: "dns_proxy_managed_0",
+  };
+  const config = {
+    inbounds: [{ tag: route.inboundTag }],
+    outbounds: [{ tag: route.outboundTag }],
+    dns: {
+      servers: [{ tag: route.dnsTag, detour: route.outboundTag }],
+      rules: [{ inbound: [route.inboundTag], server: route.dnsTag }],
+    },
+    route: { rules: [{ inbound: [route.inboundTag], outbound: route.outboundTag }] },
+  };
+  assert.equal(validateAiRouteIsolation(config, [route]), true);
+  config.dns.servers[0].detour = "direct";
+  assert.throws(() => validateAiRouteIsolation(config, [route]), /DNS 未绑定/);
 });

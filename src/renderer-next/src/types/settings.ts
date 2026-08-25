@@ -19,6 +19,23 @@ export interface SenderSettings {
   airport_outbound?: Record<string, unknown> | null
   // 机场节点展示名 (供 UI 显示当前用的是哪个节点)。
   airport_name?: string
+  // 管理员授权并由服务器下发的内置 sing-box 线路。客户端只能选择，不能编辑连接参数。
+  managed_proxy_routes?: ManagedProxyRoute[]
+  // 登录服务器明确下发的高级环境线路授权。undefined 仅用于兼容旧服务器；空数组表示全部撤销。
+  authorized_proxy_route_ids?: string[] | null
+}
+
+export interface ManagedProxyRoute {
+  id: string
+  name: string
+  enabled: boolean
+  kind?: 'managed'
+  outbound: Record<string, unknown>
+  expected?: {
+    ip?: string
+    countryCode?: string
+    asn?: string
+  }
 }
 
 export interface ReceiverSettings {

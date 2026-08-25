@@ -157,9 +157,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   const tabs = useAiStore((s) => s.tabsByKind[kind])
   const activeTabId = useAiStore((s) => s.activeTabIdByKind[kind])
-  const translationOpen = useTranslationStore(
-    (s) => advancedAiAllowed && s.open && s.kind === kind,
-  )
+  const translationOpen = useTranslationStore((s) => advancedAiAllowed && s.open && s.kind === kind)
   const toggleTranslation = useTranslationStore((s) => s.toggle)
   const feedback = useAiStore((s) => s.feedbackByKind[kind])
   const setFeedback = useAiStore((s) => s.setFeedback)
@@ -947,7 +945,7 @@ function ProxyReportPanel({
       : !dedicatedProxy
         ? `当前使用${report.proxyLabel || '直连/系统'}线路，共访问 ${hosts.length} 个域名。`
         : !report.sessionProxied
-          ? '此页面未走代理（代理可能未开启，或代理未生效）。'
+          ? `线路绑定错误：预期 SOCKS ${report.expectedSessionProxy || '未确定'}，实际 ${report.sessionProxy || 'DIRECT'}。页面访问已被阻止。`
           : fallbackHosts.length > 0
             ? `共 ${hosts.length} 个域名：${proxyHosts.length} 个经代理（梯子），${fallbackHosts.length} 个回落（本机代理/直连，未走代理）。`
             : `此页面流量已全部经代理（梯子）访问，共 ${hosts.length} 个域名。`
@@ -977,6 +975,11 @@ function ProxyReportPanel({
         {report?.socksEndpoint && senderRoute && (
           <Badge variant="outline" className="font-mono text-[11px]">
             出口 socks5://{report.socksEndpoint}
+          </Badge>
+        )}
+        {report?.expectedSessionProxy && !senderRoute && (
+          <Badge variant="outline" className="font-mono text-[11px]">
+            预期 socks5://{report.expectedSessionProxy}
           </Badge>
         )}
         <div className="ml-auto flex items-center gap-1">

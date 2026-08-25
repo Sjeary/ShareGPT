@@ -22,6 +22,7 @@ export interface AdminUser {
   bio?: string
   isAdmin: boolean
   advancedAiAllowed: boolean
+  allowedProxyRouteIds: string[]
   disabled: boolean
   // 禁止使用协作聊天: 该用户无聊天入口、不收消息、别人发他也不弹窗。
   chatDisabled?: boolean
@@ -68,11 +69,34 @@ export type AdminTab =
   | 'proxy-missing'
   | 'airport'
 
-// 机场节点 (从 Clash 节点转换成 sing-box outbound, 按群下发给客户端作可选代理)。
-export interface Airport {
+export interface ProxyRoute {
+  id: string
   name: string
-  outbound: Record<string, unknown> | null
+  enabled: boolean
+  outbound: Record<string, unknown>
+  expected: {
+    ip: string
+    countryCode: string
+    asn: string
+  }
   updatedAt?: string
+}
+
+export interface ProxyRouteCatalog {
+  version: 1
+  routes: ProxyRoute[]
+  updatedAt?: string
+}
+
+export interface ProxyRouteHealth {
+  username: string
+  routeId: string
+  ok: boolean
+  ip: string
+  countryCode: string
+  asn: string
+  checks: Record<string, boolean>
+  checkedAt: string
 }
 
 // 客户端上报的"会用到但没走代理"的域名 (聚合)。供维护内置代理清单。

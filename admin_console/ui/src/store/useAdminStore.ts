@@ -6,7 +6,9 @@ import {
   type AdminProfile,
   type AdminTab,
   type AdminUser,
-  type Airport,
+  type ProxyRoute,
+  type ProxyRouteCatalog,
+  type ProxyRouteHealth,
   type Bootstrap,
   type FeedbackItem,
   type ProxyMissingItem,
@@ -24,6 +26,7 @@ interface CreateUserInput {
   bio: string
   isAdmin: boolean
   advancedAiAllowed: boolean
+  allowedProxyRouteIds: string[]
   chatDisabled?: boolean
 }
 
@@ -34,6 +37,7 @@ interface SaveUserInput {
   bio?: string
   isAdmin?: boolean
   advancedAiAllowed?: boolean
+  allowedProxyRouteIds?: string[]
   disabled?: boolean
   chatDisabled?: boolean
 }
@@ -66,8 +70,9 @@ interface AdminState {
   feedbackLoading: boolean
   proxyMissing: ProxyMissingItem[]
   proxyMissingLoading: boolean
-  airport: Airport | null
-  airportLoading: boolean
+  proxyRoutes: ProxyRoute[]
+  proxyRoutesLoading: boolean
+  proxyRouteHealth: ProxyRouteHealth[]
 
   // 导航 / 偏好
   activeTab: AdminTab
@@ -88,8 +93,9 @@ interface AdminState {
   setBootstrap: (next: Bootstrap) => void
   loadFeedback: (opts?: { silent?: boolean }) => Promise<void>
   loadProxyMissing: (opts?: { silent?: boolean }) => Promise<void>
-  loadAirport: (opts?: { silent?: boolean }) => Promise<void>
-  saveAirport: (name: string, outbound: Record<string, unknown> | null) => Promise<void>
+  loadProxyRoutes: (opts?: { silent?: boolean }) => Promise<void>
+  loadProxyRouteHealth: (opts?: { silent?: boolean }) => Promise<void>
+  saveProxyRoutes: (routes: ProxyRoute[]) => Promise<void>
 
   // 开发者(全局发布)
   devLogin: (serverUrl: string, key: string) => Promise<void>
@@ -167,8 +173,9 @@ export const useAdminStore = create<AdminState>((set, get) => {
     feedbackLoading: false,
     proxyMissing: [],
     proxyMissingLoading: false,
-    airport: null,
-    airportLoading: false,
+    proxyRoutes: [],
+    proxyRoutesLoading: false,
+    proxyRouteHealth: [],
 
     activeTab: 'overview',
     setActiveTab: (activeTab) => set({ activeTab }),
@@ -224,6 +231,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
         await Promise.all([
           get().loadUsers({ silent: true }),
           get().loadBootstrap({ silent: true }),
+          get().loadProxyRoutes({ silent: true }),
+          get().loadProxyRouteHealth({ silent: true }),
         ])
       } finally {
         set({ busy: false })
@@ -260,6 +269,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
         await Promise.all([
           get().loadUsers({ silent: true }),
           get().loadBootstrap({ silent: true }),
+          get().loadProxyRoutes({ silent: true }),
+          get().loadProxyRouteHealth({ silent: true }),
         ])
         toast.success('管理员已初始化，可以直接开始管理服务器。')
       } finally {
@@ -369,28 +380,41 @@ export const useAdminStore = create<AdminState>((set, get) => {
       }
     },
 
-    loadAirport: async (opts) => {
-      set({ airportLoading: true })
+    loadProxyRoutes: async (opts) => {
+      set({ proxyRoutesLoading: true })
       try {
-        const payload = await request<Airport>('/api/admin/airport')
-        set({ airport: payload && typeof payload === 'object' ? payload : null })
+        const payload = await request<ProxyRouteCatalog>('/api/admin/proxy-routes')
+        set({ proxyRoutes: Array.isArray(payload.routes) ? payload.routes : [] })
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
           toast.error(err instanceof Error ? err.message : String(err))
         }
       } finally {
-        set({ airportLoading: false })
+        set({ proxyRoutesLoading: false })
       }
     },
 
-    saveAirport: async (name, outbound) => {
-      const res = await request<{ airport?: Airport }>('/api/admin/airport', {
+    saveProxyRoutes: async (routes) => {
+      const res = await request<ProxyRouteCatalog>('/api/admin/proxy-routes', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, outbound }),
+        body: JSON.stringify({ routes }),
       })
-      if (res.airport) set({ airport: res.airport })
-      toast.success(outbound ? '机场节点已下发' : '机场节点已清除')
+      set({ proxyRoutes: Array.isArray(res.routes) ? res.routes : [] })
+      toast.success(`已下发 ${Array.isArray(res.routes) ? res.routes.length : 0} 条内置线路`)
+    },
+
+    loadProxyRouteHealth: async (opts) => {
+      try {
+        const payload = await request<{ reports?: ProxyRouteHealth[] }>(
+          '/api/admin/proxy-route-health',
+        )
+        set({ proxyRouteHealth: Array.isArray(payload.reports) ? payload.reports : [] })
+      } catch (err) {
+        if (!opts?.silent && !(err instanceof AuthExpiredError)) {
+          toast.error(err instanceof Error ? err.message : String(err))
+        }
+      }
     },
 
     // ===== 开发者 (全局发布) =====

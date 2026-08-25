@@ -20,6 +20,8 @@ process.env.FOCUS_FILE = path.join(tmpDir, "focus_stats.json");
 process.env.FEEDBACK_FILE = path.join(tmpDir, "feedback.json");
 process.env.PROXY_MISSING_FILE = path.join(tmpDir, "proxy_missing.json");
 process.env.AIRPORT_FILE = path.join(tmpDir, "airport.json");
+process.env.PROXY_ROUTES_FILE = path.join(tmpDir, "proxy_routes.json");
+process.env.PROXY_ROUTE_HEALTH_FILE = path.join(tmpDir, "proxy_route_health.json");
 process.env.RELEASES_DIR = path.join(tmpDir, "releases");
 process.env.RELEASE_STORE = path.join(tmpDir, "release_shared");
 process.env.SHARED_RELEASE_FILE = path.join(tmpDir, "release_shared", "release.json");
@@ -91,6 +93,37 @@ test("高级 AI 权限在用户记录中显式归一化", () => {
     true,
   );
   assert.strictEqual(srv.normalizeUserRecord({ username: "normal" }).advancedAiAllowed, false);
+  assert.deepStrictEqual(
+    srv.normalizeUserRecord({
+      username: "allowed",
+      allowedProxyRouteIds: ["internal-unified", "Route-US", "../bad", "route-us"],
+    }).allowedProxyRouteIds,
+    ["internal-unified", "route-us"],
+  );
+});
+
+test("代理线路目录支持多线路并拒绝重复稳定 ID", () => {
+  const routes = [
+    {
+      id: "internal-airport",
+      name: "US-LA-mac",
+      enabled: true,
+      outbound: { type: "shadowsocks", server: "one.example.com", server_port: 443 },
+      expected: { ip: "203.0.113.7", countryCode: "us" },
+    },
+    {
+      id: "route-backup",
+      name: "Backup",
+      enabled: false,
+      outbound: { type: "vmess", server: "two.example.com", server_port: 8443 },
+    },
+  ];
+  const saved = srv.saveProxyRouteCatalog(routes);
+  assert.strictEqual(saved.routes.length, 2);
+  assert.strictEqual(saved.routes[0].expected.countryCode, "US");
+  assert.strictEqual(saved.routes[0].outbound.tag, undefined, "服务端必须接管 sing-box tag");
+  assert.deepStrictEqual(srv.loadProxyRouteCatalog().routes, saved.routes);
+  assert.throws(() => srv.saveProxyRouteCatalog([routes[0], routes[0]]), /不能重复/);
 });
 
 test("putUserStore: 乐观并发 — baseRev 不匹配则拒绝, 防止老版本覆盖新版本", () => {
@@ -139,6 +172,7 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
           iterations: 120000,
           digest: "sha256",
           advancedAiAllowed: true,
+          allowedProxyRouteIds: ["internal-airport"],
           disabled: false,
         },
         {
@@ -214,6 +248,79 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   const bootstrapBody = await bootstrap.json();
   assert.strictEqual(typeof bootstrapBody.fetchedAt, "string");
   assert.ok(bootstrapBody.update && typeof bootstrapBody.update === "object");
+  assert.deepStrictEqual(
+    bootstrapBody.proxyRoutes.map((route) => route.id),
+    ["internal-airport"],
+  );
+
+  const adminLogin = await fetch(`${baseUrl}/api/admin/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "admin-user", password }),
+  });
+  assert.strictEqual(adminLogin.status, 200);
+  const adminToken = (await adminLogin.json()).token;
+  const adminHeaders = { Authorization: `Bearer ${adminToken}` };
+  const saveRoutes = await fetch(`${baseUrl}/api/admin/proxy-routes`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({
+      routes: [
+        {
+          id: "route-us",
+          name: "US primary",
+          enabled: true,
+          outbound: { type: "socks", server: "us.example.com", server_port: 1080 },
+          expected: { countryCode: "US" },
+        },
+        {
+          id: "route-eu",
+          name: "EU backup",
+          enabled: true,
+          outbound: { type: "socks", server: "eu.example.com", server_port: 1080 },
+        },
+      ],
+    }),
+  });
+  assert.strictEqual(saveRoutes.status, 200);
+  assert.strictEqual((await saveRoutes.json()).routes.length, 2);
+
+  const authorizeRoute = await fetch(`${baseUrl}/api/admin/users/verify-user`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({ allowedProxyRouteIds: ["route-us"] }),
+  });
+  assert.strictEqual(authorizeRoute.status, 200);
+  assert.deepStrictEqual((await authorizeRoute.json()).user.allowedProxyRouteIds, ["route-us"]);
+
+  const authorizedBootstrap = await fetch(`${baseUrl}/api/client/bootstrap`, {
+    headers: authHeaders,
+  });
+  assert.strictEqual(authorizedBootstrap.status, 200);
+  assert.deepStrictEqual(
+    (await authorizedBootstrap.json()).proxyRoutes.map((route) => route.id),
+    ["route-us"],
+  );
+  const healthReport = await fetch(`${baseUrl}/api/client/proxy-route-health`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({
+      routeId: "route-us",
+      ok: true,
+      ip: "203.0.113.7",
+      countryCode: "US",
+      asn: "AS64500",
+      checks: { httpCrossCheck: true, dnsSameRoute: true },
+    }),
+  });
+  assert.strictEqual(healthReport.status, 200);
+  const adminHealth = await fetch(`${baseUrl}/api/admin/proxy-route-health`, {
+    headers: adminHeaders,
+  });
+  assert.strictEqual(adminHealth.status, 200);
+  const reports = (await adminHealth.json()).reports;
+  assert.strictEqual(reports[0].routeId, "route-us");
+  assert.strictEqual(reports[0].username, "verify-user");
 
   const usage = await fetch(`${baseUrl}/api/gpt/usage`, {
     method: "POST",

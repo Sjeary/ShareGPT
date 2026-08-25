@@ -11,7 +11,11 @@ const {
   DEFAULT_BROWSER_PRIVACY_SETTINGS,
   normalizeBrowserPrivacySettings,
 } = require("./browserPrivacy");
-const { hasCompleteUnifiedProxy, internalAiProxyRoutes } = require("./aiEnvironments");
+const {
+  hasCompleteUnifiedProxy,
+  internalAiProxyRoutes,
+  validateAiRouteIsolation,
+} = require("./aiEnvironments");
 
 // 自动更新源 = GitHub Releases (参考 cc-switch 的做法)。仓库地址从 package.json 推导,
 // fork 的人只要改 package.json 的 homepage/repository 就指向自己的仓库, 不写死任何自建服务器。
@@ -84,6 +88,8 @@ const PUBLIC_DEFAULT_SETTINGS = {
     fallback_mode: "system_proxy",
     fallback_local_port: "",
     target_domains: DEFAULT_TARGET_DOMAINS.join(","),
+    managed_proxy_routes: [],
+    authorized_proxy_route_ids: undefined,
   },
   receiver: {
     frps_server: "",
@@ -1541,8 +1547,7 @@ class Backend {
 
   getAiProxyRoute(routeId) {
     const target = String(routeId || "").trim();
-    const route =
-      this.activeAiProxyRoutes.find((item) => item.id === target) || this.activeAiProxyRoutes[0];
+    const route = this.activeAiProxyRoutes.find((item) => item.id === target);
     return route ? { ...route } : null;
   }
 
@@ -1600,13 +1605,16 @@ class Backend {
           },
         }
       : null;
-    const managedAirportOutbound = airportOutbound
-      ? { ...airportOutbound, tag: "proxy-airport" }
-      : null;
+    const managedOutbounds = aiProxyRoutes
+      .filter((route) => route.outbound && route.outboundTag !== "proxy-unified")
+      .map((route) => ({ ...route.outbound, tag: route.outboundTag }));
+    if (airportOutbound && !managedOutbounds.some((outbound) => outbound.tag === "proxy-airport")) {
+      managedOutbounds.push({ ...airportOutbound, tag: "proxy-airport" });
+    }
 
     const outbounds = [
       unifiedOutbound,
-      managedAirportOutbound,
+      ...managedOutbounds,
       { type: "direct", tag: "direct" },
       { type: "block", tag: "block" },
       { type: "dns", tag: "dns_out" },
@@ -1624,23 +1632,39 @@ class Backend {
     // 机场节点的 server 常是只在系统/本地 DNS 才能解析的特殊域名(如机场 GTM 域名),
     // 公共 DoH(Aliyun/1.1.1.1)解析不了。这里强制用 dns_local(系统 DNS, 同 Clash 行为)解析它,
     // 否则会出现 "DNS query loopback" 或解析失败导致整条机场链路连不上。
-    const airportServer = airportOutbound ? String(airportOutbound.server || "").trim() : "";
-    const airportDnsRule =
-      airportServer && /[a-zA-Z]/.test(airportServer) && !airportServer.includes(":")
-        ? [{ domain: [airportServer], server: "dns_local" }]
-        : [];
+    const managedServerDnsRules = managedOutbounds
+      .map((outbound) => String(outbound.server || "").trim())
+      .filter((server) => server && /[a-zA-Z]/.test(server) && !server.includes(":"))
+      .map((server) => ({ domain: [server], server: "dns_local" }));
+    const selectedDnsProxyTag =
+      selectedProxyTag === "proxy-airport" ? "dns_proxy_airport" : "dns_proxy_unified";
+    const aiDnsRules = aiProxyRoutes.map((route) => ({
+      inbound: [route.inboundTag],
+      server: route.dnsTag,
+    }));
 
     const config = {
       log: { level: "info", timestamp: true },
       dns: {
         servers: [
-          {
-            tag: "dns_proxy",
+          ...aiProxyRoutes.map((route) => ({
+            tag: route.dnsTag,
             address: "https://1.1.1.1/dns-query",
             address_resolver: "dns_resolver",
             strategy: "ipv4_only",
-            detour: selectedProxyTag,
-          },
+            detour: route.outboundTag,
+          })),
+          ...(!aiProxyRoutes.some((route) => route.dnsTag === selectedDnsProxyTag)
+            ? [
+                {
+                  tag: selectedDnsProxyTag,
+                  address: "https://1.1.1.1/dns-query",
+                  address_resolver: "dns_resolver",
+                  strategy: "ipv4_only",
+                  detour: selectedProxyTag,
+                },
+              ]
+            : []),
           {
             tag: "dns_direct",
             address: "https://dns.alidns.com/dns-query",
@@ -1658,12 +1682,19 @@ class Backend {
         ],
         rules: [
           { outbound: "dns_resolver", server: "dns_resolver" },
-          ...airportDnsRule,
+          ...managedServerDnsRules,
+          ...aiDnsRules,
           { clash_mode: "direct", server: "dns_direct" },
-          { clash_mode: "global", server: "dns_proxy" },
-          ...(domainSuffix.length ? [{ domain_suffix: domainSuffix, server: "dns_proxy" }] : []),
+          { clash_mode: "global", server: selectedDnsProxyTag },
+          ...(domainSuffix.length
+            ? [{ domain_suffix: domainSuffix, server: selectedDnsProxyTag }]
+            : []),
         ],
-        final: routeAll ? "dns_proxy" : fallbackMode === "direct" ? "dns_local" : "dns_direct",
+        final: routeAll
+          ? selectedDnsProxyTag
+          : fallbackMode === "direct"
+            ? "dns_local"
+            : "dns_direct",
       },
       inbounds: [
         {
@@ -1709,6 +1740,7 @@ class Backend {
       },
     };
 
+    validateAiRouteIsolation(config, aiProxyRoutes);
     return config;
   }
 
@@ -1762,10 +1794,6 @@ class Backend {
   }
 
   async startSender(settings) {
-    // 重启前等旧 sing-box 真正退出、端口释放, 再起新进程;
-    // 否则新进程会抢绑同一 SOCKS 端口 -> "bind: only one usage..."(EADDRINUSE) FATAL, code=1。
-    await this.stopSenderAndWait();
-
     const singboxPath = this.resolveBinary("sing-box");
     if (!fs.existsSync(singboxPath)) {
       throw new Error(
@@ -1775,8 +1803,17 @@ class Backend {
 
     const config = this.buildSenderConfig(settings);
     const configPath = path.join(this.runtimeDir, "sender.runtime.json");
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf-8");
-    this.checkSingboxConfig(singboxPath, configPath, "sender");
+    const candidatePath = path.join(this.runtimeDir, "sender.runtime.candidate.json");
+    fs.mkdirSync(this.runtimeDir, { recursive: true });
+    fs.writeFileSync(candidatePath, JSON.stringify(config, null, 2), "utf-8");
+    try {
+      this.checkSingboxConfig(singboxPath, candidatePath, "sender candidate");
+      // 候选配置校验通过后才停止旧进程；正式文件通过同目录 rename 原子替换。
+      await this.stopSenderAndWait();
+      fs.renameSync(candidatePath, configPath);
+    } finally {
+      if (fs.existsSync(candidatePath)) fs.unlinkSync(candidatePath);
+    }
 
     this.senderProcess = this.spawnProcess("sender", singboxPath, ["run", "-c", configPath]);
     // 记下本机 SOCKS 端口, 供"更新检查"经代理走出口 (github 已在路由清单里)。

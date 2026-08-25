@@ -483,6 +483,7 @@ export function useChat() {
             displayName?: string
             isAdmin?: boolean
             advancedAiAllowed?: boolean
+            allowedProxyRouteIds?: string[]
             chatDisabled?: boolean
           }
         } | null
@@ -500,6 +501,9 @@ export function useChat() {
             advancedAiAllowed: Boolean(
               payload.profile?.isAdmin || payload.profile?.advancedAiAllowed,
             ),
+            allowedProxyRouteIds: Array.isArray(payload.profile?.allowedProxyRouteIds)
+              ? payload.profile.allowedProxyRouteIds
+              : [],
             chatDisabled: Boolean(payload.profile?.chatDisabled),
           },
           password,

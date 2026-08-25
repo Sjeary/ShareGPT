@@ -37,6 +37,7 @@ const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   partitionForAiEnvironment,
+  resolvedProxyMatchesRoute,
   scaleAiHostBounds,
   shouldCloseAiWorkspacesForEnvironment,
 } = require("./aiEnvironments");
@@ -44,6 +45,8 @@ const {
 // 记录每个 AI 会话(按 partition)实际访问过的主机名, 供「代理检测」展示页面流量去向。
 // 在 configureAiSession 内通过 webRequest 被动收集 (每个 partition 仅装一次)。
 const aiContactedHostsByPartition = new Map();
+const aiRouteHealthCache = new Map();
+const AI_ROUTE_HEALTH_TTL_MS = 5 * 60 * 1000;
 
 const GPT_ALLOWED_HOSTS = [
   "chatgpt.com",
@@ -667,9 +670,46 @@ function createElectronApp(baseMode = "all") {
     }
     const environment = getConfiguredAiEnvironment(kind, targetEnvironmentId);
     const routeId = normalizeAiRouteId(environment.routeId);
+    if (!routeId) throw new Error("环境绑定的内置线路无效，请重新选择");
     const route = backend.getAiProxyRoute(routeId);
-    if (!route) throw new Error("所选内置线路未启动，请重启内置代理后再试");
+    if (!route) throw new Error("环境绑定的内置线路未启动，已阻止自动换线");
     return route;
+  }
+
+  async function checkAiRouteHealth(route, options = {}) {
+    const routeId = normalizeAiRouteId(route?.id);
+    if (!routeId || route?.mode !== "singbox") throw new Error("只能检测内置 sing-box 线路");
+    const cached = aiRouteHealthCache.get(routeId);
+    if (!options.force && cached && Date.now() - cached.cachedAt < AI_ROUTE_HEALTH_TTL_MS) {
+      return cached.report;
+    }
+    const detected = await detectProxyEnvironment(route.port);
+    const expected = route.expected && typeof route.expected === "object" ? route.expected : {};
+    const expectedIp = safeText(expected.ip).toLowerCase();
+    const expectedCountry = safeText(expected.countryCode).toUpperCase();
+    const expectedAsn = safeText(expected.asn).toUpperCase().replace(/^AS/, "");
+    const actualAsn = safeText(detected.asn).toUpperCase().replace(/^AS/, "");
+    const checks = {
+      httpCrossCheck: Boolean(detected.ip),
+      expectedIp: !expectedIp || safeText(detected.ip).toLowerCase() === expectedIp,
+      expectedCountry:
+        !expectedCountry || safeText(detected.countryCode).toUpperCase() === expectedCountry,
+      expectedAsn: !expectedAsn || actualAsn === expectedAsn,
+      dnsSameRoute: Boolean(route.dnsTag && route.outboundTag),
+      ipv6Contained: Boolean(detected.ip && !String(detected.ip).includes(":")),
+      webRtcProtected: true,
+    };
+    const ok = Object.values(checks).every(Boolean);
+    const report = {
+      ok,
+      routeId,
+      route: route.label,
+      expected,
+      checks,
+      ...detected,
+    };
+    aiRouteHealthCache.set(routeId, { cachedAt: Date.now(), report });
+    return report;
   }
 
   function getAiStoragePartitions() {
@@ -890,16 +930,22 @@ function createElectronApp(baseMode = "all") {
     }
     const targetSession = session.fromPartition(workspace.policy.partition);
     const pagePromise = collectPageFingerprint(wc);
+    const fingerprintProxyPort = Number(
+      workspace.proxyMode === "singbox"
+        ? workspace.proxyPort
+        : workspace.proxyMode === "sender"
+          ? workspace.proxyPort || backend?.activeSocksPort
+          : 0,
+    );
     const networkPromise = (() => {
-      const port = Number(
-        workspace.proxyMode === "singbox"
-          ? workspace.proxyPort
-          : workspace.proxyMode === "sender"
-            ? workspace.proxyPort || backend?.activeSocksPort
-            : 0,
-      );
-      if (!Number.isInteger(port) || port < 1 || port > 65535) return Promise.resolve(null);
-      return detectProxyEnvironment(port).catch((error) => ({
+      if (
+        !Number.isInteger(fingerprintProxyPort) ||
+        fingerprintProxyPort < 1 ||
+        fingerprintProxyPort > 65535
+      ) {
+        return Promise.resolve(null);
+      }
+      return detectProxyEnvironment(fingerprintProxyPort).catch((error) => ({
         error: safeText(error?.message || error),
       }));
     })();
@@ -925,7 +971,10 @@ function createElectronApp(baseMode = "all") {
       page,
       network,
       sessionProxy,
-      sessionProxied: /socks/i.test(sessionProxy),
+      sessionProxied: resolvedProxyMatchesRoute(sessionProxy, {
+        host: "127.0.0.1",
+        port: fingerprintProxyPort,
+      }),
       webRtcPolicy: wc.getWebRTCIPHandlingPolicy(),
       profile: {
         preset: privacy.fingerprint.preset,
@@ -1995,7 +2044,7 @@ function createElectronApp(baseMode = "all") {
         port: Number(backend?.activeSocksPort),
       };
       const route = getWorkspaceProxyRoute(kind, payload?.environmentId, sender);
-      return { route: route.label, ...(await detectProxyEnvironment(route.port)) };
+      return checkAiRouteHealth(route, { force: true });
     });
 
     ipcMain.handle("ai:ensure", async (_event, payload) => {
@@ -2018,6 +2067,12 @@ function createElectronApp(baseMode = "all") {
         port: Number.parseInt(String(payload?.port || "1080"), 10),
       };
       const route = getWorkspaceProxyRoute(kind, environmentId, sender);
+      if (environmentId) {
+        const health = await checkAiRouteHealth(route);
+        if (!health.ok) {
+          throw new Error(`线路 ${route.label} 未通过出口、DNS 或防泄漏预检，已阻止页面访问`);
+        }
+      }
       const userAgent = sanitizeEmbeddedUserAgent(payload?.userAgent);
       const homeUrl = safeText(payload?.homeUrl);
       const lastUrl = safeText(payload?.lastUrl);
@@ -2027,12 +2082,25 @@ function createElectronApp(baseMode = "all") {
       configureAiSession(targetSession, workspace.policy);
 
       const proxySignature = `${route.host}:${route.port}`;
-      if (workspace.proxySignature !== proxySignature) {
+      const resolvedSessionProxy = await targetSession
+        .resolveProxy(workspace.lastUrl || workspace.policy.homeUrl)
+        .then((value) => safeText(value))
+        .catch(() => "");
+      if (
+        workspace.proxySignature !== proxySignature ||
+        !resolvedProxyMatchesRoute(resolvedSessionProxy, route)
+      ) {
         await targetSession.setProxy({
           proxyRules: `socks5://${route.host}:${route.port}`,
           proxyBypassRules: "",
         });
         await targetSession.closeAllConnections();
+        const verifiedProxy = safeText(
+          await targetSession.resolveProxy(workspace.lastUrl || workspace.policy.homeUrl),
+        );
+        if (!resolvedProxyMatchesRoute(verifiedProxy, route)) {
+          throw new Error(`AI 会话未能绑定指定线路 ${proxySignature}，已阻止页面访问`);
+        }
         workspace.proxySignature = proxySignature;
       }
       workspace.proxyMode = route.mode;
@@ -2207,7 +2275,11 @@ function createElectronApp(baseMode = "all") {
       try {
         sessionProxy = safeText(await targetSession.resolveProxy(currentUrl));
       } catch {}
-      const sessionProxied = /socks/i.test(sessionProxy);
+      const expectedRoute = {
+        host: "127.0.0.1",
+        port: workspace.proxyPort,
+      };
+      const sessionProxied = resolvedProxyMatchesRoute(sessionProxy, expectedRoute);
 
       const recorded = aiContactedHostsByPartition.get(workspace.policy.partition) || new Set();
       const hostSet = new Set(recorded);
@@ -2246,6 +2318,7 @@ function createElectronApp(baseMode = "all") {
         proxyMode: safeText(workspace.proxyMode),
         proxyLabel: safeText(workspace.proxyLabel),
         expectedProxy: workspace.proxyMode === "sender" || workspace.proxyMode === "singbox",
+        expectedSessionProxy: safeText(workspace.proxySignature),
         sessionProxy,
         sessionProxied,
         proxyCount: hosts.filter((h) => h.via === "proxy").length,
