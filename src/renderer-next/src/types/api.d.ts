@@ -232,6 +232,7 @@ export interface ShareGptApi {
   notesAi: NotesAiApi
   onNotesAiEvent: (handler: (payload: NotesAiEvent) => void) => Unsubscribe
   translateText: (payload: {
+    requestId: string
     mode: 'api' | 'offline'
     baseUrl: string
     apiKey?: string
@@ -239,6 +240,7 @@ export interface ShareGptApi {
     source: string
     target: string
   }) => Promise<{ translatedText: string }>
+  cancelTranslation: (requestId: string) => Promise<{ ok: boolean }>
   captureAiPageText: (
     kind: 'gpt' | 'gemini' | 'claude',
     tabId?: string,

@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld("api", {
     return () => ipcRenderer.removeListener("notes-ai:event", listener);
   },
   translateText: (payload) => ipcRenderer.invoke("translation:translate", payload),
+  cancelTranslation: (requestId) => ipcRenderer.invoke("translation:cancel", requestId),
   captureAiPageText: (kind, tabId) =>
     ipcRenderer.invoke("translation:capture-page", { kind, tabId }),
   exportUserData: () => ipcRenderer.invoke("user-data:export"),

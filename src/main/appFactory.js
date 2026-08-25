@@ -48,6 +48,12 @@ const {
 // 在 configureAiSession 内通过 webRequest 被动收集 (每个 partition 仅装一次)。
 const aiContactedHostsByPartition = new Map();
 const aiRouteHealthCache = new Map();
+const PROFILE_IPC_CHANNELS = new Set([
+  "profile:get-context",
+  "window:minimize",
+  "window:toggle-maximize",
+  "window:close",
+]);
 const AI_ROUTE_HEALTH_TTL_MS = 5 * 60 * 1000;
 
 const GPT_ALLOWED_HOSTS = [
@@ -502,6 +508,7 @@ function createElectronApp(baseMode = "all") {
   let appMode = normalizeMode(baseMode, process.argv);
   const configuredAiPartitions = new Set();
   const aiWorkspaces = new Map();
+  const translationRequests = new Map();
   // GPT 与 Gemini 均支持多标签: 标签顺序 / 活动标签 / 宿主矩形 均按 kind 索引。
   const tabOrderByKind = { gpt: [], gemini: [], claude: [] };
   const activeTabIdByKind = { gpt: "", gemini: "", claude: "" };
@@ -1749,7 +1756,7 @@ function createElectronApp(baseMode = "all") {
         preload: path.join(__dirname, "preload.js"),
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false,
+        sandbox: true,
       },
     });
 
@@ -1788,6 +1795,8 @@ function createElectronApp(baseMode = "all") {
     mainWindow.removeMenu();
     loadMainRenderer(mainWindow);
     mainWindow.on("closed", () => {
+      for (const controller of translationRequests.values()) controller.abort();
+      translationRequests.clear();
       disposeAiWorkspaces();
       mainWindow = null;
     });
@@ -1804,12 +1813,18 @@ function createElectronApp(baseMode = "all") {
     const rawHandle = ipcMain.handle.bind(ipcMain);
     ipcMain.handle = (channel, listener) =>
       rawHandle(channel, (event, ...args) => {
-        const trustedSender =
-          (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents) ||
-          (profileWindow &&
-            !profileWindow.isDestroyed() &&
-            event.sender === profileWindow.webContents);
-        if (!trustedSender) throw new Error(`拒绝来自非应用窗口的 IPC: ${channel}`);
+        const fromMainWindow =
+          mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents;
+        const fromProfileWindow =
+          profileWindow &&
+          !profileWindow.isDestroyed() &&
+          event.sender === profileWindow.webContents;
+        if (!fromMainWindow && !fromProfileWindow) {
+          throw new Error(`拒绝来自非应用窗口的 IPC: ${channel}`);
+        }
+        if (fromProfileWindow && !PROFILE_IPC_CHANNELS.has(channel)) {
+          throw new Error(`个人资料窗口无权调用 IPC: ${channel}`);
+        }
         return listener(event, ...args);
       });
     // 让内嵌网页(ChatGPT/Gemini, 设为"跟随系统")的明暗跟随 app UI 主题。
@@ -1854,7 +1869,28 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("vault:remove", (_event, p) => backend.vault.remove(p));
     ipcMain.handle("notes-ai:complete", (_event, req) => backend.notesAi.complete(req));
     ipcMain.handle("notes-ai:cancel", (_event, id) => backend.notesAi.cancel(id));
-    ipcMain.handle("translation:translate", (_event, payload) => translateText(payload));
+    ipcMain.handle("translation:translate", async (_event, payload) => {
+      const requestId = safeText(payload?.requestId);
+      if (!/^[a-z0-9-]{8,100}$/i.test(requestId)) throw new Error("翻译请求 ID 无效");
+      if (translationRequests.has(requestId)) throw new Error("翻译请求 ID 重复");
+      const controller = new AbortController();
+      translationRequests.set(requestId, controller);
+      try {
+        return await translateText(payload, { signal: controller.signal });
+      } finally {
+        if (translationRequests.get(requestId) === controller) {
+          translationRequests.delete(requestId);
+        }
+      }
+    });
+    ipcMain.handle("translation:cancel", (_event, rawRequestId) => {
+      const requestId = safeText(rawRequestId);
+      const controller = translationRequests.get(requestId);
+      if (!controller) return { ok: false };
+      translationRequests.delete(requestId);
+      controller.abort();
+      return { ok: true };
+    });
     ipcMain.handle("translation:capture-page", (_event, payload) =>
       captureAiPageText(safeText(payload?.kind), safeText(payload?.tabId)),
     );
@@ -2513,7 +2549,7 @@ function createElectronApp(baseMode = "all") {
           preload: path.join(__dirname, "profilePreload.js"),
           contextIsolation: true,
           nodeIntegration: false,
-          sandbox: false,
+          sandbox: true,
         },
       });
 

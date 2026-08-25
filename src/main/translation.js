@@ -1,34 +1,33 @@
 const http = require("node:http");
 const https = require("node:https");
-const { URL } = require("node:url");
+const {
+  endpointRequestOptions,
+  isLoopbackHostname,
+  parseEndpoint,
+  resolveEndpoint,
+} = require("./endpointSecurity");
 
 const MAX_TRANSLATION_CHARS = 30000;
 const REQUEST_TIMEOUT_MS = 60000;
 
+function translationAbortError() {
+  const error = new Error("翻译请求已取消");
+  error.name = "AbortError";
+  return error;
+}
+
 function translationEndpoint(rawBaseUrl) {
-  const value = String(rawBaseUrl || "").trim();
-  if (!value) throw new Error("未配置翻译接口地址");
-  const url = new URL(value);
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("翻译接口只支持 HTTP 或 HTTPS");
-  }
+  const url = parseEndpoint(rawBaseUrl, { label: "翻译接口" });
   if (!/\/translate\/?$/.test(url.pathname)) {
     url.pathname = `${url.pathname.replace(/\/+$/, "")}/translate`;
   }
   return url;
 }
 
-function isLoopbackHostname(hostname) {
-  const value = String(hostname || "")
-    .toLowerCase()
-    .replace(/^\[|\]$/g, "");
-  return value === "localhost" || value === "127.0.0.1" || value === "::1";
-}
-
 function assertOfflineEndpoint(rawBaseUrl) {
-  const endpoint = translationEndpoint(rawBaseUrl);
-  if (!isLoopbackHostname(endpoint.hostname)) {
-    throw new Error("本地离线模式只允许连接本机回环地址");
+  const endpoint = parseEndpoint(rawBaseUrl, { label: "本地离线翻译接口", loopbackOnly: true });
+  if (!/\/translate\/?$/.test(endpoint.pathname)) {
+    endpoint.pathname = `${endpoint.pathname.replace(/\/+$/, "")}/translate`;
   }
   return endpoint;
 }
@@ -42,7 +41,9 @@ function translatedTextFromResponse(payload) {
   throw new Error("翻译接口返回了无法识别的数据");
 }
 
-function translateText(request) {
+async function translateText(request, dependencies = {}) {
+  const signal = dependencies.signal;
+  if (signal?.aborted) throw translationAbortError();
   const mode = String(request?.mode || "api");
   const text = String(request?.text || "").trim();
   if (!text) throw new Error("请输入要翻译的内容");
@@ -64,46 +65,74 @@ function translateText(request) {
     }),
     "utf8",
   );
-  const transport = endpoint.protocol === "http:" ? http : https;
+  const record = await resolveEndpoint(endpoint, { lookup: dependencies.lookup });
+  if (signal?.aborted) throw translationAbortError();
+  const requestImpl =
+    endpoint.protocol === "http:"
+      ? dependencies.httpRequest || http.request
+      : dependencies.httpsRequest || https.request;
 
   return new Promise((resolve, reject) => {
-    const req = transport.request(
-      {
-        method: "POST",
-        hostname: endpoint.hostname,
-        port: endpoint.port || undefined,
-        path: endpoint.pathname + endpoint.search,
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          "Content-Length": body.length,
+    let req = null;
+    let settled = false;
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback(value);
+    };
+    const onAbort = () => {
+      const error = translationAbortError();
+      if (req) req.destroy(error);
+      else finish(reject, error);
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+
+    try {
+      req = requestImpl(
+        {
+          ...endpointRequestOptions(endpoint, record),
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            "Content-Length": body.length,
+          },
+          timeout: REQUEST_TIMEOUT_MS,
         },
-        timeout: REQUEST_TIMEOUT_MS,
-      },
-      (res) => {
-        let raw = "";
-        res.setEncoding("utf8");
-        res.on("data", (chunk) => {
-          raw += chunk;
-          if (raw.length > 2_000_000) req.destroy(new Error("翻译接口响应过大"));
-        });
-        res.on("end", () => {
-          if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
-            reject(new Error(`翻译接口错误 ${res.statusCode || 0}`));
-            return;
-          }
-          try {
-            const translatedText = translatedTextFromResponse(JSON.parse(raw));
-            resolve({ translatedText });
-          } catch (error) {
-            reject(error);
-          }
-        });
-      },
-    );
-    req.on("timeout", () => req.destroy(new Error("翻译接口请求超时")));
-    req.on("error", reject);
-    req.end(body);
+        (res) => {
+          let raw = "";
+          res.setEncoding("utf8");
+          res.on("data", (chunk) => {
+            raw += chunk;
+            if (raw.length > 2_000_000) req.destroy(new Error("翻译接口响应过大"));
+          });
+          res.on("end", () => {
+            if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+              finish(reject, new Error(`翻译接口错误 ${res.statusCode || 0}`));
+              return;
+            }
+            try {
+              const translatedText = translatedTextFromResponse(JSON.parse(raw));
+              finish(resolve, { translatedText });
+            } catch (error) {
+              finish(reject, error);
+            }
+          });
+        },
+      );
+      req.on("timeout", () => req.destroy(new Error("翻译接口请求超时")));
+      req.on("error", (error) => finish(reject, error));
+      req.end(body);
+    } catch (error) {
+      finish(reject, error);
+    }
   });
 }
 

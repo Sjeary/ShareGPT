@@ -1,5 +1,10 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
+import {
+  isCurrentTranslationRequest,
+  isTranslationTarget,
+  type TranslationRequestToken,
+} from '@/lib/translationSession'
 import { useAppStore } from '@/store/useAppStore'
 import type { AiKind } from '@/store/useAiStore'
 import type { TranslationProvider, TranslationSettings } from '@/types/settings'
@@ -47,20 +52,31 @@ interface TranslationState {
   status: string
   loading: boolean
   settingsOpen: boolean
+  requestGeneration: number
   loaded: boolean
   config: TranslationSettings
   load: () => Promise<void>
   saveConfig: (patch: Partial<TranslationSettings>) => Promise<void>
-  setProvider: (provider: TranslationProvider) => Promise<void>
+  activateTarget: (kind: AiKind, tabId: string) => void
+  beginRequest: (
+    kind: AiKind,
+    tabId: string,
+    patch?: Partial<Pick<TranslationState, 'sourceText' | 'result' | 'status'>>,
+  ) => TranslationRequestToken | null
+  snapshotRequest: (kind: AiKind, tabId: string) => TranslationRequestToken | null
+  applyRequest: (
+    token: TranslationRequestToken,
+    patch: Partial<
+      Pick<TranslationState, 'sourceText' | 'result' | 'status' | 'loading' | 'settingsOpen'>
+    >,
+  ) => void
+  appendRequestResult: (token: TranslationRequestToken, text: string) => void
+  invalidateRequests: (kind: AiKind, tabId: string) => void
   toggle: (kind: AiKind, tabId: string) => void
   openSelection: (kind: AiKind, tabId: string, text: string) => void
   close: () => void
-  setSourceText: (text: string) => void
-  setResult: (text: string) => void
-  appendResult: (text: string) => void
-  setStatus: (status: string) => void
-  setLoading: (loading: boolean) => void
-  setSettingsOpen: (open: boolean) => void
+  setSourceText: (kind: AiKind, tabId: string, text: string) => void
+  setSettingsOpen: (kind: AiKind, tabId: string, open: boolean) => void
 }
 
 export const useTranslationStore = create<TranslationState>((set, get) => ({
@@ -72,6 +88,7 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   status: '',
   loading: false,
   settingsOpen: false,
+  requestGeneration: 0,
   loaded: false,
   config: DEFAULT_TRANSLATION_SETTINGS,
 
@@ -107,9 +124,54 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
     })
   },
 
-  setProvider: async (provider) => get().saveConfig({ provider }),
+  activateTarget: (kind, tabId) =>
+    set((state) => {
+      if (isTranslationTarget(state, kind, tabId)) return state
+      return {
+        kind,
+        tabId,
+        sourceText: '',
+        result: '',
+        status: '',
+        loading: false,
+        settingsOpen: false,
+        requestGeneration: state.requestGeneration + 1,
+      }
+    }),
+  beginRequest: (kind, tabId, patch = {}) => {
+    const state = get()
+    if (!isTranslationTarget(state, kind, tabId)) return null
+    const token = { kind, tabId, generation: state.requestGeneration + 1 }
+    set({
+      ...patch,
+      loading: true,
+      requestGeneration: token.generation,
+    })
+    return token
+  },
+  snapshotRequest: (kind, tabId) => {
+    const state = get()
+    if (!isTranslationTarget(state, kind, tabId)) return null
+    return { kind, tabId, generation: state.requestGeneration }
+  },
+  applyRequest: (token, patch) =>
+    set((state) => (isCurrentTranslationRequest(state, token) ? patch : state)),
+  appendRequestResult: (token, text) =>
+    set((state) =>
+      isCurrentTranslationRequest(state, token) ? { result: state.result + text } : state,
+    ),
+  invalidateRequests: (kind, tabId) =>
+    set((state) =>
+      isTranslationTarget(state, kind, tabId)
+        ? {
+            requestGeneration: state.requestGeneration + 1,
+            loading: false,
+          }
+        : state,
+    ),
   toggle: (kind, tabId) =>
     set((state) => {
+      if (!tabId) return state
       const sameTarget = state.kind === kind && state.tabId === tabId
       return {
         open: sameTarget ? !state.open : true,
@@ -120,23 +182,35 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
         loading: false,
         status: '',
         settingsOpen: false,
+        requestGeneration: state.requestGeneration + 1,
       }
     }),
   openSelection: (kind, tabId, text) =>
-    set({
-      open: true,
-      kind,
-      tabId,
-      sourceText: text,
-      result: '',
+    set((state) =>
+      tabId
+        ? {
+            open: true,
+            kind,
+            tabId,
+            sourceText: text,
+            result: '',
+            status: '',
+            loading: false,
+            settingsOpen: false,
+            requestGeneration: state.requestGeneration + 1,
+          }
+        : state,
+    ),
+  close: () =>
+    set((state) => ({
+      open: false,
+      loading: false,
       status: '',
       settingsOpen: false,
-    }),
-  close: () => set({ open: false, loading: false, status: '', settingsOpen: false }),
-  setSourceText: (sourceText) => set({ sourceText }),
-  setResult: (result) => set({ result }),
-  appendResult: (text) => set((state) => ({ result: state.result + text })),
-  setStatus: (status) => set({ status }),
-  setLoading: (loading) => set({ loading }),
-  setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+      requestGeneration: state.requestGeneration + 1,
+    })),
+  setSourceText: (kind, tabId, sourceText) =>
+    set((state) => (isTranslationTarget(state, kind, tabId) ? { sourceText } : state)),
+  setSettingsOpen: (kind, tabId, settingsOpen) =>
+    set((state) => (isTranslationTarget(state, kind, tabId) ? { settingsOpen } : state)),
 }))

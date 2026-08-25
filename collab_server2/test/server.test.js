@@ -117,14 +117,25 @@ test("代理线路目录支持多线路并拒绝重复稳定 ID", () => {
       id: "internal-airport",
       name: "US-LA-mac",
       enabled: true,
-      outbound: { type: "shadowsocks", server: "one.example.com", server_port: 443 },
+      outbound: {
+        type: "shadowsocks",
+        server: "one.example.com",
+        server_port: 443,
+        method: "aes-128-gcm",
+        password: "secret-one",
+      },
       expected: { ip: "203.0.113.7", countryCode: "us" },
     },
     {
       id: "route-backup",
       name: "Backup",
       enabled: false,
-      outbound: { type: "vmess", server: "two.example.com", server_port: 8443 },
+      outbound: {
+        type: "vmess",
+        server: "two.example.com",
+        server_port: 8443,
+        uuid: "11111111-1111-4111-8111-111111111111",
+      },
     },
   ];
   const saved = srv.saveProxyRouteCatalog(routes);
@@ -132,7 +143,256 @@ test("代理线路目录支持多线路并拒绝重复稳定 ID", () => {
   assert.strictEqual(saved.routes[0].expected.countryCode, "US");
   assert.strictEqual(saved.routes[0].outbound.tag, undefined, "服务端必须接管 sing-box tag");
   assert.deepStrictEqual(srv.loadProxyRouteCatalog().routes, saved.routes);
-  assert.throws(() => srv.saveProxyRouteCatalog([routes[0], routes[0]]), /不能重复/);
+  assert.throws(
+    () => srv.saveProxyRouteCatalog([routes[0], routes[0]]),
+    /routes\[1\]\.id.*不能重复/,
+  );
+});
+
+test("代理线路保存按出站类型全量校验，并返回精确字段路径", () => {
+  const catalogFile = process.env.PROXY_ROUTES_FILE;
+  const before = fs.readFileSync(catalogFile, "utf-8");
+  const validOutbounds = {
+    socks: { type: "socks", server: "socks.example.com", server_port: 1080 },
+    http: { type: "http", server: "http.example.com", server_port: 8080 },
+    shadowsocks: {
+      type: "shadowsocks",
+      server: "ss.example.com",
+      server_port: 443,
+      method: "aes-128-gcm",
+      password: "ss-password",
+    },
+    vmess: {
+      type: "vmess",
+      server: "vmess.example.com",
+      server_port: 443,
+      uuid: "22222222-2222-4222-8222-222222222222",
+    },
+    vless: {
+      type: "vless",
+      server: "vless.example.com",
+      server_port: 443,
+      uuid: "33333333-3333-4333-8333-333333333333",
+    },
+    trojan: {
+      type: "trojan",
+      server: "trojan.example.com",
+      server_port: 443,
+      password: "trojan-password",
+    },
+    hysteria2: {
+      type: "hysteria2",
+      server: "hy2.example.com",
+      server_port: 443,
+      password: "hy2-password",
+    },
+    tuic: {
+      type: "tuic",
+      server: "tuic.example.com",
+      server_port: 443,
+      uuid: "44444444-4444-4444-8444-444444444444",
+      password: "tuic-password",
+    },
+  };
+  const accepted = srv.saveProxyRouteCatalog(
+    Object.entries(validOutbounds).map(([type, outbound]) => ({
+      id: `valid-${type}`,
+      enabled: false,
+      outbound,
+    })),
+  );
+  assert.strictEqual(accepted.routes.length, Object.keys(validOutbounds).length);
+  srv.saveProxyRouteCatalog(JSON.parse(before).routes);
+  const beforeInvalidSave = fs.readFileSync(catalogFile, "utf-8");
+  const lastRequiredField = {
+    socks: "server_port",
+    http: "server_port",
+    shadowsocks: "password",
+    vmess: "uuid",
+    vless: "uuid",
+    trojan: "password",
+    hysteria2: "password",
+    tuic: "password",
+  };
+  for (const [type, requiredField] of Object.entries(lastRequiredField)) {
+    const outbound = { ...validOutbounds[type] };
+    delete outbound[requiredField];
+    assert.throws(
+      () => srv.saveProxyRouteCatalog([{ id: `missing-${type}`, outbound }]),
+      new RegExp(`routes\\[0\\]\\.outbound\\.${requiredField}:`),
+    );
+  }
+  assert.throws(
+    () =>
+      srv.saveProxyRouteCatalog([
+        {
+          id: "valid-socks",
+          outbound: { type: "socks", server: "proxy.example.com", server_port: 1080 },
+        },
+        {
+          id: "invalid-vmess",
+          outbound: { type: "vmess", server: "vmess.example.com", server_port: 443 },
+        },
+      ]),
+    /routes\[1\]\.outbound\.uuid: 不能为空字符串/,
+  );
+  assert.strictEqual(
+    fs.readFileSync(catalogFile, "utf-8"),
+    beforeInvalidSave,
+    "任意一条线路非法时不得部分覆盖原目录",
+  );
+  assert.throws(
+    () =>
+      srv.saveProxyRouteCatalog([
+        {
+          id: "bad-port",
+          outbound: { type: "http", server: "proxy.example.com", server_port: "8080" },
+        },
+      ]),
+    /routes\[0\]\.outbound\.server_port: 必须是 1 到 65535 的整数/,
+  );
+  assert.throws(
+    () =>
+      srv.saveProxyRouteCatalog([
+        {
+          id: "unsupported",
+          outbound: { type: "made-up", server: "proxy.example.com", server_port: 443 },
+        },
+      ]),
+    /routes\[0\]\.outbound\.type: 不支持的 sing-box 出站类型/,
+  );
+});
+
+test("代理线路备份创建失败时保存失败且主目录保持原样", () => {
+  const catalogFile = process.env.PROXY_ROUTES_FILE;
+  const before = fs.readFileSync(catalogFile, "utf-8");
+  const originalWriteFileSync = fs.writeFileSync;
+  fs.writeFileSync = function patchedWriteFileSync(file, ...args) {
+    if (String(file).includes(`${path.basename(catalogFile)}.backup-`)) {
+      const error = new Error("backup unavailable");
+      error.code = "EIO";
+      throw error;
+    }
+    return originalWriteFileSync.call(this, file, ...args);
+  };
+  try {
+    assert.throws(
+      () =>
+        srv.saveProxyRouteCatalog([
+          {
+            id: "must-not-commit",
+            outbound: { type: "socks", server: "new.example.com", server_port: 1080 },
+          },
+        ]),
+      /backup unavailable/,
+    );
+  } finally {
+    fs.writeFileSync = originalWriteFileSync;
+  }
+  assert.strictEqual(fs.readFileSync(catalogFile, "utf-8"), before, "备份失败不得先改变主目录");
+});
+
+test("代理线路目录损坏后隔离主文件并恢复最近有效备份", () => {
+  const catalogFile = process.env.PROXY_ROUTES_FILE;
+  for (const name of fs.readdirSync(tmpDir)) {
+    if (
+      name.startsWith(`${path.basename(catalogFile)}.backup-`) ||
+      name.startsWith(`${path.basename(catalogFile)}.corrupt-`)
+    ) {
+      fs.unlinkSync(path.join(tmpDir, name));
+    }
+  }
+  const saved = srv.saveProxyRouteCatalog([
+    {
+      id: "recoverable-route",
+      name: "Recoverable",
+      enabled: true,
+      outbound: { type: "socks", server: "recover.example.com", server_port: 1080 },
+      expected: { ip: "203.0.113.20" },
+    },
+  ]);
+  const invalidBackup = `${catalogFile}.backup-9999999999999-invalid`;
+  fs.writeFileSync(invalidBackup, "not-json", "utf-8");
+  const future = new Date(Date.now() + 60_000);
+  fs.utimesSync(invalidBackup, future, future);
+  fs.writeFileSync(catalogFile, '{"version":1,"routes":[', "utf-8");
+  const restored = srv.loadProxyRouteCatalog();
+  assert.deepStrictEqual(restored, saved);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(catalogFile, "utf-8")), saved);
+  assert.strictEqual(
+    fs.readdirSync(tmpDir).filter((name) => name.startsWith("proxy_routes.json.corrupt-")).length,
+    1,
+  );
+});
+
+test("代理线路目录损坏且无有效备份时显式失败，权限错误不会被当作损坏", () => {
+  const catalogFile = process.env.PROXY_ROUTES_FILE;
+  for (const name of fs.readdirSync(tmpDir)) {
+    if (
+      name.startsWith(`${path.basename(catalogFile)}.backup-`) ||
+      name.startsWith(`${path.basename(catalogFile)}.corrupt-`)
+    ) {
+      fs.unlinkSync(path.join(tmpDir, name));
+    }
+  }
+  fs.writeFileSync(
+    catalogFile,
+    JSON.stringify({ version: 1, routes: [{ id: "broken" }] }),
+    "utf-8",
+  );
+  assert.throws(() => srv.loadProxyRouteCatalog(), /线路目录已损坏并隔离，但没有可恢复的有效备份/);
+  assert.strictEqual(fs.existsSync(catalogFile), false);
+  assert.strictEqual(
+    fs.readdirSync(tmpDir).filter((name) => name.startsWith("proxy_routes.json.corrupt-")).length,
+    1,
+  );
+
+  const fallbackRoute = {
+    id: "internal-airport",
+    name: "US-LA-mac",
+    enabled: true,
+    outbound: { type: "socks", server: "legacy.example.com", server_port: 1080 },
+    expected: { ip: "203.0.113.7" },
+  };
+  srv.saveProxyRouteCatalog([fallbackRoute]);
+  const originalReadFileSync = fs.readFileSync;
+  fs.readFileSync = function patchedReadFileSync(file, ...args) {
+    if (path.resolve(String(file)) === path.resolve(catalogFile)) {
+      const error = new Error("permission denied");
+      error.code = "EACCES";
+      throw error;
+    }
+    return originalReadFileSync.call(this, file, ...args);
+  };
+  try {
+    assert.throws(() => srv.loadProxyRouteCatalog(), /权限不足，EACCES/);
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+  }
+  assert.strictEqual(fs.existsSync(catalogFile), true, "权限错误不得隔离或改名主目录");
+
+  fs.unlinkSync(catalogFile);
+  for (const name of fs.readdirSync(tmpDir)) {
+    if (name.startsWith(`${path.basename(catalogFile)}.backup-`)) {
+      fs.unlinkSync(path.join(tmpDir, name));
+    }
+  }
+  fs.writeFileSync(
+    process.env.AIRPORT_FILE,
+    JSON.stringify({
+      name: "Legacy airport",
+      outbound: { type: "socks", server: "legacy.example.com", server_port: 1080 },
+      updatedAt: "2026-08-20T00:00:00.000Z",
+    }),
+    "utf-8",
+  );
+  const legacyCatalog = srv.loadProxyRouteCatalog();
+  assert.deepStrictEqual(
+    legacyCatalog.routes.map((route) => route.id),
+    ["internal-airport"],
+    "主目录不存在时仍应兼容旧 airport.json",
+  );
+  srv.saveProxyRouteCatalog(legacyCatalog.routes);
 });
 
 test("putUserStore: 乐观并发 — baseRev 不匹配则拒绝, 防止老版本覆盖新版本", () => {

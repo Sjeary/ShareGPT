@@ -821,6 +821,17 @@ const PROXY_ROUTE_HEALTH_FILE =
   process.env.PROXY_ROUTE_HEALTH_FILE ||
   path.join(path.dirname(GPT_USAGE_FILE), "proxy_route_health.json");
 const PROXY_ROUTE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
+const PROXY_ROUTE_BACKUP_LIMIT = 10;
+const PROXY_OUTBOUND_REQUIRED_FIELDS = Object.freeze({
+  socks: ["server", "server_port"],
+  http: ["server", "server_port"],
+  shadowsocks: ["server", "server_port", "method", "password"],
+  vmess: ["server", "server_port", "uuid"],
+  vless: ["server", "server_port", "uuid"],
+  trojan: ["server", "server_port", "password"],
+  hysteria2: ["server", "server_port", "password"],
+  tuic: ["server", "server_port", "uuid", "password"],
+});
 
 function normalizeProxyRouteId(value) {
   const id = safeText(value).toLowerCase().slice(0, 64);
@@ -853,8 +864,185 @@ function normalizeProxyRoute(record, options = {}) {
       countryCode: safeText(expected.countryCode).slice(0, 2).toUpperCase(),
       asn: safeText(expected.asn).slice(0, 40),
     },
-    updatedAt: safeText(input.updatedAt) || safeText(options.updatedAt) || nowIso(),
+    updatedAt:
+      (options.forceUpdatedAt ? safeText(options.updatedAt) : safeText(input.updatedAt)) ||
+      safeText(options.updatedAt) ||
+      nowIso(),
   };
+}
+
+function proxyRouteValidationError(fieldPath, message) {
+  return new Error(`${fieldPath}: ${message}`);
+}
+
+function validateProxyOutbound(outbound, fieldPath) {
+  if (!outbound || typeof outbound !== "object" || Array.isArray(outbound)) {
+    throw proxyRouteValidationError(fieldPath, "必须是 sing-box 出站对象");
+  }
+  const type = safeText(outbound.type).toLowerCase();
+  if (!type) throw proxyRouteValidationError(`${fieldPath}.type`, "不能为空");
+  const requiredFields = PROXY_OUTBOUND_REQUIRED_FIELDS[type];
+  if (!requiredFields) {
+    throw proxyRouteValidationError(
+      `${fieldPath}.type`,
+      `不支持的 sing-box 出站类型 ${JSON.stringify(type)}`,
+    );
+  }
+  const normalized = { ...outbound, type };
+  delete normalized.tag;
+  for (const field of requiredFields) {
+    const value = normalized[field];
+    if (field === "server_port") {
+      if (!Number.isInteger(value) || value < 1 || value > 65535) {
+        throw proxyRouteValidationError(`${fieldPath}.${field}`, "必须是 1 到 65535 的整数");
+      }
+    } else if (typeof value !== "string" || !value.trim()) {
+      throw proxyRouteValidationError(`${fieldPath}.${field}`, "不能为空字符串");
+    }
+  }
+  return normalized;
+}
+
+function validateProxyRoute(record, fieldPath, options = {}) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw proxyRouteValidationError(fieldPath, "必须是线路对象");
+  }
+  const rawId = safeText(record.id).toLowerCase();
+  if (!PROXY_ROUTE_ID_PATTERN.test(rawId)) {
+    throw proxyRouteValidationError(
+      `${fieldPath}.id`,
+      "必须以字母或数字开头，且只能包含小写字母、数字和连字符（最多 64 个字符）",
+    );
+  }
+  const outbound = validateProxyOutbound(record.outbound, `${fieldPath}.outbound`);
+  return normalizeProxyRoute(
+    { ...record, id: rawId, outbound },
+    {
+      updatedAt: options.updatedAt,
+      forceUpdatedAt: options.forceUpdatedAt,
+    },
+  );
+}
+
+function validateProxyRouteCatalog(raw, options = {}) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw proxyRouteValidationError("catalog", "必须是对象");
+  }
+  if (typeof raw.version !== "undefined" && raw.version !== 1) {
+    throw proxyRouteValidationError("catalog.version", "仅支持版本 1");
+  }
+  if (!Array.isArray(raw.routes)) {
+    throw proxyRouteValidationError("catalog.routes", "必须是数组");
+  }
+  if (raw.routes.length > 64) {
+    throw proxyRouteValidationError("catalog.routes", "线路数量不能超过 64 条");
+  }
+  const routes = raw.routes.map((route, index) =>
+    validateProxyRoute(route, `routes[${index}]`, options),
+  );
+  const seen = new Set();
+  for (let index = 0; index < routes.length; index += 1) {
+    if (seen.has(routes[index].id)) {
+      throw proxyRouteValidationError(`routes[${index}].id`, "线路 ID 不能重复");
+    }
+    seen.add(routes[index].id);
+  }
+  return {
+    version: 1,
+    routes,
+    updatedAt: safeText(raw.updatedAt) || safeText(options.updatedAt),
+  };
+}
+
+function proxyRouteBackupPrefix() {
+  return `${path.basename(PROXY_ROUTES_FILE)}.backup-`;
+}
+
+function listProxyRouteBackups() {
+  const directory = path.dirname(PROXY_ROUTES_FILE);
+  const prefix = proxyRouteBackupPrefix();
+  try {
+    return fs
+      .readdirSync(directory)
+      .filter((name) => name.startsWith(prefix))
+      .map((name) => {
+        const file = path.join(directory, name);
+        return { file, mtimeMs: fs.statSync(file).mtimeMs };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs || b.file.localeCompare(a.file));
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+function writeProxyRouteBackup(catalog) {
+  const suffix = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const backupFile = `${PROXY_ROUTES_FILE}.backup-${suffix}`;
+  writeJsonAtomic(backupFile, catalog);
+  return backupFile;
+}
+
+function pruneProxyRouteBackups() {
+  try {
+    const obsolete = listProxyRouteBackups().slice(PROXY_ROUTE_BACKUP_LIMIT);
+    for (const item of obsolete) {
+      try {
+        fs.unlinkSync(item.file);
+      } catch (error) {
+        console.error("[collab] 线路目录旧备份清理失败:", error.message || error);
+      }
+    }
+  } catch (error) {
+    // 清理历史备份不影响已经完成的主目录保存。
+    console.error("[collab] 线路目录备份枚举失败:", error.message || error);
+  }
+}
+
+function restoreProxyRouteCatalogFromBackup() {
+  for (const item of listProxyRouteBackups()) {
+    let catalog;
+    try {
+      const raw = JSON.parse(fs.readFileSync(item.file, "utf-8"));
+      catalog = validateProxyRouteCatalog(raw);
+    } catch (error) {
+      console.error(
+        `[collab] 跳过无效线路目录备份 ${path.basename(item.file)}:`,
+        error.message || error,
+      );
+      continue;
+    }
+    try {
+      writeJsonAtomic(PROXY_ROUTES_FILE, catalog);
+    } catch (error) {
+      throw new Error(
+        `找到有效线路目录备份，但恢复主文件失败（${error?.code || "UNKNOWN"}）: ${error.message}`,
+        { cause: error },
+      );
+    }
+    console.error(`[collab] 已从线路目录备份恢复: ${path.basename(item.file)}`);
+    return catalog;
+  }
+  return null;
+}
+
+function quarantineCorruptProxyRouteCatalog(error) {
+  const corruptFile = `${PROXY_ROUTES_FILE}.corrupt-${Date.now()}-${crypto
+    .randomUUID()
+    .slice(0, 8)}`;
+  try {
+    fs.renameSync(PROXY_ROUTES_FILE, corruptFile);
+  } catch (renameError) {
+    throw new Error(
+      `线路目录损坏且无法隔离（${renameError.code || "UNKNOWN"}）: ${renameError.message}`,
+      { cause: renameError },
+    );
+  }
+  console.error(
+    `[collab] 线路目录损坏，已隔离为 ${path.basename(corruptFile)}:`,
+    error.message || error,
+  );
+  return corruptFile;
 }
 
 function legacyAirportRoute() {
@@ -873,36 +1061,49 @@ function legacyAirportRoute() {
 function loadProxyRouteCatalog() {
   try {
     const raw = JSON.parse(fs.readFileSync(PROXY_ROUTES_FILE, "utf-8"));
-    const routes = (Array.isArray(raw.routes) ? raw.routes : [])
-      .map((route) => normalizeProxyRoute(route))
-      .filter(Boolean);
-    return {
-      version: 1,
-      routes: [...new Map(routes.map((route) => [route.id, route])).values()],
-      updatedAt: safeText(raw.updatedAt),
-    };
+    return validateProxyRouteCatalog(raw);
   } catch (error) {
-    if (error?.code !== "ENOENT") {
-      console.error("[collab] 线路目录读取失败，保留文件并使用兼容配置:", error.message || error);
+    if (error?.code === "ENOENT") {
+      const legacy = legacyAirportRoute();
+      return { version: 1, routes: legacy ? [legacy] : [], updatedAt: legacy?.updatedAt || "" };
     }
-    const legacy = legacyAirportRoute();
-    return { version: 1, routes: legacy ? [legacy] : [], updatedAt: legacy?.updatedAt || "" };
+    if (["EACCES", "EPERM"].includes(error?.code)) {
+      throw new Error(`线路目录读取失败（权限不足，${error.code}）: ${error.message}`, {
+        cause: error,
+      });
+    }
+    if (error instanceof SyntaxError || /^catalog(?:\.|:)|^routes\[/.test(error?.message || "")) {
+      quarantineCorruptProxyRouteCatalog(error);
+      const restored = restoreProxyRouteCatalogFromBackup();
+      if (restored) return restored;
+      throw new Error("线路目录已损坏并隔离，但没有可恢复的有效备份", { cause: error });
+    }
+    throw new Error(`线路目录读取失败（${error?.code || "UNKNOWN"}）: ${error.message}`, {
+      cause: error,
+    });
   }
 }
 
 function saveProxyRouteCatalog(routes) {
   const updatedAt = nowIso();
   if (!Array.isArray(routes)) throw new Error("线路目录必须是数组");
-  const normalized = routes.map((route, index) => {
-    const value = normalizeProxyRoute(route, { updatedAt });
-    if (!value) throw new Error(`第 ${index + 1} 条线路缺少合法 ID、出站类型或出站配置`);
-    return value;
-  });
-  const unique = [...new Map(normalized.map((route) => [route.id, route])).values()];
-  if (unique.length !== normalized.length) throw new Error("线路 ID 不能重复");
-  if (unique.length > 64) throw new Error("线路数量不能超过 64 条");
-  const catalog = { version: 1, routes: unique, updatedAt };
-  writeJsonAtomic(PROXY_ROUTES_FILE, catalog);
+  const catalog = validateProxyRouteCatalog(
+    { version: 1, routes, updatedAt },
+    { updatedAt, forceUpdatedAt: true },
+  );
+  fs.mkdirSync(path.dirname(PROXY_ROUTES_FILE), { recursive: true });
+  const backupFile = writeProxyRouteBackup(catalog);
+  try {
+    writeJsonAtomic(PROXY_ROUTES_FILE, catalog);
+  } catch (error) {
+    try {
+      fs.unlinkSync(backupFile);
+    } catch (cleanupError) {
+      console.error("[collab] 未提交线路目录备份清理失败:", cleanupError.message || cleanupError);
+    }
+    throw error;
+  }
+  pruneProxyRouteBackups();
   return catalog;
 }
 
@@ -2568,18 +2769,23 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const bootstrap = loadClientBootstrap(req);
-    const proxyRoutes = proxyRoutesForUser(session.username, bootstrap);
-    const legacyAirport = proxyRoutes.find((route) => route.id === "internal-airport");
-    sendJson(res, 200, {
-      ...bootstrap,
-      update: sharedReleaseUpdateForClient(req),
-      airport: legacyAirport
-        ? { name: legacyAirport.name, outbound: legacyAirport.outbound }
-        : null,
-      proxyRoutes,
-      fetchedAt: nowIso(),
-    });
+    try {
+      const bootstrap = loadClientBootstrap(req);
+      const proxyRoutes = proxyRoutesForUser(session.username, bootstrap);
+      const legacyAirport = proxyRoutes.find((route) => route.id === "internal-airport");
+      sendJson(res, 200, {
+        ...bootstrap,
+        update: sharedReleaseUpdateForClient(req),
+        airport: legacyAirport
+          ? { name: legacyAirport.name, outbound: legacyAirport.outbound }
+          : null,
+        proxyRoutes,
+        fetchedAt: nowIso(),
+      });
+    } catch (error) {
+      console.error("[collab] 客户端配置读取失败:", error.message || error);
+      sendText(res, 503, "线路目录暂不可用，请联系管理员检查服务端数据");
+    }
     return;
   }
 
@@ -2827,22 +3033,21 @@ const server = http.createServer(async (req, res) => {
       const payload = safeParseJson(body) || {};
       const outbound =
         payload.outbound && typeof payload.outbound === "object" ? payload.outbound : null;
-      const saved = saveAirport(payload.name, outbound);
       const current = loadProxyRouteCatalog();
       const withoutLegacy = current.routes.filter((route) => route.id !== "internal-airport");
-      saveProxyRouteCatalog(
-        saved.outbound
-          ? [
-              ...withoutLegacy,
-              {
-                id: "internal-airport",
-                name: saved.name || "内置机场节点",
-                enabled: true,
-                outbound: saved.outbound,
-              },
-            ]
-          : withoutLegacy,
-      );
+      const nextAirport = outbound
+        ? validateProxyRoute(
+            {
+              id: "internal-airport",
+              name: safeText(payload.name).slice(0, 120) || "内置机场节点",
+              enabled: true,
+              outbound,
+            },
+            "airport",
+          )
+        : null;
+      saveProxyRouteCatalog(nextAirport ? [...withoutLegacy, nextAirport] : withoutLegacy);
+      const saved = saveAirport(payload.name, nextAirport?.outbound || null);
       sendJson(res, 200, {
         ok: true,
         airport: {
@@ -2852,7 +3057,7 @@ const server = http.createServer(async (req, res) => {
         },
       });
     } catch (err) {
-      sendText(res, 500, err.message || "保存机场节点失败");
+      sendText(res, 400, err.message || "保存机场节点失败");
     }
     return;
   }
@@ -2860,7 +3065,12 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && pathname === "/api/admin/proxy-routes") {
     const adminSession = requireAdminSession(req, res);
     if (!adminSession) return;
-    sendJson(res, 200, loadProxyRouteCatalog());
+    try {
+      sendJson(res, 200, loadProxyRouteCatalog());
+    } catch (error) {
+      console.error("[collab] 管理端线路目录读取失败:", error.message || error);
+      sendText(res, 500, "线路目录读取失败，请检查服务端日志和隔离文件");
+    }
     return;
   }
   if (req.method === "GET" && pathname === "/api/admin/proxy-route-health") {

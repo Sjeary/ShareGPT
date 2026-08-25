@@ -43,3 +43,62 @@ test("settings recover from the atomic backup without overwriting the corrupt fi
   assert.equal(recovered.ui.sidebarSide, undefined);
   assert.equal(fs.readFileSync(backend.settingsFile, "utf8"), "{broken");
 });
+
+test("translation settings survive save and reload without overwriting other sections", (t) => {
+  const backend = createBackend(t);
+  const translated = backend.patchSettings(
+    "translation",
+    {
+      provider: "api",
+      sourceLanguage: "en",
+      targetLanguage: "zh",
+      api: { baseUrl: "https://translate.example", apiKey: "test-key" },
+    },
+    0,
+  );
+  const themed = backend.patchSettings(
+    "ui",
+    { theme: "light", sidebarSide: "right" },
+    translated.settingsRevision,
+  );
+
+  const reloaded = backend.loadSettings();
+  assert.equal(reloaded.settingsRevision, themed.settingsRevision);
+  assert.equal(reloaded.translation.provider, "api");
+  assert.equal(reloaded.translation.sourceLanguage, "en");
+  assert.equal(reloaded.translation.targetLanguage, "zh");
+  assert.deepEqual(reloaded.translation.api, {
+    baseUrl: "https://translate.example",
+    apiKey: "test-key",
+  });
+  assert.equal(reloaded.ui.theme, "light");
+  assert.equal(reloaded.ui.sidebarSide, "right");
+});
+
+test("legacy notesAi settings migrate into translation as the single source of truth", (t) => {
+  const backend = createBackend(t);
+  fs.mkdirSync(path.dirname(backend.settingsFile), { recursive: true });
+  fs.writeFileSync(
+    backend.settingsFile,
+    JSON.stringify({
+      settingsRevision: 4,
+      notesAi: {
+        baseUrl: "https://ai.example",
+        apiKey: "legacy-key",
+        model: "legacy-model",
+        effort: "high",
+      },
+    }),
+    "utf8",
+  );
+
+  const migrated = backend.loadSettings();
+  assert.equal(migrated.settingsRevision, 4);
+  assert.deepEqual(migrated.translation.ai, {
+    baseUrl: "https://ai.example",
+    apiKey: "legacy-key",
+    model: "legacy-model",
+    effort: "high",
+  });
+  assert.equal(Object.hasOwn(migrated, "notesAi"), false);
+});

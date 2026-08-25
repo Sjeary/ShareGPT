@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
 import { runAi } from '@/lib/notes/aiClient'
+import { describeTranslationTarget } from '@/lib/translationTarget'
 import { cn } from '@/lib/utils'
 import { useTranslationStore } from '@/store/useTranslationStore'
 import type { AiKind } from '@/store/useAiStore'
@@ -31,132 +32,171 @@ const PROVIDERS: Array<{ id: TranslationProvider; label: string }> = [
 interface TranslationPanelProps {
   kind: AiKind
   tabId: string
+  networkReady: boolean
 }
 
-export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
+export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanelProps) {
   const state = useTranslationStore()
   const cancelRef = useRef<null | (() => void)>(null)
-  const requestGenerationRef = useRef(0)
   const [copied, setCopied] = useCopyIndicator()
+  const targetMatches = state.kind === kind && state.tabId === tabId
+  const canUseTranslation = networkReady && Boolean(tabId) && targetMatches
+  const sourceText = targetMatches ? state.sourceText : ''
+  const result = targetMatches ? state.result : ''
+  const status = targetMatches ? state.status : ''
+  const loading = targetMatches && state.loading
+  const activeProviderConfig =
+    state.config.provider === 'ai'
+      ? state.config.ai
+      : state.config.provider === 'offline'
+        ? state.config.offline
+        : state.config.api
+  const targetDisplay = describeTranslationTarget(
+    state.config.provider,
+    activeProviderConfig.baseUrl,
+  )
 
   useEffect(() => {
     void useTranslationStore.getState().load()
   }, [])
 
   useEffect(() => {
-    requestGenerationRef.current += 1
+    useTranslationStore.getState().activateTarget(kind, tabId)
     cancelRef.current?.()
     cancelRef.current = null
     return () => {
-      requestGenerationRef.current += 1
       cancelRef.current?.()
       cancelRef.current = null
+      useTranslationStore.getState().invalidateRequests(kind, tabId)
     }
   }, [kind, tabId])
 
   const patchConfig = (patch: Partial<TranslationSettings>) => {
-    void state
+    const token = useTranslationStore.getState().snapshotRequest(kind, tabId)
+    void useTranslationStore
+      .getState()
       .saveConfig(patch)
-      .catch((error) => state.setStatus(error instanceof Error ? error.message : String(error)))
+      .catch((error) => {
+        if (!token) return
+        useTranslationStore.getState().applyRequest(token, {
+          status: error instanceof Error ? error.message : String(error),
+        })
+      })
   }
 
   const closePanel = () => {
-    requestGenerationRef.current += 1
     cancelRef.current?.()
     cancelRef.current = null
-    state.close()
+    useTranslationStore.getState().close()
   }
 
   const capturePage = async () => {
-    const generation = ++requestGenerationRef.current
-    state.setLoading(true)
-    state.setStatus('正在读取当前网页…')
+    if (!networkReady || !tabId) return
+    const token = useTranslationStore.getState().beginRequest(kind, tabId, {
+      result: '',
+      status: '正在读取当前网页…',
+    })
+    if (!token) return
     try {
       const page = await api.captureAiPageText(kind, tabId)
-      if (generation !== requestGenerationRef.current) return
-      state.setSourceText(page.text)
-      state.setResult('')
-      state.setStatus(page.truncated ? '内容较长，已读取前 30000 个字符' : '已读取当前网页')
+      useTranslationStore.getState().applyRequest(token, {
+        sourceText: page.text,
+        result: '',
+        status: page.truncated ? '内容较长，已读取前 30000 个字符' : '已读取当前网页',
+      })
     } catch (error) {
-      if (generation === requestGenerationRef.current) {
-        state.setStatus(error instanceof Error ? error.message : String(error))
-      }
+      useTranslationStore.getState().applyRequest(token, {
+        status: error instanceof Error ? error.message : String(error),
+      })
     } finally {
-      if (generation === requestGenerationRef.current) state.setLoading(false)
+      useTranslationStore.getState().applyRequest(token, { loading: false })
     }
   }
 
   const translate = async () => {
-    const text = state.sourceText.trim()
+    if (!networkReady || !tabId) return
+    const current = useTranslationStore.getState()
+    const text = current.sourceText.trim()
     if (!text) {
-      state.setStatus('请先输入、选中或读取要翻译的内容')
+      const token = current.snapshotRequest(kind, tabId)
+      if (token) current.applyRequest(token, { status: '请先输入、选中或读取要翻译的内容' })
       return
     }
     cancelRef.current?.()
-    const generation = ++requestGenerationRef.current
-    state.setResult('')
-    state.setLoading(true)
-    state.setStatus('正在翻译…')
+    const token = current.beginRequest(kind, tabId, { result: '', status: '正在翻译…' })
+    if (!token) return
 
-    if (state.config.provider === 'ai') {
-      const provider = state.config.ai
+    if (current.config.provider === 'ai') {
+      const provider = current.config.ai
       if (!provider.baseUrl || !provider.apiKey) {
-        state.setLoading(false)
-        state.setSettingsOpen(true)
-        state.setStatus('请先配置 AI 接口地址和密钥')
+        current.applyRequest(token, {
+          loading: false,
+          settingsOpen: true,
+          status: '请先配置 AI 接口地址和密钥',
+        })
         return
       }
-      cancelRef.current = runAi(
+      let cancel: () => void = () => undefined
+      cancel = runAi(
         {
           provider,
           mode: 'translate',
           text,
-          ctx: { targetLanguage: TARGET_LABELS[state.config.targetLanguage] || '中文' },
+          ctx: { targetLanguage: TARGET_LABELS[current.config.targetLanguage] || '中文' },
         },
         {
           onDelta: (delta) => {
-            if (generation === requestGenerationRef.current) state.appendResult(delta)
+            useTranslationStore.getState().appendRequestResult(token, delta)
           },
           onStatus: (status) => {
-            if (generation === requestGenerationRef.current) state.setStatus(status)
+            useTranslationStore.getState().applyRequest(token, { status })
           },
           onDone: () => {
-            if (generation !== requestGenerationRef.current) return
-            cancelRef.current = null
-            state.setLoading(false)
-            state.setStatus('翻译完成')
+            if (cancelRef.current === cancel) cancelRef.current = null
+            useTranslationStore.getState().applyRequest(token, {
+              loading: false,
+              status: '翻译完成',
+            })
           },
           onError: (message) => {
-            if (generation !== requestGenerationRef.current) return
-            cancelRef.current = null
-            state.setLoading(false)
-            state.setStatus(message)
+            if (cancelRef.current === cancel) cancelRef.current = null
+            useTranslationStore.getState().applyRequest(token, { loading: false, status: message })
           },
         },
       )
+      cancelRef.current = cancel
       return
     }
 
+    let cancelRequest: null | (() => void) = null
     try {
-      const provider = state.config.provider
-      const config = provider === 'offline' ? state.config.offline : state.config.api
+      const provider = current.config.provider
+      const config = provider === 'offline' ? current.config.offline : current.config.api
+      const requestId = `translate-${crypto.randomUUID()}`
+      cancelRequest = () => {
+        void api.cancelTranslation(requestId)
+      }
+      cancelRef.current = cancelRequest
       const response = await api.translateText({
+        requestId,
         mode: provider,
         baseUrl: config.baseUrl,
-        apiKey: provider === 'api' ? state.config.api.apiKey : undefined,
+        apiKey: provider === 'api' ? current.config.api.apiKey : undefined,
         text,
-        source: state.config.sourceLanguage,
-        target: state.config.targetLanguage,
+        source: current.config.sourceLanguage,
+        target: current.config.targetLanguage,
       })
-      if (generation !== requestGenerationRef.current) return
-      state.setResult(response.translatedText)
-      state.setStatus('翻译完成')
+      useTranslationStore.getState().applyRequest(token, {
+        result: response.translatedText,
+        status: '翻译完成',
+      })
     } catch (error) {
-      if (generation === requestGenerationRef.current) {
-        state.setStatus(error instanceof Error ? error.message : String(error))
-      }
+      useTranslationStore.getState().applyRequest(token, {
+        status: error instanceof Error ? error.message : String(error),
+      })
     } finally {
-      if (generation === requestGenerationRef.current) state.setLoading(false)
+      if (cancelRef.current === cancelRequest) cancelRef.current = null
+      useTranslationStore.getState().applyRequest(token, { loading: false })
     }
   }
 
@@ -184,7 +224,7 @@ export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
             className={cn('ml-auto size-8', state.settingsOpen && 'bg-accent')}
             title="翻译设置"
             aria-label="翻译设置"
-            onClick={() => state.setSettingsOpen(!state.settingsOpen)}
+            onClick={() => state.setSettingsOpen(kind, tabId, !state.settingsOpen)}
           >
             <Settings2 className="size-4" />
           </Button>
@@ -211,11 +251,21 @@ export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
                   ? 'bg-primary text-primary-foreground'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground',
               )}
-              onClick={() => void state.setProvider(provider.id)}
+              onClick={() => patchConfig({ provider: provider.id })}
             >
               {provider.label}
             </button>
           ))}
+        </div>
+
+        <div className="flex h-7 min-w-0 shrink-0 items-center gap-1.5 border-b border-border px-3 text-[11px] text-muted-foreground">
+          <span className="shrink-0">发送到</span>
+          <span
+            className="min-w-0 truncate font-medium text-foreground"
+            title={targetDisplay.title}
+          >
+            {targetDisplay.label}
+          </span>
         </div>
 
         {state.settingsOpen && (
@@ -223,15 +273,23 @@ export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
             key={state.config.provider}
             config={state.config}
             onSave={(config) => {
-              void state
+              const token = useTranslationStore.getState().snapshotRequest(kind, tabId)
+              void useTranslationStore
+                .getState()
                 .saveConfig(config)
                 .then(() => {
-                  state.setStatus('翻译设置已保存')
-                  state.setSettingsOpen(false)
+                  if (!token) return
+                  useTranslationStore.getState().applyRequest(token, {
+                    status: '翻译设置已保存',
+                    settingsOpen: false,
+                  })
                 })
-                .catch((error) =>
-                  state.setStatus(error instanceof Error ? error.message : String(error)),
-                )
+                .catch((error) => {
+                  if (!token) return
+                  useTranslationStore.getState().applyRequest(token, {
+                    status: error instanceof Error ? error.message : String(error),
+                  })
+                })
             }}
           />
         )}
@@ -253,8 +311,9 @@ export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
           </div>
 
           <textarea
-            value={state.sourceText}
-            onChange={(event) => state.setSourceText(event.target.value)}
+            value={sourceText}
+            onChange={(event) => state.setSourceText(kind, tabId, event.target.value)}
+            disabled={!canUseTranslation}
             placeholder="输入文字，或在网页中选中文字后右键翻译"
             aria-label="待翻译内容"
             spellCheck={false}
@@ -266,7 +325,7 @@ export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
               variant="outline"
               size="sm"
               className="gap-1.5"
-              disabled={state.loading}
+              disabled={!canUseTranslation || loading}
               onClick={() => void capturePage()}
             >
               <FileText className="size-3.5" />
@@ -275,10 +334,10 @@ export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
             <Button
               size="sm"
               className="ml-auto gap-1.5"
-              disabled={state.loading}
+              disabled={!canUseTranslation || loading}
               onClick={() => void translate()}
             >
-              {state.loading ? (
+              {loading ? (
                 <Loader2 className="size-3.5 animate-spin" />
               ) : (
                 <Languages className="size-3.5" />
@@ -296,12 +355,19 @@ export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
                 className="ml-auto size-7"
                 title="复制译文"
                 aria-label="复制译文"
-                disabled={!state.result}
+                disabled={!result}
                 onClick={() => {
+                  const token = useTranslationStore.getState().snapshotRequest(kind, tabId)
                   void navigator.clipboard
-                    .writeText(state.result)
+                    .writeText(result)
                     .then(() => setCopied())
-                    .catch(() => state.setStatus('复制失败，请检查剪贴板权限'))
+                    .catch(() => {
+                      if (token) {
+                        useTranslationStore
+                          .getState()
+                          .applyRequest(token, { status: '复制失败，请检查剪贴板权限' })
+                      }
+                    })
                 }}
               >
                 {copied ? (
@@ -312,10 +378,10 @@ export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
               </Button>
             </div>
             <div className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/35 p-3 text-sm leading-6">
-              {state.result || <span className="text-muted-foreground">译文将在这里显示</span>}
+              {result || <span className="text-muted-foreground">译文将在这里显示</span>}
             </div>
             <div className="min-h-6 pt-1.5 text-xs text-muted-foreground" role="status">
-              {state.status}
+              {status}
             </div>
           </div>
         </div>

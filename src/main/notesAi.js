@@ -2,7 +2,7 @@
 // provider {baseUrl, apiKey, model, effort} 由渲染层从本地设置传入, 主进程不持久化密钥。
 const http = require("node:http");
 const https = require("node:https");
-const { URL } = require("node:url");
+const { endpointRequestOptions, parseEndpoint, resolveEndpoint } = require("./endpointSecurity");
 
 const SYS =
   "你是中文写作与知识管理助手。直接输出结果本身，不要任何解释、前后缀，也不要用 markdown 代码围栏包裹。";
@@ -52,7 +52,12 @@ function endpointFor(baseUrl) {
   return b + "/v1/responses";
 }
 
-function createNotesAi({ getWindow }) {
+function createNotesAi({
+  getWindow,
+  lookup = undefined,
+  httpRequest = http.request,
+  httpsRequest = https.request,
+}) {
   let counter = 0;
   const live = new Map();
   const MAX_RETRY = 2;
@@ -76,15 +81,9 @@ function createNotesAi({ getWindow }) {
 
     let endpoint;
     try {
-      endpoint = new URL(endpointFor(baseUrl));
-    } catch {
-      setImmediate(() => emit(streamId, { type: "error", message: "接口地址不合法" }));
-      return { streamId };
-    }
-    if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
-      setImmediate(() =>
-        emit(streamId, { type: "error", message: "接口地址只支持 HTTP 或 HTTPS" }),
-      );
+      endpoint = parseEndpoint(endpointFor(baseUrl), { label: "AI 接口" });
+    } catch (error) {
+      setImmediate(() => emit(streamId, { type: "error", message: error.message }));
       return { streamId };
     }
 
@@ -98,7 +97,7 @@ function createNotesAi({ getWindow }) {
     if (effort) payload.reasoning = { effort };
     const body = Buffer.from(JSON.stringify(payload), "utf-8");
 
-    const lib = endpoint.protocol === "http:" ? http : https;
+    const requestImpl = endpoint.protocol === "http:" ? httpRequest : httpsRequest;
     // 仅在「尚未吐出任何内容」且属于上游过载/限流/瞬时错误时才自动重试,
     // 避免把已经流式输出一半的回答重复一遍。
     const retryable = (code, msg) => {
@@ -177,16 +176,22 @@ function createNotesAi({ getWindow }) {
       }
     };
 
-    function send(attempt) {
+    async function send(attempt) {
       if (stream.cancelled || stream.terminal) return;
       stream.attempt = attempt;
       let attemptSettled = false;
-      const r = lib.request(
+      let record;
+      try {
+        record = await resolveEndpoint(endpoint, { lookup });
+      } catch (error) {
+        failAttempt(0, error.message || "接口地址校验失败");
+        return;
+      }
+      if (stream.cancelled || stream.terminal) return;
+      const r = requestImpl(
         {
+          ...endpointRequestOptions(endpoint, record),
           method: "POST",
-          hostname: endpoint.hostname,
-          port: endpoint.port || (endpoint.protocol === "http:" ? 80 : 443),
-          path: endpoint.pathname + endpoint.search,
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${apiKey}`,
@@ -196,7 +201,7 @@ function createNotesAi({ getWindow }) {
           timeout: 120000,
         },
         (res) => {
-          if (res.statusCode && res.statusCode >= 400) {
+          if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
             let err = "";
             res.on("data", (c) => (err += c));
             res.on("end", () => {

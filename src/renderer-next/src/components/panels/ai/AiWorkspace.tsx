@@ -185,6 +185,12 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const [webAddressOpen, setWebAddressOpen] = useState(false)
 
   useEffect(() => {
+    if (networkReady && activeTabId) return
+    const translation = useTranslationStore.getState()
+    if (translation.open && translation.kind === kind) translation.close()
+  }, [kind, networkReady, activeTabId])
+
+  useEffect(() => {
     if (!networkReady) setWebAddressOpen(false)
   }, [networkReady])
 
@@ -216,18 +222,15 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   // 代理检测面板 (展示该页面流量是否全部经代理)。作为宿主上方的可折叠块渲染,
   // 这样不会被原生 webview 盖住 (centered Dialog 会被原生 view 覆盖)。
   const [proxyOpen, setProxyOpen] = useState(false)
-  const [proxyChecking, setProxyChecking] = useState(false)
-  const [proxyReport, setProxyReport] = useState<AiProxyReport | null>(null)
+  const proxyTargetKey = `${kind}:${environmentId}:${activeTabId}`
+  const [proxyCheckingTarget, setProxyCheckingTarget] = useState('')
+  const [proxyResult, setProxyResult] = useState<{
+    targetKey: string
+    report: AiProxyReport
+  } | null>(null)
   const proxyCheckGeneration = useRef(0)
-
-  useEffect(() => {
-    proxyCheckGeneration.current += 1
-    const timer = window.setTimeout(() => {
-      setProxyReport(null)
-      setProxyChecking(false)
-    }, 0)
-    return () => window.clearTimeout(timer)
-  }, [activeTabId, environmentId])
+  const proxyChecking = proxyCheckingTarget === proxyTargetKey
+  const proxyReport = proxyResult?.targetKey === proxyTargetKey ? proxyResult.report : null
 
   // 窗口全屏 (类似 F11): 工具栏按钮切换; 用 resize 事件同步图标状态。
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -252,20 +255,27 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const runProxyCheck = useCallback(async () => {
     const generation = ++proxyCheckGeneration.current
     const checkedTabId = activeTabId
-    setProxyChecking(true)
+    const checkedTargetKey = proxyTargetKey
+    setProxyCheckingTarget(checkedTargetKey)
+    setProxyResult(null)
     try {
       const report = await api.checkAiProxy(kind, checkedTabId)
-      if (generation === proxyCheckGeneration.current && checkedTabId === activeTabId) {
-        setProxyReport(report)
+      if (generation === proxyCheckGeneration.current) {
+        setProxyResult({ targetKey: checkedTargetKey, report })
       }
     } catch (err) {
-      if (generation === proxyCheckGeneration.current && checkedTabId === activeTabId) {
-        setProxyReport({ ok: false, reason: err instanceof Error ? err.message : String(err) })
+      if (generation === proxyCheckGeneration.current) {
+        setProxyResult({
+          targetKey: checkedTargetKey,
+          report: { ok: false, reason: err instanceof Error ? err.message : String(err) },
+        })
       }
     } finally {
-      if (generation === proxyCheckGeneration.current) setProxyChecking(false)
+      if (generation === proxyCheckGeneration.current) {
+        setProxyCheckingTarget((target) => (target === checkedTargetKey ? '' : target))
+      }
     }
-  }, [kind, activeTabId])
+  }, [kind, activeTabId, proxyTargetKey])
 
   const toggleProxyPanel = useCallback(() => {
     setProxyOpen((open) => {
@@ -779,6 +789,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
                 title={translationOpen ? '关闭翻译侧栏' : '打开翻译侧栏'}
                 aria-label={translationOpen ? '关闭翻译侧栏' : '打开翻译侧栏'}
                 aria-pressed={translationOpen}
+                disabled={!networkReady || !activeTabId}
                 onClick={() => toggleTranslation(kind, activeTabId)}
               >
                 <Languages className="size-4" />
@@ -952,7 +963,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               </div>
             )}
           </div>
-          {translationOpen && <TranslationPanel kind={kind} tabId={activeTabId} />}
+          {translationOpen && (
+            <TranslationPanel kind={kind} tabId={activeTabId} networkReady={networkReady} />
+          )}
         </div>
       </div>
     </PanelScaffold>

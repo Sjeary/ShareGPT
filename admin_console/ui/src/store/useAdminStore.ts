@@ -115,14 +115,44 @@ function applyTheme(dark: boolean) {
 
 const EMPTY_BOOTSTRAP: Bootstrap = { sender: {}, update: {}, extra: {} }
 
+function clearedServerScope() {
+  return {
+    role: 'none' as const,
+    token: '',
+    profile: null,
+    authed: false,
+    busy: false,
+    devToken: '',
+    release: null,
+    users: [],
+    usersLoading: false,
+    bootstrap: null,
+    feedback: [],
+    feedbackLoading: false,
+    proxyMissing: [],
+    proxyMissingLoading: false,
+    proxyRoutes: [],
+    proxyRoutesLoading: false,
+    proxyRouteHealth: [],
+    activeTab: 'overview' as AdminTab,
+  }
+}
+
 export const useAdminStore = create<AdminState>((set, get) => {
+  let sessionGeneration = 0
+
   // 统一请求封装: 注入 serverUrl/token; 鉴权失效自动登出回登录页。
-  async function request<T>(pathname: string, options?: RequestInit): Promise<T> {
+  async function request<T>(
+    pathname: string,
+    options?: RequestInit,
+  ): Promise<{ value: T; generation: number }> {
     const { serverUrl, token } = get()
+    const generation = sessionGeneration
     try {
-      return await serverFetch<T>(serverUrl, token, pathname, options)
+      const value = await serverFetch<T>(serverUrl, token, pathname, options)
+      return { value, generation }
     } catch (err) {
-      if (err instanceof AuthExpiredError) {
+      if (err instanceof AuthExpiredError && generation === sessionGeneration) {
         forceLogout(err.message)
       }
       throw err
@@ -130,15 +160,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
   }
 
   function forceLogout(message?: string) {
-    if (!get().authed && !get().token) return
-    set({
-      role: 'none',
-      token: '',
-      profile: null,
-      authed: false,
-      users: [],
-      bootstrap: null,
-    })
+    sessionGeneration += 1
+    set(clearedServerScope())
     if (message) toast.error(message)
   }
 
@@ -197,8 +220,11 @@ export const useAdminStore = create<AdminState>((set, get) => {
 
     init: async () => {
       applyTheme(get().dark)
+      const generation = sessionGeneration
       const prefs = await adminApi.loadPrefs().catch(() => ({ serverUrl: '', username: '' }))
-      set({ serverUrl: prefs.serverUrl || '', username: prefs.username || '' })
+      if (generation === sessionGeneration) {
+        set({ serverUrl: prefs.serverUrl || '', username: prefs.username || '' })
+      }
     },
 
     login: async (serverUrl, username, password) => {
@@ -206,8 +232,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
       if (!base || !username || !password) {
         throw new Error('请先填写完整的服务地址、管理员账号和密码')
       }
-      set({ busy: true })
-      set({ users: [], bootstrap: null, proxyRoutes: [], proxyRouteHealth: [] })
+      const generation = ++sessionGeneration
+      set({ ...clearedServerScope(), serverUrl: base, username, busy: true })
       try {
         const res = await fetch(`${base}/api/admin/login`, {
           method: 'POST',
@@ -220,6 +246,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
           token?: string
           profile?: AdminProfile
         }
+        if (generation !== sessionGeneration) return
         set({
           serverUrl: base,
           username,
@@ -229,6 +256,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
           role: 'admin',
         })
         await adminApi.savePrefs({ serverUrl: base, username })
+        if (generation !== sessionGeneration) return
         await Promise.all([
           get().loadUsers({ silent: true }),
           get().loadBootstrap({ silent: true }),
@@ -236,7 +264,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
           get().loadProxyRouteHealth({ silent: true }),
         ])
       } finally {
-        set({ busy: false })
+        if (generation === sessionGeneration) set({ busy: false })
       }
     },
 
@@ -245,8 +273,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
       if (!base || !username || !password) {
         throw new Error('请先填写服务地址、管理员账号和密码')
       }
-      set({ busy: true })
-      set({ users: [], bootstrap: null, proxyRoutes: [], proxyRouteHealth: [] })
+      const generation = ++sessionGeneration
+      set({ ...clearedServerScope(), serverUrl: base, username, busy: true })
       try {
         const res = await fetch(`${base}/api/admin/setup`, {
           method: 'POST',
@@ -259,6 +287,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
           token?: string
           profile?: AdminProfile
         }
+        if (generation !== sessionGeneration) return
         set({
           serverUrl: base,
           username,
@@ -268,6 +297,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
           role: 'admin',
         })
         await adminApi.savePrefs({ serverUrl: base, username })
+        if (generation !== sessionGeneration) return
         await Promise.all([
           get().loadUsers({ silent: true }),
           get().loadBootstrap({ silent: true }),
@@ -276,66 +306,65 @@ export const useAdminStore = create<AdminState>((set, get) => {
         ])
         toast.success('管理员已初始化，可以直接开始管理服务器。')
       } finally {
-        set({ busy: false })
+        if (generation === sessionGeneration) set({ busy: false })
       }
     },
 
     logout: async () => {
+      const { serverUrl, token } = get()
+      sessionGeneration += 1
+      set(clearedServerScope())
       try {
-        await request('/api/admin/logout', { method: 'POST' })
+        await serverFetch(serverUrl, token, '/api/admin/logout', { method: 'POST' })
       } catch {
         /* 忽略登出请求失败 */
       }
-      set({
-        role: 'none',
-        token: '',
-        profile: null,
-        authed: false,
-        users: [],
-        bootstrap: null,
-        proxyRoutes: [],
-        proxyRouteHealth: [],
-        activeTab: 'overview',
-      })
     },
 
     loadUsers: async (opts) => {
+      const generation = sessionGeneration
       set({ usersLoading: true })
       try {
-        const payload = await request<{ users?: AdminUser[] }>('/api/admin/users')
-        set({ users: Array.isArray(payload.users) ? payload.users : [] })
+        const response = await request<{ users?: AdminUser[] }>('/api/admin/users')
+        if (response.generation === sessionGeneration) {
+          set({ users: Array.isArray(response.value.users) ? response.value.users : [] })
+        }
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
           toast.error(err instanceof Error ? err.message : String(err))
         }
       } finally {
-        set({ usersLoading: false })
+        if (generation === sessionGeneration) set({ usersLoading: false })
       }
     },
 
     createUser: async (input) => {
-      const res = await request<{ user?: AdminUser }>('/api/admin/users', {
+      const response = await request<{ user?: AdminUser }>('/api/admin/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       })
+      if (response.generation !== sessionGeneration) return null
       await get().loadUsers({ silent: true })
-      return res.user || null
+      return response.value.user || null
     },
 
     saveUser: async (username, input) => {
-      await request(`/api/admin/users/${encodeURIComponent(username)}`, {
+      const response = await request(`/api/admin/users/${encodeURIComponent(username)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       })
+      if (response.generation !== sessionGeneration) return
       await get().loadUsers({ silent: true })
     },
 
     loadBootstrap: async (opts) => {
       try {
-        const payload = await request<Bootstrap>('/api/admin/bootstrap')
-        set({ bootstrap: { ...EMPTY_BOOTSTRAP, ...payload } })
+        const response = await request<Bootstrap>('/api/admin/bootstrap')
+        if (response.generation === sessionGeneration) {
+          set({ bootstrap: { ...EMPTY_BOOTSTRAP, ...response.value } })
+        }
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
           toast.error(err instanceof Error ? err.message : String(err))
@@ -344,12 +373,15 @@ export const useAdminStore = create<AdminState>((set, get) => {
     },
 
     saveBootstrap: async (payload) => {
-      const res = await request<{ bootstrap?: Bootstrap }>('/api/admin/bootstrap', {
+      const response = await request<{ bootstrap?: Bootstrap }>('/api/admin/bootstrap', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
-      const next = res.bootstrap ? { ...EMPTY_BOOTSTRAP, ...res.bootstrap } : null
+      if (response.generation !== sessionGeneration) return null
+      const next = response.value.bootstrap
+        ? { ...EMPTY_BOOTSTRAP, ...response.value.bootstrap }
+        : null
       if (next) set({ bootstrap: next })
       return next
     },
@@ -357,63 +389,84 @@ export const useAdminStore = create<AdminState>((set, get) => {
     setBootstrap: (next) => set({ bootstrap: next }),
 
     loadFeedback: async (opts) => {
+      const generation = sessionGeneration
       set({ feedbackLoading: true })
       try {
-        const payload = await request<{ feedback?: FeedbackItem[] }>('/api/admin/feedback')
-        set({ feedback: Array.isArray(payload.feedback) ? payload.feedback : [] })
+        const response = await request<{ feedback?: FeedbackItem[] }>('/api/admin/feedback')
+        if (response.generation === sessionGeneration) {
+          set({
+            feedback: Array.isArray(response.value.feedback) ? response.value.feedback : [],
+          })
+        }
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
           toast.error(err instanceof Error ? err.message : String(err))
         }
       } finally {
-        set({ feedbackLoading: false })
+        if (generation === sessionGeneration) set({ feedbackLoading: false })
       }
     },
 
     loadProxyMissing: async (opts) => {
+      const generation = sessionGeneration
       set({ proxyMissingLoading: true })
       try {
-        const payload = await request<{ domains?: ProxyMissingItem[] }>('/api/admin/proxy-missing')
-        set({ proxyMissing: Array.isArray(payload.domains) ? payload.domains : [] })
+        const response = await request<{ domains?: ProxyMissingItem[] }>('/api/admin/proxy-missing')
+        if (response.generation === sessionGeneration) {
+          set({
+            proxyMissing: Array.isArray(response.value.domains) ? response.value.domains : [],
+          })
+        }
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
           toast.error(err instanceof Error ? err.message : String(err))
         }
       } finally {
-        set({ proxyMissingLoading: false })
+        if (generation === sessionGeneration) set({ proxyMissingLoading: false })
       }
     },
 
     loadProxyRoutes: async (opts) => {
+      const generation = sessionGeneration
       set({ proxyRoutesLoading: true })
       try {
-        const payload = await request<ProxyRouteCatalog>('/api/admin/proxy-routes')
-        set({ proxyRoutes: Array.isArray(payload.routes) ? payload.routes : [] })
+        const response = await request<ProxyRouteCatalog>('/api/admin/proxy-routes')
+        if (response.generation === sessionGeneration) {
+          set({
+            proxyRoutes: Array.isArray(response.value.routes) ? response.value.routes : [],
+          })
+        }
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
           toast.error(err instanceof Error ? err.message : String(err))
         }
       } finally {
-        set({ proxyRoutesLoading: false })
+        if (generation === sessionGeneration) set({ proxyRoutesLoading: false })
       }
     },
 
     saveProxyRoutes: async (routes) => {
-      const res = await request<ProxyRouteCatalog>('/api/admin/proxy-routes', {
+      const response = await request<ProxyRouteCatalog>('/api/admin/proxy-routes', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ routes }),
       })
-      set({ proxyRoutes: Array.isArray(res.routes) ? res.routes : [] })
-      toast.success(`已下发 ${Array.isArray(res.routes) ? res.routes.length : 0} 条内置线路`)
+      if (response.generation !== sessionGeneration) return
+      const savedRoutes = Array.isArray(response.value.routes) ? response.value.routes : []
+      set({ proxyRoutes: savedRoutes })
+      toast.success(`已下发 ${savedRoutes.length} 条内置线路`)
     },
 
     loadProxyRouteHealth: async (opts) => {
       try {
-        const payload = await request<{ reports?: ProxyRouteHealth[] }>(
+        const response = await request<{ reports?: ProxyRouteHealth[] }>(
           '/api/admin/proxy-route-health',
         )
-        set({ proxyRouteHealth: Array.isArray(payload.reports) ? payload.reports : [] })
+        if (response.generation === sessionGeneration) {
+          set({
+            proxyRouteHealth: Array.isArray(response.value.reports) ? response.value.reports : [],
+          })
+        }
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
           toast.error(err instanceof Error ? err.message : String(err))
@@ -425,7 +478,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
     devLogin: async (serverUrl, key) => {
       const base = normalizeServerUrl(serverUrl)
       if (!base || !key) throw new Error('请填写服务地址和开发者密钥')
-      set({ busy: true })
+      const generation = ++sessionGeneration
+      set({ ...clearedServerScope(), serverUrl: base, busy: true })
       try {
         const res = await fetch(`${base}/api/dev/login`, {
           method: 'POST',
@@ -438,6 +492,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
           token?: string
           release?: SharedRelease
         }
+        if (generation !== sessionGeneration) return
         set({
           role: 'dev',
           serverUrl: base,
@@ -446,34 +501,36 @@ export const useAdminStore = create<AdminState>((set, get) => {
         })
         await adminApi.savePrefs({ serverUrl: base, username: get().username })
       } finally {
-        set({ busy: false })
+        if (generation === sessionGeneration) set({ busy: false })
       }
     },
 
     devLogout: async () => {
       const { serverUrl, devToken } = get()
+      sessionGeneration += 1
+      set(clearedServerScope())
       try {
         await serverFetch(serverUrl, devToken, '/api/dev/logout', { method: 'POST' })
       } catch {
         /* 忽略 */
       }
-      set({ role: 'none', devToken: '', release: null })
     },
 
     loadDevRelease: async () => {
       const { serverUrl, devToken } = get()
+      const generation = sessionGeneration
       try {
         const res = await serverFetch<{ release?: SharedRelease }>(
           serverUrl,
           devToken,
           '/api/dev/release',
         )
-        if (res.release) set({ release: res.release })
+        if (generation === sessionGeneration && res.release) set({ release: res.release })
       } catch (err) {
-        if (err instanceof AuthExpiredError) {
-          set({ role: 'none', devToken: '', release: null })
+        if (err instanceof AuthExpiredError && generation === sessionGeneration) {
+          forceLogout()
           toast.error('开发者登录已失效，请重新登录')
-        } else {
+        } else if (generation === sessionGeneration) {
           toast.error(err instanceof Error ? err.message : String(err))
         }
       }
@@ -481,6 +538,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
 
     saveDevReleaseInfo: async (patch) => {
       const { serverUrl, devToken } = get()
+      const generation = sessionGeneration
       const res = await serverFetch<{ release?: SharedRelease }>(
         serverUrl,
         devToken,
@@ -491,7 +549,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
           body: JSON.stringify(patch),
         },
       )
-      if (res.release) set({ release: res.release })
+      if (generation === sessionGeneration && res.release) set({ release: res.release })
     },
   }
 })

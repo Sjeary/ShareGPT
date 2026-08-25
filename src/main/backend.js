@@ -314,7 +314,7 @@ function mergeSettings(base, override = {}) {
       },
     },
     translation: normalizeTranslationSettings(
-      override.translation || base.translation,
+      override.translation || (override.notesAi ? undefined : base.translation),
       override.notesAi,
     ),
     ui: { ...base.ui, ...(override.ui || {}) },

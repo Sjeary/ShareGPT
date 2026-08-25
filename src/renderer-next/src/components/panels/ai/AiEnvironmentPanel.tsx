@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
 import { createAiEnvironmentId } from '@/lib/aiEnvironments'
+import { normalizeEnvironmentNameDraft } from '@/lib/environmentName'
 import type { AiKind } from '@/store/useAiStore'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -181,20 +182,11 @@ export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }
               className="grid gap-1 rounded-md px-2 py-1.5 transition-colors hover:bg-muted/45"
             >
               <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(140px,1fr)_minmax(150px,220px)_72px]">
-                <Input
-                  defaultValue={environment.name}
-                  aria-label="环境名称"
-                  className="h-8 min-w-0 border-transparent bg-transparent px-1.5 shadow-none hover:border-input focus:border-input focus:bg-background"
-                  onBlur={(event) => {
-                    const name = event.target.value.trim()
-                    if (!name) {
-                      event.currentTarget.value = environment.name
-                    } else if (name !== environment.name) {
-                      void patchEnvironment(environment.id, { name }).catch(() => {
-                        event.currentTarget.value = environment.name
-                      })
-                    }
-                  }}
+                <EnvironmentNameInput
+                  key={`${environment.id}:${environment.name}`}
+                  environment={environment}
+                  disabled={savingId === environment.id}
+                  onSave={(name) => patchEnvironment(environment.id, { name })}
                 />
                 <select
                   value={
@@ -299,6 +291,53 @@ export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }
         </div>
       </div>
     </div>
+  )
+}
+
+function EnvironmentNameInput({
+  environment,
+  disabled,
+  onSave,
+}: {
+  environment: AdvancedAiEnvironment
+  disabled: boolean
+  onSave: (name: string) => Promise<void>
+}) {
+  const [draft, setDraft] = useState(environment.name)
+
+  const commit = async () => {
+    const committedName = environment.name
+    const name = normalizeEnvironmentNameDraft(draft, committedName)
+    if (name === committedName) {
+      setDraft(committedName)
+      return
+    }
+    setDraft(name)
+    try {
+      await onSave(name)
+    } catch {
+      setDraft(environment.name)
+    }
+  }
+
+  return (
+    <Input
+      value={draft}
+      maxLength={60}
+      disabled={disabled}
+      aria-label="环境名称"
+      className="h-8 min-w-0 border-transparent bg-transparent px-1.5 shadow-none hover:border-input focus:border-input focus:bg-background"
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => void commit()}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') event.currentTarget.blur()
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          setDraft(environment.name)
+          event.currentTarget.blur()
+        }
+      }}
+    />
   )
 }
 

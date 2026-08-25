@@ -188,14 +188,16 @@ export function useAiEvents() {
 
       if (payload?.type === 'translate-selection') {
         const profile = useAuthStore.getState().profile
+        const tabId = safeText(payload.tabId)
+        const activeTabId = useAiStore.getState().activeTabIdByKind[kind]
         if (
+          !tabId ||
+          tabId !== activeTabId ||
           !profile?.routeAuthorizationVerified ||
           (!profile?.isAdmin && !profile?.advancedAiAllowed)
         )
           return
-        useTranslationStore
-          .getState()
-          .openSelection(kind, safeText(payload.tabId), safeText(payload.text))
+        useTranslationStore.getState().openSelection(kind, tabId, safeText(payload.text))
         return
       }
 
