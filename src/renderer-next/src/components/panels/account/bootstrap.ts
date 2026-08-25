@@ -20,6 +20,9 @@ export interface BootstrapSender {
   proxy_server: string
   proxy_port: string
   proxy_uuid: string
+  proxy_expected_ip: string
+  proxy_expected_country: string
+  proxy_expected_asn: string
   socks_listen_port: string
   fallback_mode: string
   fallback_local_port: string
@@ -161,6 +164,9 @@ export function normalizeBootstrapPayload(raw: unknown): BootstrapPayload {
       proxy_server: safeText(sender.proxy_server),
       proxy_port: safeText(sender.proxy_port),
       proxy_uuid: safeText(sender.proxy_uuid),
+      proxy_expected_ip: safeText(sender.proxy_expected_ip),
+      proxy_expected_country: safeText(sender.proxy_expected_country).toUpperCase(),
+      proxy_expected_asn: safeText(sender.proxy_expected_asn),
       socks_listen_port: safeText(sender.socks_listen_port),
       fallback_mode: safeText(sender.fallback_mode) || 'system_proxy',
       fallback_local_port: safeText(sender.fallback_local_port),

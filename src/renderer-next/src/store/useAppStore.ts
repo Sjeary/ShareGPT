@@ -88,6 +88,7 @@ function applyTheme(dark: boolean) {
 }
 
 const EMPTY_SETTINGS: AppSettings = {
+  settingsRevision: 0,
   sender: {},
   receiver: {},
   collab: {},
@@ -442,8 +443,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   saveSettings: async (next) => {
-    set({ settings: next })
-    await api.saveSettings(next as unknown as Record<string, unknown>)
+    const saved = (await api.saveSettings(
+      next as unknown as Record<string, unknown>,
+    )) as AppSettings
+    set({ settings: { ...EMPTY_SETTINGS, ...saved } })
   },
 
   patchSection: async (section, patch) => {
@@ -453,6 +456,28 @@ export const useAppStore = create<AppState>((set, get) => ({
       [section]: { ...(cur[section] as object), ...(patch as object) },
     }
     set({ settings: next })
-    await api.saveSettings(next as unknown as Record<string, unknown>)
+    try {
+      const saved = (await api.patchSettings({
+        section: String(section),
+        patch: patch as Record<string, unknown>,
+        expectedRevision: cur.settingsRevision,
+      })) as unknown as AppSettings
+      set({ settings: { ...EMPTY_SETTINGS, ...saved } })
+    } catch (error) {
+      const latest = (await api
+        .loadSettings()
+        .catch(() => cur as unknown as Record<string, unknown>)) as unknown as AppSettings
+      if (String(error).includes('设置已被其他操作更新')) {
+        const saved = (await api.patchSettings({
+          section: String(section),
+          patch: patch as Record<string, unknown>,
+          expectedRevision: latest.settingsRevision,
+        })) as unknown as AppSettings
+        set({ settings: { ...EMPTY_SETTINGS, ...saved } })
+        return
+      }
+      set({ settings: { ...EMPTY_SETTINGS, ...latest } })
+      throw error
+    }
   },
 }))

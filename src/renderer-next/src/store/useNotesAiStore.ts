@@ -1,8 +1,9 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
+import { useAppStore } from '@/store/useAppStore'
 import type { NotesAiProvider } from '@/types/api'
 
-// 知识库 AI provider 配置 (持久化到 app settings.notesAi; 密钥仅存本机)。
+// 知识库与翻译共用 settings.translation.ai，避免维护两份会漂移的 provider 配置。
 interface NotesAiState {
   baseUrl: string
   apiKey: string
@@ -15,7 +16,7 @@ interface NotesAiState {
   configured: () => boolean
 }
 
-const DEFAULTS = { baseUrl: 'http://47.113.226.118:8080', model: 'gpt-5.5', effort: 'medium' }
+const DEFAULTS = { baseUrl: '', model: 'gpt-5.5', effort: 'medium' }
 
 export const useNotesAiStore = create<NotesAiState>((set, get) => ({
   baseUrl: DEFAULTS.baseUrl,
@@ -28,7 +29,10 @@ export const useNotesAiStore = create<NotesAiState>((set, get) => ({
     if (get().loaded) return
     try {
       const settings = (await api.loadSettings()) as Record<string, unknown>
-      const c = (settings?.notesAi ?? {}) as Partial<NotesAiProvider>
+      const translation = (settings?.translation ?? {}) as {
+        ai?: Partial<NotesAiProvider>
+      }
+      const c = translation.ai ?? {}
       set({
         baseUrl: c.baseUrl || DEFAULTS.baseUrl,
         apiKey: c.apiKey || '',
@@ -42,16 +46,23 @@ export const useNotesAiStore = create<NotesAiState>((set, get) => ({
   },
 
   save: async (patch) => {
+    const previous = get()
     set(patch)
     const s = get()
     try {
-      const settings = (await api.loadSettings()) as Record<string, unknown>
-      await api.saveSettings({
-        ...settings,
-        notesAi: { baseUrl: s.baseUrl, apiKey: s.apiKey, model: s.model, effort: s.effort },
+      const translation = useAppStore.getState().settings?.translation
+      await useAppStore.getState().patchSection('translation', {
+        ...translation,
+        ai: { baseUrl: s.baseUrl, apiKey: s.apiKey, model: s.model, effort: s.effort },
       })
-    } catch {
-      /* ignore */
+    } catch (error) {
+      set({
+        baseUrl: previous.baseUrl,
+        apiKey: previous.apiKey,
+        model: previous.model,
+        effort: previous.effort,
+      })
+      throw error
     }
   },
 

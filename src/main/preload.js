@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("api", {
   setThemeSource: (source) => ipcRenderer.invoke("app:set-theme-source", source),
   loadSettings: () => ipcRenderer.invoke("settings:load"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
+  patchSettings: (payload) => ipcRenderer.invoke("settings:patch", payload),
   importSettings: () => ipcRenderer.invoke("settings:import"),
   loadChatHistory: () => ipcRenderer.invoke("chat-history:load"),
   saveChatHistory: (payload) => ipcRenderer.invoke("chat-history:save", payload),
@@ -18,8 +19,8 @@ contextBridge.exposeInMainWorld("api", {
   vault: {
     start: () => ipcRenderer.invoke("vault:start"),
     getRoot: () => ipcRenderer.invoke("vault:get-root"),
-    setRoot: (absPath) => ipcRenderer.invoke("vault:set-root", absPath),
-    pickFolder: () => ipcRenderer.invoke("vault:pick-folder"),
+    chooseRoot: () => ipcRenderer.invoke("vault:choose-root"),
+    chooseImport: () => ipcRenderer.invoke("vault:choose-import"),
     list: () => ipcRenderer.invoke("vault:list"),
     readAll: () => ipcRenderer.invoke("vault:read-all"),
     read: (p) => ipcRenderer.invoke("vault:read", p),
@@ -28,7 +29,6 @@ contextBridge.exposeInMainWorld("api", {
     create: (p, content) => ipcRenderer.invoke("vault:create", { path: p, content }),
     rename: (from, to) => ipcRenderer.invoke("vault:rename", { from, to }),
     remove: (p) => ipcRenderer.invoke("vault:remove", p),
-    importFrom: (src) => ipcRenderer.invoke("vault:import", src),
   },
   onVaultChanged: (handler) => {
     const listener = (_event, payload) => handler(payload);
@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("ai-tabs:switch", { ...(payload || {}), kind }),
   closeAiView: (kind, payload) => ipcRenderer.invoke("ai-tabs:close", { ...(payload || {}), kind }),
   setActiveAiKind: (kind) => ipcRenderer.invoke("ai:set-active-kind", { kind }),
+  closeAllAiWorkspaces: () => ipcRenderer.invoke("ai:close-all"),
   ensureAiWorkspace: (payload) => ipcRenderer.invoke("ai:ensure", payload),
   activateAiEnvironment: (payload) => ipcRenderer.invoke("ai:environment-activate", payload),
   deleteAiEnvironment: (payload) => ipcRenderer.invoke("ai:environment-delete", payload),
@@ -87,7 +88,7 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("browser-privacy:capture", { kind, tabId }),
   applyBrowserPrivacy: () => ipcRenderer.invoke("browser-privacy:apply"),
   detectProxyEnvironment: () => ipcRenderer.invoke("browser-privacy:detect-proxy-environment"),
-  executeAiJavaScript: (payload) => ipcRenderer.invoke("ai:execute-javascript", payload),
+  installAiQueryTracker: (payload) => ipcRenderer.invoke("ai:install-query-tracker", payload),
   openProfileEditor: (payload) => ipcRenderer.invoke("profile:open", payload),
   emitProfileUpdated: (payload) => ipcRenderer.send("profile:updated", payload),
   minimizeWindow: () => ipcRenderer.invoke("window:minimize"),

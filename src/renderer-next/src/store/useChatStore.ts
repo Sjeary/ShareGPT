@@ -3,7 +3,7 @@ import { create } from 'zustand'
 // 协作聊天 store 切片 (本面板自有, 不污染 useAppStore)。
 // 数据来源:
 //  - 本地历史: window.api.loadChatHistory() / saveChatHistory()  (结构见旧 renderer.js ~325 serializeConversationStore)
-//  - 实时: 协作服务器 WebSocket (wss?://host/ws?token=...)  (协议见旧 renderer.js ~4332)
+//  - 实时: 协作服务器 WebSocket，token 通过子协议请求头发送，不进入 URL。
 //  - 在线联系人: GET {server}/api/users  (见旧 renderer.js ~4246)
 // 会话 key 约定 (与旧版兼容, 复用本地历史):
 //  - 房间(子网广播): `room:<scope>`

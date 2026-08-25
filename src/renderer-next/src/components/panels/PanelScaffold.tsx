@@ -27,19 +27,19 @@ export function PanelScaffold({
       <div
         aria-hidden={hideHeader}
         className={cn(
-          'flex shrink-0 items-center gap-3 overflow-hidden px-6',
-          'transition-[height,opacity,border-color] duration-200 ease-out motion-reduce:transition-none',
+          'flex shrink-0 items-center gap-2 px-3 sm:gap-3 sm:px-6',
+          'transition-[opacity,border-color] duration-200 ease-out motion-reduce:transition-none',
           hideHeader
-            ? 'pointer-events-none h-0 border-b border-transparent opacity-0'
-            : 'h-14 border-b border-border opacity-100',
+            ? 'pointer-events-none h-0 overflow-hidden border-b border-transparent opacity-0'
+            : 'min-h-14 border-b border-border py-2 opacity-100',
         )}
       >
-        <Icon className="size-5 text-primary" />
+        <Icon className="size-5 shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-base font-semibold leading-tight">{title}</h1>
-          {hint && <p className="truncate text-xs text-muted-foreground">{hint}</p>}
+          {hint && <p className="hidden truncate text-xs text-muted-foreground sm:block">{hint}</p>}
         </div>
-        {toolbar}
+        {toolbar && <div className="min-w-0 max-w-[55%] shrink-0 overflow-x-auto">{toolbar}</div>}
       </div>
       <div
         className={scrollable ? 'min-h-0 flex-1 overflow-auto' : 'min-h-0 flex-1 overflow-hidden'}

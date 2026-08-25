@@ -3,7 +3,7 @@ import { create } from 'zustand'
 // 组队(共享)日历 store 切片 (本面板自有, 不污染 useAppStore/useChatStore)。
 // 数据来源:
 //  - 协作服务器 REST: {server}/api/team-calendar/events  (鉴权复用聊天 token)
-//  - 实时: 协作 WebSocket (wss?://host/ws?token=...) 的 calendar_event_* 消息;
+//  - 实时: 协作 WebSocket（token 不进入 URL）的 calendar_event_* 消息;
 //    若服务端不支持则降级到 ~15s 轮询。
 //  - 未登录 / 服务端无该接口(404/error): 降级为本地团队日历, 持久化到 localStorage。
 // 事件按房间(subnetKey)隔离, 由服务端盖章; 本地模式下全部归到本地房间。

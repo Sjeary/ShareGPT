@@ -95,6 +95,16 @@ class VaultManager {
     return res.filePaths[0];
   }
 
+  async chooseRoot() {
+    const picked = await this.pickFolder();
+    return picked ? this.setRoot(picked) : null;
+  }
+
+  async chooseImport() {
+    const picked = await this.pickFolder();
+    return picked ? this.importFrom(picked) : null;
+  }
+
   // —— 列表 / 读 / 写 ——
   // 递归列出全部文本文件 (相对路径 + 时间戳)。
   async list() {

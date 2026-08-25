@@ -1753,46 +1753,11 @@ function handleGptTrackerMessage(message) {
 function installGptQueryTracker(tabId = state.gpt.activeTabId) {
   const targetId = safeText(tabId) || state.gpt.activeTabId;
   const activeTab = state.gpt.tabs.find((item) => item.id === targetId);
-  if (!window.api?.executeAiJavaScript || !activeTab || !isGptAllowedUrl(activeTab.url)) return;
-
-  const marker = JSON.stringify(GPT_QUERY_MARKER);
+  if (!window.api?.installAiQueryTracker || !activeTab || !isGptAllowedUrl(activeTab.url)) return;
   window.api
-    .executeAiJavaScript({
+    .installAiQueryTracker({
       kind: "gpt",
       tabId: targetId,
-      code: `
-    (() => {
-      if (window.__gptQueryTrackerInstalled) return;
-      window.__gptQueryTrackerInstalled = true;
-
-      const emit = () => {
-        const textarea = document.querySelector("textarea");
-        const editor = document.querySelector('[contenteditable="true"]');
-        const text = String(textarea?.value || editor?.innerText || "").trim().slice(0, 160);
-        console.log(${marker} + JSON.stringify({ text, stamp: Date.now() }));
-      };
-
-      document.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" || event.shiftKey) return;
-        const target = event.target;
-        const editable = Boolean(
-          target?.closest?.("textarea")
-          || target?.closest?.('[contenteditable="true"]')
-          || target?.matches?.('[contenteditable="true"]'),
-        );
-        if (!editable) return;
-        setTimeout(emit, 0);
-      }, true);
-
-      document.addEventListener("click", (event) => {
-        const button = event.target?.closest?.(
-          'button[data-testid="send-button"], button[aria-label*="Send"], button[aria-label*="发送"]',
-        );
-        if (!button) return;
-        setTimeout(emit, 0);
-      }, true);
-    })();
-  `,
     })
     .catch(() => {
       // ignore tracker injection failures
@@ -2425,6 +2390,8 @@ function refreshSenderAccess() {
   if (!senderPanel || state.mode === "receiver") return;
 
   const senderRunning = Boolean(state.status?.senderRunning);
+  const senderStarting = Boolean(state.status?.senderStarting);
+  const senderLocked = senderRunning || senderStarting;
   const canUseSender = isCollabOnline();
   const hint = el("senderAuthHint");
   const senderInputs = senderPanel.querySelectorAll("input, select, textarea");
@@ -2438,12 +2405,12 @@ function refreshSenderAccess() {
       input.disabled = true;
       continue;
     }
-    input.disabled = !canUseSender || senderRunning;
+    input.disabled = !canUseSender || senderLocked;
   }
 
-  if (el("btnStartSender")) el("btnStartSender").disabled = senderRunning || !canUseSender;
+  if (el("btnStartSender")) el("btnStartSender").disabled = senderLocked || !canUseSender;
   if (el("btnSaveSender")) el("btnSaveSender").disabled = !canUseSender;
-  if (el("btnStopSender")) el("btnStopSender").disabled = !senderRunning;
+  if (el("btnStopSender")) el("btnStopSender").disabled = !senderLocked;
 
   if (hint) {
     hint.style.display = canUseSender ? "none" : "block";
@@ -2473,10 +2440,12 @@ function syncReceiverOverview() {
 function setStatus(status) {
   state.status = status;
   const senderRunning = Boolean(status?.senderRunning);
+  const senderStarting = Boolean(status?.senderStarting);
   const receiverRunning = Boolean(status?.receiverFrpcRunning || status?.receiverSingboxRunning);
 
   if (el("senderState"))
-    el("senderState").textContent = `发送服务：${senderRunning ? "运行中" : "未开启"}`;
+    el("senderState").textContent =
+      `发送服务：${senderStarting ? "启动中" : senderRunning ? "运行中" : "未开启"}`;
   if (el("receiverState"))
     el("receiverState").textContent = `接收服务：${receiverRunning ? "运行中" : "未开启"}`;
 
@@ -4527,8 +4496,8 @@ function connectCollabWebSocket() {
     return;
   }
   state.collab.intentionalSocketClose = false;
-  const wsUrl = `${toWsUrl(state.collab.serverUrl)}?token=${encodeURIComponent(expectedToken)}`;
-  const ws = new WebSocket(wsUrl);
+  const wsUrl = toWsUrl(state.collab.serverUrl);
+  const ws = new WebSocket(wsUrl, ["sharegpt", `sharegpt-auth.${expectedToken}`]);
   let opened = false;
   state.collab.ws = ws;
   setCollabState("连接中");

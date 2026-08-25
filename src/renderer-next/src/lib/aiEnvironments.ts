@@ -7,11 +7,22 @@ import type {
 import type { AiKind } from '@/store/useAiStore'
 
 const KINDS: AiKind[] = ['gpt', 'gemini', 'claude']
+const ROUTE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/
 
 function text(value: unknown, maxLength = 80): string {
   return String(value ?? '')
     .trim()
     .slice(0, maxLength)
+}
+
+function configKey(value: unknown): string {
+  const source = JSON.stringify(value)
+  let hash = 2166136261
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0).toString(36)
 }
 
 function hasCompleteUnifiedProxy(sender: Partial<SenderSettings>): boolean {
@@ -28,22 +39,40 @@ function hasCompleteUnifiedProxy(sender: Partial<SenderSettings>): boolean {
 export function availableAiRoutes(sender: Partial<SenderSettings> = {}): AdvancedAiRoute[] {
   const routes: AdvancedAiRoute[] = []
   const authorized = Array.isArray(sender.authorized_proxy_route_ids)
-    ? new Set(sender.authorized_proxy_route_ids)
-    : null
-  const isAuthorized = (id: string) => !authorized || authorized.has(id)
+    ? new Set(sender.authorized_proxy_route_ids.map((id) => text(id, 64).toLowerCase()))
+    : new Set<string>()
+  const isAuthorized = (id: string) => authorized.has(id)
   if (hasCompleteUnifiedProxy(sender) && isAuthorized('internal-unified')) {
-    routes.push({ id: 'internal-unified', name: '内置统一代理', mode: 'singbox' })
+    routes.push({
+      id: 'internal-unified',
+      name: '内置统一代理',
+      mode: 'singbox',
+      configKey: configKey([sender.proxy_server, sender.proxy_port, sender.proxy_uuid]),
+    })
   }
   const managed = Array.isArray(sender.managed_proxy_routes) ? sender.managed_proxy_routes : []
   const legacy =
     sender.airport_outbound && typeof sender.airport_outbound === 'object'
       ? [{ id: 'internal-airport', name: sender.airport_name || '内置机场节点', enabled: true }]
       : []
+  const seen = new Set(routes.map((route) => route.id))
   for (const route of [...managed, ...legacy]) {
     const id = text(route?.id, 64).toLowerCase()
-    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id) || route?.enabled === false || !isAuthorized(id))
-      if (routes.some((candidate) => candidate.id === id)) continue
-    routes.push({ id, name: `内置节点 · ${text(route?.name, 80) || id}`, mode: 'singbox' })
+    if (
+      !ROUTE_ID_PATTERN.test(id) ||
+      route?.enabled === false ||
+      !isAuthorized(id) ||
+      seen.has(id)
+    ) {
+      continue
+    }
+    seen.add(id)
+    routes.push({
+      id,
+      name: `内置节点 · ${text(route?.name, 80) || id}`,
+      mode: 'singbox',
+      configKey: configKey([id, 'outbound' in route ? route.outbound : sender.airport_outbound]),
+    })
   }
   return routes
 }
@@ -55,7 +84,7 @@ export function createAiEnvironmentId(): string {
 
 export function normalizeAdvancedAiSettings(raw: unknown): AdvancedAiSettings {
   const value = raw && typeof raw === 'object' ? (raw as Partial<AdvancedAiSettings>) : {}
-  const environments = Array.isArray(value.environments)
+  const normalizedEnvironments = Array.isArray(value.environments)
     ? value.environments
         .map((item): AdvancedAiEnvironment | null => {
           const id = text(item?.id, 48).toLowerCase()
@@ -72,6 +101,14 @@ export function normalizeAdvancedAiSettings(raw: unknown): AdvancedAiSettings {
         })
         .filter((item): item is AdvancedAiEnvironment => Boolean(item))
     : []
+  const environments = [
+    ...new Map(
+      normalizedEnvironments.map((environment) => [
+        `${environment.kind}:${environment.id}`,
+        environment,
+      ]),
+    ).values(),
+  ]
 
   const activeByKind = { gpt: '', gemini: '', claude: '' }
   for (const kind of KINDS) {

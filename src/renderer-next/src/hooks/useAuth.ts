@@ -108,13 +108,26 @@ async function applySenderBootstrapConfig(serverSender: BootstrapSender): Promis
 
   const current = (useAppStore.getState().settings?.sender ?? {}) as Partial<SenderSettings>
   if (hasCompleteSenderBootstrap(current)) {
-    return false
+    const expectedIdentity = {
+      proxy_expected_ip: serverSender.proxy_expected_ip || '',
+      proxy_expected_country: serverSender.proxy_expected_country || '',
+      proxy_expected_asn: serverSender.proxy_expected_asn || '',
+    }
+    const changed = Object.entries(expectedIdentity).some(
+      ([key, value]) => String(current[key as keyof SenderSettings] || '') !== value,
+    )
+    if (changed) await useAppStore.getState().patchSection('sender', expectedIdentity)
+    return changed
   }
 
   const merged: Partial<SenderSettings> = {
     proxy_server: serverSender.proxy_server || current.proxy_server || '',
     proxy_port: serverSender.proxy_port || current.proxy_port || '',
     proxy_uuid: serverSender.proxy_uuid || current.proxy_uuid || '',
+    proxy_expected_ip: serverSender.proxy_expected_ip || current.proxy_expected_ip || '',
+    proxy_expected_country:
+      serverSender.proxy_expected_country || current.proxy_expected_country || '',
+    proxy_expected_asn: serverSender.proxy_expected_asn || current.proxy_expected_asn || '',
     socks_listen_port: serverSender.socks_listen_port || current.socks_listen_port || '',
     fallback_mode: serverSender.fallback_mode || current.fallback_mode || 'system_proxy',
     fallback_local_port: serverSender.fallback_local_port || current.fallback_local_port || '',
@@ -127,7 +140,7 @@ async function applySenderBootstrapConfig(serverSender: BootstrapSender): Promis
 
 // 登录后拉取客户端 bootstrap (更新信息 + 发送端配置同步)。
 // 移植自旧 renderer.js fetchClientBootstrap(~2870): best-effort, 失败不阻塞登录。
-async function fetchClientBootstrap(
+export async function fetchClientBootstrap(
   serverUrl: string,
   token: string,
 ): Promise<BootstrapPayload | null> {
@@ -149,38 +162,45 @@ async function fetchClientBootstrap(
   }
 
   const payload = normalizeBootstrapPayload(await response.json().catch(() => null))
-  // 自动更新已改为查询 GitHub Releases (见 LoggedInView 更新区 / 登录页提示), 不再从服务器读取版本信息。
-  // 本机 sender 不完整时用服务器下发补全。
+  return payload
+}
+
+export async function clearRemoteRouteState(): Promise<void> {
+  await useAppStore.getState().patchSection('sender', {
+    managed_proxy_routes: [],
+    authorized_proxy_route_ids: [],
+    airport_outbound: null,
+    airport_name: '',
+  })
+}
+
+export async function applyClientBootstrap(payload: BootstrapPayload): Promise<void> {
   await applySenderBootstrapConfig(payload.sender)
   // 管理端节点是权威配置：更新时覆盖，撤销时也清掉本机旧副本。
-  // 不改 proxy_mode；若当前选中的节点被撤销，发送端启动校验会要求切回统一代理。
-  await useAppStore
-    .getState()
-    .patchSection('sender', {
-      managed_proxy_routes: payload.proxyRoutes
-        .filter((route) => route.kind === 'managed' && route.outbound)
-        .map((route) => ({
-          id: route.id,
-          name: route.name,
-          enabled: route.enabled,
-          kind: 'managed' as const,
-          outbound: route.outbound || {},
-          expected: route.expected,
-        })),
-      authorized_proxy_route_ids: payload.proxyRoutesAuthoritative
-        ? payload.proxyRoutes.map((route) => route.id)
-        : null,
-      airport_outbound:
-        payload.proxyRoutes.find((route) => route.id === 'internal-airport')?.outbound ||
-        payload.airport?.outbound ||
-        null,
-      airport_name:
-        payload.proxyRoutes.find((route) => route.id === 'internal-airport')?.name ||
-        payload.airport?.name ||
-        '',
-    })
-    .catch(() => undefined)
-  return payload
+  // 缺少权威 routes 数组时保持 fail-closed，不沿用旧账号授权。
+  await useAppStore.getState().patchSection('sender', {
+    managed_proxy_routes: payload.proxyRoutes
+      .filter((route) => route.kind === 'managed' && route.outbound)
+      .map((route) => ({
+        id: route.id,
+        name: route.name,
+        enabled: route.enabled,
+        kind: 'managed' as const,
+        outbound: route.outbound || {},
+        expected: route.expected,
+      })),
+    authorized_proxy_route_ids: payload.proxyRoutesAuthoritative
+      ? payload.proxyRoutes.map((route) => route.id)
+      : [],
+    airport_outbound:
+      payload.proxyRoutes.find((route) => route.id === 'internal-airport')?.outbound ||
+      payload.airport?.outbound ||
+      null,
+    airport_name:
+      payload.proxyRoutes.find((route) => route.id === 'internal-airport')?.name ||
+      payload.airport?.name ||
+      '',
+  })
 }
 
 export function useAuth() {
@@ -225,17 +245,41 @@ export function useAuth() {
         throw new Error('登录未成功，请稍后重试')
       }
 
+      // 在暴露新会话前先清除上一账号的远程线路，再读取服务器的权威 bootstrap。
+      // bootstrap 失败仍允许基础聊天登录，但高级 AI 保持 fail-closed。
+      await api.stopSender().catch(() => {})
+      await api.closeAllAiWorkspaces().catch(() => {})
+      await clearRemoteRouteState()
+      let bootstrap: BootstrapPayload | null = null
+      try {
+        bootstrap = await fetchClientBootstrap(cleanedServer, payload.token)
+        if (bootstrap) await applyClientBootstrap(bootstrap)
+      } catch {
+        // 基础聊天仍可登录，但 routeAuthorizationVerified 保持 false。
+      }
+
+      const routeAuthorizationVerified = Boolean(bootstrap?.proxyRoutesAuthoritative)
       const profile: AuthProfile = {
         username: cleanedUser,
         displayName: (payload.profile?.displayName ?? '').trim() || cleanedUser,
         avatar: (payload.profile?.avatar ?? '').trim(),
         isAdmin: Boolean(payload.profile?.isAdmin),
-        advancedAiAllowed: Boolean(payload.profile?.isAdmin || payload.profile?.advancedAiAllowed),
-        allowedProxyRouteIds: Array.isArray(payload.profile?.allowedProxyRouteIds)
-          ? payload.profile.allowedProxyRouteIds
+        advancedAiAllowed: Boolean(payload.profile?.advancedAiAllowed),
+        routeAuthorizationVerified,
+        allowedProxyRouteIds: routeAuthorizationVerified
+          ? bootstrap?.proxyRoutes.map((route) => route.id) || []
           : [],
         chatDisabled: Boolean(payload.profile?.chatDisabled),
       }
+
+      // 持久化登录偏好成功后才公开运行期会话，避免半登录状态。
+      await patchSection('collab', {
+        server_url: cleanedServer,
+        last_username: cleanedUser,
+        last_avatar: profile.avatar,
+        remember_password: rememberPassword,
+        saved_password: rememberPassword ? password : '',
+      })
 
       setSession({ token: payload.token, profile, password })
 
@@ -264,24 +308,7 @@ export function useAuth() {
         useChatStore.getState().setDirectory(normalizeDirectory(rawUsers))
       }
 
-      // 持久化 collab 设置 (与旧版 settings.json 字段 100% 兼容)。
-      await patchSection('collab', {
-        server_url: cleanedServer,
-        last_username: cleanedUser,
-        last_avatar: profile.avatar,
-        remember_password: rememberPassword,
-        saved_password: rememberPassword ? password : '',
-      })
-
       setAuthed(true)
-
-      // 拉取客户端 bootstrap (更新信息 + 发送端配置同步)。best-effort, 失败不阻塞登录。
-      // (移植自旧 performCollabLogin ~4588: try fetchClientBootstrap catch 记日志。)
-      try {
-        await fetchClientBootstrap(cleanedServer, payload.token)
-      } catch {
-        /* 忽略: 登录已成功, bootstrap 失败仅影响更新提示/自动补全 */
-      }
 
       return profile
     },
@@ -317,6 +344,8 @@ export function useAuth() {
     // 移植自旧 renderer.js collabLogout(~4273): await stopSenderBecauseAccountOffline。
     // 注意: 4002/4003/静默重登失败时的 stopSender 归 chat 域 (useChat.ts), 本域只管主动退出。
     await api.stopSender().catch(() => {})
+    await api.closeAllAiWorkspaces().catch(() => {})
+    await clearRemoteRouteState().catch(() => {})
 
     clearSession()
     setAuthed(false)

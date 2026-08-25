@@ -19,6 +19,24 @@ test("高级 AI 线路查找失败时禁止静默换线", () => {
   });
 });
 
+test("普通统一代理不依赖高级 AI 线路授权", () => {
+  const backend = Object.create(Backend.prototype);
+  backend.appMode = "sender";
+  const config = backend.buildSenderConfig({
+    proxy_server: "proxy.example.com",
+    proxy_port: "443",
+    proxy_uuid: "00000000-0000-4000-8000-000000000000",
+    socks_listen_port: "1080",
+    fallback_mode: "direct",
+    proxy_mode: "unified",
+    authorized_proxy_route_ids: [],
+  });
+
+  assert.ok(config.outbounds.some((outbound) => outbound.tag === "proxy-unified"));
+  assert.ok(config.route.rules.some((rule) => rule.outbound === "proxy-unified"));
+  assert.ok(!config.inbounds.some((inbound) => inbound.tag === "ai-unified-in"));
+});
+
 test("sender 配置在同一 sing-box 中固定两条高级 AI 出口", () => {
   const backend = Object.create(Backend.prototype);
   backend.appMode = "sender";
@@ -26,6 +44,8 @@ test("sender 配置在同一 sing-box 中固定两条高级 AI 出口", () => {
     proxy_server: "proxy.example.com",
     proxy_port: "443",
     proxy_uuid: "00000000-0000-4000-8000-000000000000",
+    proxy_expected_ip: "203.0.113.7",
+    proxy_expected_country: "US",
     socks_listen_port: "1080",
     fallback_mode: "direct",
     proxy_mode: "unified",
@@ -37,6 +57,7 @@ test("sender 配置在同一 sing-box 中固定两条高级 AI 出口", () => {
       method: "2022-blake3-aes-128-gcm",
       password: "test-only",
     },
+    authorized_proxy_route_ids: ["internal-unified", "internal-airport"],
   });
 
   assert.ok(config.outbounds.some((outbound) => outbound.tag === "proxy-unified"));

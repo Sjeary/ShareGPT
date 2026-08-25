@@ -17,13 +17,13 @@ export function PanelScaffold({
 }) {
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-6">
+      <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border px-3 sm:gap-3 sm:px-6">
         <Icon className="size-5 text-primary" />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-base font-semibold leading-tight">{title}</h1>
-          {hint && <p className="truncate text-xs text-muted-foreground">{hint}</p>}
+          {hint && <p className="hidden truncate text-xs text-muted-foreground sm:block">{hint}</p>}
         </div>
-        {toolbar}
+        {toolbar && <div className="max-w-[60%] shrink-0 overflow-x-auto">{toolbar}</div>}
       </div>
       <div className="min-h-0 flex-1 overflow-auto">{children}</div>
     </section>

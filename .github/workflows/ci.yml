@@ -25,10 +25,10 @@ jobs:
 
       - name: 安装依赖 (主程序 + 渲染层 + 管理端 + 协作服务端)
         run: |
-          npm install --no-audit --no-fund
-          npm --prefix src/renderer-next install --no-audit --no-fund
-          npm --prefix admin_console/ui install --no-audit --no-fund
-          npm --prefix collab_server2 install --no-audit --no-fund
+          npm ci --no-audit --no-fund
+          npm --prefix src/renderer-next ci --no-audit --no-fund
+          npm --prefix admin_console/ui ci --no-audit --no-fund
+          npm --prefix collab_server2 ci --no-audit --no-fund
 
       - name: 主进程语法检查 (node --check)
         run: |
@@ -50,6 +50,10 @@ jobs:
 
       - name: 单元测试 (collab_server2)
         run: npm test
+
+      - name: 单元测试 (渲染层)
+        run: npm test
+        working-directory: src/renderer-next
 
       - name: 格式检查 (prettier)
         run: npm run format:check

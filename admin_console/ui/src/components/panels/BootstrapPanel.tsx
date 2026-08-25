@@ -14,6 +14,9 @@ const EMPTY_SENDER = {
   proxy_server: '',
   proxy_port: '',
   proxy_uuid: '',
+  proxy_expected_ip: '',
+  proxy_expected_country: '',
+  proxy_expected_asn: '',
   socks_listen_port: '1080',
   fallback_mode: 'system_proxy',
   fallback_local_port: '',
@@ -36,6 +39,9 @@ export function BootstrapPanel() {
       proxy_server: String(sender.proxy_server || ''),
       proxy_port: String(sender.proxy_port || ''),
       proxy_uuid: String(sender.proxy_uuid || ''),
+      proxy_expected_ip: String(sender.proxy_expected_ip || ''),
+      proxy_expected_country: String(sender.proxy_expected_country || ''),
+      proxy_expected_asn: String(sender.proxy_expected_asn || ''),
       socks_listen_port: String(sender.socks_listen_port || '1080'),
       fallback_mode: String(sender.fallback_mode || 'system_proxy'),
       fallback_local_port: String(sender.fallback_local_port || ''),
@@ -108,6 +114,28 @@ export function BootstrapPanel() {
               <Input
                 value={form.proxy_uuid}
                 onChange={(e) => patch({ proxy_uuid: e.target.value })}
+              />
+            </Field>
+            <Field label="预期出口 IP">
+              <Input
+                value={form.proxy_expected_ip}
+                onChange={(e) => patch({ proxy_expected_ip: e.target.value })}
+                placeholder="高级环境启用前必须配置"
+              />
+            </Field>
+            <Field label="预期国家代码">
+              <Input
+                value={form.proxy_expected_country}
+                onChange={(e) => patch({ proxy_expected_country: e.target.value.toUpperCase() })}
+                maxLength={2}
+                placeholder="US"
+              />
+            </Field>
+            <Field label="预期 ASN">
+              <Input
+                value={form.proxy_expected_asn}
+                onChange={(e) => patch({ proxy_expected_asn: e.target.value })}
+                placeholder="可选"
               />
             </Field>
             <Field label="本地 SOCKS 端口">

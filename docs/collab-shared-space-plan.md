@@ -7,7 +7,7 @@
 ## 1. 现状（来自代码探查）
 
 - 客户端：`ChatPanel.tsx` + `useChat.ts`（WebSocket）+ `useChatStore.ts`；登录在 `useAuth.ts`。
-- 服务端：`collab_server2/server.js`，WS `/ws?token=`，消息 `scope` 仅两种：
+- 服务端：`collab_server2/server.js`，WS `/ws`（token 通过 WebSocket 子协议请求头发送），消息 `scope` 仅两种：
   `subnet`（同子网广播房）/ `private`（1:1）。房间由 IP 自动派生，**用户不能自选/创建房间**。
 - 设置：`settings.collab.*`（server_url、pinned_users、通知开关等）。
 

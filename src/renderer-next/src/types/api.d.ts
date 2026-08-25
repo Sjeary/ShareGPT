@@ -141,8 +141,8 @@ export interface VaultChangeEvent {
 export interface VaultApi {
   start: () => Promise<void>
   getRoot: () => Promise<string>
-  setRoot: (absPath: string) => Promise<{ ok: boolean; root: string; count: number }>
-  pickFolder: () => Promise<string | null>
+  chooseRoot: () => Promise<{ ok: boolean; root: string; count: number } | null>
+  chooseImport: () => Promise<VaultImportReport | null>
   list: () => Promise<VaultFileMeta[]>
   readAll: () => Promise<VaultFile[]>
   read: (path: string) => Promise<VaultFile>
@@ -151,7 +151,6 @@ export interface VaultApi {
   create: (path: string, content?: string) => Promise<VaultFile>
   rename: (from: string, to: string) => Promise<{ ok: boolean }>
   remove: (path: string) => Promise<{ ok: boolean }>
-  importFrom: (src: string) => Promise<VaultImportReport>
 }
 
 // —— 知识库 AI (Responses 流式) ——
@@ -207,6 +206,11 @@ export interface ShareGptApi {
   // 设置 / 数据
   loadSettings: () => Promise<Record<string, unknown>>
   saveSettings: (settings: Record<string, unknown>) => Promise<unknown>
+  patchSettings: (payload: {
+    section: string
+    patch: Record<string, unknown>
+    expectedRevision?: number
+  }) => Promise<Record<string, unknown>>
   importSettings: () => Promise<unknown>
   loadChatHistory: () => Promise<unknown>
   saveChatHistory: (payload: unknown) => Promise<unknown>
@@ -264,6 +268,7 @@ export interface ShareGptApi {
   switchAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
   closeAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
   setActiveAiKind: (kind: 'gpt' | 'gemini' | 'claude' | '') => Promise<unknown>
+  closeAllAiWorkspaces: () => Promise<unknown>
   ensureAiWorkspace: (payload: unknown) => Promise<unknown>
   activateAiEnvironment: (payload: unknown) => Promise<unknown>
   deleteAiEnvironment: (payload: unknown) => Promise<unknown>
@@ -318,10 +323,15 @@ export interface ShareGptApi {
     checkedAt: string
     security?: { proxy: boolean; vpn: boolean; tor: boolean; hosting: boolean }
   }>
-  executeAiJavaScript: (payload: unknown) => Promise<unknown>
+  installAiQueryTracker: (payload: { kind: string; tabId: string }) => Promise<boolean>
 
   // profile 独立窗口
   openProfileEditor: (payload: unknown) => Promise<unknown>
+  getProfileContext?: () => Promise<{
+    serverUrl: string
+    token: string
+    username: string
+  } | null>
   emitProfileUpdated: (payload: unknown) => void
 
   // 窗口控制

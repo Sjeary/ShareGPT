@@ -87,8 +87,8 @@ function internalAiProxyRoutes(sender = {}) {
   const definitions = [];
   const authorized = Array.isArray(sender.authorized_proxy_route_ids)
     ? new Set(sender.authorized_proxy_route_ids.map(normalizeAiRouteId).filter(Boolean))
-    : null;
-  const isAuthorized = (id) => !authorized || authorized.has(id);
+    : new Set();
+  const isAuthorized = (id) => authorized.has(id);
 
   if (hasCompleteUnifiedProxy(sender) && isAuthorized("internal-unified")) {
     definitions.push({
@@ -98,7 +98,11 @@ function internalAiProxyRoutes(sender = {}) {
       inboundTag: "ai-unified-in",
       outboundTag: "proxy-unified",
       dnsTag: "dns_proxy_unified",
-      expected: { ip: "", countryCode: "", asn: "" },
+      expected: {
+        ip: safeText(sender.proxy_expected_ip, 80),
+        countryCode: safeText(sender.proxy_expected_country, 2).toUpperCase(),
+        asn: safeText(sender.proxy_expected_asn, 40),
+      },
     });
   }
 
@@ -200,10 +204,46 @@ function validateAiRouteIsolation(config, routes) {
   return true;
 }
 
+function evaluateAiRouteHealth(route = {}, detected = {}) {
+  const expected = route.expected && typeof route.expected === "object" ? route.expected : {};
+  const expectedIp = safeText(expected.ip).toLowerCase();
+  const expectedCountry = safeText(expected.countryCode).toUpperCase();
+  const expectedAsn = safeText(expected.asn).toUpperCase().replace(/^AS/, "");
+  const actualIp = safeText(detected.ip).toLowerCase();
+  const actualAsn = safeText(detected.asn).toUpperCase().replace(/^AS/, "");
+  const requiresExpectedIp = Boolean(normalizeAiRouteId(route.id));
+  const status = (checked, passed) => (checked ? (passed ? "passed" : "failed") : "not-checked");
+  const checks = {
+    httpCrossCheck: status(true, Boolean(actualIp)),
+    expectedIp: status(
+      Boolean(expectedIp) || requiresExpectedIp,
+      Boolean(expectedIp) && actualIp === expectedIp,
+    ),
+    expectedCountry: status(
+      Boolean(expectedCountry),
+      safeText(detected.countryCode).toUpperCase() === expectedCountry,
+    ),
+    expectedAsn: status(Boolean(expectedAsn), actualAsn === expectedAsn),
+    dnsConfigured: status(true, Boolean(route.dnsTag && route.outboundTag)),
+    ipv4EgressObserved: status(true, Boolean(actualIp && !actualIp.includes(":"))),
+    webRtcPolicyApplied: "not-checked",
+  };
+  const blockingChecks = [
+    checks.httpCrossCheck,
+    checks.expectedIp,
+    checks.expectedCountry,
+    checks.expectedAsn,
+    checks.dnsConfigured,
+    checks.ipv4EgressObserved,
+  ].filter((result) => result !== "not-checked");
+  return { expected, checks, ok: blockingChecks.every((result) => result === "passed") };
+}
+
 module.exports = {
   hasCompleteUnifiedProxy,
   internalAiProxyRoutes,
   validateAiRouteIsolation,
+  evaluateAiRouteHealth,
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   partitionForAiEnvironment,

@@ -36,18 +36,23 @@ interface TranslationPanelProps {
 export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
   const state = useTranslationStore()
   const cancelRef = useRef<null | (() => void)>(null)
+  const requestGenerationRef = useRef(0)
   const [copied, setCopied] = useCopyIndicator()
 
   useEffect(() => {
-    void state.load()
-  }, [state.load])
+    void useTranslationStore.getState().load()
+  }, [])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    requestGenerationRef.current += 1
+    cancelRef.current?.()
+    cancelRef.current = null
+    return () => {
+      requestGenerationRef.current += 1
       cancelRef.current?.()
-    },
-    [],
-  )
+      cancelRef.current = null
+    }
+  }, [kind, tabId])
 
   const patchConfig = (patch: Partial<TranslationSettings>) => {
     void state
@@ -55,18 +60,29 @@ export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
       .catch((error) => state.setStatus(error instanceof Error ? error.message : String(error)))
   }
 
+  const closePanel = () => {
+    requestGenerationRef.current += 1
+    cancelRef.current?.()
+    cancelRef.current = null
+    state.close()
+  }
+
   const capturePage = async () => {
+    const generation = ++requestGenerationRef.current
     state.setLoading(true)
     state.setStatus('正在读取当前网页…')
     try {
       const page = await api.captureAiPageText(kind, tabId)
+      if (generation !== requestGenerationRef.current) return
       state.setSourceText(page.text)
       state.setResult('')
       state.setStatus(page.truncated ? '内容较长，已读取前 30000 个字符' : '已读取当前网页')
     } catch (error) {
-      state.setStatus(error instanceof Error ? error.message : String(error))
+      if (generation === requestGenerationRef.current) {
+        state.setStatus(error instanceof Error ? error.message : String(error))
+      }
     } finally {
-      state.setLoading(false)
+      if (generation === requestGenerationRef.current) state.setLoading(false)
     }
   }
 
@@ -77,6 +93,7 @@ export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
       return
     }
     cancelRef.current?.()
+    const generation = ++requestGenerationRef.current
     state.setResult('')
     state.setLoading(true)
     state.setStatus('正在翻译…')
@@ -97,14 +114,20 @@ export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
           ctx: { targetLanguage: TARGET_LABELS[state.config.targetLanguage] || '中文' },
         },
         {
-          onDelta: state.appendResult,
-          onStatus: state.setStatus,
+          onDelta: (delta) => {
+            if (generation === requestGenerationRef.current) state.appendResult(delta)
+          },
+          onStatus: (status) => {
+            if (generation === requestGenerationRef.current) state.setStatus(status)
+          },
           onDone: () => {
+            if (generation !== requestGenerationRef.current) return
             cancelRef.current = null
             state.setLoading(false)
             state.setStatus('翻译完成')
           },
           onError: (message) => {
+            if (generation !== requestGenerationRef.current) return
             cancelRef.current = null
             state.setLoading(false)
             state.setStatus(message)
@@ -125,191 +148,256 @@ export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
         source: state.config.sourceLanguage,
         target: state.config.targetLanguage,
       })
+      if (generation !== requestGenerationRef.current) return
       state.setResult(response.translatedText)
       state.setStatus('翻译完成')
     } catch (error) {
-      state.setStatus(error instanceof Error ? error.message : String(error))
+      if (generation === requestGenerationRef.current) {
+        state.setStatus(error instanceof Error ? error.message : String(error))
+      }
     } finally {
-      state.setLoading(false)
+      if (generation === requestGenerationRef.current) state.setLoading(false)
     }
   }
 
   return (
-    <aside className="flex h-full w-[360px] min-w-[300px] max-w-[42%] shrink-0 flex-col border-l border-border bg-background">
-      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
-        <Languages className="size-4 text-primary" />
-        <h2 className="text-sm font-semibold">翻译</h2>
-        <span className="text-xs text-muted-foreground">
-          {PROVIDERS.find((item) => item.id === state.config.provider)?.label}
-        </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className={cn('ml-auto size-8', state.settingsOpen && 'bg-accent')}
-          title="翻译设置"
-          aria-label="翻译设置"
-          onClick={() => state.setSettingsOpen(!state.settingsOpen)}
-        >
-          <Settings2 className="size-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-8"
-          title="关闭翻译侧栏"
-          aria-label="关闭翻译侧栏"
-          onClick={state.close}
-        >
-          <X className="size-4" />
-        </Button>
-      </div>
-
-      <div className="flex shrink-0 gap-1 border-b border-border p-2">
-        {PROVIDERS.map((provider) => (
-          <button
-            key={provider.id}
-            type="button"
-            className={cn(
-              'h-8 flex-1 rounded-md px-2 text-xs font-medium transition-colors',
-              state.config.provider === provider.id
-                ? 'bg-primary text-primary-foreground'
-                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-            )}
-            onClick={() => void state.setProvider(provider.id)}
-          >
-            {provider.label}
-          </button>
-        ))}
-      </div>
-
-      {state.settingsOpen && (
-        <TranslationSettingsForm config={state.config} onChange={patchConfig} />
-      )}
-
-      <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
-        <div className="flex items-center gap-2">
-          <LanguageSelect
-            value={state.config.sourceLanguage}
-            includeAuto
-            label="源语言"
-            onChange={(sourceLanguage) => patchConfig({ sourceLanguage })}
-          />
-          <span className="text-xs text-muted-foreground">→</span>
-          <LanguageSelect
-            value={state.config.targetLanguage}
-            label="目标语言"
-            onChange={(targetLanguage) => patchConfig({ targetLanguage })}
-          />
-        </div>
-
-        <textarea
-          value={state.sourceText}
-          onChange={(event) => state.setSourceText(event.target.value)}
-          placeholder="输入文字，或在网页中选中文字后右键翻译"
-          aria-label="待翻译内容"
-          spellCheck={false}
-          className="min-h-28 w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-        />
-
-        <div className="flex items-center gap-2">
+    <>
+      <button
+        type="button"
+        aria-label="关闭翻译侧栏"
+        className="fixed inset-0 z-20 bg-black/35 backdrop-blur-[1px] lg:hidden"
+        onClick={closePanel}
+      />
+      <aside
+        aria-label="翻译侧栏"
+        className="fixed inset-y-0 right-0 z-30 flex w-[min(92vw,380px)] flex-col border-l border-border bg-background shadow-2xl lg:static lg:z-auto lg:w-[clamp(280px,30vw,420px)] lg:min-w-0 lg:shrink-0 lg:shadow-none"
+      >
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
+          <Languages className="size-4 text-primary" />
+          <h2 className="text-sm font-semibold">翻译</h2>
+          <span className="text-xs text-muted-foreground">
+            {PROVIDERS.find((item) => item.id === state.config.provider)?.label}
+          </span>
           <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5"
-            disabled={state.loading}
-            onClick={() => void capturePage()}
+            variant="ghost"
+            size="icon"
+            className={cn('ml-auto size-8', state.settingsOpen && 'bg-accent')}
+            title="翻译设置"
+            aria-label="翻译设置"
+            onClick={() => state.setSettingsOpen(!state.settingsOpen)}
           >
-            <FileText className="size-3.5" />
-            读取整页
+            <Settings2 className="size-4" />
           </Button>
           <Button
-            size="sm"
-            className="ml-auto gap-1.5"
-            disabled={state.loading}
-            onClick={() => void translate()}
+            variant="ghost"
+            size="icon"
+            className="size-8"
+            title="关闭翻译侧栏"
+            aria-label="关闭翻译侧栏"
+            onClick={closePanel}
           >
-            {state.loading ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Languages className="size-3.5" />
-            )}
-            翻译
+            <X className="size-4" />
           </Button>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col border-t border-border pt-2">
-          <div className="mb-1 flex h-8 items-center">
-            <span className="text-xs font-medium text-muted-foreground">译文</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="ml-auto size-7"
-              title="复制译文"
-              aria-label="复制译文"
-              disabled={!state.result}
-              onClick={() => {
-                void navigator.clipboard.writeText(state.result).then(() => setCopied())
-              }}
-            >
-              {copied ? (
-                <Check className="size-3.5 text-emerald-500" />
-              ) : (
-                <Clipboard className="size-3.5" />
+        <div className="flex shrink-0 gap-1 border-b border-border p-2">
+          {PROVIDERS.map((provider) => (
+            <button
+              key={provider.id}
+              type="button"
+              className={cn(
+                'h-8 flex-1 rounded-md px-2 text-xs font-medium transition-colors',
+                state.config.provider === provider.id
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
               )}
+              onClick={() => void state.setProvider(provider.id)}
+            >
+              {provider.label}
+            </button>
+          ))}
+        </div>
+
+        {state.settingsOpen && (
+          <TranslationSettingsForm
+            key={state.config.provider}
+            config={state.config}
+            onSave={(config) => {
+              void state
+                .saveConfig(config)
+                .then(() => {
+                  state.setStatus('翻译设置已保存')
+                  state.setSettingsOpen(false)
+                })
+                .catch((error) =>
+                  state.setStatus(error instanceof Error ? error.message : String(error)),
+                )
+            }}
+          />
+        )}
+
+        <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
+          <div className="flex items-center gap-2">
+            <LanguageSelect
+              value={state.config.sourceLanguage}
+              includeAuto
+              label="源语言"
+              onChange={(sourceLanguage) => patchConfig({ sourceLanguage })}
+            />
+            <span className="text-xs text-muted-foreground">→</span>
+            <LanguageSelect
+              value={state.config.targetLanguage}
+              label="目标语言"
+              onChange={(targetLanguage) => patchConfig({ targetLanguage })}
+            />
+          </div>
+
+          <textarea
+            value={state.sourceText}
+            onChange={(event) => state.setSourceText(event.target.value)}
+            placeholder="输入文字，或在网页中选中文字后右键翻译"
+            aria-label="待翻译内容"
+            spellCheck={false}
+            className="min-h-28 w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          />
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              disabled={state.loading}
+              onClick={() => void capturePage()}
+            >
+              <FileText className="size-3.5" />
+              读取整页
+            </Button>
+            <Button
+              size="sm"
+              className="ml-auto gap-1.5"
+              disabled={state.loading}
+              onClick={() => void translate()}
+            >
+              {state.loading ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Languages className="size-3.5" />
+              )}
+              翻译
             </Button>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/35 p-3 text-sm leading-6">
-            {state.result || <span className="text-muted-foreground">译文将在这里显示</span>}
-          </div>
-          <div className="min-h-6 pt-1.5 text-xs text-muted-foreground" role="status">
-            {state.status}
+
+          <div className="flex min-h-0 flex-1 flex-col border-t border-border pt-2">
+            <div className="mb-1 flex h-8 items-center">
+              <span className="text-xs font-medium text-muted-foreground">译文</span>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="ml-auto size-7"
+                title="复制译文"
+                aria-label="复制译文"
+                disabled={!state.result}
+                onClick={() => {
+                  void navigator.clipboard
+                    .writeText(state.result)
+                    .then(() => setCopied())
+                    .catch(() => state.setStatus('复制失败，请检查剪贴板权限'))
+                }}
+              >
+                {copied ? (
+                  <Check className="size-3.5 text-emerald-500" />
+                ) : (
+                  <Clipboard className="size-3.5" />
+                )}
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/35 p-3 text-sm leading-6">
+              {state.result || <span className="text-muted-foreground">译文将在这里显示</span>}
+            </div>
+            <div className="min-h-6 pt-1.5 text-xs text-muted-foreground" role="status">
+              {state.status}
+            </div>
           </div>
         </div>
-      </div>
-    </aside>
+      </aside>
+    </>
   )
 }
 
 function TranslationSettingsForm({
   config,
-  onChange,
+  onSave,
 }: {
   config: TranslationSettings
-  onChange: (patch: Partial<TranslationSettings>) => void
+  onSave: (config: TranslationSettings) => void
 }) {
   const inputClass = 'h-8 text-xs'
+  const [draft, setDraft] = useState(config)
+  const changed = JSON.stringify(draft) !== JSON.stringify(config)
+  const remoteUrl = draft.provider === 'ai' ? draft.ai.baseUrl : draft.api.baseUrl
+  const usesRemoteHttp = (() => {
+    try {
+      const url = new URL(remoteUrl)
+      return (
+        url.protocol === 'http:' &&
+        !['localhost', '127.0.0.1', '::1'].includes(url.hostname.toLowerCase())
+      )
+    } catch {
+      return false
+    }
+  })()
   return (
-    <div className="shrink-0 space-y-2 border-b border-border bg-muted/20 p-3">
-      {config.provider === 'ai' && (
+    <div className="max-h-[42vh] shrink-0 space-y-2 overflow-y-auto border-b border-border bg-muted/20 p-3">
+      {draft.provider === 'ai' && (
         <>
           <Input
             className={inputClass}
-            value={config.ai.baseUrl}
+            value={draft.ai.baseUrl}
             aria-label="AI 接口地址"
             placeholder="AI 接口地址"
-            onChange={(event) => onChange({ ai: { ...config.ai, baseUrl: event.target.value } })}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                ai: { ...current.ai, baseUrl: event.target.value },
+              }))
+            }
           />
           <Input
             className={inputClass}
             type="password"
-            value={config.ai.apiKey}
+            value={draft.ai.apiKey}
             aria-label="AI 接口密钥"
             placeholder="AI 接口密钥"
-            onChange={(event) => onChange({ ai: { ...config.ai, apiKey: event.target.value } })}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                ai: { ...current.ai, apiKey: event.target.value },
+              }))
+            }
           />
           <div className="flex gap-2">
             <Input
               className={inputClass}
-              value={config.ai.model}
+              value={draft.ai.model}
               aria-label="AI 模型"
               placeholder="模型"
-              onChange={(event) => onChange({ ai: { ...config.ai, model: event.target.value } })}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  ai: { ...current.ai, model: event.target.value },
+                }))
+              }
             />
             <select
               className="h-8 rounded-md border border-input bg-background px-2 text-xs"
               aria-label="推理强度"
-              value={config.ai.effort}
-              onChange={(event) => onChange({ ai: { ...config.ai, effort: event.target.value } })}
+              value={draft.ai.effort}
+              onChange={(event) =>
+                setDraft((current) => ({
+                  ...current,
+                  ai: { ...current.ai, effort: event.target.value },
+                }))
+              }
             >
               <option value="low">低</option>
               <option value="medium">中</option>
@@ -318,39 +406,68 @@ function TranslationSettingsForm({
           </div>
         </>
       )}
-      {config.provider === 'api' && (
+      {draft.provider === 'api' && (
         <>
           <Input
             className={inputClass}
-            value={config.api.baseUrl}
+            value={draft.api.baseUrl}
             aria-label="翻译 API 地址"
             placeholder="LibreTranslate 兼容接口地址"
-            onChange={(event) => onChange({ api: { ...config.api, baseUrl: event.target.value } })}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                api: { ...current.api, baseUrl: event.target.value },
+              }))
+            }
           />
           <Input
             className={inputClass}
             type="password"
-            value={config.api.apiKey}
+            value={draft.api.apiKey}
             aria-label="翻译 API 密钥"
             placeholder="API 密钥（可选）"
-            onChange={(event) => onChange({ api: { ...config.api, apiKey: event.target.value } })}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                api: { ...current.api, apiKey: event.target.value },
+              }))
+            }
           />
         </>
       )}
-      {config.provider === 'offline' && (
+      {draft.provider === 'offline' && (
         <>
           <Input
             className={inputClass}
-            value={config.offline.baseUrl}
+            value={draft.offline.baseUrl}
             aria-label="本地翻译服务地址"
             placeholder="http://127.0.0.1:5000"
-            onChange={(event) => onChange({ offline: { baseUrl: event.target.value } })}
+            onChange={(event) =>
+              setDraft((current) => ({
+                ...current,
+                offline: { baseUrl: event.target.value },
+              }))
+            }
           />
           <p className="text-[11px] text-muted-foreground">
             仅允许本机回环地址，文本不会发送到远程服务。
           </p>
         </>
       )}
+      {usesRemoteHttp && (
+        <p className="rounded-md border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+          当前远程地址使用
+          HTTP。翻译内容和接口密钥会以明文在网络中传输；应用仍允许保存并使用该地址。
+        </p>
+      )}
+      <div className="flex justify-end gap-2 pt-1">
+        <Button size="sm" variant="ghost" disabled={!changed} onClick={() => setDraft(config)}>
+          取消
+        </Button>
+        <Button size="sm" disabled={!changed} onClick={() => onSave(draft)}>
+          保存设置
+        </Button>
+      </div>
     </div>
   )
 }

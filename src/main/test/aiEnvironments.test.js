@@ -10,6 +10,7 @@ const {
   resolvedProxyMatchesRoute,
   scaleAiHostBounds,
   shouldCloseAiWorkspacesForEnvironment,
+  evaluateAiRouteHealth,
 } = require("../aiEnvironments");
 
 test("高级 AI 环境为每个服务和环境生成独立 partition", () => {
@@ -22,6 +23,31 @@ test("高级 AI 环境为每个服务和环境生成独立 partition", () => {
     partitionForAiEnvironment("gpt", "env-work"),
     partitionForAiEnvironment("claude", "env-work"),
   );
+});
+
+test("线路健康检查把 DNS、IPv4 和托管线路预期 IP 作为阻断项", () => {
+  const route = {
+    id: "route-us",
+    outboundTag: "proxy-route-us",
+    dnsTag: "dns-route-us",
+    expected: { ip: "203.0.113.7", countryCode: "US" },
+  };
+  const detected = {
+    ip: "203.0.113.7",
+    countryCode: "US",
+    asn: "AS64500",
+  };
+  const passed = evaluateAiRouteHealth(route, detected);
+  assert.equal(passed.ok, true);
+  assert.equal(passed.checks.dnsConfigured, "passed");
+  assert.equal(passed.checks.ipv4EgressObserved, "passed");
+
+  assert.equal(evaluateAiRouteHealth({ ...route, dnsTag: "" }, detected).ok, false);
+  assert.equal(evaluateAiRouteHealth({ ...route, expected: {} }, detected).ok, false);
+  assert.equal(evaluateAiRouteHealth(route, { ...detected, ip: "2001:db8::1" }).ok, false);
+
+  const unified = { ...route, id: "internal-unified", expected: {} };
+  assert.equal(evaluateAiRouteHealth(unified, detected).ok, false);
 });
 
 test("高级 AI 环境拒绝可造成 partition 混淆的标识", () => {
@@ -76,11 +102,19 @@ test("内置 sing-box 为统一代理和下发节点生成独立回环入口", (
     proxy_server: "proxy.example.com",
     proxy_port: "443",
     proxy_uuid: "00000000-0000-4000-8000-000000000000",
+    proxy_expected_ip: "203.0.113.7",
+    proxy_expected_country: "US",
     socks_listen_port: "1080",
     airport_name: "管理员节点",
     airport_outbound: { type: "shadowsocks", server: "airport.example.com" },
+    authorized_proxy_route_ids: ["internal-unified", "internal-airport"],
   };
   assert.equal(hasCompleteUnifiedProxy(sender), true);
+  assert.deepEqual(internalAiProxyRoutes(sender)[0].expected, {
+    ip: "203.0.113.7",
+    countryCode: "US",
+    asn: "",
+  });
   assert.deepEqual(
     internalAiProxyRoutes(sender).map(({ id, label, host, port, inboundTag, outboundTag }) => ({
       id,
@@ -116,6 +150,7 @@ test("内置线路忽略不完整出站并安全处理端口上界", () => {
     internalAiProxyRoutes({
       socks_listen_port: "65535",
       airport_outbound: { type: "socks", server: "managed.example.com" },
+      authorized_proxy_route_ids: ["internal-airport"],
     }).map((route) => ({ id: route.id, host: route.host, port: route.port })),
     [{ id: "internal-airport", host: "127.0.0.1", port: 1024 }],
   );

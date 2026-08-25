@@ -24,6 +24,7 @@ import {
   serializeConversations,
 } from '@/components/panels/chat/normalize'
 import { messagePreview } from '@/components/panels/chat/format'
+import { applyClientBootstrap, clearRemoteRouteState, fetchClientBootstrap } from '@/hooks/useAuth'
 
 // 协作聊天主控 hook。
 // 职责:
@@ -35,7 +36,7 @@ import { messagePreview } from '@/components/panels/chat/format'
 // 注意: 登录(获取 token)归账户面板。本 hook 在拿到 token 前只渲染本地历史,
 //       WS 不会连接 (留 TODO: token 注入)。
 
-function toWsUrl(httpUrl: string, token: string): string {
+function toWsUrl(httpUrl: string): string {
   const normalized = (httpUrl || '').replace(/\/+$/, '')
   if (!/^https?:\/\//i.test(normalized)) {
     throw new Error('服务地址需要以 http:// 或 https:// 开头')
@@ -43,7 +44,7 @@ function toWsUrl(httpUrl: string, token: string): string {
   const base = normalized.startsWith('https://')
     ? `wss://${normalized.slice('https://'.length)}/ws`
     : `ws://${normalized.slice('http://'.length)}/ws`
-  return `${base}?token=${encodeURIComponent(token)}`
+  return base
 }
 
 export interface SendMessageInput {
@@ -420,12 +421,53 @@ export function useChat() {
 
     const typingTimersMap = typingTimers.current
     let cancelled = false
+    let routeRefreshInFlight: Promise<void> | null = null
 
     // 账号被动断开、且已无法自动恢复(需手动重新登录)时, 停止本机发送服务(代理):
     // 账号断开就不应继续以本机转发流量 (对齐旧版 stopSenderBecauseAccountOffline)。
     // 仅在终态调用; socket/静默重登等瞬断会自动重连, 不在此停, 避免代理频繁起停。
     const stopSenderForAccountOffline = () => {
       void api.stopSender().catch(() => {})
+      void api.closeAllAiWorkspaces().catch(() => {})
+      void useAppStore
+        .getState()
+        .patchSection('sender', {
+          managed_proxy_routes: [],
+          authorized_proxy_route_ids: [],
+          airport_outbound: null,
+          airport_name: '',
+        })
+        .catch(() => {})
+    }
+
+    const refreshAuthoritativeRoutes = (serverUrl: string, token: string): Promise<void> => {
+      if (routeRefreshInFlight) return routeRefreshInFlight
+      routeRefreshInFlight = (async () => {
+        const wasRunning = Boolean(useAppStore.getState().status.senderRunning)
+        await api.stopSender().catch(() => {})
+        await api.closeAllAiWorkspaces().catch(() => {})
+        await clearRemoteRouteState()
+        const bootstrap = await fetchClientBootstrap(serverUrl, token)
+        if (!bootstrap) throw new Error('服务器没有返回客户端线路配置')
+        await applyClientBootstrap(bootstrap)
+        const authState = useAuthStore.getState()
+        if (authState.profile) {
+          authState.setProfile({
+            ...authState.profile,
+            routeAuthorizationVerified: bootstrap.proxyRoutesAuthoritative,
+            allowedProxyRouteIds: bootstrap.proxyRoutesAuthoritative
+              ? bootstrap.proxyRoutes.map((route) => route.id)
+              : [],
+          })
+        }
+        if (wasRunning) {
+          const sender = useAppStore.getState().settings?.sender
+          if (sender) await api.startSender(sender)
+        }
+      })().finally(() => {
+        routeRefreshInFlight = null
+      })
+      return routeRefreshInFlight
     }
 
     // 指数退避重连: socket 策略直接重连; relogin 策略先静默刷新 token。
@@ -490,6 +532,8 @@ export function useChat() {
         if (!payload?.token) throw new Error('登录未成功')
         const displayName = (payload.profile?.displayName ?? '').trim() || username
         const avatar = (payload.profile?.avatar ?? '').trim()
+        await refreshAuthoritativeRoutes(serverUrl, payload.token)
+        const refreshedProfile = useAuthStore.getState().profile
         // 写回运行期会话 (不动 setAuthed/持久化设置, 仅刷新 token)。
         setSession({
           token: payload.token,
@@ -498,12 +542,9 @@ export function useChat() {
             displayName,
             avatar,
             isAdmin: Boolean(payload.profile?.isAdmin),
-            advancedAiAllowed: Boolean(
-              payload.profile?.isAdmin || payload.profile?.advancedAiAllowed,
-            ),
-            allowedProxyRouteIds: Array.isArray(payload.profile?.allowedProxyRouteIds)
-              ? payload.profile.allowedProxyRouteIds
-              : [],
+            advancedAiAllowed: Boolean(payload.profile?.advancedAiAllowed),
+            routeAuthorizationVerified: Boolean(refreshedProfile?.routeAuthorizationVerified),
+            allowedProxyRouteIds: refreshedProfile?.allowedProxyRouteIds || [],
             chatDisabled: Boolean(payload.profile?.chatDisabled),
           },
           password,
@@ -539,14 +580,14 @@ export function useChat() {
       if (!token || !serverUrl) return
       let url: string
       try {
-        url = toWsUrl(serverUrl, token)
+        url = toWsUrl(serverUrl)
       } catch {
         setConnection('error')
         return
       }
 
       setConnection('connecting')
-      const ws = new WebSocket(url)
+      const ws = new WebSocket(url, ['sharegpt', `sharegpt-auth.${token}`])
       wsRef.current = ws
       let opened = false
 
@@ -590,6 +631,28 @@ export function useChat() {
             if (payload.displayName) setIdentity({ displayName: String(payload.displayName) })
             if (payload.avatar) setIdentity({ avatar: String(payload.avatar) })
             if (payload.roomScope) setRoomScope(String(payload.roomScope))
+            const profile = useAuthStore.getState().profile
+            if (profile?.isAdmin || profile?.advancedAiAllowed) {
+              const current = useChatStore.getState().identity
+              void refreshAuthoritativeRoutes(current.serverUrl, current.token).catch((error) => {
+                stopSenderForAccountOffline()
+                showNotificationToast(
+                  '代理线路同步失败',
+                  error instanceof Error ? error.message : String(error),
+                )
+              })
+            }
+            break
+          }
+          case 'proxy_routes_changed': {
+            const current = useChatStore.getState().identity
+            void refreshAuthoritativeRoutes(current.serverUrl, current.token).catch((error) => {
+              stopSenderForAccountOffline()
+              showNotificationToast(
+                '代理线路更新失败',
+                error instanceof Error ? error.message : String(error),
+              )
+            })
             break
           }
           case 'history':

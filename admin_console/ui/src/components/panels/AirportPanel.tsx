@@ -40,6 +40,16 @@ export function AirportPanel() {
     () => (selected >= 0 && nodes[selected] ? clashNodeToSingbox(nodes[selected]) : null),
     [selected, nodes],
   )
+  const dirty = useMemo(() => JSON.stringify(routes) !== JSON.stringify(catalog), [routes, catalog])
+
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (!dirty) return
+      event.preventDefault()
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
 
   function parseNodes() {
     const parsed = parseClashProxies(text)
@@ -74,6 +84,12 @@ export function AirportPanel() {
   }
 
   async function saveCatalog() {
+    if (!dirty) return
+    const missingExpectedIp = routes.find((route) => route.enabled && !route.expected?.ip.trim())
+    if (missingExpectedIp) {
+      toast.error(`启用线路 ${missingExpectedIp.name || missingExpectedIp.id} 前请填写预期出口 IP`)
+      return
+    }
     setSaving(true)
     try {
       await save(routes)
@@ -94,13 +110,16 @@ export function AirportPanel() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void Promise.all([load(), loadHealth()])}
+            onClick={() => {
+              if (dirty && !window.confirm('当前有未保存的线路修改，仍要放弃并刷新吗？')) return
+              void Promise.all([load(), loadHealth()])
+            }}
             disabled={loading}
           >
             <RotateCw className={loading ? 'animate-spin' : ''} />
             刷新
           </Button>
-          <Button size="sm" onClick={() => void saveCatalog()} disabled={saving}>
+          <Button size="sm" onClick={() => void saveCatalog()} disabled={saving || !dirty}>
             <Save />
             {saving ? '下发中' : '保存并下发'}
           </Button>
@@ -140,9 +159,11 @@ export function AirportPanel() {
                   variant="outline"
                   size="icon"
                   title="删除线路"
-                  onClick={() =>
+                  onClick={() => {
+                    if (!window.confirm(`确定删除线路“${route.name}”吗？保存后将影响已绑定账号。`))
+                      return
                     setRoutes((current) => current.filter((item) => item.id !== route.id))
-                  }
+                  }}
                 >
                   <Trash2 />
                 </Button>
@@ -180,32 +201,50 @@ export function AirportPanel() {
                 </span>
               </div>
               <div className="grid gap-1 border-t border-border/60 pt-2">
-                <span className="text-xs font-medium">最近客户端巡检</span>
+                <span className="text-xs font-medium">最近客户端自报巡检（非服务端独立验证）</span>
                 {!health.some((report) => report.routeId === route.id) && (
                   <span className="text-xs text-muted-foreground">暂无上报</span>
                 )}
                 {health
                   .filter((report) => report.routeId === route.id)
                   .slice(0, 3)
-                  .map((report) => (
-                    <div
-                      key={`${report.username}-${report.checkedAt}`}
-                      className="flex flex-wrap items-center gap-x-3 text-xs"
-                    >
-                      <span className={report.ok ? 'text-emerald-500' : 'text-destructive'}>
-                        {report.ok ? '通过' : '失败'}
-                      </span>
-                      <span>{report.username}</span>
-                      <span className="text-muted-foreground">
-                        {report.ip || '未知 IP'}
-                        {report.countryCode ? ` · ${report.countryCode}` : ''}
-                        {report.asn ? ` · ${report.asn}` : ''}
-                      </span>
-                      <span className="text-muted-foreground">
-                        {new Date(report.checkedAt).toLocaleString()}
-                      </span>
-                    </div>
-                  ))}
+                  .map((report) => {
+                    const stale = Boolean(
+                      route.updatedAt &&
+                      new Date(report.checkedAt).getTime() < new Date(route.updatedAt).getTime(),
+                    )
+                    return (
+                      <div
+                        key={`${report.username}-${report.checkedAt}`}
+                        className="flex flex-wrap items-center gap-x-3 text-xs"
+                      >
+                        <span
+                          className={
+                            stale
+                              ? 'text-muted-foreground'
+                              : report.ok
+                                ? 'text-emerald-500'
+                                : 'text-destructive'
+                          }
+                        >
+                          {stale
+                            ? '配置已变化，报告过期'
+                            : report.ok
+                              ? '已通过阻断检查'
+                              : '存在失败项目'}
+                        </span>
+                        <span>{report.username}</span>
+                        <span className="text-muted-foreground">
+                          {report.ip || '未知 IP'}
+                          {report.countryCode ? ` · ${report.countryCode}` : ''}
+                          {report.asn ? ` · ${report.asn}` : ''}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {new Date(report.checkedAt).toLocaleString()}
+                        </span>
+                      </div>
+                    )
+                  })}
               </div>
             </div>
           ))}

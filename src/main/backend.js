@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
+const net = require("node:net");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const os = require("node:os");
@@ -79,11 +80,25 @@ const DEFAULT_TARGET_DOMAINS = [
   "githubusercontent.com",
 ];
 
+const DEFAULT_TRANSLATION_SETTINGS = {
+  version: 1,
+  provider: "ai",
+  sourceLanguage: "auto",
+  targetLanguage: "zh",
+  ai: { baseUrl: "", apiKey: "", model: "gpt-5.5", effort: "medium" },
+  api: { baseUrl: "", apiKey: "" },
+  offline: { baseUrl: "http://127.0.0.1:5000" },
+};
+
 const PUBLIC_DEFAULT_SETTINGS = {
+  settingsRevision: 0,
   sender: {
     proxy_server: "",
     proxy_port: "",
     proxy_uuid: "",
+    proxy_expected_ip: "",
+    proxy_expected_country: "",
+    proxy_expected_asn: "",
     socks_listen_port: "1080",
     fallback_mode: "system_proxy",
     fallback_local_port: "",
@@ -150,6 +165,7 @@ const PUBLIC_DEFAULT_SETTINGS = {
     environments: [],
     activeByKind: { gpt: "", gemini: "", claude: "" },
   },
+  translation: structuredClone(DEFAULT_TRANSLATION_SETTINGS),
   ui: {
     setup_guide_dismissed: false,
     theme: "dark",
@@ -178,10 +194,96 @@ const UPDATE_BACKUP_SKIP_NAMES = new Set([
   "runtime",
 ]);
 
+function normalizeTranslationSettings(raw, legacyNotesAi) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  const legacy = legacyNotesAi && typeof legacyNotesAi === "object" ? legacyNotesAi : {};
+  const provider = ["ai", "api", "offline"].includes(String(value.provider))
+    ? String(value.provider)
+    : DEFAULT_TRANSLATION_SETTINGS.provider;
+  return {
+    ...DEFAULT_TRANSLATION_SETTINGS,
+    ...value,
+    version: 1,
+    provider,
+    ai: { ...DEFAULT_TRANSLATION_SETTINGS.ai, ...legacy, ...(value.ai || {}) },
+    api: { ...DEFAULT_TRANSLATION_SETTINGS.api, ...(value.api || {}) },
+    offline: { ...DEFAULT_TRANSLATION_SETTINGS.offline, ...(value.offline || {}) },
+  };
+}
+
+function writeJsonAtomic(file, payload) {
+  const dir = path.dirname(file);
+  const temp = path.join(dir, `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
+  const backup = `${file}.bak`;
+  fs.mkdirSync(dir, { recursive: true });
+  const fd = fs.openSync(temp, "w");
+  try {
+    fs.writeFileSync(fd, JSON.stringify(payload, null, 2), "utf-8");
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    if (fs.existsSync(file)) fs.copyFileSync(file, backup);
+    fs.renameSync(temp, file);
+  } finally {
+    if (fs.existsSync(temp)) fs.unlinkSync(temp);
+  }
+}
+
+const ENCRYPTED_SECRET_PREFIX = "sharegpt-safe:v1:";
+const SECRET_KEY_PATTERN =
+  /(?:password|passwd|api.?key|secret|token|uuid|private.?key|credential)/i;
+
+function getSafeStorage() {
+  if (!process.versions.electron) return null;
+  try {
+    const electron = require("electron");
+    return electron?.safeStorage?.isEncryptionAvailable?.() ? electron.safeStorage : null;
+  } catch {
+    return null;
+  }
+}
+
+function transformSensitiveValues(value, mode, key = "") {
+  if (Array.isArray(value)) {
+    return value.map((item) => transformSensitiveValues(item, mode));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([childKey, childValue]) => [
+        childKey,
+        transformSensitiveValues(childValue, mode, childKey),
+      ]),
+    );
+  }
+  if (typeof value !== "string") return value;
+  const storage = getSafeStorage();
+  if (mode === "decrypt" && value.startsWith(ENCRYPTED_SECRET_PREFIX)) {
+    if (!storage) return "";
+    try {
+      return storage.decryptString(
+        Buffer.from(value.slice(ENCRYPTED_SECRET_PREFIX.length), "base64"),
+      );
+    } catch {
+      return "";
+    }
+  }
+  if (mode === "encrypt" && value && SECRET_KEY_PATTERN.test(key) && storage) {
+    if (value.startsWith(ENCRYPTED_SECRET_PREFIX)) return value;
+    return `${ENCRYPTED_SECRET_PREFIX}${storage.encryptString(value).toString("base64")}`;
+  }
+  return value;
+}
+
 function mergeSettings(base, override = {}) {
   const basePrivacy = base.browserPrivacy || DEFAULT_BROWSER_PRIVACY_SETTINGS;
   const overridePrivacy = override.browserPrivacy || {};
   return {
+    settingsRevision: Math.max(
+      0,
+      Number.parseInt(String(override.settingsRevision ?? base.settingsRevision ?? 0), 10) || 0,
+    ),
     sender: { ...base.sender, ...(override.sender || {}) },
     receiver: { ...base.receiver, ...(override.receiver || {}) },
     collab: { ...base.collab, ...(override.collab || {}) },
@@ -211,8 +313,48 @@ function mergeSettings(base, override = {}) {
         ...(override.advancedAi?.activeByKind || {}),
       },
     },
+    translation: normalizeTranslationSettings(
+      override.translation || base.translation,
+      override.notesAi,
+    ),
     ui: { ...base.ui, ...(override.ui || {}) },
   };
+}
+
+function redactSettingsForExport(settings) {
+  const value = structuredClone(settings || {});
+  value.sender = {
+    ...(value.sender || {}),
+    proxy_uuid: "",
+    airport_outbound: null,
+    managed_proxy_routes: (Array.isArray(value.sender?.managed_proxy_routes)
+      ? value.sender.managed_proxy_routes
+      : []
+    ).map((route) => ({
+      id: route?.id,
+      name: route?.name,
+      enabled: route?.enabled !== false,
+      expected: route?.expected || {},
+      credentialExcluded: true,
+    })),
+  };
+  value.receiver = {
+    ...(value.receiver || {}),
+    frps_token: "",
+    vmess_uuid: "",
+  };
+  value.collab = {
+    ...(value.collab || {}),
+    remember_password: false,
+    saved_password: "",
+  };
+  value.translation = {
+    ...(value.translation || {}),
+    ai: { ...(value.translation?.ai || {}), apiKey: "" },
+    api: { ...(value.translation?.api || {}), apiKey: "" },
+  };
+  delete value.notesAi;
+  return value;
 }
 
 function isWindows() {
@@ -248,6 +390,61 @@ function toListenPort(value, name) {
     throw new Error(`${name} 必须是 1024~65535 的整数，避免在 macOS 或 Windows 上要求管理员权限`);
   }
   return n;
+}
+
+async function assertLoopbackPortsAvailable(ports) {
+  for (const port of [...new Set(ports)]) {
+    await new Promise((resolve, reject) => {
+      const probe = net.createServer();
+      probe.unref();
+      probe.once("error", (error) => {
+        const errorCode = /** @type {NodeJS.ErrnoException} */ (error).code;
+        reject(
+          new Error(
+            errorCode === "EADDRINUSE"
+              ? `本地监听端口 ${port} 已被其他程序占用`
+              : `无法使用本地监听端口 ${port}: ${error?.message || error}`,
+          ),
+        );
+      });
+      probe.listen({ host: "127.0.0.1", port, exclusive: true }, () => {
+        probe.close((error) => (error ? reject(error) : resolve()));
+      });
+    });
+  }
+}
+
+function canConnectToLoopbackPort(port, timeoutMs = 250) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port });
+    let settled = false;
+    const finish = (connected) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(connected);
+    };
+    socket.setTimeout(timeoutMs, () => finish(false));
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+  });
+}
+
+async function waitForLoopbackPortsListening(ports, child = null, timeoutMs = 8000) {
+  const uniquePorts = [...new Set(ports)].filter((port) => Number.isInteger(port));
+  if (!uniquePorts.length) return;
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (child && (child.exitCode !== null || child.signalCode !== null)) {
+      throw new Error("发送服务在监听端口就绪前退出");
+    }
+    const ready = await Promise.all(uniquePorts.map((port) => canConnectToLoopbackPort(port)));
+    if (ready.every(Boolean)) return;
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
+
+  throw new Error(`发送服务启动超时，端口尚未就绪：${uniquePorts.join(", ")}`);
 }
 
 function clampPositiveInt(value, fallback) {
@@ -550,6 +747,7 @@ class Backend {
     this.activeSocksPort = null;
     this.activeProxiedSuffixes = null;
     this.activeAiProxyRoutes = [];
+    this.senderState = "stopped";
   }
 
   // 当前发送端配置里「走代理(梯子)」的域名后缀集合。路由规则(buildSenderConfig)与
@@ -781,17 +979,75 @@ class Backend {
     }
 
     try {
-      const raw = JSON.parse(fs.readFileSync(this.settingsFile, "utf-8"));
+      const raw = transformSensitiveValues(
+        JSON.parse(fs.readFileSync(this.settingsFile, "utf-8")),
+        "decrypt",
+      );
       return mergeSettings(defaultSettings, raw);
-    } catch {
-      return structuredClone(defaultSettings);
+    } catch (error) {
+      const backupFile = `${this.settingsFile}.bak`;
+      try {
+        const backup = transformSensitiveValues(
+          JSON.parse(fs.readFileSync(backupFile, "utf-8")),
+          "decrypt",
+        );
+        this.log("app", `设置文件损坏，已从上一份有效备份恢复：${error.message || error}`);
+        return mergeSettings(defaultSettings, backup);
+      } catch {
+        this.log("app", `设置文件损坏且无有效备份，已保留原文件：${error.message || error}`);
+        return structuredClone(defaultSettings);
+      }
     }
   }
 
   saveSettings(data) {
+    const currentRevision = this.loadSettings().settingsRevision || 0;
+    const suppliedRevision = Number(data?.settingsRevision);
+    if (Number.isInteger(suppliedRevision) && suppliedRevision !== currentRevision) {
+      throw Object.assign(new Error("设置已被其他操作更新，请重试"), {
+        code: "SETTINGS_REVISION_CONFLICT",
+      });
+    }
     const merged = mergeSettings(this.loadPrivateDefaults(), data);
-    fs.writeFileSync(this.settingsFile, JSON.stringify(merged, null, 2), "utf-8");
+    merged.settingsRevision = Math.max(currentRevision, merged.settingsRevision || 0) + 1;
+    writeJsonAtomic(this.settingsFile, transformSensitiveValues(merged, "encrypt"));
     return merged;
+  }
+
+  patchSettings(section, patch, expectedRevision) {
+    const allowed = new Set([
+      "sender",
+      "receiver",
+      "collab",
+      "gpt",
+      "gemini",
+      "claude",
+      "browserPrivacy",
+      "advancedAi",
+      "translation",
+      "ui",
+    ]);
+    const target = String(section || "");
+    if (!allowed.has(target)) throw new Error("不允许修改该设置区域");
+    if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+      throw new Error("设置补丁必须是对象");
+    }
+    const current = this.loadSettings();
+    if (
+      Number.isInteger(expectedRevision) &&
+      expectedRevision >= 0 &&
+      expectedRevision !== current.settingsRevision
+    ) {
+      throw Object.assign(new Error("设置已被其他操作更新，请重试"), {
+        code: "SETTINGS_REVISION_CONFLICT",
+        current,
+      });
+    }
+    return this.saveSettings({
+      ...current,
+      [target]: { ...(current[target] || {}), ...patch },
+      settingsRevision: current.settingsRevision,
+    });
   }
 
   ensureChatHistoryFile() {
@@ -898,7 +1154,8 @@ class Backend {
       format: "sharegpt-user-data",
       version: 1,
       exportedAt: new Date().toISOString(),
-      settings: this.loadSettings(),
+      credentialsExcluded: true,
+      settings: redactSettingsForExport(this.loadSettings()),
       chatHistory: this.loadChatHistory(),
     };
 
@@ -922,7 +1179,10 @@ class Backend {
     try {
       const filePath = result.filePaths[0];
       const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      const settings = this.saveSettings(raw?.settings || {});
+      const settings = this.saveSettings({
+        ...(raw?.settings || {}),
+        settingsRevision: this.loadSettings().settingsRevision,
+      });
       const chatHistory = this.saveChatHistory(raw?.chatHistory || {});
       return { settings, chatHistory, filePath };
     } catch (err) {
@@ -989,7 +1249,7 @@ class Backend {
     try {
       const filePath = result.filePaths[0];
       const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      return this.saveSettings(raw);
+      return this.saveSettings({ ...raw, settingsRevision: this.loadSettings().settingsRevision });
     } catch (err) {
       throw new Error(`无法装载该文件: ${err.message}`);
     }
@@ -1387,7 +1647,9 @@ class Backend {
 
   getStatus() {
     return {
-      senderRunning: !!this.senderProcess,
+      senderRunning: this.senderState === "running",
+      senderStarting: this.senderState === "starting",
+      sender: this.senderState,
       aiProxyRoutes: this.activeAiProxyRoutes.map(({ id, label }) => ({ id, label })),
       receiverFrpcRunning: !!this.receiverFrpc,
       receiverSingboxRunning: !!this.receiverSingbox,
@@ -1422,6 +1684,7 @@ class Backend {
       if (source === "sender" && this.senderProcess === child) {
         this.senderProcess = null;
         this.activeAiProxyRoutes = [];
+        this.senderState = "error";
       }
       if (source === "receiver-frpc" && this.receiverFrpc === child) this.receiverFrpc = null;
       if (source === "receiver-singbox" && this.receiverSingbox === child)
@@ -1434,6 +1697,7 @@ class Backend {
       if (source === "sender" && this.senderProcess === child) {
         this.senderProcess = null;
         this.activeAiProxyRoutes = [];
+        this.senderState = code === 0 ? "stopped" : "error";
       }
       if (source === "receiver-frpc" && this.receiverFrpc === child) this.receiverFrpc = null;
       if (source === "receiver-singbox" && this.receiverSingbox === child)
@@ -1497,6 +1761,7 @@ class Backend {
     this.activeSocksPort = null;
     this.activeProxiedSuffixes = null;
     this.activeAiProxyRoutes = [];
+    this.senderState = "stopped";
     this.emitStatus();
   }
 
@@ -1541,6 +1806,7 @@ class Backend {
     this.activeSocksPort = null;
     this.activeProxiedSuffixes = null;
     this.activeAiProxyRoutes = [];
+    this.senderState = "stopped";
     this.emitStatus();
     await this.stopChildAndWait(child, "sender");
   }
@@ -1810,18 +2076,50 @@ class Backend {
       this.checkSingboxConfig(singboxPath, candidatePath, "sender candidate");
       // 候选配置校验通过后才停止旧进程；正式文件通过同目录 rename 原子替换。
       await this.stopSenderAndWait();
+      await assertLoopbackPortsAvailable(
+        config.inbounds
+          .map((inbound) => Number(inbound?.listen_port))
+          .filter((port) => Number.isInteger(port)),
+      );
       fs.renameSync(candidatePath, configPath);
     } finally {
       if (fs.existsSync(candidatePath)) fs.unlinkSync(candidatePath);
     }
 
-    this.senderProcess = this.spawnProcess("sender", singboxPath, ["run", "-c", configPath]);
+    const child = this.spawnProcess("sender", singboxPath, ["run", "-c", configPath]);
+    this.senderProcess = child;
+    this.senderState = "starting";
+    this.activeAiProxyRoutes = [];
+    this.emitStatus();
+    try {
+      await waitForLoopbackPortsListening(
+        config.inbounds
+          .map((inbound) => Number(inbound?.listen_port))
+          .filter((port) => Number.isInteger(port)),
+        child,
+      );
+      if (this.senderProcess !== child || child.exitCode !== null || child.signalCode !== null) {
+        throw new Error("发送服务在监听端口就绪后意外退出");
+      }
+    } catch (error) {
+      if (this.senderProcess === child) {
+        await this.stopChildAndWait(child, "sender");
+        this.senderProcess = null;
+        this.activeSocksPort = null;
+        this.activeProxiedSuffixes = null;
+        this.activeAiProxyRoutes = [];
+        this.senderState = "error";
+        this.emitStatus();
+      }
+      throw error;
+    }
     // 记下本机 SOCKS 端口, 供"更新检查"经代理走出口 (github 已在路由清单里)。
     this.activeSocksPort = Number(settings.socks_listen_port) || null;
     this.activeAiProxyRoutes = internalAiProxyRoutes(settings);
     // 记下「当前运行中的配置」实际走代理的域名后缀, 供代理检测按真实路由分类
     // (而非写死的内置清单), 加入域名并重启后检测才会从"回落"翻到"已走代理"。
     this.activeProxiedSuffixes = this.proxiedDomainSuffixes(settings);
+    this.senderState = "running";
     // 运行日志标明当前代理方式, 便于观察走的是统一梯子还是下发的机场节点。
     const useAirportLog =
       settings.proxy_mode === "airport" &&
@@ -1894,4 +2192,5 @@ module.exports = {
   DEFAULT_SETTINGS: PUBLIC_DEFAULT_SETTINGS,
   PUBLIC_DEFAULT_SETTINGS,
   DEFAULT_TARGET_DOMAINS,
+  waitForLoopbackPortsListening,
 };

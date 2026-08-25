@@ -22,6 +22,7 @@ export interface AdminUser {
   bio?: string
   isAdmin: boolean
   advancedAiAllowed: boolean
+  effectiveAdvancedAiAllowed?: boolean
   allowedProxyRouteIds: string[]
   disabled: boolean
   // 禁止使用协作聊天: 该用户无聊天入口、不收消息、别人发他也不弹窗。
@@ -34,6 +35,9 @@ export interface BootstrapSender {
   proxy_server: string
   proxy_port: string
   proxy_uuid: string
+  proxy_expected_ip: string
+  proxy_expected_country: string
+  proxy_expected_asn: string
   socks_listen_port: string
   fallback_mode: string
   fallback_local_port: string
@@ -91,11 +95,13 @@ export interface ProxyRouteCatalog {
 export interface ProxyRouteHealth {
   username: string
   routeId: string
+  routeFingerprint?: string
   ok: boolean
   ip: string
   countryCode: string
   asn: string
-  checks: Record<string, boolean>
+  checks: Record<string, 'passed' | 'failed' | 'not-checked'>
+  source?: 'client-report'
   checkedAt: string
 }
 

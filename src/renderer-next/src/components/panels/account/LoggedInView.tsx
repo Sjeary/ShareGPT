@@ -502,7 +502,9 @@ export function LoggedInView() {
   const advancedAiRaw = useAppStore((s) => s.settings?.advancedAi)
   const advancedAi = useMemo(() => normalizeAdvancedAiSettings(advancedAiRaw), [advancedAiRaw])
   const profile = useAuthStore((s) => s.profile)
-  const advancedAiAllowed = Boolean(profile?.isAdmin || profile?.advancedAiAllowed)
+  const advancedAiAllowed = Boolean(
+    profile?.routeAuthorizationVerified && (profile?.isAdmin || profile?.advancedAiAllowed),
+  )
   const { logout } = useAuth()
 
   const [loggingOut, setLoggingOut] = useState(false)

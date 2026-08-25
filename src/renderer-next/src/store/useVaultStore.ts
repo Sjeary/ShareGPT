@@ -301,20 +301,18 @@ export const useVaultStore = create<VaultState>((set, get) => {
     },
 
     setRootViaDialog: async () => {
-      const picked = await api.vault.pickFolder()
-      if (!picked) return false
-      const res = await api.vault.setRoot(picked)
+      const res = await api.vault.chooseRoot()
+      if (!res) return false
       set({ root: res.root })
       await get().reload()
       return true
     },
 
     importVault: async () => {
-      const picked = await api.vault.pickFolder()
-      if (!picked) return null
       set({ busy: true })
       try {
-        const report = await api.vault.importFrom(picked)
+        const report = await api.vault.chooseImport()
+        if (!report) return null
         await get().reload()
         return report
       } finally {

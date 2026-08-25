@@ -49,6 +49,11 @@ const MAX_ATTACHMENT_BYTES = Number.parseInt(
   process.env.MAX_ATTACHMENT_BYTES || `${30 * 1024 * 1024}`,
   10,
 );
+const MAX_WS_PAYLOAD_BYTES = Number.parseInt(
+  process.env.MAX_WS_PAYLOAD_BYTES ||
+    `${MAX_ATTACHMENT_BYTES * MAX_ATTACHMENTS_PER_MESSAGE + 1024 * 1024}`,
+  10,
+);
 const RECALL_EDITABLE_WINDOW_MS = Number.parseInt(
   process.env.RECALL_EDITABLE_WINDOW_MS || `${7 * 24 * 60 * 60 * 1000}`,
   10,
@@ -56,6 +61,7 @@ const RECALL_EDITABLE_WINDOW_MS = Number.parseInt(
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
 const LOGIN_MAX_FAILS = Number.parseInt(process.env.LOGIN_MAX_FAILS || "10", 10);
 const LOGIN_LOCK_MS = Number.parseInt(process.env.LOGIN_LOCK_MS || `${15 * 60 * 1000}`, 10);
+const LOGIN_ATTEMPT_CACHE_MAX = Number.parseInt(process.env.LOGIN_ATTEMPT_CACHE_MAX || "10000", 10);
 const SERVER_SENDER_BOOTSTRAP = {
   proxy_server:
     process.env.SHAREGPT_SENDER_PROXY_SERVER ||
@@ -75,6 +81,9 @@ const SERVER_SENDER_BOOTSTRAP = {
     process.env.SENDER_PROXY_UUID ||
     process.env.PROXY_UUID ||
     "",
+  proxy_expected_ip: process.env.SHAREGPT_SENDER_PROXY_EXPECTED_IP || "",
+  proxy_expected_country: process.env.SHAREGPT_SENDER_PROXY_EXPECTED_COUNTRY || "",
+  proxy_expected_asn: process.env.SHAREGPT_SENDER_PROXY_EXPECTED_ASN || "",
   socks_listen_port:
     process.env.SHAREGPT_SENDER_SOCKS_PORT ||
     process.env.CHATPORTAL_SENDER_SOCKS_PORT ||
@@ -264,6 +273,9 @@ function ensureClientBootstrapFile() {
             proxy_server: "",
             proxy_port: "",
             proxy_uuid: "",
+            proxy_expected_ip: "",
+            proxy_expected_country: "",
+            proxy_expected_asn: "",
             socks_listen_port: "1080",
             fallback_mode: "system_proxy",
             fallback_local_port: "",
@@ -303,6 +315,9 @@ function normalizeBootstrapPayload(raw) {
       proxy_server: safeText(sender.proxy_server),
       proxy_port: safeText(sender.proxy_port),
       proxy_uuid: safeText(sender.proxy_uuid),
+      proxy_expected_ip: safeText(sender.proxy_expected_ip).slice(0, 80),
+      proxy_expected_country: safeText(sender.proxy_expected_country).slice(0, 2).toUpperCase(),
+      proxy_expected_asn: safeText(sender.proxy_expected_asn).slice(0, 40),
       socks_listen_port: safeText(sender.socks_listen_port) || "1080",
       fallback_mode: safeText(sender.fallback_mode) || "system_proxy",
       fallback_local_port: safeText(sender.fallback_local_port),
@@ -351,6 +366,9 @@ function serverSuggestedBootstrap(req) {
       proxy_server: firstNonEmpty(SERVER_SENDER_BOOTSTRAP.proxy_server, host),
       proxy_port: SERVER_SENDER_BOOTSTRAP.proxy_port,
       proxy_uuid: SERVER_SENDER_BOOTSTRAP.proxy_uuid,
+      proxy_expected_ip: SERVER_SENDER_BOOTSTRAP.proxy_expected_ip,
+      proxy_expected_country: SERVER_SENDER_BOOTSTRAP.proxy_expected_country,
+      proxy_expected_asn: SERVER_SENDER_BOOTSTRAP.proxy_expected_asn,
       socks_listen_port: SERVER_SENDER_BOOTSTRAP.socks_listen_port,
       fallback_mode: SERVER_SENDER_BOOTSTRAP.fallback_mode,
       fallback_local_port: SERVER_SENDER_BOOTSTRAP.fallback_local_port,
@@ -369,6 +387,11 @@ function mergeServerBootstrapFallback(stored, req) {
       proxy_server: normalized.sender.proxy_server || suggested.sender.proxy_server,
       proxy_port: normalized.sender.proxy_port || suggested.sender.proxy_port,
       proxy_uuid: normalized.sender.proxy_uuid || suggested.sender.proxy_uuid,
+      proxy_expected_ip: normalized.sender.proxy_expected_ip || suggested.sender.proxy_expected_ip,
+      proxy_expected_country:
+        normalized.sender.proxy_expected_country || suggested.sender.proxy_expected_country,
+      proxy_expected_asn:
+        normalized.sender.proxy_expected_asn || suggested.sender.proxy_expected_asn,
       socks_listen_port: normalized.sender.socks_listen_port || suggested.sender.socks_listen_port,
       fallback_mode: normalized.sender.fallback_mode || suggested.sender.fallback_mode,
       fallback_local_port:
@@ -461,16 +484,20 @@ function requireDevSession(req, res) {
 
 function normalizeAttachment(record) {
   const dataUrl = safeText(record?.dataUrl);
-  const size = Math.max(0, Number.parseInt(String(record?.size || "0"), 10) || 0);
-  if (!dataUrl || size > MAX_ATTACHMENT_BYTES) {
+  const separator = dataUrl.indexOf(",");
+  const header = separator >= 0 ? dataUrl.slice(0, separator) : "";
+  const encoded = separator >= 0 ? dataUrl.slice(separator + 1) : "";
+  if (!/^data:[^,]*;base64$/i.test(header) || !/^[a-z\d+/]*={0,2}$/i.test(encoded)) {
     return null;
   }
+  const actualSize = Buffer.from(encoded, "base64").length;
+  if (!actualSize || actualSize > MAX_ATTACHMENT_BYTES) return null;
 
   return {
     kind: safeText(record?.kind) === "image" ? "image" : "file",
     name: safeText(record?.name).slice(0, 200) || "file",
     mime: safeText(record?.mime).slice(0, 200),
-    size,
+    size: actualSize,
     dataUrl,
   };
 }
@@ -854,7 +881,10 @@ function loadProxyRouteCatalog() {
       routes: [...new Map(routes.map((route) => [route.id, route])).values()],
       updatedAt: safeText(raw.updatedAt),
     };
-  } catch {
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.error("[collab] 线路目录读取失败，保留文件并使用兼容配置:", error.message || error);
+    }
     const legacy = legacyAirportRoute();
     return { version: 1, routes: legacy ? [legacy] : [], updatedAt: legacy?.updatedAt || "" };
   }
@@ -862,9 +892,12 @@ function loadProxyRouteCatalog() {
 
 function saveProxyRouteCatalog(routes) {
   const updatedAt = nowIso();
-  const normalized = (Array.isArray(routes) ? routes : [])
-    .map((route) => normalizeProxyRoute(route, { updatedAt }))
-    .filter(Boolean);
+  if (!Array.isArray(routes)) throw new Error("线路目录必须是数组");
+  const normalized = routes.map((route, index) => {
+    const value = normalizeProxyRoute(route, { updatedAt });
+    if (!value) throw new Error(`第 ${index + 1} 条线路缺少合法 ID、出站类型或出站配置`);
+    return value;
+  });
   const unique = [...new Map(normalized.map((route) => [route.id, route])).values()];
   if (unique.length !== normalized.length) throw new Error("线路 ID 不能重复");
   if (unique.length > 64) throw new Error("线路数量不能超过 64 条");
@@ -887,7 +920,11 @@ function proxyRoutesForUser(username, bootstrap = null) {
       name: "内置统一代理",
       enabled: true,
       kind: "unified",
-      expected: { ip: "", countryCode: "", asn: "" },
+      expected: {
+        ip: safeText(sender.proxy_expected_ip),
+        countryCode: safeText(sender.proxy_expected_country).toUpperCase(),
+        asn: safeText(sender.proxy_expected_asn),
+      },
     });
   }
   for (const route of loadProxyRouteCatalog().routes) {
@@ -908,21 +945,48 @@ function loadProxyRouteHealth() {
 function saveProxyRouteHealthReport(username, payload) {
   const routeId = normalizeProxyRouteId(payload?.routeId);
   if (!routeId) throw new Error("线路 ID 不合法");
-  const allowed = proxyRoutesForUser(username).some((route) => route.id === routeId);
-  if (!allowed) throw new Error("该用户未获授权使用此线路");
+  const route = proxyRoutesForUser(username).find((item) => item.id === routeId);
+  if (!route) throw new Error("该用户未获授权使用此线路");
   const checks = payload?.checks && typeof payload.checks === "object" ? payload.checks : {};
+  const normalizeCheck = (value) => {
+    if (["passed", "failed", "not-checked"].includes(value)) return value;
+    if (value === true) return "passed";
+    if (value === false) return "failed";
+    return "not-checked";
+  };
+  const normalizedChecks = Object.fromEntries(
+    Object.entries(checks)
+      .slice(0, 20)
+      .map(([key, value]) => [safeText(key).slice(0, 50), normalizeCheck(value)]),
+  );
+  const ip = safeText(payload?.ip).slice(0, 80);
+  const countryCode = safeText(payload?.countryCode).slice(0, 2).toUpperCase();
+  const asn = safeText(payload?.asn).slice(0, 40);
+  const expected = route.expected && typeof route.expected === "object" ? route.expected : {};
+  const requiredChecks = ["httpCrossCheck", "dnsConfigured", "ipv4EgressObserved"];
+  if (safeText(expected.ip)) requiredChecks.push("expectedIp");
+  if (safeText(expected.countryCode)) requiredChecks.push("expectedCountry");
+  if (safeText(expected.asn)) requiredChecks.push("expectedAsn");
+  const identityMatches =
+    (!safeText(expected.ip) || safeText(expected.ip).toLowerCase() === ip.toLowerCase()) &&
+    (!safeText(expected.countryCode) ||
+      safeText(expected.countryCode).toUpperCase() === countryCode) &&
+    (!safeText(expected.asn) ||
+      safeText(expected.asn).toUpperCase().replace(/^AS/, "") ===
+        asn.toUpperCase().replace(/^AS/, ""));
   const report = {
     username: safeText(username),
     routeId,
-    ok: Boolean(payload?.ok),
-    ip: safeText(payload?.ip).slice(0, 80),
-    countryCode: safeText(payload?.countryCode).slice(0, 2).toUpperCase(),
-    asn: safeText(payload?.asn).slice(0, 40),
-    checks: Object.fromEntries(
-      Object.entries(checks)
-        .slice(0, 20)
-        .map(([key, value]) => [safeText(key).slice(0, 50), Boolean(value)]),
-    ),
+    routeFingerprint: safeText(payload?.routeFingerprint).slice(0, 64),
+    ok:
+      Boolean(payload?.ok) &&
+      identityMatches &&
+      requiredChecks.every((key) => normalizedChecks[key] === "passed"),
+    ip,
+    countryCode,
+    asn,
+    checks: normalizedChecks,
+    source: "client-report",
     checkedAt: nowIso(),
   };
   const store = loadProxyRouteHealth();
@@ -984,6 +1048,25 @@ function verifyPassword(user, password) {
   }
 }
 
+function verifyPasswordAsync(user, password) {
+  if (!user || !user.passwordHash || !user.salt) return Promise.resolve(false);
+  const iterations = Number.isInteger(user.iterations) ? user.iterations : 120000;
+  const digest = user.digest || "sha256";
+  return new Promise((resolve) => {
+    crypto.pbkdf2(password, user.salt, iterations, 32, digest, (error, derivedKey) => {
+      if (error) {
+        resolve(false);
+        return;
+      }
+      try {
+        resolve(crypto.timingSafeEqual(derivedKey, Buffer.from(String(user.passwordHash), "hex")));
+      } catch {
+        resolve(false);
+      }
+    });
+  });
+}
+
 function makeToken() {
   return crypto.randomBytes(24).toString("base64url");
 }
@@ -1001,10 +1084,17 @@ function loginLockState(ip) {
   if (rec && rec.lockUntil && rec.lockUntil > Date.now()) {
     return { locked: true, retryAfterMs: rec.lockUntil - Date.now() };
   }
+  if (rec && rec.lockUntil && rec.lockUntil <= Date.now() && rec.fails === 0) {
+    loginAttempts.delete(ip);
+  }
   return { locked: false, retryAfterMs: 0 };
 }
 
 function recordLoginFail(ip) {
+  if (!loginAttempts.has(ip) && loginAttempts.size >= LOGIN_ATTEMPT_CACHE_MAX) {
+    const oldestKey = loginAttempts.keys().next().value;
+    if (oldestKey) loginAttempts.delete(oldestKey);
+  }
   const rec = loginAttempts.get(ip) || { fails: 0, lockUntil: 0 };
   rec.fails += 1;
   if (rec.fails >= LOGIN_MAX_FAILS) {
@@ -1016,6 +1106,11 @@ function recordLoginFail(ip) {
 
 function clearLoginFails(ip) {
   loginAttempts.delete(ip);
+}
+
+function loginAttemptKey(req, username, scope = "user") {
+  const ip = normalizeIp(req.socket?.remoteAddress);
+  return `${scope}:${safeText(username).toLowerCase().slice(0, 80)}:${ip}`;
 }
 
 function subnetKeyFromIp(ip) {
@@ -1235,7 +1330,25 @@ function resolveAdminSessionByToken(token) {
     adminSessions.delete(normalized);
     return null;
   }
+  const { user } = findUser(session.username);
+  if (!user?.isAdmin) {
+    adminSessions.delete(normalized);
+    return null;
+  }
   return session;
+}
+
+function revokeUserSessions(username, reason = "permissions_changed") {
+  for (const [token, session] of sessions.entries()) {
+    if (session.username !== username) continue;
+    sessions.delete(token);
+    const ws = wsByToken.get(token);
+    if (ws && ws.readyState === ws.OPEN) ws.close(4002, reason);
+    wsByToken.delete(token);
+  }
+  for (const [token, session] of adminSessions.entries()) {
+    if (session.username === username) adminSessions.delete(token);
+  }
 }
 
 function requireAdminSession(req, res) {
@@ -1309,7 +1422,9 @@ function adminUserSummary(user) {
     avatarKind: safeText(user.avatarKind) || inferAvatarKind(user.avatar),
     bio: safeText(user.bio),
     isAdmin: Boolean(user.isAdmin),
-    advancedAiAllowed: Boolean(user.isAdmin || user.advancedAiAllowed),
+    // 编辑表单只能使用持久化原始值，不能把管理员的隐式权限在降权时写回。
+    advancedAiAllowed: Boolean(user.advancedAiAllowed),
+    effectiveAdvancedAiAllowed: Boolean(user.isAdmin || user.advancedAiAllowed),
     allowedProxyRouteIds: normalizeProxyRouteIds(user.allowedProxyRouteIds),
     disabled: Boolean(user.disabled),
     chatDisabled: Boolean(user.chatDisabled),
@@ -1511,6 +1626,11 @@ function resolveSessionByToken(token) {
   const session = sessions.get(token);
   if (!session) return null;
   if (session.expiresAt <= Date.now()) {
+    sessions.delete(token);
+    return null;
+  }
+  const { user } = findUser(session.username);
+  if (!user) {
     sessions.delete(token);
     return null;
   }
@@ -1761,6 +1881,18 @@ function broadcastToUser(username, payload, exceptToken) {
   }
 }
 
+function broadcastProxyRoutesChanged(reason, updatedAt = nowIso()) {
+  for (const client of wsClients) {
+    const { user } = findUser(client.username);
+    if (!user || (!user.isAdmin && !user.advancedAiAllowed)) continue;
+    sendToClient(client, {
+      type: "proxy_routes_changed",
+      reason: safeText(reason) || "catalog_updated",
+      updatedAt,
+    });
+  }
+}
+
 // —— 团队专注(番茄钟)排名: { daily: { [username]: { [YYYY-MM-DD]: { minutes, count } } } } ——
 function focusDateStr(d = new Date()) {
   const p = (n) => String(n).padStart(2, "0");
@@ -1874,19 +2006,20 @@ const server = http.createServer(async (req, res) => {
       }
 
       const remoteIp = normalizeIp(req.socket?.remoteAddress);
-      const lock = loginLockState(remoteIp);
+      const attemptKey = loginAttemptKey(req, username);
+      const lock = loginLockState(attemptKey);
       if (lock.locked) {
         sendText(res, 429, `登录失败次数过多，请 ${Math.ceil(lock.retryAfterMs / 1000)} 秒后再试`);
         return;
       }
 
       const { store, user } = findUser(username);
-      if (!user || !verifyPassword(user, password)) {
-        recordLoginFail(remoteIp);
+      if (!user || !(await verifyPasswordAsync(user, password))) {
+        recordLoginFail(attemptKey);
         sendText(res, 401, "账号或密码错误");
         return;
       }
-      clearLoginFails(remoteIp);
+      clearLoginFails(attemptKey);
 
       for (const [oldToken, session] of sessions.entries()) {
         if (session.username === username) {
@@ -1979,7 +2112,7 @@ const server = http.createServer(async (req, res) => {
       const payload = safeParseJson(await readBody(req)) || {};
       const password = String(payload.password || "");
       const { user } = findUser(currentSession.username);
-      if (!password || !user || !verifyPassword(user, password)) {
+      if (!password || !user || !(await verifyPasswordAsync(user, password))) {
         const previous = passwordVerifyAttempts.get(token) || {
           fails: 0,
           lockUntil: 0,
@@ -2039,12 +2172,20 @@ const server = http.createServer(async (req, res) => {
       const payload = safeParseJson(body);
       const username = safeText(payload?.username);
       const password = String(payload?.password || "");
+      const attemptKey = loginAttemptKey(req, username, "admin");
+      const lock = loginLockState(attemptKey);
+      if (lock.locked) {
+        sendText(res, 429, `登录失败次数过多，请 ${Math.ceil(lock.retryAfterMs / 1000)} 秒后再试`);
+        return;
+      }
       const { user } = findUser(username);
 
-      if (!user || !user.isAdmin || user.disabled || !verifyPassword(user, password)) {
+      if (!user || !user.isAdmin || user.disabled || !(await verifyPasswordAsync(user, password))) {
+        recordLoginFail(attemptKey);
         sendText(res, 401, "管理员账号或密码错误");
         return;
       }
+      clearLoginFails(attemptKey);
 
       const token = makeToken();
       const now = Date.now();
@@ -2181,6 +2322,29 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const payload = safeParseJson(body) || {};
       const nextPassword = String(payload.password || "");
+      const nextDisabled =
+        typeof payload.disabled === "undefined"
+          ? Boolean(user.disabled)
+          : Boolean(payload.disabled);
+      const nextIsAdmin =
+        typeof payload.isAdmin === "undefined" ? Boolean(user.isAdmin) : Boolean(payload.isAdmin);
+
+      if (
+        username === adminSession.username &&
+        ((!nextIsAdmin && user.isAdmin) || (nextDisabled && !user.disabled))
+      ) {
+        sendText(res, 400, "不能禁用自己或取消自己的管理员权限");
+        return;
+      }
+      if (user.isAdmin && !user.disabled && (!nextIsAdmin || nextDisabled)) {
+        const otherEnabledAdmins = store.users.filter(
+          (item) => item.username !== username && item.isAdmin && !item.disabled,
+        );
+        if (!otherEnabledAdmins.length) {
+          sendText(res, 400, "不能禁用或降权最后一个可用管理员");
+          return;
+        }
+      }
 
       if (typeof payload.displayName !== "undefined")
         user.displayName = safeText(payload.displayName).slice(0, 30) || user.username;
@@ -2191,6 +2355,9 @@ const server = http.createServer(async (req, res) => {
       }
       if (typeof payload.disabled !== "undefined") user.disabled = Boolean(payload.disabled);
       if (typeof payload.isAdmin !== "undefined") user.isAdmin = Boolean(payload.isAdmin);
+      if (payload.isAdmin === false && typeof payload.advancedAiAllowed === "undefined") {
+        user.advancedAiAllowed = false;
+      }
       if (typeof payload.advancedAiAllowed !== "undefined")
         user.advancedAiAllowed = Boolean(payload.advancedAiAllowed);
       if (typeof payload.allowedProxyRouteIds !== "undefined")
@@ -2206,6 +2373,16 @@ const server = http.createServer(async (req, res) => {
       }
       user.updatedAt = nowIso();
       saveUserStore(store);
+      if (
+        typeof payload.disabled !== "undefined" ||
+        typeof payload.isAdmin !== "undefined" ||
+        typeof payload.advancedAiAllowed !== "undefined" ||
+        typeof payload.allowedProxyRouteIds !== "undefined" ||
+        typeof payload.chatDisabled !== "undefined" ||
+        nextPassword
+      ) {
+        revokeUserSessions(username);
+      }
       sendJson(res, 200, {
         ok: true,
         user: adminUserSummary(normalizeUserRecord(user)),
@@ -2230,6 +2407,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req, 512 * 1024);
       const payload = safeParseJson(body) || {};
       const saved = saveClientBootstrap(payload);
+      broadcastProxyRoutesChanged("bootstrap_updated");
       sendJson(res, 200, {
         ok: true,
         bootstrap: saved,
@@ -2293,10 +2471,18 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
     const payload = safeParseJson(body) || {};
     const key = String(payload.key || payload.token || "");
+    const attemptKey = loginAttemptKey(req, "developer", "dev");
+    const lock = loginLockState(attemptKey);
+    if (lock.locked) {
+      sendText(res, 429, `登录失败次数过多，请 ${Math.ceil(lock.retryAfterMs / 1000)} 秒后再试`);
+      return;
+    }
     if (!DEV_TOKEN || key !== DEV_TOKEN) {
+      recordLoginFail(attemptKey);
       sendText(res, 401, "developer key invalid");
       return;
     }
+    clearLoginFails(attemptKey);
     const token = makeToken();
     devSessions.set(token, { expiresAt: Date.now() + SESSION_TTL_MS });
     sendJson(res, 200, { token, release: loadSharedRelease() });
@@ -2692,7 +2878,16 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readBody(req, 2 * 1024 * 1024);
       const payload = safeParseJson(body) || {};
+      const missingExpectedIp = (Array.isArray(payload.routes) ? payload.routes : []).find(
+        (route) => route?.enabled !== false && !safeText(route?.expected?.ip),
+      );
+      if (missingExpectedIp) {
+        throw new Error(
+          `启用线路 ${normalizeProxyRouteId(missingExpectedIp.id) || "未知线路"} 前必须填写预期出口 IP`,
+        );
+      }
       const saved = saveProxyRouteCatalog(payload.routes);
+      broadcastProxyRoutesChanged("catalog_updated", saved.updatedAt);
       sendJson(res, 200, { ok: true, ...saved });
     } catch (err) {
       sendText(res, 400, err.message || "保存代理线路失败");
@@ -2950,7 +3145,11 @@ const server = http.createServer(async (req, res) => {
   sendText(res, 404, "Not Found");
 });
 
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({
+  noServer: true,
+  maxPayload: MAX_WS_PAYLOAD_BYTES,
+  handleProtocols: (protocols) => (protocols.has("sharegpt") ? "sharegpt" : false),
+});
 
 server.on("upgrade", (request, socket, head) => {
   const reqUrl = new URL(request.url || "/", `http://${request.headers.host || "127.0.0.1"}`);
@@ -2960,7 +3159,14 @@ server.on("upgrade", (request, socket, head) => {
   }
 
   cleanupExpiredSessions();
-  const token = String(reqUrl.searchParams.get("token") || "").trim();
+  const requestedProtocols = String(request.headers["sec-websocket-protocol"] || "")
+    .split(",")
+    .map((value) => value.trim());
+  const authProtocol = requestedProtocols.find((value) => value.startsWith("sharegpt-auth."));
+  // 查询参数仅保留旧客户端兼容；新版不会把 token 暴露到 URL / 访问日志。
+  const token = String(
+    authProtocol?.slice("sharegpt-auth.".length) || reqUrl.searchParams.get("token") || "",
+  ).trim();
   const session = resolveSessionByToken(token);
   if (!token || !session) {
     socket.destroy();
@@ -3416,6 +3622,7 @@ module.exports = {
   server,
   hashPassword,
   verifyPassword,
+  verifyPasswordAsync,
   writeJsonAtomic,
   normalizeIp,
   loginLockState,

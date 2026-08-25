@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useMemo, useState } from 'react'
+import { StrictMode, useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Minus, Square, X, Save, UserRound } from 'lucide-react'
 import { Toaster } from '@/components/ui/sonner'
@@ -67,12 +67,9 @@ function WindowControls() {
 }
 
 function ProfileApp() {
-  const params = useMemo(() => new URLSearchParams(window.location.search), [])
-  const serverUrl = safeText(params.get('serverUrl')).replace(/\/+$/, '')
-  const token = safeText(params.get('token'))
-  const queryUsername = safeText(params.get('username'))
-
-  const [username, setUsername] = useState(queryUsername)
+  const [serverUrl, setServerUrl] = useState('')
+  const [token, setToken] = useState('')
+  const [username, setUsername] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [bio, setBio] = useState('')
   const [avatar, setAvatar] = useState('')
@@ -81,32 +78,26 @@ function ProfileApp() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  // 头像取首字; 与主窗 settings.ui.theme 对齐主题。
   useEffect(() => {
-    api
-      ?.loadSettings?.()
-      .then((s) => {
-        const theme = (s as { ui?: { theme?: string } })?.ui?.theme
-        document.documentElement.classList.toggle('dark', safeText(theme).toLowerCase() !== 'light')
-      })
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    if (!serverUrl || !token) {
-      setError('登录信息已失效，请回到主页面重新打开个人资料。')
-      return
-    }
     void (async () => {
       try {
-        const resp = await fetch(`${serverUrl}/api/profile`, {
-          headers: { Authorization: `Bearer ${token}` },
+        const context = await api?.getProfileContext?.()
+        const nextServerUrl = safeText(context?.serverUrl).replace(/\/+$/, '')
+        const nextToken = safeText(context?.token)
+        const nextUsername = safeText(context?.username)
+        if (!nextServerUrl || !nextToken) {
+          throw new Error('登录信息已失效，请回到主页面重新打开个人资料。')
+        }
+        setServerUrl(nextServerUrl)
+        setToken(nextToken)
+        const resp = await fetch(`${nextServerUrl}/api/profile`, {
+          headers: { Authorization: `Bearer ${nextToken}` },
         })
         if (!resp.ok) throw new Error((await resp.text()) || `读取资料失败（${resp.status}）`)
         const payload = await resp.json()
         const p = (payload?.profile ?? {}) as Partial<ProfileData>
-        setUsername(safeText(p.username) || queryUsername)
-        setDisplayName(safeText(p.displayName) || safeText(p.username) || queryUsername)
+        setUsername(safeText(p.username) || nextUsername)
+        setDisplayName(safeText(p.displayName) || safeText(p.username) || nextUsername)
         setBio(safeText(p.bio))
         setAvatar(firstChar(p.avatar))
         setRoomScope(safeText(payload?.roomScope))
@@ -115,7 +106,7 @@ function ProfileApp() {
         setError(e instanceof Error ? e.message : '读取资料失败')
       }
     })()
-  }, [serverUrl, token, queryUsername])
+  }, [])
 
   async function handleSave() {
     if (saving) return

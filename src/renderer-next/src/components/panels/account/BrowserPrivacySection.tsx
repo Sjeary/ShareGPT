@@ -67,7 +67,10 @@ export function BrowserPrivacySection() {
   const privacy = useAppStore((state) => state.settings?.browserPrivacy)
   const advancedAiConfigured = useAppStore((state) => state.settings?.advancedAi?.enabled === true)
   const advancedAiAllowed = useAuthStore((state) =>
-    Boolean(state.profile?.isAdmin || state.profile?.advancedAiAllowed),
+    Boolean(
+      state.profile?.routeAuthorizationVerified &&
+      (state.profile?.isAdmin || state.profile?.advancedAiAllowed),
+    ),
   )
   const advancedAiEnabled = advancedAiConfigured && advancedAiAllowed
   const patchSection = useAppStore((state) => state.patchSection)

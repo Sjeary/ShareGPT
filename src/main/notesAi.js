@@ -55,6 +55,7 @@ function endpointFor(baseUrl) {
 function createNotesAi({ getWindow }) {
   let counter = 0;
   const live = new Map();
+  const MAX_RETRY = 2;
 
   function emit(streamId, payload) {
     const win = getWindow();
@@ -80,6 +81,12 @@ function createNotesAi({ getWindow }) {
       setImmediate(() => emit(streamId, { type: "error", message: "接口地址不合法" }));
       return { streamId };
     }
+    if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
+      setImmediate(() =>
+        emit(streamId, { type: "error", message: "接口地址只支持 HTTP 或 HTTPS" }),
+      );
+      return { streamId };
+    }
 
     const payload = {
       model,
@@ -92,26 +99,88 @@ function createNotesAi({ getWindow }) {
     const body = Buffer.from(JSON.stringify(payload), "utf-8");
 
     const lib = endpoint.protocol === "http:" ? http : https;
-    const MAX_RETRY = 2;
     // 仅在「尚未吐出任何内容」且属于上游过载/限流/瞬时错误时才自动重试,
     // 避免把已经流式输出一半的回答重复一遍。
-    let gotDelta = false;
     const retryable = (code, msg) => {
       if ([429, 500, 502, 503, 504, 529].includes(Number(code))) return true;
       return /overload|rate.?limit|too many|temporar|timeout|busy|unavailable|capacity/i.test(
         String(msg || ""),
       );
     };
-    const scheduleRetry = (attempt, reason) => {
-      const delay = 800 * (attempt + 1) + 400 * attempt;
+    const stream = {
+      request: null,
+      retryTimer: null,
+      attempt: 0,
+      terminal: false,
+      cancelled: false,
+      gotDelta: false,
+    };
+    live.set(streamId, stream);
+
+    const finishOnce = (payload) => {
+      if (stream.terminal || stream.cancelled) return false;
+      stream.terminal = true;
+      if (stream.retryTimer) clearTimeout(stream.retryTimer);
+      stream.retryTimer = null;
+      emit(streamId, payload);
+      live.delete(streamId);
+      return true;
+    };
+
+    const scheduleRetry = () => {
+      if (stream.cancelled || stream.terminal) return;
+      const nextAttempt = stream.attempt + 1;
+      const delay = 800 * nextAttempt + 400 * (nextAttempt - 1);
       emit(streamId, {
         type: "status",
-        message: `服务繁忙, 正在重试(${attempt + 1}/${MAX_RETRY})…`,
+        message: `服务繁忙, 正在重试(${nextAttempt}/${MAX_RETRY})…`,
       });
-      setTimeout(() => send(attempt + 1), delay);
+      stream.request = null;
+      stream.retryTimer = setTimeout(() => {
+        stream.retryTimer = null;
+        if (!stream.cancelled && !stream.terminal) send(nextAttempt);
+      }, delay);
+    };
+
+    const failAttempt = (code, message) => {
+      if (stream.cancelled || stream.terminal) return;
+      if (!stream.gotDelta && stream.attempt < MAX_RETRY && retryable(code, message)) {
+        scheduleRetry();
+        return;
+      }
+      finishOnce({
+        type: "error",
+        message:
+          retryable(code, message) && !stream.gotDelta
+            ? `AI 服务繁忙${code ? `(${code})` : ""}, 已重试 ${MAX_RETRY} 次仍失败, 请稍后再试`
+            : message || "网络错误",
+      });
+    };
+
+    const handleSseLine = (line) => {
+      const normalized = String(line || "").trim();
+      if (!normalized.startsWith("data:")) return;
+      const data = normalized.slice(5).trim();
+      if (!data || data === "[DONE]" || stream.terminal || stream.cancelled) return;
+      try {
+        const event = JSON.parse(data);
+        if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+          stream.gotDelta = true;
+          emit(streamId, { type: "delta", text: event.delta });
+        } else if (event.type === "response.completed") {
+          finishOnce({ type: "done" });
+        } else if (event.type === "response.failed" || event.type === "error") {
+          finishOnce({ type: "error", message: event.error?.message || "生成失败" });
+        }
+      } catch {
+        // 非法 SSE 行由上游负责重发；不能与下一行拼接，否则会组成错误 JSON。
+      }
     };
 
     function send(attempt) {
+      if (stream.cancelled || stream.terminal) return;
+      stream.attempt = attempt;
+      let attemptSettled = false;
       const r = lib.request(
         {
           method: "POST",
@@ -131,18 +200,9 @@ function createNotesAi({ getWindow }) {
             let err = "";
             res.on("data", (c) => (err += c));
             res.on("end", () => {
-              if (!gotDelta && attempt < MAX_RETRY && retryable(res.statusCode, err)) {
-                scheduleRetry(attempt, err);
-              } else {
-                emit(streamId, {
-                  type: "error",
-                  message:
-                    retryable(res.statusCode, err) && !gotDelta
-                      ? `AI 服务繁忙(${res.statusCode}), 已重试 ${MAX_RETRY} 次仍失败, 请稍后再试`
-                      : `接口错误 ${res.statusCode}: ${err.slice(0, 300)}`,
-                });
-                live.delete(streamId);
-              }
+              if (attemptSettled) return;
+              attemptSettled = true;
+              failAttempt(res.statusCode, `接口错误 ${res.statusCode}: ${err.slice(0, 300)}`);
             });
             return;
           }
@@ -154,48 +214,30 @@ function createNotesAi({ getWindow }) {
             while ((idx = buf.indexOf("\n")) >= 0) {
               const line = buf.slice(0, idx).trim();
               buf = buf.slice(idx + 1);
-              if (!line.startsWith("data:")) continue;
-              const data = line.slice(5).trim();
-              if (!data || data === "[DONE]") continue;
-              try {
-                const j = JSON.parse(data);
-                if (j.type === "response.output_text.delta" && typeof j.delta === "string") {
-                  gotDelta = true;
-                  emit(streamId, { type: "delta", text: j.delta });
-                } else if (j.type === "response.completed") {
-                  emit(streamId, { type: "done" });
-                } else if (j.type === "response.failed" || j.type === "error") {
-                  emit(streamId, { type: "error", message: j.error?.message || "生成失败" });
-                }
-              } catch {
-                /* 非完整 JSON, 等下一块 */
-              }
+              handleSseLine(line);
             }
           });
           res.on("end", () => {
-            emit(streamId, { type: "done" });
-            live.delete(streamId);
+            if (buf.trim()) handleSseLine(buf);
+            if (!attemptSettled) {
+              attemptSettled = true;
+              finishOnce({ type: "done" });
+            }
           });
         },
       );
       r.on("error", (e) => {
-        if (!gotDelta && attempt < MAX_RETRY && retryable(0, e.message)) {
-          scheduleRetry(attempt, e.message);
-        } else {
-          emit(streamId, { type: "error", message: e.message || "网络错误" });
-          live.delete(streamId);
-        }
+        if (attemptSettled || stream.cancelled || stream.terminal) return;
+        attemptSettled = true;
+        failAttempt(0, e.message || "网络错误");
       });
       r.on("timeout", () => {
+        if (attemptSettled || stream.cancelled || stream.terminal) return;
+        attemptSettled = true;
         r.destroy();
-        if (!gotDelta && attempt < MAX_RETRY) {
-          scheduleRetry(attempt, "timeout");
-        } else {
-          emit(streamId, { type: "error", message: "请求超时" });
-          live.delete(streamId);
-        }
+        failAttempt(0, "请求超时");
       });
-      live.set(streamId, r);
+      stream.request = r;
       r.end(body);
     }
 
@@ -204,10 +246,13 @@ function createNotesAi({ getWindow }) {
   }
 
   function cancel(streamId) {
-    const r = live.get(streamId);
-    if (r) {
+    const stream = live.get(streamId);
+    if (stream) {
+      stream.cancelled = true;
+      if (stream.retryTimer) clearTimeout(stream.retryTimer);
+      stream.retryTimer = null;
       try {
-        r.destroy();
+        stream.request?.destroy();
       } catch {}
       live.delete(streamId);
     }

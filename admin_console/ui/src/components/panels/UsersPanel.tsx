@@ -140,6 +140,7 @@ export function UsersPanel() {
                 <button
                   key={f.key}
                   type="button"
+                  aria-pressed={filter === f.key}
                   onClick={() => setFilter(f.key)}
                   className={cn(
                     'rounded-full px-3 py-1 text-xs font-medium transition-colors',
@@ -168,7 +169,10 @@ export function UsersPanel() {
                   tabIndex={0}
                   onClick={() => setSelected(u.username)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') setSelected(u.username)
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      if (e.key === ' ') e.preventDefault()
+                      setSelected(u.username)
+                    }
                   }}
                   className={cn(
                     'cursor-pointer rounded-lg border p-3 text-left transition-colors',
@@ -201,6 +205,9 @@ export function UsersPanel() {
                         size="icon"
                         className="size-7"
                         title={u.isAdmin ? '取消管理员' : '设为管理员'}
+                        aria-label={
+                          u.isAdmin ? `取消 ${u.username} 的管理员` : `将 ${u.username} 设为管理员`
+                        }
                         onClick={() => void quickToggle(u, 'isAdmin')}
                       >
                         {u.isAdmin ? (
@@ -214,6 +221,9 @@ export function UsersPanel() {
                         size="icon"
                         className="size-7"
                         title={u.disabled ? '启用账号' : '禁用账号'}
+                        aria-label={
+                          u.disabled ? `启用账号 ${u.username}` : `禁用账号 ${u.username}`
+                        }
                         onClick={() => void quickToggle(u, 'disabled')}
                       >
                         {u.disabled ? (

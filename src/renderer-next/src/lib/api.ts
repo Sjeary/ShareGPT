@@ -7,6 +7,7 @@ const fallback = {
   setThemeSource: async () => undefined,
   loadSettings: async () => ({}),
   saveSettings: async () => undefined,
+  patchSettings: async () => ({}),
   importSettings: async () => undefined,
   loadChatHistory: async () => ({}),
   saveChatHistory: async () => undefined,
@@ -19,8 +20,8 @@ const fallback = {
   vault: {
     start: async () => undefined,
     getRoot: async () => '',
-    setRoot: async () => ({ ok: false, root: '', count: 0 }),
-    pickFolder: async () => null,
+    chooseRoot: async () => null,
+    chooseImport: async () => null,
     list: async () => [],
     readAll: async () => [],
     read: async () => ({ path: '', content: '', mtime: 0, ctime: 0 }),
@@ -29,7 +30,6 @@ const fallback = {
     create: async () => ({ path: '', content: '', mtime: 0, ctime: 0 }),
     rename: async () => ({ ok: true }),
     remove: async () => ({ ok: true }),
-    importFrom: async () => ({ notes: 0, attachments: 0, skipped: 0, root: '' }),
   },
   onVaultChanged: () => noop,
   notesAi: {
@@ -63,6 +63,7 @@ const fallback = {
   switchAiView: async () => undefined,
   closeAiView: async () => undefined,
   setActiveAiKind: async () => ({ activeKind: '' }),
+  closeAllAiWorkspaces: async () => ({ ok: true }),
   ensureAiWorkspace: async () => undefined,
   activateAiEnvironment: async () => ({ ok: true }),
   deleteAiEnvironment: async () => ({ ok: true }),
@@ -92,7 +93,7 @@ const fallback = {
   detectProxyEnvironment: async () => {
     throw new Error('仅桌面客户端支持出口环境检测')
   },
-  executeAiJavaScript: async () => undefined,
+  installAiQueryTracker: async () => false,
   openProfileEditor: async () => undefined,
   emitProfileUpdated: noop,
   minimizeWindow: async () => undefined,

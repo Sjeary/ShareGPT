@@ -19,12 +19,17 @@ export function GptTabBar({
   onCreate: () => void
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
+    <div
+      role="tablist"
+      aria-label="AI 会话标签"
+      className="flex min-w-0 items-center gap-1 overflow-x-auto"
+    >
       {tabs.map((tab) => {
         const active = tab.id === activeTabId
         return (
           <div
             key={tab.id}
+            role="presentation"
             className={cn(
               'group flex h-8 max-w-44 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs transition-colors',
               active
@@ -34,8 +39,22 @@ export function GptTabBar({
           >
             <button
               type="button"
+              role="tab"
+              aria-selected={active}
+              tabIndex={active ? 0 : -1}
               title={tab.title}
               onClick={() => onSwitch(tab.id)}
+              onKeyDown={(event) => {
+                const index = tabs.findIndex((item) => item.id === tab.id)
+                let nextIndex = -1
+                if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length
+                if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length
+                if (event.key === 'Home') nextIndex = 0
+                if (event.key === 'End') nextIndex = tabs.length - 1
+                if (nextIndex < 0) return
+                event.preventDefault()
+                onSwitch(tabs[nextIndex].id)
+              }}
               className="min-w-0 flex-1 truncate text-left"
             >
               {tab.title}

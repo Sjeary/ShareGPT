@@ -4,6 +4,9 @@ export interface SenderSettings {
   proxy_server: string
   proxy_port: string
   proxy_uuid: string
+  proxy_expected_ip?: string
+  proxy_expected_country?: string
+  proxy_expected_asn?: string
   socks_listen_port: string
   fallback_mode: string
   fallback_local_port: string
@@ -84,12 +87,15 @@ export interface UiSettings {
   claude_notice_dismissed: boolean
   // 新手引导(分步高亮导览)是否已完成/跳过过一次; 已完成则不再自动弹, 仅可手动重看。
   onboarding_done: boolean
+  // 删除环境时分区被 Chromium 占用，会在下次启动再次清理。
+  pendingAiPartitionCleanup?: string[]
 }
 
 export interface AdvancedAiRoute {
   id: string
   name: string
   mode: 'singbox'
+  configKey: string
 }
 
 export interface AdvancedAiEnvironment {
@@ -169,6 +175,7 @@ export interface BrowserPrivacySettings {
 }
 
 export interface AppSettings {
+  settingsRevision: number
   sender: Partial<SenderSettings>
   receiver: Partial<ReceiverSettings>
   collab: Partial<CollabSettings>
@@ -208,6 +215,8 @@ export type ServiceState = 'stopped' | 'starting' | 'running' | 'error'
 export interface StatusPayload {
   sender?: ServiceState | string
   receiver?: ServiceState | string
+  senderRunning?: boolean
+  senderStarting?: boolean
   aiProxyRoutes?: Array<{ id: string; label: string }>
   [k: string]: unknown
 }

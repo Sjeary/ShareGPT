@@ -60,7 +60,21 @@ import {
   normalizeAdvancedAiSettings,
   routeForEnvironment,
 } from '@/lib/aiEnvironments'
-import type { AdvancedAiSettings, AppSettings } from '@/types/settings'
+import type { AdvancedAiSettings } from '@/types/settings'
+
+const environmentActivationGeneration: Record<AiKind, number> = {
+  gpt: 0,
+  gemini: 0,
+  claude: 0,
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable ||
+      Boolean(target.closest('input, textarea, select, [role="dialog"]')))
+  )
+}
 
 function safeText(value: unknown): string {
   if (value === undefined || value === null) return ''
@@ -103,7 +117,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const setAiHeaderHidden = useAppStore((s) => s.setAiHeaderHidden)
   const toggleAiHeaderHidden = useAppStore((s) => s.toggleAiHeaderHidden)
   const advancedAiAllowed = useAuthStore((s) =>
-    Boolean(s.profile?.isAdmin || s.profile?.advancedAiAllowed),
+    Boolean(
+      s.profile?.routeAuthorizationVerified && (s.profile?.isAdmin || s.profile?.advancedAiAllowed),
+    ),
   )
   const senderRunning = isSenderRunning(status)
   const advancedAi = useMemo(
@@ -128,10 +144,8 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const [environmentPanelOpen, setEnvironmentPanelOpen] = useState(false)
 
   const saveAdvancedAi = useCallback(async (next: AdvancedAiSettings) => {
-    const current = useAppStore.getState().settings
-    if (!current) return
     const normalized = normalizeAdvancedAiSettings(next)
-    await useAppStore.getState().saveSettings({ ...current, advancedAi: normalized } as AppSettings)
+    await useAppStore.getState().patchSection('advancedAi', normalized)
   }, [])
 
   const selectEnvironment = useCallback(
@@ -148,6 +162,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
+      const state = useAppStore.getState()
+      if ((!state.sidebarHidden && !state.aiHeaderHidden) || isEditableTarget(e.target)) return
+      e.preventDefault()
       useAppStore.getState().setSidebarHidden(false)
       setAiHeaderHidden(false)
     }
@@ -201,6 +218,16 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const [proxyOpen, setProxyOpen] = useState(false)
   const [proxyChecking, setProxyChecking] = useState(false)
   const [proxyReport, setProxyReport] = useState<AiProxyReport | null>(null)
+  const proxyCheckGeneration = useRef(0)
+
+  useEffect(() => {
+    proxyCheckGeneration.current += 1
+    const timer = window.setTimeout(() => {
+      setProxyReport(null)
+      setProxyChecking(false)
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [activeTabId, environmentId])
 
   // 窗口全屏 (类似 F11): 工具栏按钮切换; 用 resize 事件同步图标状态。
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -223,14 +250,20 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   }, [])
 
   const runProxyCheck = useCallback(async () => {
+    const generation = ++proxyCheckGeneration.current
+    const checkedTabId = activeTabId
     setProxyChecking(true)
     try {
-      const report = await api.checkAiProxy(kind, activeTabId)
-      setProxyReport(report)
+      const report = await api.checkAiProxy(kind, checkedTabId)
+      if (generation === proxyCheckGeneration.current && checkedTabId === activeTabId) {
+        setProxyReport(report)
+      }
     } catch (err) {
-      setProxyReport({ ok: false, reason: err instanceof Error ? err.message : String(err) })
+      if (generation === proxyCheckGeneration.current && checkedTabId === activeTabId) {
+        setProxyReport({ ok: false, reason: err instanceof Error ? err.message : String(err) })
+      }
     } finally {
-      setProxyChecking(false)
+      if (generation === proxyCheckGeneration.current) setProxyChecking(false)
     }
   }, [kind, activeTabId])
 
@@ -388,16 +421,22 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   useEffect(() => {
     let cancelled = false
+    const generation = ++environmentActivationGeneration[kind]
     void (async () => {
       try {
-        await api.activateAiEnvironment({ kind, environmentId })
+        await api.activateAiEnvironment({ kind, environmentId, generation })
+        if (cancelled || generation !== environmentActivationGeneration[kind]) return
         useAiStore.getState().setTabs(kind, [], '')
         const payload = (await api.listAiViews(kind)) as AiEventPayload
-        if (!cancelled) applyAiTabsPayload(kind, payload)
-      } catch {
-        /* ignore */
+        if (cancelled || generation !== environmentActivationGeneration[kind]) return
+        applyAiTabsPayload(kind, payload)
+      } catch (error) {
+        if (!cancelled && generation === environmentActivationGeneration[kind]) {
+          setFeedback(kind, error instanceof Error ? error.message : String(error), 'error')
+        }
+        return
       }
-      if (!cancelled && networkReady) {
+      if (!cancelled && generation === environmentActivationGeneration[kind] && networkReady) {
         try {
           const store = useAiStore.getState()
           if (!store.tabsByKind[kind].length) {
@@ -405,11 +444,14 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               lastUrl: homeUrlFor(kind),
               environmentId,
             })) as AiEventPayload
-            if (!cancelled) applyAiTabsPayload(kind, created)
+            if (cancelled || generation !== environmentActivationGeneration[kind]) return
+            applyAiTabsPayload(kind, created)
             // activeTabId 更新会触发下面的 effect，再统一执行 ensure，避免并发初始化同一视图。
             return
           }
-          await ensureWorkspace()
+          if (!cancelled && generation === environmentActivationGeneration[kind]) {
+            await ensureWorkspace()
+          }
         } catch (err) {
           if (!cancelled) {
             setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
@@ -578,13 +620,14 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     >
       <div className="flex h-full min-h-0 flex-col">
         {/* 控制条 */}
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
           <div className="flex items-center gap-1">
             <Button
               variant="ghost"
               size="icon"
               className="size-8"
               title="主页"
+              aria-label="主页"
               disabled={!networkReady}
               onClick={() => void goHome()}
             >
@@ -595,6 +638,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               size="icon"
               className="size-8"
               title="后退"
+              aria-label="后退"
               disabled={!view.canGoBack}
               onClick={() => void navigate('back')}
             >
@@ -605,6 +649,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               size="icon"
               className="size-8"
               title="前进"
+              aria-label="前进"
               disabled={!view.canGoForward}
               onClick={() => void navigate('forward')}
             >
@@ -615,6 +660,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               size="icon"
               className="size-8"
               title="刷新"
+              aria-label="刷新"
               disabled={!networkReady}
               onClick={() => void navigate('reload')}
             >
@@ -632,7 +678,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
             onCreate={() => void createTab()}
           />
 
-          <div className="ml-auto flex shrink-0 items-center gap-1">
+          <div className="ml-auto flex shrink-0 items-center gap-1 max-lg:w-full max-lg:justify-end max-lg:overflow-x-auto max-lg:border-t max-lg:border-border/60 max-lg:pt-1.5">
             {advancedMode && (
               <>
                 {environments.length > 0 && (
@@ -662,6 +708,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
                     environmentPanelOpen && 'bg-accent text-accent-foreground',
                   )}
                   title={environments.length ? '管理环境与线路' : '新建 AI 环境'}
+                  aria-label={environments.length ? '管理环境与线路' : '新建 AI 环境'}
                   onClick={() => setEnvironmentPanelOpen((open) => !open)}
                 >
                   <SlidersHorizontal className="size-4" />
@@ -742,6 +789,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               size="icon"
               className="size-8"
               title={sidebarHidden ? '显示侧栏' : '隐藏侧栏 (只看网页, 按 Esc 恢复)'}
+              aria-label={sidebarHidden ? '显示侧栏' : '隐藏侧栏'}
               onClick={toggleSidebarHidden}
             >
               {sidebarHidden ? (
@@ -769,6 +817,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               size="icon"
               className="size-8"
               title={isFullscreen ? '退出全屏 (F11)' : '全屏 (F11)'}
+              aria-label={isFullscreen ? '退出全屏' : '全屏'}
               onClick={toggleFullscreen}
             >
               {isFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}

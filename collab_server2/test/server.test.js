@@ -49,6 +49,15 @@ test("verifyPassword: 正确密码 true, 错误密码 false", () => {
   assert.strictEqual(srv.verifyPassword({}, "x"), false);
 });
 
+test("verifyPasswordAsync: 异步校验不会改变密码验证语义", async () => {
+  const salt = "async-salt";
+  const passwordHash = srv.hashPassword("correct-horse", salt, 120000, "sha256");
+  const user = { passwordHash, salt, iterations: 120000, digest: "sha256" };
+  assert.strictEqual(await srv.verifyPasswordAsync(user, "correct-horse"), true);
+  assert.strictEqual(await srv.verifyPasswordAsync(user, "wrong"), false);
+  assert.strictEqual(await srv.verifyPasswordAsync(null, "x"), false);
+});
+
 test("writeJsonAtomic: 写出合法 JSON, 可覆盖, 不留临时文件", () => {
   const file = path.join(tmpDir, "atomic.json");
   srv.writeJsonAtomic(file, { a: 1, list: [1, 2, 3] });
@@ -224,7 +233,7 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   const loginBody = await login.json();
   const { token } = loginBody;
   assert.strictEqual(loginBody.profile.advancedAiAllowed, true);
-  const authHeaders = { Authorization: `Bearer ${token}` };
+  let authHeaders = { Authorization: `Bearer ${token}` };
 
   for (const [username, allowed] of [
     ["normal-user", false],
@@ -259,8 +268,57 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
     body: JSON.stringify({ username: "admin-user", password }),
   });
   assert.strictEqual(adminLogin.status, 200);
-  const adminToken = (await adminLogin.json()).token;
+  const adminLoginBody = await adminLogin.json();
+  const adminToken = adminLoginBody.token;
+  assert.strictEqual(adminLoginBody.profile.advancedAiAllowed, false);
+  assert.strictEqual(adminLoginBody.profile.effectiveAdvancedAiAllowed, true);
   const adminHeaders = { Authorization: `Bearer ${adminToken}` };
+  const selfDemotion = await fetch(`${baseUrl}/api/admin/users/admin-user`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({ isAdmin: false }),
+  });
+  assert.strictEqual(selfDemotion.status, 400);
+  assert.match(await selfDemotion.text(), /不能禁用自己|最后一个可用管理员/);
+  const createTemporaryAdmin = await fetch(`${baseUrl}/api/admin/users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({
+      username: "temporary-admin",
+      password,
+      isAdmin: true,
+      advancedAiAllowed: false,
+    }),
+  });
+  assert.strictEqual(createTemporaryAdmin.status, 200);
+  const createdAdmin = (await createTemporaryAdmin.json()).user;
+  assert.strictEqual(createdAdmin.advancedAiAllowed, false);
+  assert.strictEqual(createdAdmin.effectiveAdvancedAiAllowed, true);
+  const demoteTemporaryAdmin = await fetch(`${baseUrl}/api/admin/users/temporary-admin`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({ isAdmin: false }),
+  });
+  assert.strictEqual(demoteTemporaryAdmin.status, 200);
+  const demotedAdmin = (await demoteTemporaryAdmin.json()).user;
+  assert.strictEqual(demotedAdmin.isAdmin, false);
+  assert.strictEqual(demotedAdmin.advancedAiAllowed, false);
+  assert.strictEqual(demotedAdmin.effectiveAdvancedAiAllowed, false);
+  const rejectUnverifiableRoute = await fetch(`${baseUrl}/api/admin/proxy-routes`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({
+      routes: [
+        {
+          id: "route-without-identity",
+          enabled: true,
+          outbound: { type: "socks", server: "unknown.example.com", server_port: 1080 },
+        },
+      ],
+    }),
+  });
+  assert.strictEqual(rejectUnverifiableRoute.status, 400);
+  assert.match(await rejectUnverifiableRoute.text(), /预期出口 IP/);
   const saveRoutes = await fetch(`${baseUrl}/api/admin/proxy-routes`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...adminHeaders },
@@ -271,13 +329,14 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
           name: "US primary",
           enabled: true,
           outbound: { type: "socks", server: "us.example.com", server_port: 1080 },
-          expected: { countryCode: "US" },
+          expected: { ip: "203.0.113.7", countryCode: "US" },
         },
         {
           id: "route-eu",
           name: "EU backup",
           enabled: true,
           outbound: { type: "socks", server: "eu.example.com", server_port: 1080 },
+          expected: { ip: "198.51.100.8", countryCode: "DE" },
         },
       ],
     }),
@@ -292,6 +351,18 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   });
   assert.strictEqual(authorizeRoute.status, 200);
   assert.deepStrictEqual((await authorizeRoute.json()).user.allowedProxyRouteIds, ["route-us"]);
+
+  const revokedBootstrap = await fetch(`${baseUrl}/api/client/bootstrap`, {
+    headers: authHeaders,
+  });
+  assert.strictEqual(revokedBootstrap.status, 401);
+  const relogin = await fetch(`${baseUrl}/api/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "verify-user", password }),
+  });
+  assert.strictEqual(relogin.status, 200);
+  authHeaders = { Authorization: `Bearer ${(await relogin.json()).token}` };
 
   const authorizedBootstrap = await fetch(`${baseUrl}/api/client/bootstrap`, {
     headers: authHeaders,
@@ -310,7 +381,14 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
       ip: "203.0.113.7",
       countryCode: "US",
       asn: "AS64500",
-      checks: { httpCrossCheck: true, dnsSameRoute: true },
+      checks: {
+        httpCrossCheck: "passed",
+        expectedIp: "passed",
+        expectedCountry: "passed",
+        dnsConfigured: "passed",
+        ipv4EgressObserved: "passed",
+        webRtcPolicyApplied: "not-checked",
+      },
     }),
   });
   assert.strictEqual(healthReport.status, 200);
@@ -321,6 +399,9 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   const reports = (await adminHealth.json()).reports;
   assert.strictEqual(reports[0].routeId, "route-us");
   assert.strictEqual(reports[0].username, "verify-user");
+  assert.strictEqual(reports[0].ok, true);
+  assert.strictEqual(reports[0].checks.httpCrossCheck, "passed");
+  assert.strictEqual(reports[0].checks.webRtcPolicyApplied, "not-checked");
 
   const usage = await fetch(`${baseUrl}/api/gpt/usage`, {
     method: "POST",
@@ -348,14 +429,14 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
 
   const wrong = await fetch(`${baseUrl}/api/account/verify-password`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify({ password: "wrong-password" }),
   });
   assert.strictEqual(wrong.status, 401);
 
   const correct = await fetch(`${baseUrl}/api/account/verify-password`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify({ password }),
   });
   assert.strictEqual(correct.status, 200);
@@ -373,12 +454,12 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   };
   const savePrivacy = await fetch(`${baseUrl}/api/user-store/browser-privacy`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify({ baseRev: 0, data: privacyPayload }),
   });
   assert.strictEqual(savePrivacy.status, 200);
   const loadPrivacy = await fetch(`${baseUrl}/api/user-store/browser-privacy`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: authHeaders,
   });
   assert.strictEqual(loadPrivacy.status, 200);
   assert.deepStrictEqual((await loadPrivacy.json()).data, privacyPayload);

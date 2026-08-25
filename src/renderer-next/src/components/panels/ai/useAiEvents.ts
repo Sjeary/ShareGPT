@@ -163,62 +163,13 @@ function isTabUrlAllowed(kind: AiKind, url: string): boolean {
   return isAllowedUrlFor(kind, url)
 }
 
-// 在 AI 页面注入监听 Enter / 发送按钮的脚本; 用户发问时通过 console.log(marker + json)
-// 把提问文本回传, 用于统计上报。三家共用一套通用选择器 (覆盖 ChatGPT / Gemini / Claude
-// 的发送按钮与回车发送), 各自带不同标记。注入轻量、只读 DOM, 不改页面, 避免触发风控。
+// 请求主进程安装固定的只读查询统计器。渲染层不再向主进程传任意 JavaScript。
 function installQueryTracker(kind: AiKind, tabId: string) {
   const store = useAiStore.getState()
   const targetId = safeText(tabId) || store.activeTabIdByKind[kind]
   const tab = store.tabsByKind[kind].find((item) => item.id === targetId)
-  if (!api.executeAiJavaScript || !tab || !isTabUrlAllowed(kind, tab.url)) return
-
-  const marker = JSON.stringify(AI_QUERY_MARKER[kind])
-  void api
-    .executeAiJavaScript({
-      kind,
-      tabId: targetId,
-      code: `
-    (() => {
-      if (window.__aiQueryTrackerInstalled) return;
-      window.__aiQueryTrackerInstalled = true;
-
-      const CE = '[contenteditable]:not([contenteditable="false"])';
-      const readText = () => {
-        const textarea = document.querySelector("textarea");
-        const editor = document.querySelector(CE);
-        return String(textarea?.value || editor?.innerText || "").trim().slice(0, 160);
-      };
-      const emit = (text) => {
-        if (!text) return;
-        console.log(${marker} + JSON.stringify({ text, stamp: Date.now() }));
-      };
-
-      // 同步读取后立即上报: 发送后输入框(尤其 Claude 的 contenteditable)会被立刻清空,
-      // 若延迟到 setTimeout 再读会读到空串导致漏记 (GPT 的 textarea 恰好能撑过这一拍)。
-      document.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
-        const target = event.target;
-        const editable = Boolean(
-          target?.closest?.("textarea")
-          || target?.closest?.(CE)
-          || target?.matches?.(CE),
-        );
-        if (!editable) return;
-        emit(readText());
-      }, true);
-
-      document.addEventListener("click", (event) => {
-        // 仅匹配明确的"发送"按钮; 去掉过宽的 Submit/纯 send 子串以免误计入使用量。
-        const button = event.target?.closest?.(
-          'button[data-testid="send-button"], button[aria-label*="Send" i], button[aria-label*="发送"]',
-        );
-        if (!button) return;
-        emit(readText());
-      }, true);
-    })();
-  `,
-    })
-    .catch(() => undefined)
+  if (!api.installAiQueryTracker || !tab || !isTabUrlAllowed(kind, tab.url)) return
+  void api.installAiQueryTracker({ kind, tabId: targetId }).catch(() => undefined)
 }
 
 let bound = false
@@ -237,7 +188,11 @@ export function useAiEvents() {
 
       if (payload?.type === 'translate-selection') {
         const profile = useAuthStore.getState().profile
-        if (!profile?.isAdmin && !profile?.advancedAiAllowed) return
+        if (
+          !profile?.routeAuthorizationVerified ||
+          (!profile?.isAdmin && !profile?.advancedAiAllowed)
+        )
+          return
         useTranslationStore
           .getState()
           .openSelection(kind, safeText(payload.tabId), safeText(payload.text))

@@ -7,17 +7,24 @@ import { createAiEnvironmentId } from '@/lib/aiEnvironments'
 import type { AiKind } from '@/store/useAiStore'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
-import type { AdvancedAiEnvironment, AdvancedAiRoute, AdvancedAiSettings } from '@/types/settings'
+import type {
+  AdvancedAiEnvironment,
+  AdvancedAiRoute,
+  AdvancedAiSettings,
+  AppSettings,
+} from '@/types/settings'
 import { toast } from 'sonner'
 
 const KIND_LABEL: Record<AiKind, string> = { gpt: 'ChatGPT', gemini: 'Gemini', claude: 'Claude' }
 type RouteHealth = {
   ok: boolean
   routeId?: string
+  routeFingerprint?: string
+  configKey?: string
   ip?: string
   countryCode?: string
   asn?: string
-  checks?: Record<string, boolean>
+  checks?: Record<string, 'passed' | 'failed' | 'not-checked'>
 }
 
 interface Props {
@@ -34,6 +41,7 @@ export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }
   const [environmentName, setEnvironmentName] = useState('')
   const [newRouteId, setNewRouteId] = useState('')
   const [checkingId, setCheckingId] = useState('')
+  const [savingId, setSavingId] = useState('')
   const [adding, setAdding] = useState(false)
   const [healthById, setHealthById] = useState<Record<string, RouteHealth>>({})
   const environments = settings.environments.filter((environment) => environment.kind === kind)
@@ -65,28 +73,49 @@ export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }
   }
 
   async function patchEnvironment(id: string, patch: Partial<AdvancedAiEnvironment>) {
-    await onChange({
-      ...settings,
-      environments: settings.environments.map((environment) =>
-        environment.id === id ? { ...environment, ...patch } : environment,
-      ),
-    })
+    setSavingId(id)
+    if (typeof patch.routeId === 'string') {
+      setHealthById((current) => {
+        const next = { ...current }
+        delete next[id]
+        return next
+      })
+    }
+    try {
+      await onChange({
+        ...settings,
+        environments: settings.environments.map((environment) =>
+          environment.id === id ? { ...environment, ...patch } : environment,
+        ),
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '保存环境失败')
+      throw error
+    } finally {
+      setSavingId('')
+    }
   }
 
   async function removeEnvironment(environment: AdvancedAiEnvironment) {
     if (!window.confirm(`删除“${environment.name}”并清除其中的登录状态？此操作无法撤销。`)) return
     try {
-      await api.deleteAiEnvironment({ kind, environmentId: environment.id })
-      const remaining = settings.environments.filter((item) => item.id !== environment.id)
-      const nextActive = remaining.find((item) => item.kind === kind)?.id || ''
-      await onChange({
-        ...settings,
-        environments: remaining,
-        activeByKind: { ...settings.activeByKind, [kind]: nextActive },
-      })
-      toast.success('环境及其登录状态已清除')
+      setSavingId(environment.id)
+      const result = (await api.deleteAiEnvironment({
+        kind,
+        environmentId: environment.id,
+      })) as { settings?: AppSettings; dataCleared?: boolean }
+      if (result.settings) {
+        useAppStore.setState({ settings: result.settings })
+      }
+      if (result.dataCleared === false) {
+        toast.warning('环境配置已删除；登录数据将在下次启动时再次清理')
+      } else {
+        toast.success('环境及其登录状态已清除')
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '删除环境失败')
+    } finally {
+      setSavingId('')
     }
   }
 
@@ -97,12 +126,14 @@ export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }
         kind,
         environmentId: environment.id,
       })) as RouteHealth & { route?: string }
-      setHealthById((current) => ({ ...current, [environment.id]: result }))
+      const currentRoute = routes.find((route) => route.id === environment.routeId)
+      const currentResult = { ...result, configKey: currentRoute?.configKey }
+      setHealthById((current) => ({ ...current, [environment.id]: currentResult }))
       if (serverUrl && token && result.routeId) {
         void fetch(`${serverUrl.replace(/\/+$/, '')}/api/client/proxy-route-health`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify(result),
+          body: JSON.stringify(currentResult),
         }).catch(() => undefined)
       }
       if (result.ok) toast.success([result.route, result.ip].filter(Boolean).join(' · '))
@@ -156,8 +187,13 @@ export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }
                   className="h-8 min-w-0 border-transparent bg-transparent px-1.5 shadow-none hover:border-input focus:border-input focus:bg-background"
                   onBlur={(event) => {
                     const name = event.target.value.trim()
-                    if (name && name !== environment.name)
-                      void patchEnvironment(environment.id, { name })
+                    if (!name) {
+                      event.currentTarget.value = environment.name
+                    } else if (name !== environment.name) {
+                      void patchEnvironment(environment.id, { name }).catch(() => {
+                        event.currentTarget.value = environment.name
+                      })
+                    }
                   }}
                 />
                 <select
@@ -168,9 +204,11 @@ export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }
                   }
                   aria-label="内置网络线路"
                   className="h-8 min-w-0 rounded-md border border-transparent bg-transparent px-1.5 text-sm outline-none hover:border-input focus-visible:border-input focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-ring"
-                  disabled={!routes.length}
+                  disabled={!routes.length || savingId === environment.id}
                   onChange={(event) =>
-                    void patchEnvironment(environment.id, { routeId: event.target.value })
+                    void patchEnvironment(environment.id, { routeId: event.target.value }).catch(
+                      () => undefined,
+                    )
                   }
                 >
                   {!routes.some((route) => route.id === environment.routeId) && (
@@ -189,7 +227,11 @@ export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }
                     variant="ghost"
                     size="icon-sm"
                     title="检测出口"
-                    disabled={checkingId === environment.id || !routes.length}
+                    disabled={
+                      checkingId === environment.id ||
+                      savingId === environment.id ||
+                      !routes.some((route) => route.id === environment.routeId)
+                    }
                     onClick={() => void checkEnvironment(environment)}
                   >
                     <RefreshCw className={checkingId === environment.id ? 'animate-spin' : ''} />
@@ -198,13 +240,18 @@ export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }
                     variant="ghost"
                     size="icon-sm"
                     title="删除环境"
+                    disabled={savingId === environment.id}
                     onClick={() => void removeEnvironment(environment)}
                   >
                     <Trash2 />
                   </Button>
                 </div>
               </div>
-              {healthById[environment.id] && <RouteHealthRow health={healthById[environment.id]} />}
+              {healthById[environment.id]?.routeId === environment.routeId &&
+                healthById[environment.id]?.configKey ===
+                  routes.find((route) => route.id === environment.routeId)?.configKey && (
+                  <RouteHealthRow health={healthById[environment.id]} />
+                )}
             </div>
           ))}
 
@@ -259,10 +306,12 @@ function RouteHealthRow({ health }: { health: RouteHealth }) {
   const checks = health.checks || {}
   const items = [
     ['HTTP 双源', checks.httpCrossCheck],
-    ['出口预期', checks.expectedIp && checks.expectedCountry && checks.expectedAsn],
-    ['DNS 同线路', checks.dnsSameRoute],
-    ['IPv6 隔离', checks.ipv6Contained],
-    ['WebRTC 防泄漏', checks.webRtcProtected],
+    ['预期 IP', checks.expectedIp],
+    ['预期国家', checks.expectedCountry],
+    ['预期 ASN', checks.expectedAsn],
+    ['DNS 路由配置', checks.dnsConfigured],
+    ['观察到 IPv4 出口', checks.ipv4EgressObserved],
+    ['WebRTC 策略', checks.webRtcPolicyApplied],
   ] as const
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/50 px-1 pt-1.5 text-[11px] text-muted-foreground">
@@ -271,9 +320,18 @@ function RouteHealthRow({ health }: { health: RouteHealth }) {
         {health.countryCode ? ` · ${health.countryCode}` : ''}
         {health.asn ? ` · ${health.asn}` : ''}
       </span>
-      {items.map(([label, ok]) => (
-        <span key={label} className={ok ? 'text-emerald-500' : 'text-destructive'}>
-          {ok ? '通过' : '失败'} · {label}
+      {items.map(([label, result]) => (
+        <span
+          key={label}
+          className={
+            result === 'passed'
+              ? 'text-emerald-500'
+              : result === 'failed'
+                ? 'text-destructive'
+                : 'text-muted-foreground'
+          }
+        >
+          {result === 'passed' ? '通过' : result === 'failed' ? '失败' : '未检测'} · {label}
         </span>
       ))}
     </div>

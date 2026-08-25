@@ -207,6 +207,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
         throw new Error('请先填写完整的服务地址、管理员账号和密码')
       }
       set({ busy: true })
+      set({ users: [], bootstrap: null, proxyRoutes: [], proxyRouteHealth: [] })
       try {
         const res = await fetch(`${base}/api/admin/login`, {
           method: 'POST',
@@ -245,6 +246,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
         throw new Error('请先填写服务地址、管理员账号和密码')
       }
       set({ busy: true })
+      set({ users: [], bootstrap: null, proxyRoutes: [], proxyRouteHealth: [] })
       try {
         const res = await fetch(`${base}/api/admin/setup`, {
           method: 'POST',
@@ -291,6 +293,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
         authed: false,
         users: [],
         bootstrap: null,
+        proxyRoutes: [],
+        proxyRouteHealth: [],
         activeTab: 'overview',
       })
     },
