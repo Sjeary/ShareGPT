@@ -37,7 +37,8 @@
 - 翻译内容、状态和异步结果按 `kind + tabId + generation` 隔离；代理检测结果按服务、环境和标签绑定。
 - 管理后台登录、退出、鉴权失效和服务器切换会清空服务器作用域状态，并拒绝旧会话响应回写。
 - 服务端托管线路保存改为全量严格校验、候选备份成功后再原子替换、损坏隔离与最近有效备份恢复。
-- renderer 构建工具链间接依赖已修复审计告警；完整与生产依赖 `npm audit` 均为 0。
+- renderer 完整依赖 `npm audit` 为 0；根项目打包工具链和管理端构建工具链仍有 2026-08-26 新增的上游安全公告，见“当前自动化基线”。
+- AI 标签激活时的 `ensure` 失败已进入统一错误反馈，不再形成 renderer 未处理 Promise rejection。
 
 ## 原始审查逐项结果
 
@@ -45,7 +46,7 @@
 | --- | ------------------------------- | ------------ | --------------------------------------------------------------------------- |
 | 1   | 可用线路过滤错误                | 已完成       | 非法、禁用、未授权、重复及缺失授权均有 renderer 单测                        |
 | 2   | 翻译设置无法持久化              | 已完成       | 统一 `translation` schema、旧 `notesAi` 迁移、save/reload 与跨 section 测试 |
-| 3   | 账号切换残留旧线路              | 代码完成     | fail-closed、退出/失效清理、workspace 关闭；真实 A/B 账号验收待执行         |
+| 3   | 账号切换残留旧线路              | 已完成       | Electron A/B 临时账号实测；普通账号不继承高级入口、托管线路或旧授权         |
 | 4   | Notes AI 终止/重试/取消错误     | 已完成       | 单终止事件、非 2xx、尾行 SSE、timeout、backoff cancel 单测                  |
 | 5   | 明文远程接口与敏感配置          | 已完成       | 默认远程地址为空、远程 HTTPS、私网/metadata 拒绝、导出脱敏与本地加密已覆盖  |
 | 6   | settings 丢失更新与损坏恢复     | 已完成       | revision、section patch、原子写、备份恢复及冲突测试                         |
@@ -57,8 +58,8 @@
 | 12  | Accessibility debugger 长期保持 | 已完成       | `disable` 与 attach 所有权清理                                              |
 | 13  | 端口冲突与 sender 假就绪        | 已完成       | bind 探测、全端口 ready 等待及进程提前退出测试                              |
 | 14  | 服务端静默丢弃/回退线路         | 已完成       | 精确字段错误、整批拒绝、损坏隔离、备份恢复与故障注入测试                    |
-| 15  | 窄窗口翻译侧栏挤压网页          | 代码完成     | 小窗口覆盖 drawer、宽屏 clamp 侧栏；完整缩放截图矩阵待真实 AI 页面验收      |
-| 16  | 工具栏拥挤                      | 代码完成     | 动态内容截断、隐藏控制与响应式布局；完整窗口矩阵待验收                      |
+| 15  | 窄窗口翻译侧栏挤压网页          | 隔离测试完成 | `860x620`、`1024x640`、`1440x900` 自动截图且外层无横向溢出                  |
+| 16  | 工具栏拥挤                      | 隔离测试完成 | 动态内容截断、隐藏/恢复与响应式窗口矩阵已通过                               |
 | 17  | 标签语义和键盘支持不足          | 已完成       | `tablist/tab/aria-selected` 与方向键、Home/End                              |
 | 18  | 全局 Escape 干扰编辑            | 已完成       | 仅存在隐藏区且非可编辑目标时处理                                            |
 
@@ -99,6 +100,19 @@
 - 为 translation 设置增加 save/reload 往返与并发 section patch 测试。
 - 为账号 A 退出、账号 B bootstrap 失败补集成测试。
 
+## 2026-08-26 本机 Electron 验证
+
+- 新增 `npm run verify:ai-review-ui`，使用临时用户目录、临时协作服务器、两条管理员下发的回环线路和本地翻译服务；真实账号 Cookie、用户线路和外部 AI 网站均不参与。
+- 登录按钮在首屏可见，无需滚动。
+- 三个 ChatGPT 环境可新增、改名、换线和删除，设置持久化结果与 UI 一致。
+- 标签具备 `tablist/tab/aria-selected` 语义，方向键和 Home 键切换正常。
+- 本地离线翻译显示在 ShareGPT 独立侧栏；切换标签会中止请求，延迟结果不会污染新标签。
+- Cmd `+`、`-`、`0` 会同步外壳与内嵌 WebContents zoom；窗口矩阵没有外层横向溢出。
+- 侧栏和顶部信息栏可独立隐藏，Escape 恢复正常。
+- Claude 网址输入默认不出现，只在点击“打开网页”后展开，并在独立内部标签打开。
+- 高级账号退出后登录普通账号，普通账号看不到高级环境和翻译入口，托管线路及授权数组为空。
+- 自动化发现并修复标签激活 `ensureAiWorkspace` 拒绝未捕获问题；修复后 renderer `pageerror` 为 0。
+
 ## 长期安全与可靠性
 
 - 评估主窗口启用 Electron sandbox，并按窗口类型校验敏感 IPC sender。
@@ -134,14 +148,14 @@
 - renderer production build：通过。
 - admin console production build：通过。
 - 主进程 checkJs 类型检查：通过。
-- 根目录 ESLint：0 error（保留 50 个历史 warning）。
-- Electron 隔离 GUI：通过；sandboxed preload、登录、密码复核、分区清理/重建、Claude 打开网页入口默认隐藏均正常，AI 网站访问 0，非本地请求 0。
-- npm audit：根目录、renderer、admin console、collab server 的生产依赖均为 0；renderer 完整依赖也为 0。
+- 根目录 ESLint：0 error（保留 49 个历史 warning）。
+- Electron 隔离 GUI：两套通过；隐私/密码复核/分区重建，以及高级环境/翻译/标签/缩放/布局/A-B 权限隔离均正常。
+- npm audit（2026-08-26）：renderer 0；根项目 10 项（9 high、1 critical，主要来自 `electron-builder@24` 打包工具链，完整修复要求破坏性升级到 26）；admin console 2 high（`nanoid/postcss` 构建链）。本轮未擅自执行 `--force` 升级。
 - 本次变更文件 Prettier 与 `git diff --check`：通过。全目录检查只命中未跟踪、未纳入本分支的 `website/` 草稿，未擅自修改。
 
 ## 尚需人工验收
 
 - 使用当前管理员下发配置验证三个 ChatGPT 环境仍绑定 `internal-unified`，Claude 环境仍绑定管理员指定的独立线路；测试不得改写这两组绑定。
 - 在真实出口环境验证 expected IP、DNS detour、IPv6 和 WebRTC；未实现的真实探测继续显示“未检测”。
-- 在 `860x620`、`1024x640`、`1280x720`、`1440x900` 及 `80%`、`100%`、`125%`、`150%` 缩放下，对登录后的 GPT/Claude 原生网页宿主做截图回归。
+- 使用真实 GPT/Claude 页面补做 `1280x720` 和完整 `80%`、`125%`、`150%` 视觉截图；隔离页面已完成 `860x620`、`1024x640`、`1440x900` 与 Cmd 缩放同步验证。
 - renderer 独立 ESLint 目前仍有 26 个该分支既存错误；当前 GitHub Actions 不运行该命令，不能把它误报为本轮通过，建议单独建清理任务后再加入 CI。

@@ -477,7 +477,11 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   // 激活标签变化时重新 ensure, 让主进程切换/定位正确的 view。
   useEffect(() => {
-    if (networkReady && activeTabId) void ensureWorkspace()
+    if (networkReady && activeTabId) {
+      void ensureWorkspace().catch((error) => {
+        setFeedback(kind, error instanceof Error ? error.message : String(error), 'error')
+      })
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId])
 

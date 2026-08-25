@@ -1,0 +1,569 @@
+const assert = require("node:assert");
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const http = require("node:http");
+const net = require("node:net");
+const os = require("node:os");
+const path = require("node:path");
+const { spawn } = require("node:child_process");
+const { _electron: electron } = require("playwright");
+
+// Full desktop smoke test for the advanced AI review fixes. It uses a temporary
+// user-data directory and loopback-only services, so real account cookies and routes stay untouched.
+const ROOT = path.resolve(__dirname, "..");
+const USERNAME = "ai-review-verifier";
+const BASIC_USERNAME = "ai-review-basic";
+const PASSWORD = "correct-password";
+
+function reservePort() {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = address && typeof address === "object" ? address.port : 0;
+      server.close((error) => (error ? reject(error) : resolve(port)));
+    });
+  });
+}
+
+function passwordRecord(username, advanced) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const iterations = 120000;
+  return {
+    username,
+    displayName: advanced ? "AI Review Verifier" : "Basic Verifier",
+    salt,
+    passwordHash: crypto.pbkdf2Sync(PASSWORD, salt, iterations, 32, "sha256").toString("hex"),
+    iterations,
+    digest: "sha256",
+    disabled: false,
+    isAdmin: false,
+    advancedAiAllowed: advanced,
+    allowedProxyRouteIds: advanced ? ["route-a", "route-b"] : [],
+  };
+}
+
+async function waitForHealth(baseUrl, child, output, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error(`collaboration server exited\n${output.join("")}`);
+    try {
+      if ((await fetch(`${baseUrl}/api/health`)).ok) return;
+    } catch {
+      // Server may still be binding.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`collaboration server did not become healthy\n${output.join("")}`);
+}
+
+async function stopChild(child) {
+  if (!child || child.exitCode !== null) return;
+  child.kill("SIGTERM");
+  await Promise.race([
+    new Promise((resolve) => child.once("exit", resolve)),
+    new Promise((resolve) => setTimeout(resolve, 3000)),
+  ]);
+  if (child.exitCode === null) child.kill("SIGKILL");
+}
+
+function startLoopbackSocks() {
+  const server = net.createServer((client) => {
+    let buffer = Buffer.alloc(0);
+    let stage = "greeting";
+    let upstream = null;
+    client.on("data", (chunk) => {
+      if (stage === "relay") {
+        upstream?.write(chunk);
+        return;
+      }
+      buffer = Buffer.concat([buffer, chunk]);
+      if (stage === "greeting") {
+        if (buffer.length < 2) return;
+        const length = 2 + buffer[1];
+        if (buffer.length < length) return;
+        buffer = buffer.subarray(length);
+        client.write(Buffer.from([5, 0]));
+        stage = "request";
+      }
+      if (stage !== "request" || buffer.length < 4) return;
+      const atyp = buffer[3];
+      let host = "";
+      let offset = 4;
+      if (atyp === 1) {
+        if (buffer.length < 10) return;
+        host = [...buffer.subarray(offset, offset + 4)].join(".");
+        offset += 4;
+      } else if (atyp === 3) {
+        const size = buffer[offset];
+        if (buffer.length < offset + 1 + size + 2) return;
+        host = buffer.subarray(offset + 1, offset + 1 + size).toString("utf8");
+        offset += 1 + size;
+      } else if (atyp === 4) {
+        if (buffer.length < 22) return;
+        host = "::1";
+        offset += 16;
+      } else {
+        client.destroy();
+        return;
+      }
+      const port = buffer.readUInt16BE(offset);
+      const remaining = buffer.subarray(offset + 2);
+      buffer = Buffer.alloc(0);
+      upstream = net.connect({ host, port }, () => {
+        client.write(Buffer.from([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]));
+        if (remaining.length) upstream.write(remaining);
+        stage = "relay";
+      });
+      upstream.on("data", (data) => client.write(data));
+      upstream.on("error", () => client.destroy());
+      upstream.on("close", () => client.end());
+    });
+    client.on("error", () => undefined);
+    client.on("close", () => upstream?.destroy());
+  });
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve(server));
+  });
+}
+
+function startFixtureServer(state) {
+  const server = http.createServer((request, response) => {
+    if (request.method === "GET" && request.url === "/page") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(
+        "<!doctype html><title>Local verification page</title><h1>Local verification page</h1>",
+      );
+      return;
+    }
+    if (request.method === "POST" && ["/translate", "/slow/translate"].includes(request.url)) {
+      const chunks = [];
+      request.on("data", (chunk) => chunks.push(chunk));
+      request.on("end", () => {
+        const payload = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+        const send = () => {
+          if (response.destroyed) return;
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify({ translatedText: `[ZH] ${payload.q || ""}` }));
+        };
+        if (request.url === "/slow/translate") {
+          state.slowStarted += 1;
+          response.on("close", () => {
+            if (!response.writableEnded) state.slowAborted += 1;
+          });
+          setTimeout(send, 4000);
+        } else {
+          send();
+        }
+      });
+      return;
+    }
+    response.writeHead(404);
+    response.end("not found");
+  });
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve(server));
+  });
+}
+
+async function closeServer(server) {
+  if (!server) return;
+  await new Promise((resolve) => server.close(resolve));
+}
+
+async function login(window, baseUrl, username) {
+  await window.locator("#account-server").waitFor({ state: "visible" });
+  await window.locator("#account-server").fill(baseUrl);
+  await window.locator("#account-username").fill(username);
+  await window.locator("#account-password").fill(PASSWORD);
+  await window.getByRole("button", { name: "登录", exact: true }).click();
+  await window.locator('[data-tour="nav-account"]').waitFor({ state: "visible" });
+  const skip = window.getByRole("button", { name: "跳过", exact: true });
+  if (await skip.isVisible().catch(() => false)) await skip.click();
+}
+
+async function patchSection(window, section, patch) {
+  return window.evaluate(
+    ({ sectionName, sectionPatch }) => {
+      return window.api.patchSettings({ section: sectionName, patch: sectionPatch });
+    },
+    { sectionName: section, sectionPatch: patch },
+  );
+}
+
+async function waitUntil(predicate, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("condition timed out");
+}
+
+async function zoomSnapshot(electronApp) {
+  return electronApp.evaluate(({ BrowserWindow, webContents }) => {
+    const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+    return {
+      shell: main?.webContents.getZoomLevel(),
+      contents: webContents
+        .getAllWebContents()
+        .filter((item) => !item.isDestroyed() && item.getType() !== "backgroundPage")
+        .map((item) => ({ type: item.getType(), url: item.getURL(), zoom: item.getZoomLevel() })),
+    };
+  });
+}
+
+async function sendZoomShortcut(electronApp, keyCode) {
+  await electronApp.evaluate(({ BrowserWindow }, key) => {
+    const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+    main.webContents.sendInputEvent({ type: "keyDown", keyCode: key, modifiers: ["meta"] });
+    main.webContents.sendInputEvent({ type: "keyUp", keyCode: key, modifiers: ["meta"] });
+  }, keyCode);
+}
+
+async function main() {
+  const keepOpen = process.env.SHAREGPT_KEEP_TEST_APP === "1";
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-ai-review-ui-"));
+  const userDataDir = path.join(tempDir, "user-data");
+  const fixtureState = { slowStarted: 0, slowAborted: 0 };
+  const [socksServer, fixtureServer] = await Promise.all([
+    startLoopbackSocks(),
+    startFixtureServer(fixtureState),
+  ]);
+  const socksPort = socksServer.address().port;
+  const fixturePort = fixtureServer.address().port;
+  const collabPort = await reservePort();
+  const senderPort = await reservePort();
+  const baseUrl = `http://127.0.0.1:${collabPort}`;
+  const fixtureUrl = `http://127.0.0.1:${fixturePort}`;
+
+  const usersFile = path.join(tempDir, "users.json");
+  fs.writeFileSync(
+    usersFile,
+    JSON.stringify(
+      { users: [passwordRecord(USERNAME, true), passwordRecord(BASIC_USERNAME, false)] },
+      null,
+      2,
+    ),
+  );
+  fs.writeFileSync(
+    path.join(tempDir, "proxy_routes.json"),
+    JSON.stringify(
+      {
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        routes: ["a", "b"].map((suffix) => ({
+          id: `route-${suffix}`,
+          name: suffix === "a" ? "Review route A" : "Review route B",
+          enabled: true,
+          outbound: { type: "socks", server: "127.0.0.1", server_port: socksPort },
+          expected: {},
+        })),
+      },
+      null,
+      2,
+    ),
+  );
+  fs.writeFileSync(path.join(tempDir, "client_bootstrap.json"), JSON.stringify({ sender: {} }));
+
+  const serverOutput = [];
+  const collab = spawn(process.execPath, [path.join(ROOT, "collab_server2/server.js")], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      HOST: "127.0.0.1",
+      PORT: String(collabPort),
+      USERS_FILE: usersFile,
+      GPT_USAGE_FILE: path.join(tempDir, "gpt_usage.json"),
+      CHAT_HISTORY_FILE: path.join(tempDir, "chat_history.json"),
+      CLIENT_BOOTSTRAP_FILE: path.join(tempDir, "client_bootstrap.json"),
+      CALENDARS_FILE: path.join(tempDir, "calendars.json"),
+      USER_STORES_FILE: path.join(tempDir, "user_stores.json"),
+      FOCUS_FILE: path.join(tempDir, "focus_stats.json"),
+      RELEASES_DIR: path.join(tempDir, "releases"),
+      PROXY_ROUTES_FILE: path.join(tempDir, "proxy_routes.json"),
+      PROXY_ROUTE_HEALTH_FILE: path.join(tempDir, "proxy_route_health.json"),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  collab.stdout.on("data", (chunk) => serverOutput.push(String(chunk)));
+  collab.stderr.on("data", (chunk) => serverOutput.push(String(chunk)));
+
+  let electronApp;
+  const results = [];
+  try {
+    await waitForHealth(baseUrl, collab, serverOutput);
+    electronApp = await electron.launch({
+      args: [ROOT],
+      cwd: ROOT,
+      env: { ...process.env, SHAREGPT_USER_DATA: userDataDir },
+    });
+    const blockedRequests = [];
+    await electronApp.context().route("**/*", async (route) => {
+      const url = new URL(route.request().url());
+      const loopback = ["127.0.0.1", "localhost", "::1"].includes(url.hostname);
+      if (["file:", "data:", "devtools:"].includes(url.protocol) || loopback) {
+        await route.continue();
+      } else {
+        blockedRequests.push(url.toString());
+        await route.abort("blockedbyclient");
+      }
+    });
+
+    const window = await electronApp.firstWindow();
+    const pageErrors = [];
+    window.on("pageerror", (error) => pageErrors.push(error.message));
+    await window.locator("#account-server").waitFor({ state: "visible" });
+    const loginBox = await window.getByRole("button", { name: "登录", exact: true }).boundingBox();
+    assert.ok(
+      loginBox && loginBox.y + loginBox.height <= (await window.evaluate(() => innerHeight)),
+    );
+    results.push("login action is visible without scrolling");
+
+    const now = new Date().toISOString();
+    await patchSection(window, "advancedAi", {
+      version: 1,
+      enabled: true,
+      environments: [
+        { id: "env-gpt-one", kind: "gpt", name: "GPT one", routeId: "route-a", createdAt: now },
+        { id: "env-gpt-two", kind: "gpt", name: "GPT two", routeId: "route-a", createdAt: now },
+        { id: "env-gpt-three", kind: "gpt", name: "GPT three", routeId: "route-a", createdAt: now },
+        {
+          id: "env-claude-one",
+          kind: "claude",
+          name: "Claude one",
+          routeId: "route-b",
+          createdAt: now,
+        },
+      ],
+      activeByKind: { gpt: "env-gpt-one", gemini: "", claude: "env-claude-one" },
+    });
+    await window.reload();
+    await login(window, baseUrl, USERNAME);
+    const advancedLoginState = await window.evaluate(async () => window.api.loadSettings());
+    assert.strictEqual(advancedLoginState.advancedAi.enabled, true);
+    assert.deepStrictEqual(
+      advancedLoginState.sender.authorized_proxy_route_ids,
+      ["route-a", "route-b"],
+      `authoritative route sync failed; server=${serverOutput.join("")}`,
+    );
+    assert.deepStrictEqual(
+      advancedLoginState.sender.managed_proxy_routes.map((route) => route.id),
+      ["route-a", "route-b"],
+    );
+    await window.locator('[data-tour="nav-gpt"]').click();
+    await window.getByRole("button", { name: "管理环境与线路" }).click();
+    await window.getByText("ChatGPT 环境", { exact: true }).waitFor();
+    assert.strictEqual(await window.getByLabel("环境名称").count(), 3);
+    assert.strictEqual(await window.getByLabel("内置网络线路").count(), 3);
+    assert.deepStrictEqual(
+      await window.getByLabel("当前 AI 环境").locator("option").allTextContents(),
+      ["GPT one", "GPT two", "GPT three"],
+    );
+    await window.getByLabel("环境名称").first().fill("GPT primary");
+    await window.getByLabel("环境名称").first().press("Enter");
+    await window.getByLabel("内置网络线路").first().selectOption("route-b");
+    await window.getByRole("button", { name: "新建", exact: true }).click();
+    await window.getByPlaceholder("ChatGPT 新环境名称").fill("GPT disposable");
+    await window.getByLabel("新环境内置网络线路").selectOption("route-a");
+    await window.getByRole("button", { name: "完成", exact: true }).click();
+    await window.getByLabel("环境名称").nth(3).waitFor();
+    window.once("dialog", (dialog) => dialog.accept());
+    await window.getByTitle("删除环境").last().click();
+    await waitUntil(async () => (await window.getByLabel("环境名称").count()) === 3);
+    const advanced = await window.evaluate(
+      async () => (await window.api.loadSettings()).advancedAi,
+    );
+    assert.strictEqual(
+      advanced.environments.find((item) => item.id === "env-gpt-one").name,
+      "GPT primary",
+    );
+    assert.strictEqual(
+      advanced.environments.find((item) => item.id === "env-gpt-one").routeId,
+      "route-b",
+    );
+    assert.strictEqual(advanced.environments.filter((item) => item.kind === "gpt").length, 3);
+    results.push("advanced environment create/edit/route/delete persists correctly");
+
+    await patchSection(window, "advancedAi", { ...advanced, enabled: false });
+    await patchSection(window, "translation", {
+      provider: "offline",
+      sourceLanguage: "en",
+      targetLanguage: "zh",
+      offline: { baseUrl: fixtureUrl },
+    });
+    await window.reload();
+    await login(window, baseUrl, USERNAME);
+    await window.evaluate(
+      ({ listenPort, upstreamPort }) =>
+        window.api.startSender({
+          socks_listen_port: String(listenPort),
+          fallback_mode: "direct",
+          fallback_local_port: "",
+          proxy_mode: "airport",
+          airport_name: "Local UI verification chain",
+          airport_outbound: { type: "socks", server: "127.0.0.1", server_port: upstreamPort },
+          target_domains: "chatgpt.com\nopenai.com\nclaude.ai\nanthropic.com",
+        }),
+      { listenPort: senderPort, upstreamPort: socksPort },
+    );
+
+    await window.locator('[data-tour="nav-gpt"]').click();
+    await window.getByRole("tab").first().waitFor({ state: "visible", timeout: 10_000 });
+    const firstTab = window.getByRole("tab").first();
+    assert.strictEqual(await firstTab.getAttribute("aria-selected"), "true");
+    await window.getByLabel("新建标签页").click();
+    await window.getByRole("tab").nth(1).waitFor();
+    await firstTab.focus();
+    await firstTab.press("ArrowRight");
+    assert.strictEqual(await window.getByRole("tab").nth(1).getAttribute("aria-selected"), "true");
+    await window.getByRole("tab").nth(1).press("Home");
+    assert.strictEqual(await firstTab.getAttribute("aria-selected"), "true");
+    results.push("tab ARIA and keyboard navigation work");
+
+    await window.getByLabel("打开翻译侧栏").click();
+    const translationPanel = window.getByRole("complementary", { name: "翻译侧栏" });
+    await translationPanel.waitFor();
+    assert.match(await translationPanel.textContent(), /本机.*127\.0\.0\.1/);
+    await window.getByLabel("待翻译内容").fill("hello isolation");
+    await window.getByRole("button", { name: "翻译", exact: true }).click();
+    await window.getByText("[ZH] hello isolation", { exact: true }).waitFor();
+    results.push("offline translation stays in the isolated ShareGPT sidebar");
+
+    await translationPanel.getByLabel("翻译设置").click();
+    await translationPanel.getByLabel("本地翻译服务地址").fill(`${fixtureUrl}/slow`);
+    await translationPanel.getByRole("button", { name: "保存设置", exact: true }).click();
+    await translationPanel.getByLabel("本地翻译服务地址").waitFor({ state: "hidden" });
+    await window.getByLabel("待翻译内容").fill("cancel me");
+    await window.getByRole("button", { name: "翻译", exact: true }).click();
+    await waitUntil(() => fixtureState.slowStarted > 0);
+    await window.getByLabel("新建标签页").click();
+    await waitUntil(() => fixtureState.slowAborted > 0);
+    assert.strictEqual(await window.getByText("[ZH] cancel me", { exact: true }).count(), 0);
+    results.push("tab switch aborts translation and blocks stale results");
+
+    const initialZoom = await zoomSnapshot(electronApp);
+    await sendZoomShortcut(electronApp, "-");
+    await window.waitForTimeout(350);
+    const zoomedOut = await zoomSnapshot(electronApp);
+    assert.ok(
+      zoomedOut.shell < initialZoom.shell,
+      `zoom shortcut did not reduce shell zoom: ${JSON.stringify({ initialZoom, zoomedOut })}`,
+    );
+    assert.ok(
+      zoomedOut.contents.every(
+        (item) => item.type !== "browserView" || item.zoom === zoomedOut.shell,
+      ),
+    );
+    await sendZoomShortcut(electronApp, "=");
+    await sendZoomShortcut(electronApp, "0");
+    await window.waitForTimeout(350);
+    const resetZoom = await zoomSnapshot(electronApp);
+    assert.strictEqual(resetZoom.shell, 0);
+    results.push("Cmd +/-/0 keeps shell and embedded views on one zoom level");
+
+    for (const [width, height] of [
+      [860, 620],
+      [1024, 640],
+      [1440, 900],
+    ]) {
+      await electronApp.evaluate(
+        ({ BrowserWindow }, size) => {
+          const mainWindow = BrowserWindow.getAllWindows().find(
+            (candidate) => !candidate.isDestroyed(),
+          );
+          mainWindow.setSize(size.width, size.height);
+          mainWindow.center();
+        },
+        { width, height },
+      );
+      await window.waitForTimeout(300);
+      const layout = await window.evaluate(() => ({
+        width: innerWidth,
+        height: innerHeight,
+        scrollWidth: document.documentElement.scrollWidth,
+        scrollHeight: document.documentElement.scrollHeight,
+      }));
+      assert.ok(
+        layout.scrollWidth <= layout.width + 1,
+        `${width}x${height} has horizontal overflow`,
+      );
+      await window.screenshot({ path: path.join(tempDir, `layout-${width}x${height}.png`) });
+    }
+    results.push("responsive window matrix has no outer horizontal overflow");
+
+    await window.getByLabel("隐藏侧栏").click();
+    await window.getByLabel("隐藏顶部信息栏").click();
+    assert.strictEqual(await window.getByLabel("显示侧栏").count(), 1);
+    assert.strictEqual(await window.getByLabel("显示顶部信息栏").count(), 1);
+    await window.keyboard.press("Escape");
+    await window.getByLabel("隐藏侧栏").waitFor();
+    await window.getByLabel("隐藏顶部信息栏").waitFor();
+    results.push("sidebar/header hide controls and Escape restoration work");
+
+    await window.locator('[data-tour="nav-claude"]').click();
+    await window.getByLabel("打开网页").waitFor();
+    assert.strictEqual(await window.getByTestId("claude-address-input").count(), 0);
+    await window.getByLabel("打开网页").click();
+    await window.getByTestId("claude-address-input").fill(`${fixtureUrl}/page`);
+    await window.getByLabel("在新标签页打开").click();
+    await window.waitForTimeout(600);
+    assert.strictEqual(await window.getByTestId("claude-address-input").count(), 0);
+    results.push("Claude address field is opt-in and opens a separate internal tab");
+
+    await window.locator('[data-tour="nav-account"]').click();
+    await window.getByRole("button", { name: "退出登录", exact: true }).click();
+    await window.locator("#account-server").waitFor({ state: "visible" });
+    await login(window, baseUrl, BASIC_USERNAME);
+    await window.locator('[data-tour="nav-gpt"]').click();
+    assert.strictEqual(await window.getByLabel("打开翻译侧栏").count(), 0);
+    assert.strictEqual(await window.getByLabel(/管理环境与线路|新建 AI 环境/).count(), 0);
+    const basicSettings = await window.evaluate(async () => window.api.loadSettings());
+    assert.deepStrictEqual(basicSettings.sender.managed_proxy_routes, []);
+    assert.deepStrictEqual(basicSettings.sender.authorized_proxy_route_ids, []);
+    results.push("basic account cannot inherit advanced controls or previous route authorization");
+
+    assert.deepStrictEqual(pageErrors, [], `renderer page errors: ${pageErrors.join("\n")}`);
+    assert.ok(
+      blockedRequests.length > 0,
+      "expected remote AI requests to be blocked by the test harness",
+    );
+    const summary = {
+      ok: true,
+      tempDir,
+      userDataDir,
+      blockedRemoteRequests: blockedRequests.length,
+      checks: results,
+      screenshots: fs.readdirSync(tempDir).filter((name) => name.endsWith(".png")),
+      keptOpen: keepOpen,
+    };
+    process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+    if (keepOpen) {
+      await electronApp.evaluate(({ BrowserWindow }) => {
+        const mainWindow = BrowserWindow.getAllWindows().find(
+          (candidate) => !candidate.isDestroyed(),
+        );
+        mainWindow.setSize(1280, 800);
+        mainWindow.center();
+        mainWindow.show();
+        mainWindow.focus();
+      });
+      await new Promise((resolve) => {
+        process.once("SIGINT", resolve);
+        process.once("SIGTERM", resolve);
+      });
+    }
+  } finally {
+    await electronApp?.close().catch(() => undefined);
+    await stopChild(collab);
+    await Promise.all([closeServer(socksServer), closeServer(fixtureServer)]);
+  }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
