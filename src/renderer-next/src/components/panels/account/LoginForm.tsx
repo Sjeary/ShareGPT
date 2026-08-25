@@ -8,16 +8,14 @@ import {
   X,
   Cable,
   Eye,
-  MessageCircle,
-  Bot,
-  BarChart3,
+  ArchiveRestore,
+  ChevronDown,
 } from 'lucide-react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
-import { Separator } from '@/components/ui/separator'
+import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
@@ -56,7 +54,7 @@ function LoginUpdateBanner() {
   }
 
   return (
-    <div className="w-full max-w-sm rounded-lg border border-primary/40 bg-primary/10 px-4 py-3">
+    <div className="w-full rounded-md border border-primary/35 bg-primary/8 px-3 py-2.5">
       <div className="flex items-start gap-2">
         <Sparkles className="mt-0.5 size-4 shrink-0 text-primary" />
         <div className="min-w-0 flex-1">
@@ -78,12 +76,12 @@ function LoginUpdateBanner() {
           <X className="size-4" />
         </button>
       </div>
-      <div className="mt-2 flex items-center gap-2">
-        <Button size="sm" onClick={() => downloadUrl && void api.openExternal(downloadUrl)}>
+      <div className="mt-2 flex items-center gap-1">
+        <Button size="xs" onClick={() => downloadUrl && void api.openExternal(downloadUrl)}>
           <Download />
           下载新版本
         </Button>
-        <Button size="sm" variant="ghost" onClick={dismiss}>
+        <Button size="xs" variant="ghost" onClick={dismiss}>
           不再提示
         </Button>
       </div>
@@ -117,6 +115,7 @@ export function LoginForm() {
     collab?.remember_password ? (collab?.saved_password ?? '') : '',
   )
   const [submitting, setSubmitting] = useState(false)
+  const [recoveryOpen, setRecoveryOpen] = useState(false)
   // 内联错误条 + 出错字段 (用于 aria-invalid 触发红边)。
   const [error, setError] = useState('')
   const [errorField, setErrorField] = useState<ErrorField | null>(null)
@@ -179,151 +178,150 @@ export function LoginForm() {
   }
 
   return (
-    // 外层只负责竖向滚动(窗口矮时), 内层 grid 居中一列 max-w-sm 内容,
-    // 避免 flex + overflow 同时作用时出现的横向偏移。
-    <div className="h-full overflow-y-auto">
-      <div className="grid min-h-full place-items-center p-6">
-        <div className="flex w-full max-w-sm flex-col items-center gap-3">
-          <LoginUpdateBanner />
-
-          {/* 品牌头 (仅登录页): logo + 名称 + 友好欢迎语 + 一句话功能点, 让开局不再是一张冷冰冰的表单。 */}
+    <div className="login-stage h-full overflow-hidden">
+      <main className="h-full overflow-y-auto px-5 py-4 sm:px-8">
+        <div className="login-enter mx-auto flex min-h-full w-full max-w-sm flex-col justify-center py-2">
           {showPreviewEntry && (
-            <div className="flex w-full flex-col items-center gap-3 text-center">
-              <div className="grid size-14 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
-                <Cable className="size-7" />
+            <div className="mb-5 flex items-center justify-center gap-3">
+              <div className="grid size-11 place-items-center rounded-lg bg-primary text-primary-foreground shadow-sm">
+                <Cable className="size-5" />
               </div>
-              <div>
-                <h1 className="text-2xl font-semibold tracking-tight">欢迎使用 {brandName}</h1>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  一站式的团队协作与 AI 网页客户端 · 登录后开启全部能力
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5">
-                  <MessageCircle className="size-3.5 text-primary" />
-                  协作聊天
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <Bot className="size-3.5 text-primary" />
-                  内嵌 AI 网页
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <BarChart3 className="size-3.5 text-primary" />
-                  用量统计
-                </span>
-              </div>
+              <h1 className="text-xl font-semibold">{brandName}</h1>
             </div>
           )}
 
-          <Card className="w-full">
-            <CardHeader className="text-center">
-              <CardTitle className="text-xl">登录协作服务</CardTitle>
-              <CardDescription>填写服务地址与账号即可登录</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form className="grid gap-4" onSubmit={handleSubmit}>
-                <div className="grid gap-2">
-                  <Label htmlFor="account-server">服务地址</Label>
-                  <Input
-                    ref={serverRef}
-                    id="account-server"
-                    placeholder="http://example.com:8088"
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={serverUrl}
-                    onChange={(e) => setServerUrl(e.target.value)}
-                    disabled={submitting}
-                    aria-invalid={errorField === 'server' || undefined}
-                  />
-                </div>
+          <LoginUpdateBanner />
 
-                <div className="grid gap-2">
-                  <Label htmlFor="account-username">账号</Label>
-                  <Input
-                    ref={usernameRef}
-                    id="account-username"
-                    placeholder="用户名"
-                    autoComplete="username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    disabled={submitting}
-                    aria-invalid={errorField === 'username' || undefined}
-                  />
-                </div>
-
-                <div className="grid gap-2">
-                  <Label htmlFor="account-password">密码</Label>
-                  <Input
-                    ref={passwordRef}
-                    id="account-password"
-                    type="password"
-                    placeholder="密码"
-                    autoComplete="current-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    disabled={submitting}
-                    aria-invalid={errorField === 'password' || undefined}
-                  />
-                </div>
-
-                <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-                  <Label htmlFor="account-remember" className="cursor-pointer text-sm font-normal">
-                    记住密码
-                  </Label>
-                  <Switch
-                    id="account-remember"
-                    checked={rememberPassword}
-                    onCheckedChange={setRememberPassword}
-                    disabled={submitting}
-                  />
-                </div>
-
-                {error && (
-                  <p
-                    role="alert"
-                    className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                  >
-                    {error}
-                  </p>
-                )}
-
-                <Button type="submit" className="w-full" disabled={submitting}>
-                  {submitting ? (
-                    <>
-                      <Loader2 className="animate-spin" />
-                      登录中…
-                    </>
-                  ) : (
-                    <>
-                      <LogIn />
-                      登录
-                    </>
-                  )}
-                </Button>
-              </form>
-
-              <Separator className="my-4" />
+          <div className="mt-3 rounded-lg border border-border bg-card p-5 shadow-sm sm:p-6">
+            <form className="grid gap-3" onSubmit={handleSubmit}>
+              <div className="grid gap-2">
+                <Label htmlFor="account-server">服务地址</Label>
+                <Input
+                  ref={serverRef}
+                  id="account-server"
+                  placeholder="http://example.com:8088"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={serverUrl}
+                  onChange={(e) => setServerUrl(e.target.value)}
+                  disabled={submitting}
+                  aria-invalid={errorField === 'server' || undefined}
+                />
+              </div>
 
               <div className="grid gap-2">
-                <p className="text-xs text-muted-foreground">从备份文件恢复本机配置或资料包</p>
-                <ImportActions />
+                <Label htmlFor="account-username">账号</Label>
+                <Input
+                  ref={usernameRef}
+                  id="account-username"
+                  placeholder="用户名"
+                  autoComplete="username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  disabled={submitting}
+                  aria-invalid={errorField === 'username' || undefined}
+                />
               </div>
-            </CardContent>
-          </Card>
 
-          {/* 不登录也能先逛逛: 进入只读预览态 (Shell 顶部会挂"预览条"引导随时登录)。 */}
-          {showPreviewEntry && (
-            <Button
-              variant="ghost"
-              className="w-full text-muted-foreground"
-              onClick={() => setPreviewMode(true)}
+              <div className="grid gap-2">
+                <Label htmlFor="account-password">密码</Label>
+                <Input
+                  ref={passwordRef}
+                  id="account-password"
+                  type="password"
+                  placeholder="密码"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={submitting}
+                  aria-invalid={errorField === 'password' || undefined}
+                />
+              </div>
+
+              <div className="flex min-h-8 items-center justify-between">
+                <Label htmlFor="account-remember" className="cursor-pointer text-sm font-normal">
+                  记住密码
+                </Label>
+                <Switch
+                  id="account-remember"
+                  checked={rememberPassword}
+                  onCheckedChange={setRememberPassword}
+                  disabled={submitting}
+                />
+              </div>
+
+              {error && (
+                <p
+                  role="alert"
+                  className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                >
+                  {error}
+                </p>
+              )}
+
+              <Button type="submit" className="mt-1 h-10 w-full" disabled={submitting}>
+                {submitting ? (
+                  <>
+                    <Loader2 className="animate-spin" />
+                    登录中…
+                  </>
+                ) : (
+                  <>
+                    <LogIn />
+                    登录
+                  </>
+                )}
+              </Button>
+            </form>
+          </div>
+
+          <div className="mt-2 grid gap-1">
+            <button
+              type="button"
+              className="flex h-8 items-center gap-2 rounded-md px-1 text-left text-xs text-muted-foreground transition-colors hover:text-foreground"
+              aria-expanded={recoveryOpen}
+              onClick={() => setRecoveryOpen((open) => !open)}
             >
-              <Eye />
-              先不登录，随便逛逛
-            </Button>
+              <ArchiveRestore className="size-3.5" />
+              从备份恢复
+              <ChevronDown
+                className={cn(
+                  'ml-auto size-3.5 transition-transform duration-200 motion-reduce:transition-none',
+                  recoveryOpen && 'rotate-180',
+                )}
+              />
+            </button>
+            <div
+              className={cn(
+                'grid overflow-hidden transition-[grid-template-rows,opacity] duration-200 motion-reduce:transition-none',
+                recoveryOpen ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0',
+              )}
+            >
+              <div className="min-h-0">
+                <div className="pb-1 pt-2">
+                  <ImportActions />
+                </div>
+              </div>
+            </div>
+            {showPreviewEntry && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full text-muted-foreground"
+                onClick={() => setPreviewMode(true)}
+              >
+                <Eye />
+                先浏览界面
+              </Button>
+            )}
+          </div>
+          {showPreviewEntry && (
+            <p className="mt-2 text-center text-[11px] text-muted-foreground">
+              v{String(meta.version || '1.0.8')}
+            </p>
           )}
         </div>
-      </div>
+      </main>
     </div>
   )
 }
