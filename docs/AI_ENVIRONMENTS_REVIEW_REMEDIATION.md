@@ -113,4 +113,4 @@ Electron 截图矩阵覆盖 `860x620`、`1024x640`、`1440x900`；人工检查�
 - 需在真实 GPT/Claude 页面补充完整缩放与站点兼容视觉检查；自动化没有登录真实账号。
 - CORS 白名单、uncaughtException 生命周期、首管理员 setup token、JSON/SQLite 迁移及 Chromium 全局 flags 仍需独立设计和回归计划。
 - 根项目与 admin 构建工具链漏洞仍待单独升级验证，不能视为本轮已消除。
-- 远程 GitHub Actions 结果只在分支 push 后按实际可见状态记录；本地门禁不能替代远端 CI。
+- 分支 push 后 `gh run list --branch codex/fix-ai-review-followup` 返回空列表：当前 workflow 的 `push` 仅监听 `main`，功能分支需创建 pull request 才会触发。本轮未获权创建 PR，因此没有远端 CI 结果；本地门禁不能替代远端 CI。
