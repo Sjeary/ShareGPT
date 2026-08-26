@@ -93,6 +93,8 @@ const DEFAULT_TRANSLATION_SETTINGS = {
   provider: "ai",
   sourceLanguage: "auto",
   targetLanguage: "zh",
+  siteLanguage: "en",
+  confirmNonTargetSend: true,
   ai: { baseUrl: "", apiKey: "", model: "gpt-5.5", effort: "medium" },
   api: { baseUrl: "", apiKey: "" },
   offline: { baseUrl: "http://127.0.0.1:5000" },
@@ -768,6 +770,7 @@ class Backend {
     this.activePrincipalId = LOCAL_PRINCIPAL_ID;
     this.activePrincipalServerUrl = "";
     this.activePrincipalUsername = "";
+    this.activePrincipalGeneration = 0;
   }
 
   // 当前发送端配置里「走代理(梯子)」的域名后缀集合。路由规则(buildSenderConfig)与
@@ -1158,11 +1161,13 @@ class Backend {
       principalId: this.activePrincipalId,
       serverUrl: this.activePrincipalServerUrl,
       username: this.activePrincipalUsername,
+      generation: this.activePrincipalGeneration,
     };
     try {
       this.activePrincipalId = principalId;
       this.activePrincipalServerUrl = confirmedServer;
       this.activePrincipalUsername = confirmedUsername;
+      this.activePrincipalGeneration = previous.generation + 1;
       return {
         principalId,
         settings: this.materializePrincipalSettings({ ...stored, principalSettings: state }),
@@ -1171,6 +1176,7 @@ class Backend {
       this.activePrincipalId = previous.principalId;
       this.activePrincipalServerUrl = previous.serverUrl;
       this.activePrincipalUsername = previous.username;
+      this.activePrincipalGeneration = previous.generation;
       throw error;
     }
   }
@@ -1180,16 +1186,19 @@ class Backend {
       principalId: this.activePrincipalId,
       serverUrl: this.activePrincipalServerUrl,
       username: this.activePrincipalUsername,
+      generation: this.activePrincipalGeneration,
     };
     try {
       this.activePrincipalId = LOCAL_PRINCIPAL_ID;
       this.activePrincipalServerUrl = "";
       this.activePrincipalUsername = "";
+      this.activePrincipalGeneration = previous.generation + 1;
       return this.loadSettings();
     } catch (error) {
       this.activePrincipalId = previous.principalId;
       this.activePrincipalServerUrl = previous.serverUrl;
       this.activePrincipalUsername = previous.username;
+      this.activePrincipalGeneration = previous.generation;
       throw error;
     }
   }
@@ -1198,6 +1207,7 @@ class Backend {
     const { state } = this.principalSettingsState(this.readStoredSettings());
     return {
       principalId: this.activePrincipalId,
+      generation: this.activePrincipalGeneration,
       legacyPartitionOwnerId: normalizePrincipalId(state.legacyPartitionOwnerId),
     };
   }
@@ -1324,6 +1334,8 @@ class Backend {
       "provider",
       "sourceLanguage",
       "targetLanguage",
+      "siteLanguage",
+      "confirmNonTargetSend",
       "ai.baseUrl",
       "ai.apiKey",
       "ai.model",

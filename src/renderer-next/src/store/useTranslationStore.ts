@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { api } from '@/lib/api'
 import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
 import {
+  hasPendingAutoTranslation,
   isCurrentTranslationRequest,
   isTranslationTarget,
   type TranslationRequestToken,
@@ -22,6 +23,8 @@ export const DEFAULT_TRANSLATION_SETTINGS: TranslationSettings = {
   provider: 'ai',
   sourceLanguage: 'auto',
   targetLanguage: 'zh',
+  siteLanguage: 'en',
+  confirmNonTargetSend: true,
   ai: DEFAULT_AI,
   api: { baseUrl: '', apiKey: '' },
   offline: { baseUrl: 'http://127.0.0.1:5000' },
@@ -54,6 +57,15 @@ interface TranslationState {
   status: string
   loading: boolean
   settingsOpen: boolean
+  autoTranslateGeneration: number
+  autoTranslateConsumedGeneration: number
+  pendingSend: {
+    kind: AiKind
+    tabId: string
+    requestId: string
+    text: string
+    targetLanguage: string
+  } | null
   requestGeneration: number
   loaded: boolean
   config: TranslationSettings
@@ -76,9 +88,11 @@ interface TranslationState {
   invalidateRequests: (kind: AiKind, tabId: string) => void
   toggle: (kind: AiKind, tabId: string) => void
   openSelection: (kind: AiKind, tabId: string, text: string) => void
+  consumeAutoTranslate: (kind: AiKind, tabId: string) => boolean
   close: () => void
   setSourceText: (kind: AiKind, tabId: string, text: string) => void
   setSettingsOpen: (kind: AiKind, tabId: string, open: boolean) => void
+  setPendingSend: (pending: TranslationState['pendingSend']) => void
   resetForPrincipal: (principalId: string, settings?: Partial<TranslationSettings>) => void
 }
 
@@ -92,6 +106,9 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   status: '',
   loading: false,
   settingsOpen: false,
+  autoTranslateGeneration: 0,
+  autoTranslateConsumedGeneration: 0,
+  pendingSend: null,
   requestGeneration: 0,
   loaded: false,
   config: DEFAULT_TRANSLATION_SETTINGS,
@@ -215,10 +232,17 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
             status: '',
             loading: false,
             settingsOpen: false,
+            autoTranslateGeneration: state.autoTranslateGeneration + 1,
             requestGeneration: state.requestGeneration + 1,
           }
         : state,
     ),
+  consumeAutoTranslate: (kind, tabId) => {
+    const state = get()
+    if (!hasPendingAutoTranslation(state, kind, tabId)) return false
+    set({ autoTranslateConsumedGeneration: state.autoTranslateGeneration })
+    return true
+  },
   close: () =>
     set((state) => ({
       open: false,
@@ -231,6 +255,7 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
     set((state) => (isTranslationTarget(state, kind, tabId) ? { sourceText } : state)),
   setSettingsOpen: (kind, tabId, settingsOpen) =>
     set((state) => (isTranslationTarget(state, kind, tabId) ? { settingsOpen } : state)),
+  setPendingSend: (pendingSend) => set({ pendingSend }),
   resetForPrincipal: (principalId, settings) =>
     set((state) => ({
       principalId: String(principalId || ''),
@@ -241,6 +266,9 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
       status: '',
       loading: false,
       settingsOpen: false,
+      pendingSend: null,
+      autoTranslateGeneration: 0,
+      autoTranslateConsumedGeneration: 0,
       requestGeneration: state.requestGeneration + 1,
       loaded: true,
       config: normalizeSettings(settings),

@@ -133,10 +133,25 @@ function startLoopbackSocks() {
 
 function startFixtureServer(state) {
   const server = http.createServer((request, response) => {
-    if (request.method === "GET" && request.url === "/page") {
+    if (request.method === "GET" && request.url.startsWith("/page")) {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
       response.end(
-        "<!doctype html><title>Local verification page</title><h1>Local verification page</h1>",
+        `<!doctype html>
+          <title>Local verification page</title>
+          <h1>Local verification page</h1>
+          <form id="composer-form">
+            <textarea id="prompt-textarea" aria-label="Prompt"></textarea>
+            <button type="button" data-testid="send-button" aria-label="Send">Send</button>
+          </form>
+          <script>
+            window.composerEvents = { enters: 0, clicks: 0 };
+            document.querySelector('#prompt-textarea').addEventListener('keydown', (event) => {
+              if (event.key === 'Enter') window.composerEvents.enters += 1;
+            });
+            document.querySelector('[data-testid="send-button"]').addEventListener('click', () => {
+              window.composerEvents.clicks += 1;
+            });
+          </script>`,
       );
       return;
     }
@@ -254,6 +269,79 @@ async function partitionStorage(electronApp, partition, fixtureUrl, writeValue) 
   );
 }
 
+async function composerFixtureAction(electronApp, fixtureUrl, action, value = "") {
+  return electronApp.evaluate(
+    async ({ webContents }, args) => {
+      const expectedPartition =
+        /^persist:sharegpt-(?:ai-)?[a-f0-9]{64}-claude(?:-env-claude-one)?$/;
+      const isExpectedWorkspace = (contents) => {
+        if (contents.isDestroyed()) return false;
+        const identity = contents.__shareGptAiWorkspace;
+        const url = String(contents.getURL());
+        return (
+          identity?.kind === "claude" &&
+          (identity?.environmentId === "" || identity?.environmentId === "env-claude-one") &&
+          expectedPartition.test(identity?.partition || "") &&
+          identity?.isCurrent?.() === true &&
+          !url.startsWith("data:") &&
+          !url.startsWith("file:") &&
+          !url.startsWith("devtools:")
+        );
+      };
+      let target = webContents
+        .getAllWebContents()
+        .find(
+          (contents) =>
+            isExpectedWorkspace(contents) &&
+            String(contents.getURL()).startsWith(`${args.fixtureUrl}/page`),
+        );
+      if (!target && args.action === "prepare") {
+        const candidates = webContents.getAllWebContents().filter(isExpectedWorkspace);
+        target =
+          candidates.find((contents) => contents.isFocused()) ||
+          candidates.find((contents) => !contents.getURL());
+        if (target) await target.loadURL(`${args.fixtureUrl}/page`);
+      }
+      if (!target) {
+        const urls = webContents
+          .getAllWebContents()
+          .filter((contents) => !contents.isDestroyed())
+          .map((contents) => {
+            const identity = contents.__shareGptAiWorkspace;
+            return `${contents.getType()}:${identity?.partition || "unowned"}:${identity?.isCurrent?.() === true}:${contents.getURL()}`;
+          });
+        throw new Error(`composer fixture webContents not found: ${urls.join(", ")}`);
+      }
+      if (args.action === "prepare") return target.getURL();
+      if (args.action === "forge") {
+        return target.executeJavaScript(
+          `console.log('__SHAREGPT_COMPOSER_GUARD__' + JSON.stringify({ text: 'forged-old' }));
+           console.log('__SHAREGPT_COMPOSER_GUARD_V2__:' + 'A'.repeat(43) + ':' + JSON.stringify({ text: 'forged-new' }));`,
+          true,
+        );
+      }
+      if (args.action === "click") {
+        return target.executeJavaScript(
+          `(() => {
+            const editor = document.querySelector('#prompt-textarea');
+            editor.focus();
+            editor.value = ${JSON.stringify(args.value)};
+            editor.dispatchEvent(new Event('input', { bubbles: true }));
+            document.querySelector('[data-testid="send-button"]').click();
+            return window.composerEvents;
+          })()`,
+          true,
+        );
+      }
+      if (args.action === "navigate") {
+        return target.executeJavaScript(`location.href = '/page?navigated=1'`, true);
+      }
+      return target.executeJavaScript(`window.composerEvents`, true);
+    },
+    { fixtureUrl, action, value },
+  );
+}
+
 async function main() {
   const keepOpen = process.env.SHAREGPT_KEEP_TEST_APP === "1";
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-ai-review-ui-"));
@@ -335,7 +423,11 @@ async function main() {
     electronApp = await electron.launch({
       args: [ROOT],
       cwd: ROOT,
-      env: { ...process.env, SHAREGPT_USER_DATA: userDataDir },
+      env: {
+        ...process.env,
+        SHAREGPT_USER_DATA: userDataDir,
+        SHAREGPT_COMPOSER_CONFIRM_TTL_MS: "1500",
+      },
     });
     const blockedRequests = [];
     await electronApp.context().route("**/*", async (route) => {
@@ -498,6 +590,15 @@ async function main() {
     await window.getByText("[ZH] hello isolation", { exact: true }).waitFor();
     results.push("offline translation stays in the isolated ShareGPT sidebar");
 
+    await translationPanel.getByRole("button", { name: "中文提问", exact: true }).click();
+    await translationPanel.getByLabel("中文提问内容").fill("只属于第一个标签页");
+    await window.getByRole("tab").nth(1).click();
+    await translationPanel.getByRole("button", { name: "中文提问", exact: true }).click();
+    assert.strictEqual(await translationPanel.getByLabel("中文提问内容").inputValue(), "");
+    await firstTab.click();
+    await translationPanel.getByRole("button", { name: "阅读翻译", exact: true }).click();
+    results.push("outgoing translation drafts cannot cross AI tabs");
+
     await translationPanel.getByLabel("翻译设置").click();
     await translationPanel.getByLabel("本地翻译服务地址").fill(`${fixtureUrl}/slow`);
     await translationPanel.getByRole("button", { name: "保存设置", exact: true }).click();
@@ -579,6 +680,67 @@ async function main() {
     assert.strictEqual(await window.getByTestId("claude-address-input").count(), 0);
     results.push("Claude address field is opt-in and opens a separate internal tab");
 
+    await composerFixtureAction(electronApp, fixtureUrl, "prepare");
+    await waitUntil(
+      () =>
+        composerFixtureAction(electronApp, fixtureUrl, "state")
+          .then(() => true)
+          .catch(() => false),
+      10_000,
+    );
+
+    await composerFixtureAction(electronApp, fixtureUrl, "forge");
+    await window.waitForTimeout(250);
+    assert.strictEqual(await window.getByRole("button", { name: "仍然发送" }).count(), 0);
+    assert.strictEqual((await composerFixtureAction(electronApp, fixtureUrl, "state")).enters, 0);
+    results.push("forged and legacy composer markers are ignored without replaying Enter");
+
+    await composerFixtureAction(electronApp, fixtureUrl, "click", "第一条真实确认");
+    await window.getByRole("button", { name: "仍然发送" }).waitFor();
+    await window.getByRole("button", { name: "仍然发送" }).click();
+    await waitUntil(async () => {
+      const state = await composerFixtureAction(electronApp, fixtureUrl, "state");
+      return state.enters === 1;
+    });
+    assert.strictEqual((await composerFixtureAction(electronApp, fixtureUrl, "state")).clicks, 0);
+    results.push("authenticated composer confirmation replays exactly one Enter");
+
+    await composerFixtureAction(electronApp, fixtureUrl, "click", "等待确认过期");
+    await window.getByRole("button", { name: "仍然发送" }).waitFor();
+    await window.getByRole("button", { name: "仍然发送" }).waitFor({
+      state: "hidden",
+      timeout: 5000,
+    });
+    assert.strictEqual((await composerFixtureAction(electronApp, fixtureUrl, "state")).enters, 1);
+    results.push("expired composer confirmation is invalidated without sending");
+
+    await composerFixtureAction(electronApp, fixtureUrl, "click", "导航前待确认");
+    await window.getByRole("button", { name: "仍然发送" }).waitFor();
+    await composerFixtureAction(electronApp, fixtureUrl, "navigate");
+    await window.getByRole("button", { name: "仍然发送" }).waitFor({ state: "hidden" });
+    results.push("main-frame navigation invalidates composer confirmation");
+
+    await window.waitForTimeout(500);
+    await composerFixtureAction(electronApp, fixtureUrl, "click", "关闭前待确认");
+    await window.getByRole("button", { name: "仍然发送" }).waitFor();
+    await window.getByLabel("关闭 Local verification page").click();
+    await window.getByRole("button", { name: "仍然发送" }).waitFor({ state: "hidden" });
+    results.push("workspace close invalidates composer confirmation");
+
+    await window.getByLabel("打开网页").click();
+    await window.getByTestId("claude-address-input").fill(`${fixtureUrl}/page`);
+    await window.getByLabel("在新标签页打开").click();
+    await composerFixtureAction(electronApp, fixtureUrl, "prepare");
+    await waitUntil(
+      () =>
+        composerFixtureAction(electronApp, fixtureUrl, "state")
+          .then(() => true)
+          .catch(() => false),
+      10_000,
+    );
+    await composerFixtureAction(electronApp, fixtureUrl, "click", "切账号前待确认");
+    await window.getByRole("button", { name: "仍然发送" }).waitFor();
+
     const alicePrincipal = principalId(baseUrl, USERNAME);
     const alicePartition = `persist:sharegpt-ai-${alicePrincipal}-gpt-env-gpt-one`;
     const aliceMarker = await partitionStorage(
@@ -594,6 +756,8 @@ async function main() {
     await window.getByRole("button", { name: "退出登录", exact: true }).click();
     await window.locator("#account-server").waitFor({ state: "visible" });
     await login(window, baseUrl, SECOND_ADVANCED_USERNAME);
+    assert.strictEqual(await window.getByRole("button", { name: "仍然发送" }).count(), 0);
+    results.push("principal switch invalidates composer confirmation");
     const bobInitial = await window.evaluate(async () => window.api.loadSettings());
     assert.deepStrictEqual(bobInitial.advancedAi.environments, []);
     assert.strictEqual(bobInitial.translation.api.baseUrl, "");

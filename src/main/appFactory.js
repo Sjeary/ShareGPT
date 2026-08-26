@@ -28,6 +28,21 @@ const {
 const { collectPageFingerprint, snapshotDigest, newLocalProfile } = require("./browserFingerprint");
 const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
 const { translateText } = require("./translation");
+const {
+  composerGuardMarker,
+  createComposerConfirmationRegistry,
+  createComposerGuardToken,
+  createOneShotComposerBypass,
+  disableComposerClickGuard,
+  hasClearlyNonTargetLanguage,
+  installComposerClickGuard,
+  inspectAiComposer,
+  inspectComposerSubmit,
+  isPlainComposerSubmit,
+  parseComposerGuardConsoleMessage,
+  replaceAiComposerText,
+  sendComposerEnter,
+} = require("./aiComposer");
 const { createAiEnvironmentGenerationGuard } = require("./aiEnvironmentGeneration");
 const { runSettingsPrincipalTransition } = require("./settingsPrincipalTransition");
 const {
@@ -129,6 +144,8 @@ const AI_ALLOWED_PERMISSIONS = new Set([
   "top-level-storage-access",
 ]);
 const GPT_TAB_TITLE_LIMIT = 48;
+const COMPOSER_GUARD_WORLD_ID = 1001;
+const COMPOSER_CONFIRM_TTL_MS = 2 * 60 * 1000;
 
 function getEventWindow(event, fallbackWindow) {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
@@ -507,6 +524,19 @@ function createElectronApp(baseMode = "all") {
   const configuredAiPartitions = new Set();
   const aiWorkspaces = new Map();
   const translationRequests = new Map();
+  const configuredComposerTtl = Number.parseInt(
+    String(process.env.SHAREGPT_COMPOSER_CONFIRM_TTL_MS || ""),
+    10,
+  );
+  const composerConfirmationTtl =
+    !app.isPackaged && Number.isInteger(configuredComposerTtl) && configuredComposerTtl > 0
+      ? Math.min(configuredComposerTtl, COMPOSER_CONFIRM_TTL_MS)
+      : COMPOSER_CONFIRM_TTL_MS;
+  const pendingComposerSends = createComposerConfirmationRegistry({
+    ttlMs: composerConfirmationTtl,
+    onExpire: (pending) => emitComposerSendInvalidated(pending, "expired"),
+  });
+  let composerEligibility = { principalId: "", eligible: false };
   // GPT 与 Gemini 均支持多标签: 标签顺序 / 活动标签 / 宿主矩形 均按 kind 索引。
   const tabOrderByKind = { gpt: [], gemini: [], claude: [] };
   const activeTabIdByKind = { gpt: "", gemini: "", claude: "" };
@@ -563,6 +593,8 @@ function createElectronApp(baseMode = "all") {
   function setActiveAiKind(rawKind) {
     const nextKind = isAiKind(safeText(rawKind)) ? safeText(rawKind) : "";
     if (nextKind === activeAiKind) return activeAiKind;
+    const previousWorkspace = getWorkspace(activeAiKind, activeTabIdByKind[activeAiKind]);
+    if (previousWorkspace) invalidateComposerWorkspace(previousWorkspace, "workspace-switched");
     activeAiKind = nextKind;
     for (const workspace of aiWorkspaces.values()) {
       detachWorkspaceView(workspace);
@@ -574,8 +606,14 @@ function createElectronApp(baseMode = "all") {
     return aiEnvironmentGuard.assert(payload);
   }
 
-  function assertPrincipalUnchanged(principalId) {
-    if (backend.getPrincipalContext().principalId !== principalId) {
+  function assertPrincipalUnchanged(expected) {
+    const current = backend.getPrincipalContext();
+    const principalId = typeof expected === "string" ? expected : expected?.principalId;
+    const generation = typeof expected === "object" ? Number(expected?.generation) : null;
+    if (
+      current.principalId !== principalId ||
+      (Number.isInteger(generation) && current.generation !== generation)
+    ) {
       throw Object.assign(new Error("协作账号已切换，操作已终止"), {
         code: "PRINCIPAL_CHANGED",
       });
@@ -601,6 +639,208 @@ function createElectronApp(baseMode = "all") {
     };
     mainWindow.webContents.send("app:event", eventPayload);
     return eventPayload;
+  }
+
+  function isComposerEligible() {
+    const principalId = backend?.getPrincipalContext?.().principalId || "";
+    return Boolean(
+      composerEligibility.eligible &&
+      principalId &&
+      composerEligibility.principalId === principalId,
+    );
+  }
+
+  function emitComposerSendInvalidated(pending, reason) {
+    if (!pending) return;
+    emitAiEvent(pending.kind, "composer-send-invalidated", {
+      tabId: pending.tabId,
+      requestId: pending.requestId,
+      reason: safeText(reason),
+    });
+  }
+
+  function invalidateComposerWorkspace(workspace, reason = "invalidated") {
+    if (!workspace) return;
+    const pending = pendingComposerSends.invalidateWorkspace(
+      workspaceKey(workspace.kind, workspace.id),
+    );
+    emitComposerSendInvalidated(pending, reason);
+    workspace.composerContextGeneration = (workspace.composerContextGeneration || 0) + 1;
+    workspace.composerGuardToken = "";
+    workspace.composerGuardBypass?.clear?.();
+  }
+
+  function invalidateAllComposerWorkspaces(reason = "invalidated") {
+    for (const workspace of aiWorkspaces.values()) invalidateComposerWorkspace(workspace, reason);
+    for (const pending of pendingComposerSends.clear()) {
+      emitComposerSendInvalidated(pending, reason);
+    }
+  }
+
+  function captureComposerContext(workspace, options = {}) {
+    const principalContext = backend?.getPrincipalContext?.() || {
+      principalId: "",
+      generation: -1,
+    };
+    const context = {
+      workspace,
+      kind: safeText(workspace?.kind),
+      tabId: safeText(workspace?.id),
+      environmentId: safeText(workspace?.environmentId),
+      environmentGeneration: Number(workspace?.environmentGeneration || 0),
+      principalId: principalContext.principalId,
+      principalContext,
+      composerContextGeneration: Number(workspace?.composerContextGeneration || 0),
+      requireActive: options.requireActive !== false,
+    };
+    assertComposerContextCurrent(context);
+    return context;
+  }
+
+  function assertComposerContextCurrent(context) {
+    const workspace = context?.workspace;
+    const wc = workspace?.view?.webContents;
+    if (!isComposerEligible()) throw new Error("当前账号无网页翻译权限");
+    assertPrincipalUnchanged(context.principalContext);
+    if (
+      !workspace ||
+      !wc ||
+      wc.isDestroyed() ||
+      getWorkspace(context.kind, context.tabId) !== workspace ||
+      safeText(workspace.environmentId) !== context.environmentId ||
+      Number(workspace.environmentGeneration || 0) !== context.environmentGeneration ||
+      Number(workspace.composerContextGeneration || 0) !== context.composerContextGeneration ||
+      !isWorkspaceDocumentAllowed(workspace)
+    ) {
+      throw Object.assign(new Error("网页发送上下文已失效"), {
+        code: "COMPOSER_CONTEXT_STALE",
+      });
+    }
+    if (
+      context.requireActive &&
+      (activeAiKind !== context.kind || activeTabIdByKind[context.kind] !== context.tabId)
+    ) {
+      throw Object.assign(new Error("目标会话已切换，请重新操作"), {
+        code: "COMPOSER_CONTEXT_STALE",
+      });
+    }
+    if (
+      !aiEnvironmentGuard.isCurrent({
+        kind: context.kind,
+        environmentId: context.environmentId,
+        generation: context.environmentGeneration,
+      })
+    ) {
+      throw Object.assign(new Error("AI 环境操作已失效"), {
+        code: "AI_ENVIRONMENT_STALE",
+      });
+    }
+    return workspace;
+  }
+
+  function replayComposerEnter(context) {
+    const workspace = assertComposerContextCurrent(context);
+    const wc = workspace.view.webContents;
+    workspace.composerGuardBypass.arm(context.composerContextGeneration);
+    sendComposerEnter(wc);
+    assertComposerContextCurrent(context);
+    return true;
+  }
+
+  function queueComposerConfirmation(context, text, targetLanguage, options = {}) {
+    const workspace = assertComposerContextCurrent(context);
+    const { pending, replaced } = pendingComposerSends.queue(
+      workspaceKey(workspace.kind, workspace.id),
+      {
+        kind: workspace.kind,
+        tabId: workspace.id,
+        environmentId: context.environmentId,
+        environmentGeneration: context.environmentGeneration,
+        principalId: context.principalId,
+        composerContextGeneration: context.composerContextGeneration,
+        context,
+        text,
+        findAny: Boolean(options.findAny),
+      },
+    );
+    emitComposerSendInvalidated(replaced, "replaced");
+    emitAiEvent(workspace.kind, "confirm-non-target-send", {
+      tabId: workspace.id,
+      requestId: pending.requestId,
+      text,
+      targetLanguage,
+    });
+    return pending;
+  }
+
+  function guardComposerEnter(workspace, event, input) {
+    if (!isPlainComposerSubmit(input)) return false;
+    if (workspace.composerGuardBypass.consume(workspace.composerContextGeneration)) return false;
+    if (!isComposerEligible()) return false;
+    const translation = backend?.loadSettings()?.translation || {};
+    if (translation.confirmNonTargetSend === false) return false;
+    const targetLanguage = safeText(translation.siteLanguage) || "en";
+    let context;
+    try {
+      context = captureComposerContext(workspace);
+    } catch {
+      return false;
+    }
+
+    event.preventDefault();
+    void inspectComposerSubmit(workspace.view.webContents, targetLanguage, {
+      assertCurrent: () => assertComposerContextCurrent(context),
+    })
+      .then((decision) => {
+        if (decision.action === "replay") {
+          replayComposerEnter(context);
+          return;
+        }
+        queueComposerConfirmation(context, decision.text, targetLanguage);
+      })
+      .catch((error) => {
+        try {
+          assertComposerContextCurrent(context);
+          emitAiEvent(workspace.kind, "composer-send-guard-failed", {
+            tabId: workspace.id,
+            message: safeText(error?.message) || "无法检查待发送内容",
+          });
+        } catch {}
+      });
+    return true;
+  }
+
+  async function syncComposerClickGuard(workspace) {
+    const wc = workspace?.view?.webContents;
+    if (!wc || wc.isDestroyed() || !isWorkspaceDocumentAllowed(workspace)) return false;
+    if (!isComposerEligible()) {
+      if (workspace.composerGuardInstalled) {
+        await disableComposerClickGuard(wc, COMPOSER_GUARD_WORLD_ID);
+        workspace.composerGuardInstalled = false;
+      }
+      invalidateComposerWorkspace(workspace, "ineligible");
+      return false;
+    }
+    const context = captureComposerContext(workspace, { requireActive: false });
+    const translation = backend?.loadSettings()?.translation || {};
+    if (!workspace.composerGuardToken) workspace.composerGuardToken = createComposerGuardToken();
+    const token = workspace.composerGuardToken;
+    await installComposerClickGuard(wc, {
+      worldId: COMPOSER_GUARD_WORLD_ID,
+      enabled: translation.confirmNonTargetSend !== false,
+      targetLanguage: safeText(translation.siteLanguage) || "en",
+      marker: composerGuardMarker(token),
+    });
+    assertComposerContextCurrent(context);
+    if (workspace.composerGuardToken !== token) throw new Error("网页发送守卫已失效");
+    workspace.composerGuardInstalled = true;
+    return true;
+  }
+
+  function syncAllComposerClickGuards() {
+    return Promise.allSettled(
+      [...aiWorkspaces.values()].map((workspace) => syncComposerClickGuard(workspace)),
+    );
   }
 
   // 初始化 electron-updater (Windows 打包版)。更新源由 electron-builder 写入的 app-update.yml 决定
@@ -963,7 +1203,7 @@ function createElectronApp(baseMode = "all") {
   async function captureWorkspaceFingerprint(kind, tabId = "", options = {}) {
     const targetKind = safeText(kind);
     if (!isAiKind(targetKind)) throw new Error("不支持的 AI 服务");
-    const principalId = backend.getPrincipalContext().principalId;
+    const principalContext = backend.getPrincipalContext();
     const workspace =
       getWorkspace(targetKind, safeText(tabId)) ||
       getWorkspace(targetKind, activeTabIdByKind[targetKind]);
@@ -1006,7 +1246,7 @@ function createElectronApp(baseMode = "all") {
       networkPromise,
       proxyPromise,
     ]);
-    assertPrincipalUnchanged(principalId);
+    assertPrincipalUnchanged(principalContext);
 
     const settings = backend.loadSettings();
     const privacy = normalizeBrowserPrivacySettings(settings.browserPrivacy);
@@ -1035,15 +1275,15 @@ function createElectronApp(baseMode = "all") {
     snapshot.digest = snapshotDigest(snapshot);
 
     if (options.save !== false) {
-      assertPrincipalUnchanged(principalId);
+      assertPrincipalUnchanged(principalContext);
       privacy.audit.current[targetKind] = snapshot;
       settings.browserPrivacy = privacy;
-      backend.saveSettings(settings);
+      backend.saveSettingsForPrincipal(settings, principalContext.principalId);
     }
     return snapshot;
   }
 
-  async function rememberBeforeClear(kind, principalId) {
+  async function rememberBeforeClear(kind, principalContext) {
     const targetKind = safeText(kind);
     const settings = backend.loadSettings();
     const privacy = normalizeBrowserPrivacySettings(settings.browserPrivacy);
@@ -1053,11 +1293,11 @@ function createElectronApp(baseMode = "all") {
     } catch {
       // 页面可能未打开或仍在导航；此时回退到最后一次已保存的当前快照。
     }
-    assertPrincipalUnchanged(principalId);
+    assertPrincipalUnchanged(principalContext);
     privacy.audit.beforeClear[targetKind] = snapshot || privacy.audit.current[targetKind] || null;
     privacy.audit.current[targetKind] = null;
     settings.browserPrivacy = privacy;
-    backend.saveSettings(settings);
+    backend.saveSettingsForPrincipal(settings, principalContext.principalId);
     return privacy.audit.beforeClear[targetKind];
   }
 
@@ -1164,6 +1404,7 @@ function createElectronApp(baseMode = "all") {
       lastUrl: safeText(options.lastUrl),
       allowExternalBrowsing: Boolean(options.allowExternalBrowsing),
       environmentId: safeText(options.environmentId),
+      environmentGeneration: Number(options.environmentGeneration || 0),
     });
 
     const order = tabOrderByKind[targetKind];
@@ -1191,6 +1432,7 @@ function createElectronApp(baseMode = "all") {
       };
     }
 
+    invalidateComposerWorkspace(workspace, "workspace-closed");
     detachWorkspaceView(workspace);
     aiWorkspaces.delete(workspaceKey(targetKind, targetId));
 
@@ -1304,6 +1546,41 @@ function createElectronApp(baseMode = "all") {
     }
   }
 
+  function isTrustedComposerConsoleEvent(workspace, details, legacySourceId) {
+    const wc = workspace?.view?.webContents;
+    const currentUrl = safeText(wc?.getURL?.());
+    if (
+      !wc ||
+      wc.isDestroyed() ||
+      getWorkspace(workspace.kind, workspace.id) !== workspace ||
+      !currentUrl ||
+      !isWorkspaceUrlAllowed(workspace, currentUrl)
+    ) {
+      return false;
+    }
+    if (details && "frame" in details) {
+      if (!details.frame || details.frame !== wc.mainFrame) return false;
+    }
+    const sourceId = safeText(details?.sourceId || legacySourceId);
+    if (sourceId) {
+      try {
+        const sourceUrl = new URL(sourceId);
+        const documentUrl = new URL(currentUrl);
+        if (
+          !["http:", "https:"].includes(sourceUrl.protocol) ||
+          !isWorkspaceUrlAllowed(workspace, sourceUrl.toString()) ||
+          sourceUrl.origin !== documentUrl.origin
+        ) {
+          return false;
+        }
+      } catch {
+        // Electron may report an internal VM label for isolated-world code. In that
+        // case the main-frame identity, current URL and unguessable token remain authoritative.
+      }
+    }
+    return true;
+  }
+
   function bindAiWorkspaceEvents(workspace) {
     const wc = workspace.view.webContents;
 
@@ -1375,6 +1652,11 @@ function createElectronApp(baseMode = "all") {
       handleBlockedAiNavigation(workspace, url);
     });
 
+    wc.on("did-start-navigation", (details) => {
+      if (!details?.isMainFrame) return;
+      invalidateComposerWorkspace(workspace, "navigation");
+    });
+
     wc.on("did-start-loading", () => {
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
       workspace.loading = true;
@@ -1383,6 +1665,7 @@ function createElectronApp(baseMode = "all") {
 
     wc.on("dom-ready", () => {
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
+      void syncComposerClickGuard(workspace).catch(() => {});
       emitAiState(workspace, "dom-ready");
     });
 
@@ -1456,6 +1739,7 @@ function createElectronApp(baseMode = "all") {
         workspace.lastUrl = normalizeAiWorkspaceUrl(workspace, url);
       }
       workspace.initialized = true;
+      void syncComposerClickGuard(workspace).catch(() => {});
       emitAiState(workspace, "did-navigate", { url });
     });
 
@@ -1466,6 +1750,7 @@ function createElectronApp(baseMode = "all") {
       if (isWorkspaceUrlAllowed(workspace, url)) {
         workspace.lastUrl = normalizeAiWorkspaceUrl(workspace, url);
       }
+      void syncComposerClickGuard(workspace).catch(() => {});
       emitAiState(workspace, "did-navigate-in-page", { url });
     });
 
@@ -1476,9 +1761,35 @@ function createElectronApp(baseMode = "all") {
       emitTabsChanged(workspace.kind);
     });
 
-    wc.on("console-message", (_event, _level, message) => {
-      emitAiEvent(workspace.kind, "console-message", { message: String(message || "") });
+    wc.on("console-message", (details, _level, legacyMessage, _line, legacySourceId) => {
+      const value = String(details?.message ?? legacyMessage ?? "");
+      const parsed = parseComposerGuardConsoleMessage(value, workspace.composerGuardToken);
+      if (parsed.kind !== "other") {
+        if (
+          parsed.kind !== "valid" ||
+          !isComposerEligible() ||
+          !isTrustedComposerConsoleEvent(workspace, details, legacySourceId)
+        ) {
+          return;
+        }
+        try {
+          const context = captureComposerContext(workspace);
+          const translation = backend?.loadSettings()?.translation || {};
+          const targetLanguage = safeText(translation.siteLanguage) || "en";
+          if (
+            translation.confirmNonTargetSend !== false &&
+            hasClearlyNonTargetLanguage(parsed.text, targetLanguage)
+          ) {
+            queueComposerConfirmation(context, parsed.text, targetLanguage, { findAny: true });
+          }
+        } catch {}
+        return;
+      }
+      emitAiEvent(workspace.kind, "console-message", { message: value });
     });
+
+    wc.on("render-process-gone", () => invalidateComposerWorkspace(workspace, "renderer-gone"));
+    wc.on("destroyed", () => invalidateComposerWorkspace(workspace, "workspace-destroyed"));
 
     // F11: 嵌入的 AI 网页获得焦点时, 渲染层收不到键盘事件; 在此拦截 F11 切换窗口全屏。
     // 另: Ctrl/Cmd + 加/减/0 只缩放当前内嵌网页，不允许影响 ShareGPT 外壳布局。
@@ -1497,6 +1808,7 @@ function createElectronApp(baseMode = "all") {
         }
         return;
       }
+      if (guardComposerEnter(workspace, event, input)) return;
       const zoomAction = aiZoomAction(input);
       if (zoomAction) {
         event.preventDefault();
@@ -1634,6 +1946,14 @@ function createElectronApp(baseMode = "all") {
       if (safeText(existing.environmentId) !== requestedEnvironmentId) {
         throw new Error("目标标签不属于当前 AI 环境");
       }
+      const requestedGeneration = Number(options.environmentGeneration || 0);
+      if (
+        !Number.isInteger(requestedGeneration) ||
+        requestedGeneration < 1 ||
+        Number(existing.environmentGeneration || 0) !== requestedGeneration
+      ) {
+        throw new Error("AI 环境操作已失效");
+      }
       return existing;
     }
 
@@ -1642,6 +1962,10 @@ function createElectronApp(baseMode = "all") {
     }
 
     const environmentId = normalizeAiEnvironmentId(options.environmentId);
+    const environmentGeneration = Number(options.environmentGeneration || 0);
+    if (!Number.isInteger(environmentGeneration) || environmentGeneration < 1) {
+      throw new Error("AI 环境操作已失效");
+    }
     const policy = getAiPolicy(targetKind, environmentId);
     if (!policy) {
       throw new Error("不支持的 AI 工作区");
@@ -1671,6 +1995,7 @@ function createElectronApp(baseMode = "all") {
       id: targetTabId,
       kind: targetKind,
       environmentId,
+      environmentGeneration: Number(options.environmentGeneration || 0),
       policy,
       view,
       attached: false,
@@ -1691,7 +2016,26 @@ function createElectronApp(baseMode = "all") {
       environmentBootstrapping: false,
       managedNavigationCount: 0,
       suppressLoadErrorsUntil: 0,
+      composerContextGeneration: 1,
+      composerGuardToken: "",
+      composerGuardInstalled: false,
+      composerGuardBypass: createOneShotComposerBypass(),
     };
+
+    Reflect.defineProperty(view.webContents, "__shareGptAiWorkspace", {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: Object.freeze({
+        kind: targetKind,
+        environmentId,
+        partition: policy.partition,
+        isCurrent: () =>
+          workspace.attached &&
+          activeAiKind === targetKind &&
+          activeTabIdByKind[targetKind] === workspace.id,
+      }),
+    });
 
     bindAiWorkspaceEvents(workspace);
     view.webContents.setZoomLevel(mainWindow.webContents.getZoomLevel());
@@ -1703,6 +2047,7 @@ function createElectronApp(baseMode = "all") {
 
   function disposeAiWorkspaces() {
     for (const workspace of aiWorkspaces.values()) {
+      invalidateComposerWorkspace(workspace, "workspace-disposed");
       detachWorkspaceView(workspace);
 
       try {
@@ -1721,6 +2066,9 @@ function createElectronApp(baseMode = "all") {
     activeTabIdByKind.claude = "";
     activeAiKind = "";
     configuredAiPartitions.clear();
+    for (const pending of pendingComposerSends.clear()) {
+      emitComposerSendInvalidated(pending, "workspace-disposed");
+    }
   }
 
   function attachWindowGuards(targetWindow) {
@@ -1874,6 +2222,7 @@ function createElectronApp(baseMode = "all") {
       return backend.loadSettings();
     });
     ipcMain.handle("settings:principal-activate", (_event, payload) => {
+      composerEligibility = { principalId: "", eligible: false };
       disposeAiWorkspaces();
       aiEnvironmentGuard.invalidateAll();
       for (const controller of translationRequests.values()) controller.abort();
@@ -1883,6 +2232,7 @@ function createElectronApp(baseMode = "all") {
       );
     });
     ipcMain.handle("settings:principal-clear", () => {
+      composerEligibility = { principalId: "", eligible: false };
       disposeAiWorkspaces();
       aiEnvironmentGuard.invalidateAll();
       for (const controller of translationRequests.values()) controller.abort();
@@ -1895,24 +2245,38 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("settings:principal-context", () => ({
       principalId: backend.getPrincipalContext().principalId,
     }));
+    ipcMain.handle("ai:set-composer-eligibility", async (_event, payload) => {
+      const principalId = safeText(payload?.principalId);
+      if (!principalId || principalId !== backend.getPrincipalContext().principalId) {
+        throw new Error("网页翻译权限 principal 已变化");
+      }
+      composerEligibility = { principalId, eligible: payload?.eligible === true };
+      if (!composerEligibility.eligible) invalidateAllComposerWorkspaces("ineligible");
+      await syncAllComposerClickGuards();
+      return { ok: true, principalId, eligible: composerEligibility.eligible };
+    });
     ipcMain.handle("settings:save", (_event, payload) =>
       backend.saveSettingsForPrincipal(payload?.settings, payload?.expectedPrincipalId),
     );
-    ipcMain.handle("settings:patch", (_event, payload) =>
-      backend.patchSettings(
+    ipcMain.handle("settings:patch", (_event, payload) => {
+      const result = backend.patchSettings(
         payload?.section,
         payload?.patch,
         payload?.expectedRevision,
         payload?.expectedPrincipalId,
-      ),
-    );
+      );
+      if (payload?.section === "translation") syncAllComposerClickGuards();
+      return result;
+    });
     ipcMain.handle("settings:operate", (_event, payload) => {
-      return backend.operateSettings(
+      const result = backend.operateSettings(
         payload?.section,
         payload?.operations,
         payload?.expectedRevision,
         payload?.expectedPrincipalId,
       );
+      if (payload?.section === "translation") syncAllComposerClickGuards();
+      return result;
     });
     ipcMain.handle("settings:import", (_event, payload) =>
       backend.importSettings(payload?.expectedPrincipalId),
@@ -1975,6 +2339,68 @@ function createElectronApp(baseMode = "all") {
       const result = await captureAiPageText(kind, safeText(payload?.tabId));
       assertCurrentAiEnvironmentOperation(payload);
       return result;
+    });
+    ipcMain.handle("translation:write-composer", async (_event, payload) => {
+      const { kind, environmentId, generation } = assertCurrentAiEnvironmentOperation(payload);
+      const tabId = safeText(payload?.tabId);
+      const workspace = getWorkspace(kind, tabId);
+      if (
+        !workspace ||
+        safeText(workspace.environmentId) !== environmentId ||
+        Number(workspace.environmentGeneration || 0) !== generation
+      ) {
+        throw new Error("目标会话不属于当前环境");
+      }
+      const context = captureComposerContext(workspace);
+      const assertCurrent = () => {
+        assertCurrentAiEnvironmentOperation(payload);
+        assertComposerContextCurrent(context);
+      };
+      const result = await replaceAiComposerText(workspace.view.webContents, payload?.text, {
+        assertCurrent,
+      });
+      assertCurrent();
+      if (payload?.send === true) replayComposerEnter(context);
+      return { ...result, sent: payload?.send === true };
+    });
+    ipcMain.handle("translation:resolve-composer-send", async (_event, payload) => {
+      const { kind, environmentId, generation } = assertCurrentAiEnvironmentOperation(payload);
+      const requestId = safeText(payload?.requestId);
+      const pending = pendingComposerSends.get(requestId);
+      if (!pending) {
+        throw new Error("发送确认已过期，请重新发送");
+      }
+      if (
+        pending.kind !== kind ||
+        pending.tabId !== safeText(payload?.tabId) ||
+        pending.environmentId !== environmentId ||
+        pending.environmentGeneration !== generation ||
+        pending.principalId !== backend.getPrincipalContext().principalId
+      ) {
+        throw new Error("发送确认不属于当前会话");
+      }
+      assertComposerContextCurrent(pending.context);
+      if (payload?.confirmed !== true) {
+        if (!pendingComposerSends.take(requestId)) {
+          throw new Error("发送确认已失效，请重新发送");
+        }
+        return { ok: true, sent: false };
+      }
+      const workspace = assertComposerContextCurrent(pending.context);
+      const composer = await inspectAiComposer(workspace.view.webContents, {
+        findAny: pending.findAny,
+        focus: pending.findAny,
+      });
+      assertCurrentAiEnvironmentOperation(payload);
+      assertComposerContextCurrent(pending.context);
+      if (!composer.editable || safeText(composer.text) !== pending.text) {
+        throw new Error("网页输入内容已经变化，请重新确认");
+      }
+      if (!pendingComposerSends.take(requestId)) {
+        throw new Error("发送确认已失效，请重新发送");
+      }
+      replayComposerEnter(pending.context);
+      return { ok: true, sent: true };
     });
     ipcMain.handle("user-data:export", (_event, payload) =>
       backend.exportUserData(payload?.expectedPrincipalId),
@@ -2124,13 +2550,16 @@ function createElectronApp(baseMode = "all") {
     });
 
     ipcMain.handle("ai-tabs:create", (_event, payload) => {
-      const { kind, environmentId } = assertCurrentAiEnvironmentOperation(payload);
+      const { kind, environmentId, generation } = assertCurrentAiEnvironmentOperation(payload);
       assertCurrentAiEnvironmentOperation(payload);
+      const previousWorkspace = getWorkspace(kind, activeTabIdByKind[kind]);
+      if (previousWorkspace) invalidateComposerWorkspace(previousWorkspace, "workspace-switched");
       const workspace = createTabWorkspace(kind, {
         title: safeText(payload?.title),
         lastUrl: safeText(payload?.lastUrl),
         allowExternalBrowsing: Boolean(payload?.allowExternalBrowsing),
         environmentId,
+        environmentGeneration: generation,
       });
       activeTabIdByKind[kind] = workspace.id;
       syncActiveWorkspace(kind);
@@ -2151,6 +2580,10 @@ function createElectronApp(baseMode = "all") {
       if (safeText(workspace.environmentId) !== environmentId)
         throw new Error("目标会话不属于当前环境");
       assertCurrentAiEnvironmentOperation(payload);
+      const previousWorkspace = getWorkspace(kind, activeTabIdByKind[kind]);
+      if (previousWorkspace && previousWorkspace !== workspace) {
+        invalidateComposerWorkspace(previousWorkspace, "workspace-switched");
+      }
       activeTabIdByKind[kind] = workspace.id;
       syncActiveWorkspace(kind);
       emitTabsChanged(kind);
@@ -2178,17 +2611,30 @@ function createElectronApp(baseMode = "all") {
       const activation = aiEnvironmentGuard.activate({ kind, environmentId, generation });
       if (activation.stale) return { ok: false, stale: true, kind, environmentId };
       const workspaces = listWorkspaces(kind);
+      for (const workspace of workspaces) {
+        if (
+          safeText(workspace.environmentId) !== environmentId ||
+          Number(workspace.environmentGeneration || 0) !== generation
+        ) {
+          invalidateComposerWorkspace(workspace, "environment-activated");
+        }
+        if (safeText(workspace.environmentId) === environmentId) {
+          workspace.environmentGeneration = generation;
+        }
+      }
       const changed = shouldCloseAiWorkspacesForEnvironment(workspaces, environmentId);
       if (changed) await closeWorkspacesForKind(kind);
       if (!aiEnvironmentGuard.isCurrent(activation)) {
         return { ok: false, stale: true, kind, environmentId };
       }
+      await syncAllComposerClickGuards();
       return { ok: true, kind, environmentId, changed, generation };
     });
 
     ipcMain.handle("ai:environment-delete", async (_event, payload) => {
       const { kind } = assertCurrentAiEnvironmentOperation(payload);
-      const principalId = backend.getPrincipalContext().principalId;
+      const principalContext = backend.getPrincipalContext();
+      const principalId = principalContext.principalId;
       const environmentId = normalizeAiEnvironmentId(payload?.targetEnvironmentId);
       if (!isAiKind(kind) || !environmentId) throw new Error("AI 环境标识不合法");
       getConfiguredAiEnvironment(kind, environmentId);
@@ -2211,7 +2657,7 @@ function createElectronApp(baseMode = "all") {
       );
       if (targetLoaded) await closeWorkspacesForKind(kind);
       assertCurrentAiEnvironmentOperation(payload);
-      assertPrincipalUnchanged(principalId);
+      assertPrincipalUnchanged(principalContext);
       let savedSettings = backend.operateSettings(
         "advancedAi",
         operations,
@@ -2234,7 +2680,7 @@ function createElectronApp(baseMode = "all") {
           error: error?.message || String(error),
         });
       });
-      assertPrincipalUnchanged(principalId);
+      assertPrincipalUnchanged(principalContext);
       if (!dataCleared) {
         const latest = backend.loadSettings();
         const pending = Array.isArray(latest.ui?.pendingAiPartitionCleanup)
@@ -2266,7 +2712,7 @@ function createElectronApp(baseMode = "all") {
     });
 
     ipcMain.handle("ai:ensure", async (_event, payload) => {
-      const { kind, environmentId } = assertCurrentAiEnvironmentOperation(payload);
+      const { kind, environmentId, generation } = assertCurrentAiEnvironmentOperation(payload);
       const requestedTabId = safeText(payload?.tabId);
       if (!requestedTabId && !activeTabIdByKind[kind]) {
         return null;
@@ -2288,6 +2734,7 @@ function createElectronApp(baseMode = "all") {
         lastUrl: safeText(payload?.lastUrl),
         allowExternalBrowsing: Boolean(payload?.allowExternalBrowsing),
         environmentId,
+        environmentGeneration: generation,
       });
       if (!activeTabIdByKind[kind]) {
         activeTabIdByKind[kind] = workspace.id;
@@ -2377,17 +2824,17 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("ai:data-clear", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
-      const principalId = backend.getPrincipalContext().principalId;
+      const principalContext = backend.getPrincipalContext();
       await verifyBrowserDestructiveAction(payload);
-      assertPrincipalUnchanged(principalId);
-      const beforeSnapshot = await rememberBeforeClear(kind, principalId);
-      assertPrincipalUnchanged(principalId);
+      assertPrincipalUnchanged(principalContext);
+      const beforeSnapshot = await rememberBeforeClear(kind, principalContext);
+      assertPrincipalUnchanged(principalContext);
       const policy = getAiPolicy(kind);
       await closeWorkspacesForKind(kind);
-      assertPrincipalUnchanged(principalId);
+      assertPrincipalUnchanged(principalContext);
       const targetSession = session.fromPartition(policy.partition);
       await clearAiSessionData(targetSession);
-      assertPrincipalUnchanged(principalId);
+      assertPrincipalUnchanged(principalContext);
       aiContactedHostsByPartition.get(policy.partition)?.clear();
 
       const settings = backend.loadSettings();
@@ -2399,24 +2846,24 @@ function createElectronApp(baseMode = "all") {
         ...(settings[kind] || {}),
         last_url: policy.homeUrl,
       };
-      backend.saveSettings(settings);
+      backend.saveSettingsForPrincipal(settings, principalContext.principalId);
       return { ok: true, kind, clearedAt, homeUrl: policy.homeUrl, beforeSnapshot };
     });
 
     ipcMain.handle("ai:profile-rebuild", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
-      const principalId = backend.getPrincipalContext().principalId;
+      const principalContext = backend.getPrincipalContext();
       await verifyBrowserDestructiveAction(payload);
-      assertPrincipalUnchanged(principalId);
-      const beforeSnapshot = await rememberBeforeClear(kind, principalId);
-      assertPrincipalUnchanged(principalId);
+      assertPrincipalUnchanged(principalContext);
+      const beforeSnapshot = await rememberBeforeClear(kind, principalContext);
+      assertPrincipalUnchanged(principalContext);
       const oldPolicy = getAiPolicy(kind);
       await closeWorkspacesForKind(kind);
-      assertPrincipalUnchanged(principalId);
+      assertPrincipalUnchanged(principalContext);
       const oldSession = session.fromPartition(oldPolicy.partition);
       await clearAiSessionData(oldSession);
-      assertPrincipalUnchanged(principalId);
+      assertPrincipalUnchanged(principalContext);
       aiContactedHostsByPartition.get(oldPolicy.partition)?.clear();
 
       const settings = backend.loadSettings();
@@ -2433,7 +2880,7 @@ function createElectronApp(baseMode = "all") {
         partition,
         last_url: oldPolicy.homeUrl,
       };
-      backend.saveSettings(settings);
+      backend.saveSettingsForPrincipal(settings, principalContext.principalId);
       return {
         ok: true,
         kind,

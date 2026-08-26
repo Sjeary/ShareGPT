@@ -195,6 +195,8 @@ export interface TranslationSettings {
   provider: TranslationProvider
   sourceLanguage: string
   targetLanguage: string
+  siteLanguage: string
+  confirmNonTargetSend: boolean
   ai: {
     baseUrl: string
     apiKey: string

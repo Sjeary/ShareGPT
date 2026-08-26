@@ -26,6 +26,8 @@ import {
 } from '@/components/panels/chat/normalize'
 import { messagePreview } from '@/components/panels/chat/format'
 import { applyClientBootstrap, clearRemoteRouteState, fetchClientBootstrap } from '@/hooks/useAuth'
+import { isComposerGuardEligible } from '@/lib/translationSession'
+import { isCurrentRouteRefreshSession, type RouteRefreshSession } from '@/lib/authSession'
 
 // 协作聊天主控 hook。
 // 职责:
@@ -422,7 +424,7 @@ export function useChat() {
 
     const typingTimersMap = typingTimers.current
     let cancelled = false
-    let routeRefreshInFlight: Promise<void> | null = null
+    let routeRefreshInFlight: Promise<boolean> | null = null
 
     // 账号被动断开、且已无法自动恢复(需手动重新登录)时, 停止本机发送服务(代理):
     // 账号断开就不应继续以本机转发流量 (对齐旧版 stopSenderBecauseAccountOffline)。
@@ -431,6 +433,11 @@ export function useChat() {
       const notesAiPrincipalId = useNotesAiStore.getState().principalId
       void api.stopSender().catch(() => {})
       void api.closeAllAiWorkspaces().catch(() => {})
+      if (notesAiPrincipalId) {
+        void api
+          .setAiComposerEligibility({ principalId: notesAiPrincipalId, eligible: false })
+          .catch(() => {})
+      }
       void api.notesAi.invalidatePrincipal(notesAiPrincipalId).catch(() => {})
       useNotesAiStore.getState().invalidatePrincipal()
       void useAppStore
@@ -444,29 +451,70 @@ export function useChat() {
         .catch(() => {})
     }
 
-    const refreshAuthoritativeRoutes = (serverUrl: string, token: string): Promise<void> => {
+    const refreshAuthoritativeRoutes = (serverUrl: string, token: string): Promise<boolean> => {
       if (routeRefreshInFlight) return routeRefreshInFlight
-      routeRefreshInFlight = (async () => {
-        const wasRunning = Boolean(useAppStore.getState().status.senderRunning)
-        await api.stopSender().catch(() => {})
-        await api.closeAllAiWorkspaces().catch(() => {})
-        await clearRemoteRouteState()
-        const bootstrap = await fetchClientBootstrap(serverUrl, token)
-        if (!bootstrap) throw new Error('服务器没有返回客户端线路配置')
-        await applyClientBootstrap(bootstrap)
-        const authState = useAuthStore.getState()
-        if (authState.profile) {
-          authState.setProfile({
-            ...authState.profile,
-            routeAuthorizationVerified: bootstrap.proxyRoutesAuthoritative,
-            allowedProxyRouteIds: bootstrap.proxyRoutesAuthoritative
-              ? bootstrap.proxyRoutes.map((route) => route.id)
-              : [],
+      const currentIdentity = useChatStore.getState().identity
+      const captured: RouteRefreshSession = {
+        principalId: useNotesAiStore.getState().principalId,
+        serverUrl,
+        username: currentIdentity.username,
+        acceptedTokens: [...new Set([currentIdentity.token, token].filter(Boolean))],
+      }
+      const isCurrent = () => {
+        const liveIdentity = useChatStore.getState().identity
+        return (
+          !cancelled &&
+          isCurrentRouteRefreshSession(captured, {
+            principalId: useNotesAiStore.getState().principalId,
+            serverUrl: liveIdentity.serverUrl,
+            username: liveIdentity.username,
+            token: liveIdentity.token,
           })
-        }
-        if (wasRunning) {
-          const sender = useAppStore.getState().settings?.sender
-          if (sender) await api.startSender(sender)
+        )
+      }
+      routeRefreshInFlight = (async () => {
+        try {
+          if (!isCurrent()) return false
+          const wasRunning = Boolean(useAppStore.getState().status.senderRunning)
+          await api.stopSender().catch(() => {})
+          if (!isCurrent()) return false
+          await api.closeAllAiWorkspaces().catch(() => {})
+          if (!isCurrent()) return false
+          await clearRemoteRouteState(isCurrent)
+          if (!isCurrent()) return false
+          const bootstrap = await fetchClientBootstrap(serverUrl, token)
+          if (!isCurrent()) return false
+          if (!bootstrap) throw new Error('服务器没有返回客户端线路配置')
+          await applyClientBootstrap(bootstrap, isCurrent)
+          if (!isCurrent()) return false
+          const authState = useAuthStore.getState()
+          if (authState.profile) {
+            const nextProfile = {
+              ...authState.profile,
+              routeAuthorizationVerified: bootstrap.proxyRoutesAuthoritative,
+              allowedProxyRouteIds: bootstrap.proxyRoutesAuthoritative
+                ? bootstrap.proxyRoutes.map((route) => route.id)
+                : [],
+            }
+            if (!isCurrent()) return false
+            authState.setProfile(nextProfile)
+            if (!isCurrent()) return false
+            await api.setAiComposerEligibility({
+              principalId: captured.principalId,
+              eligible: isComposerGuardEligible(nextProfile),
+            })
+            if (!isCurrent()) return false
+          }
+          if (wasRunning) {
+            if (!isCurrent()) return false
+            const sender = useAppStore.getState().settings?.sender
+            if (sender) await api.startSender(sender)
+            if (!isCurrent()) return false
+          }
+          return true
+        } catch (error) {
+          if (!isCurrent()) return false
+          throw error
         }
       })().finally(() => {
         routeRefreshInFlight = null
@@ -497,8 +545,25 @@ export function useChat() {
     // 静默重登: 用 runtimePassword 直接 POST /api/login 刷新 token, 写回 auth + chat store。
     const attemptSilentRelogin = async () => {
       if (cancelled || silentReloginInFlight.current) return
-      const serverUrl = useChatStore.getState().identity.serverUrl
-      const username = useChatStore.getState().identity.username
+      const reloginIdentity = useChatStore.getState().identity
+      const serverUrl = reloginIdentity.serverUrl
+      const username = reloginIdentity.username
+      const reloginPrincipalId = useNotesAiStore.getState().principalId
+      let replacementToken = ''
+      const isReloginCurrent = () =>
+        !cancelled &&
+        isCurrentRouteRefreshSession(
+          {
+            principalId: reloginPrincipalId,
+            serverUrl,
+            username,
+            acceptedTokens: [reloginIdentity.token, replacementToken].filter(Boolean),
+          },
+          {
+            principalId: useNotesAiStore.getState().principalId,
+            ...useChatStore.getState().identity,
+          },
+        )
       const password = useAuthStore.getState().runtimePassword
       if (!serverUrl || !username || !password) {
         manualReloginRef.current = '服务已重启，请重新登录。'
@@ -534,40 +599,57 @@ export function useChat() {
             chatDisabled?: boolean
           }
         } | null
+        if (!isReloginCurrent()) return
         if (!payload?.token) throw new Error('登录未成功')
+        replacementToken = payload.token
+        if (!isReloginCurrent()) return
         const confirmedUsername = typeof payload.username === 'string' ? payload.username : ''
         if (!confirmedUsername.trim() || confirmedUsername !== username) {
           throw new Error('服务器返回的账号身份已变化，请重新登录')
         }
         const displayName = (payload.profile?.displayName ?? '').trim() || confirmedUsername
         const avatar = (payload.profile?.avatar ?? '').trim()
-        await refreshAuthoritativeRoutes(serverUrl, payload.token)
+        const routesCurrent = await refreshAuthoritativeRoutes(serverUrl, payload.token)
+        if (!routesCurrent || !isReloginCurrent()) {
+          silentReloginInFlight.current = false
+          return
+        }
         const refreshedProfile = useAuthStore.getState().profile
+        const nextProfile = {
+          username: confirmedUsername,
+          displayName,
+          avatar,
+          isAdmin: Boolean(payload.profile?.isAdmin),
+          advancedAiAllowed: Boolean(payload.profile?.advancedAiAllowed),
+          routeAuthorizationVerified: Boolean(refreshedProfile?.routeAuthorizationVerified),
+          allowedProxyRouteIds: refreshedProfile?.allowedProxyRouteIds || [],
+          chatDisabled: Boolean(payload.profile?.chatDisabled),
+        }
+        if (!isReloginCurrent()) return
+        await api.setAiComposerEligibility({
+          principalId: reloginPrincipalId,
+          eligible: isComposerGuardEligible(nextProfile),
+        })
+        if (!isReloginCurrent()) return
         // 写回运行期会话 (不动 setAuthed/持久化设置, 仅刷新 token)。
         setSession({
           token: payload.token,
-          profile: {
-            username: confirmedUsername,
-            displayName,
-            avatar,
-            isAdmin: Boolean(payload.profile?.isAdmin),
-            advancedAiAllowed: Boolean(payload.profile?.advancedAiAllowed),
-            routeAuthorizationVerified: Boolean(refreshedProfile?.routeAuthorizationVerified),
-            allowedProxyRouteIds: refreshedProfile?.allowedProxyRouteIds || [],
-            chatDisabled: Boolean(payload.profile?.chatDisabled),
-          },
+          profile: nextProfile,
           password,
         })
+        if (!isReloginCurrent()) return
         useChatStore.getState().setIdentity({
           token: payload.token,
           displayName,
           avatar,
         })
+        if (!isReloginCurrent()) return
         silentReloginInFlight.current = false
         // identity.token 变化会触发本 effect 重建并重连; 这里主动重连以防 token 相同。
         if (!cancelled) connect()
       } catch (err) {
         silentReloginInFlight.current = false
+        if (!isReloginCurrent()) return
         const message = err instanceof Error ? err.message : String(err)
         if (MANUAL_RELOGIN_PATTERN.test(message)) {
           manualReloginRef.current = '登录状态已失效，请重新登录。'
@@ -579,6 +661,7 @@ export function useChat() {
         // 网络类错误: 继续退避重试。
         scheduleReconnect('relogin')
       } finally {
+        silentReloginInFlight.current = false
         window.clearTimeout(timer)
       }
     }

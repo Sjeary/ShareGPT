@@ -29,6 +29,8 @@ test("settings use an empty remote translation endpoint and reject stale writes"
   const backend = createBackend(t);
   const initial = backend.loadSettings();
   assert.equal(initial.translation.ai.baseUrl, "");
+  assert.equal(initial.translation.siteLanguage, "en");
+  assert.equal(initial.translation.confirmNonTargetSend, true);
   assert.equal(initial.settingsRevision, 0);
 
   const saved = backend.patchSettings("ui", { theme: "dark" }, 0, activePrincipalId(backend));
@@ -307,6 +309,7 @@ test("failed principal migration keeps the previously active principal", (t) => 
 test("failed principal clear restores the previous principal", (t) => {
   const backend = createBackend(t);
   const alice = backend.activatePrincipal("https://collab.example", "Alice");
+  const aliceGeneration = backend.getPrincipalContext().generation;
   const loadSettings = backend.loadSettings;
   backend.loadSettings = () => {
     throw new Error("forced clear failure");
@@ -314,6 +317,21 @@ test("failed principal clear restores the previous principal", (t) => {
   assert.throws(() => backend.clearPrincipal(), /forced clear failure/);
   backend.loadSettings = loadSettings;
   assert.equal(backend.getPrincipalContext().principalId, alice.principalId);
+  assert.equal(backend.getPrincipalContext().generation, aliceGeneration);
+});
+
+test("principal generation rejects A/B/A async contexts even when the id matches again", (t) => {
+  const backend = createBackend(t);
+  const alice = backend.activatePrincipal("https://collab.example/team-a", "Alice");
+  const firstAliceContext = backend.getPrincipalContext();
+
+  backend.activatePrincipal("https://collab.example/team-a", "Bob");
+  const secondAlice = backend.activatePrincipal("https://collab.example/team-a", "Alice");
+  const secondAliceContext = backend.getPrincipalContext();
+
+  assert.equal(secondAlice.principalId, alice.principalId);
+  assert.equal(secondAliceContext.principalId, firstAliceContext.principalId);
+  assert.ok(secondAliceContext.generation > firstAliceContext.generation);
 });
 
 test("settings writes reject a stale expected principal after an account switch", (t) => {
