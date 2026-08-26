@@ -606,7 +606,21 @@ async function main() {
       tooltipSnapshot.bounds.y + tooltipSnapshot.bounds.height <=
         tooltipSnapshot.contentBounds.height,
     );
-    await window.evaluate(() => window.api.setNavTooltip({ visible: false }));
+    const tooltipOriginalSize = await electronApp.evaluate(({ BrowserWindow }) => {
+      const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+      const [width, height] = main.getSize();
+      main.setSize(width > 900 ? width - 24 : width + 24, height);
+      return { width, height };
+    });
+    await waitUntil(() =>
+      electronApp.evaluate(({ BrowserWindow }) => {
+        const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+        const tooltip = main?.contentView.children.find((view) =>
+          view.webContents?.getURL().includes("window.setTooltip"),
+        );
+        return tooltip?.getVisible() === false;
+      }),
+    );
     const tooltipHidden = await electronApp.evaluate(({ BrowserWindow }) => {
       const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
       const tooltip = main?.contentView.children.find((view) =>
@@ -618,7 +632,11 @@ async function main() {
       bounds: { x: 0, y: 0, width: 1, height: 1 },
       visible: false,
     });
-    results.push("native AI navigation tooltip bounds and hidden state are enforced");
+    await electronApp.evaluate(({ BrowserWindow }, size) => {
+      const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+      main.setSize(size.width, size.height);
+    }, tooltipOriginalSize);
+    results.push("native AI navigation tooltip bounds and geometry-change hiding are enforced");
 
     const firstTab = window.getByRole("tab").first();
     assert.strictEqual(await firstTab.getAttribute("aria-selected"), "true");

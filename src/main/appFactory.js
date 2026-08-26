@@ -2266,6 +2266,11 @@ function createElectronApp(baseMode = "all") {
     }
     mainWindow.removeMenu();
     mainWindow.on("blur", hideNavTooltip);
+    mainWindow.on("resize", hideNavTooltip);
+    mainWindow.on("maximize", hideNavTooltip);
+    mainWindow.on("unmaximize", hideNavTooltip);
+    mainWindow.on("enter-full-screen", hideNavTooltip);
+    mainWindow.on("leave-full-screen", hideNavTooltip);
     mainWindow.on("close", closeNavTooltip);
     loadMainRenderer(mainWindow);
     mainWindow.on("closed", () => {
