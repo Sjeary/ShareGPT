@@ -1,5 +1,6 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { NavItem, NavKey } from '@/lib/nav'
 
@@ -9,6 +10,31 @@ const ROW_GAP = 4
 const HOLD_MS = 240
 // 进入拖动前的位移容差: 超过则判定为"滚动/误触", 取消长按。
 const MOVE_TOLERANCE = 8
+const NATIVE_TOOLTIP_HEIGHT = 40
+
+function showNativeTooltip(target: HTMLButtonElement, label: string, side: 'left' | 'right') {
+  const trigger = target.getBoundingClientRect()
+  const width = Math.max(88, Math.min(208, label.length * 14 + 34))
+  const x = side === 'right' ? trigger.right + 4 : trigger.left - width - 4
+  const y = trigger.top + (trigger.height - NATIVE_TOOLTIP_HEIGHT) / 2
+  void api
+    .setNavTooltip({
+      visible: true,
+      label,
+      side,
+      bounds: {
+        x: Math.max(4, Math.min(window.innerWidth - width - 4, x)),
+        y: Math.max(4, Math.min(window.innerHeight - NATIVE_TOOLTIP_HEIGHT - 4, y)),
+        width,
+        height: NATIVE_TOOLTIP_HEIGHT,
+      },
+    })
+    .catch(() => undefined)
+}
+
+function hideNativeTooltip() {
+  void api.setNavTooltip({ visible: false }).catch(() => undefined)
+}
 
 interface DragState {
   key: NavKey
@@ -50,6 +76,9 @@ export function NavList({
   onReorder,
 }: Props) {
   const [drag, setDrag] = useState<DragState | null>(null)
+  // AI 网页是原生 WebContentsView，普通 DOM tooltip 无法盖在它上面。
+  // 折叠导航在这些页面改由主进程绘制同层级的原生提示视图。
+  const useNativeTooltip = activeKey === 'gpt' || activeKey === 'gemini' || activeKey === 'claude'
   const rowEls = useRef<(HTMLDivElement | null)[]>([])
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pointerId = useRef<number | null>(null)
@@ -65,6 +94,23 @@ export function NavList({
       holdTimer.current = null
     }
   }
+
+  const dragging = Boolean(drag)
+  useEffect(() => {
+    if (!collapsed || !useNativeTooltip || dragging) hideNativeTooltip()
+  }, [collapsed, dragging, useNativeTooltip])
+
+  useEffect(() => {
+    hideNativeTooltip()
+  }, [activeKey, tooltipSide])
+
+  useEffect(
+    () => () => {
+      if (holdTimer.current) clearTimeout(holdTimer.current)
+      hideNativeTooltip()
+    },
+    [],
+  )
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>, index: number, key: NavKey) => {
     if (e.button !== 0) return // 仅主键/触摸
@@ -172,7 +218,26 @@ export function NavList({
         const btn = (
           <button
             data-tour={`nav-${key}`}
-            onClick={() => onClickRow(key)}
+            onPointerEnter={(event) => {
+              if (collapsed && useNativeTooltip) {
+                showNativeTooltip(event.currentTarget, label, tooltipSide)
+              }
+            }}
+            onPointerLeave={() => {
+              if (useNativeTooltip) hideNativeTooltip()
+            }}
+            onFocus={(event) => {
+              if (collapsed && useNativeTooltip) {
+                showNativeTooltip(event.currentTarget, label, tooltipSide)
+              }
+            }}
+            onBlur={() => {
+              if (useNativeTooltip) hideNativeTooltip()
+            }}
+            onClick={() => {
+              if (useNativeTooltip) hideNativeTooltip()
+              onClickRow(key)
+            }}
             className={cn(
               'group flex w-full items-center rounded-lg py-2.5 text-left transition-colors',
               'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
@@ -234,7 +299,7 @@ export function NavList({
             onPointerCancel={finishDrag}
             className={cn(lifted && 'select-none', 'touch-pan-y')}
           >
-            {collapsed && !drag ? (
+            {collapsed && !drag && !useNativeTooltip ? (
               <Tooltip>
                 <TooltipTrigger asChild>{btn}</TooltipTrigger>
                 <TooltipContent side={tooltipSide} className="font-medium">

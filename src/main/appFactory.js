@@ -45,6 +45,7 @@ const {
 } = require("./aiComposer");
 const { createAiEnvironmentGenerationGuard } = require("./aiEnvironmentGeneration");
 const { runSettingsPrincipalTransition } = require("./settingsPrincipalTransition");
+const { createNavTooltipController, normalizeNavTooltipBounds } = require("./navTooltip");
 const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
@@ -541,6 +542,7 @@ function createElectronApp(baseMode = "all") {
   const tabOrderByKind = { gpt: [], gemini: [], claude: [] };
   const activeTabIdByKind = { gpt: "", gemini: "", claude: "" };
   let activeAiKind = "";
+  let navTooltipController = null;
   const aiEnvironmentGuard = createAiEnvironmentGenerationGuard();
   let aiTabCounter = 0;
   const hostStateByKind = {
@@ -579,6 +581,7 @@ function createElectronApp(baseMode = "all") {
       const wc = workspace?.view?.webContents;
       if (wc && !wc.isDestroyed()) wc.setZoomLevel(next);
     }
+    navTooltipController?.setZoomLevel(next);
     for (const kind of Object.keys(hostStateByKind)) {
       hostStateByKind[kind] = {
         visible: hostStateByKind[kind].visible,
@@ -595,6 +598,7 @@ function createElectronApp(baseMode = "all") {
     if (nextKind === activeAiKind) return activeAiKind;
     const previousWorkspace = getWorkspace(activeAiKind, activeTabIdByKind[activeAiKind]);
     if (previousWorkspace) invalidateComposerWorkspace(previousWorkspace, "workspace-switched");
+    hideNavTooltip();
     activeAiKind = nextKind;
     for (const workspace of aiWorkspaces.values()) {
       detachWorkspaceView(workspace);
@@ -1351,6 +1355,93 @@ function createElectronApp(baseMode = "all") {
     }
     mainWindow.contentView.addChildView(workspace.view);
     workspace.attached = true;
+    navTooltipController?.bringToFrontIfVisible();
+  }
+
+  function hideNavTooltip() {
+    return navTooltipController?.hide() || false;
+  }
+
+  function closeNavTooltip() {
+    const controller = navTooltipController;
+    navTooltipController = null;
+    return controller?.close() || false;
+  }
+
+  function ensureNavTooltipController() {
+    if (navTooltipController) return navTooltipController;
+    const documentUrl = `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
+        <meta charset="utf-8">
+        <style>
+          * { box-sizing: border-box; }
+          html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+          body { position: relative; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+          #tip {
+            position: absolute; top: 3px; bottom: 3px; left: 10px; right: 2px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 10px; background: #1d1d1f; color: #f5f5f7;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, .22);
+            font-size: 14px; font-weight: 600; line-height: 1; white-space: nowrap;
+          }
+          #tip::before {
+            content: ""; position: absolute; left: -4px; top: 50%;
+            width: 9px; height: 9px; background: #1d1d1f;
+            transform: translateY(-50%) rotate(45deg); border-radius: 2px;
+          }
+          body[data-side="left"] #tip { left: 2px; right: 10px; }
+          body[data-side="left"] #tip::before { left: auto; right: -4px; }
+        </style>
+        <div id="tip"></div>
+        <script>
+          window.setTooltip = ({ label, side }) => {
+            document.body.dataset.side = side === "left" ? "left" : "right";
+            document.getElementById("tip").textContent = label;
+          };
+        </script>`)}`;
+    navTooltipController = createNavTooltipController({
+      createView() {
+        const view = new WebContentsView({
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            backgroundThrottling: false,
+          },
+        });
+        view.setBackgroundColor("#00000000");
+        view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
+        view.setVisible(false);
+        const shell = mainWindow?.webContents;
+        if (shell && !shell.isDestroyed()) view.webContents.setZoomLevel(shell.getZoomLevel());
+        return view;
+      },
+      getHost: () => mainWindow,
+      loadView: (view) => view.webContents.loadURL(documentUrl),
+      renderView: (view, payload) =>
+        view.webContents.executeJavaScript(
+          `window.setTooltip(${JSON.stringify({ label: payload.label, side: payload.side })})`,
+        ),
+      resolveBounds(bounds, host) {
+        const shellZoomFactor = host.webContents.getZoomFactor?.() || 1;
+        const contentBounds = host.getContentBounds();
+        const normalized = normalizeNavTooltipBounds(bounds, {
+          width: contentBounds.width / shellZoomFactor,
+          height: contentBounds.height / shellZoomFactor,
+        });
+        return normalized ? scaleAiHostBounds(normalized, shellZoomFactor) : null;
+      },
+    });
+    return navTooltipController;
+  }
+
+  async function setNavTooltip(payload = {}) {
+    if (!payload.visible) return hideNavTooltip();
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+
+    const label = safeText(payload.label).slice(0, 80);
+    if (!label) return hideNavTooltip();
+    const side = payload.side === "left" ? "left" : "right";
+    return ensureNavTooltipController().show({ label, side, bounds: payload.bounds });
   }
 
   function detachWorkspaceView(workspace) {
@@ -2046,6 +2137,7 @@ function createElectronApp(baseMode = "all") {
   }
 
   function disposeAiWorkspaces() {
+    hideNavTooltip();
     for (const workspace of aiWorkspaces.values()) {
       invalidateComposerWorkspace(workspace, "workspace-disposed");
       detachWorkspaceView(workspace);
@@ -2173,11 +2265,14 @@ function createElectronApp(baseMode = "all") {
       mainWindow.setWindowButtonVisibility(true);
     }
     mainWindow.removeMenu();
+    mainWindow.on("blur", hideNavTooltip);
+    mainWindow.on("close", closeNavTooltip);
     loadMainRenderer(mainWindow);
     mainWindow.on("closed", () => {
       for (const controller of translationRequests.values()) controller.abort();
       translationRequests.clear();
       disposeAiWorkspaces();
+      closeNavTooltip();
       mainWindow = null;
     });
   }
@@ -2534,6 +2629,7 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("ai:set-active-kind", (_event, payload) => {
       return { activeKind: setActiveAiKind(payload?.kind) };
     });
+    ipcMain.handle("nav:tooltip", (_event, payload) => setNavTooltip(payload));
     ipcMain.handle("ai:close-all", () => {
       disposeAiWorkspaces();
       return { ok: true };
@@ -3291,6 +3387,7 @@ function createElectronApp(baseMode = "all") {
   });
 
   app.on("before-quit", () => {
+    closeNavTooltip();
     disposeAiWorkspaces();
     if (backend) backend.stopAll();
   });
