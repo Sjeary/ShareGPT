@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "codex/release-*"]
   pull_request:
 
 # 取消同一分支上过期的运行
