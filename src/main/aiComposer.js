@@ -9,6 +9,9 @@ function hasClearlyNonTargetLanguage(text, targetLanguage = "en") {
 
   switch (String(targetLanguage || "en").toLowerCase()) {
     case "en":
+    case "fr":
+    case "de":
+    case "es":
       return NON_LATIN_SCRIPT.test(value);
     case "zh":
       return /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Cyrillic}\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Thai}\p{Script=Devanagari}]/u.test(
@@ -29,6 +32,20 @@ function hasClearlyNonTargetLanguage(text, targetLanguage = "en") {
     default:
       return false;
   }
+}
+
+function isPlainComposerSubmit(input) {
+  return Boolean(
+    input &&
+      input.type === "keyDown" &&
+      input.key === "Enter" &&
+      !input.alt &&
+      !input.control &&
+      !input.meta &&
+      !input.shift &&
+      !input.isAutoRepeat &&
+      !input.isComposing,
+  );
 }
 
 /**
@@ -82,7 +99,7 @@ function composerClickGuardScript(options = {}) {
       const editorSelector = '#prompt-textarea, textarea, [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
       const sendSelector = 'button[data-testid="send-button"], button[aria-label*="Send" i], button[aria-label*="发送"]';
       const clearlyNonTarget = (text, target) => {
-        if (target === 'en') return /[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}\\p{Script=Cyrillic}\\p{Script=Arabic}\\p{Script=Hebrew}\\p{Script=Thai}\\p{Script=Devanagari}]/u.test(text);
+        if (['en', 'fr', 'de', 'es'].includes(target)) return /[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}\\p{Script=Cyrillic}\\p{Script=Arabic}\\p{Script=Hebrew}\\p{Script=Thai}\\p{Script=Devanagari}]/u.test(text);
         if (target === 'zh') return /[\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Hangul}\\p{Script=Cyrillic}\\p{Script=Arabic}\\p{Script=Hebrew}\\p{Script=Thai}\\p{Script=Devanagari}]/u.test(text);
         if (target === 'ja') return /[\\p{Script=Hangul}\\p{Script=Cyrillic}\\p{Script=Arabic}\\p{Script=Hebrew}\\p{Script=Thai}\\p{Script=Devanagari}]/u.test(text);
         if (target === 'ko') return /[\\p{Script=Hiragana}\\p{Script=Katakana}\\p{Script=Cyrillic}\\p{Script=Arabic}\\p{Script=Hebrew}\\p{Script=Thai}\\p{Script=Devanagari}]/u.test(text);
@@ -109,6 +126,16 @@ function composerClickGuardScript(options = {}) {
       return true;
     })();
   `;
+}
+
+async function installComposerClickGuard(webContents, options = {}) {
+  if (!webContents || webContents.isDestroyed()) throw new Error("当前网页尚未打开");
+  const worldId = Number.isInteger(options.worldId) ? options.worldId : 1001;
+  return webContents.executeJavaScriptInIsolatedWorld(
+    worldId,
+    [{ code: composerClickGuardScript(options) }],
+    false,
+  );
 }
 
 /**
@@ -146,7 +173,9 @@ module.exports = {
   composerClickGuardScript,
   composerInspectionScript,
   hasClearlyNonTargetLanguage,
+  installComposerClickGuard,
   inspectAiComposer,
+  isPlainComposerSubmit,
   replaceAiComposerText,
   sendComposerEnter,
 };

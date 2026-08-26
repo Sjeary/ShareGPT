@@ -29,9 +29,10 @@ const { collectPageFingerprint, snapshotDigest, newLocalProfile } = require("./b
 const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
 const { translateText } = require("./translation");
 const {
-  composerClickGuardScript,
   hasClearlyNonTargetLanguage,
+  installComposerClickGuard,
   inspectAiComposer,
+  isPlainComposerSubmit,
   replaceAiComposerText,
   sendComposerEnter,
 } = require("./aiComposer");
@@ -651,17 +652,7 @@ function createElectronApp(baseMode = "all") {
   }
 
   function guardComposerEnter(workspace, event, input) {
-    if (
-      input?.type !== "keyDown" ||
-      input.key !== "Enter" ||
-      input.alt ||
-      input.control ||
-      input.meta ||
-      input.shift ||
-      input.isAutoRepeat
-    ) {
-      return false;
-    }
+    if (!isPlainComposerSubmit(input)) return false;
     if (workspace.composerGuardBypass) {
       workspace.composerGuardBypass = false;
       return false;
@@ -688,12 +679,12 @@ function createElectronApp(baseMode = "all") {
     const wc = workspace?.view?.webContents;
     if (!wc || wc.isDestroyed() || !isWorkspaceDocumentAllowed(workspace)) return false;
     const translation = backend?.loadSettings()?.translation || {};
-    const code = composerClickGuardScript({
+    await installComposerClickGuard(wc, {
+      worldId: COMPOSER_GUARD_WORLD_ID,
       enabled: translation.confirmNonTargetSend !== false,
       targetLanguage: safeText(translation.siteLanguage) || "en",
       marker: COMPOSER_GUARD_MARKER,
     });
-    await wc.mainFrame.executeJavaScriptInIsolatedWorld(COMPOSER_GUARD_WORLD_ID, [{ code }], false);
     return true;
   }
 
@@ -2093,12 +2084,19 @@ function createElectronApp(baseMode = "all") {
     });
     ipcMain.handle("translation:write-composer", async (_event, payload) => {
       const { kind, environmentId } = assertCurrentAiEnvironmentOperation(payload);
-      const workspace = getWorkspace(kind, safeText(payload?.tabId));
+      const tabId = safeText(payload?.tabId);
+      if (activeAiKind !== kind || activeTabIdByKind[kind] !== tabId) {
+        throw new Error("目标会话已切换，请重新操作");
+      }
+      const workspace = getWorkspace(kind, tabId);
       if (!workspace || safeText(workspace.environmentId) !== environmentId) {
         throw new Error("目标会话不属于当前环境");
       }
       const result = await replaceAiComposerText(workspace.view.webContents, payload?.text);
       assertCurrentAiEnvironmentOperation(payload);
+      if (activeAiKind !== kind || activeTabIdByKind[kind] !== tabId) {
+        throw new Error("目标会话已切换，请重新操作");
+      }
       if (payload?.send === true) replayComposerEnter(workspace);
       return { ...result, sent: payload?.send === true };
     });
@@ -2120,6 +2118,9 @@ function createElectronApp(baseMode = "all") {
       }
       pendingComposerSends.delete(requestId);
       if (payload?.confirmed !== true) return { ok: true, sent: false };
+      if (activeAiKind !== kind || activeTabIdByKind[kind] !== pending.tabId) {
+        throw new Error("目标会话已切换，请重新发送");
+      }
       const workspace = getWorkspace(kind, pending.tabId);
       if (!workspace) throw new Error("当前网页尚未打开");
       const composer = await inspectAiComposer(workspace.view.webContents, {
@@ -2128,6 +2129,9 @@ function createElectronApp(baseMode = "all") {
       });
       if (!composer.editable || safeText(composer.text) !== pending.text) {
         throw new Error("网页输入内容已经变化，请重新确认");
+      }
+      if (activeAiKind !== kind || activeTabIdByKind[kind] !== pending.tabId) {
+        throw new Error("目标会话已切换，请重新发送");
       }
       replayComposerEnter(workspace);
       return { ok: true, sent: true };

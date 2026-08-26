@@ -498,6 +498,15 @@ async function main() {
     await window.getByText("[ZH] hello isolation", { exact: true }).waitFor();
     results.push("offline translation stays in the isolated ShareGPT sidebar");
 
+    await translationPanel.getByRole("button", { name: "中文提问", exact: true }).click();
+    await translationPanel.getByLabel("中文提问内容").fill("只属于第一个标签页");
+    await window.getByRole("tab").nth(1).click();
+    await translationPanel.getByRole("button", { name: "中文提问", exact: true }).click();
+    assert.strictEqual(await translationPanel.getByLabel("中文提问内容").inputValue(), "");
+    await firstTab.click();
+    await translationPanel.getByRole("button", { name: "阅读翻译", exact: true }).click();
+    results.push("outgoing translation drafts cannot cross AI tabs");
+
     await translationPanel.getByLabel("翻译设置").click();
     await translationPanel.getByLabel("本地翻译服务地址").fill(`${fixtureUrl}/slow`);
     await translationPanel.getByRole("button", { name: "保存设置", exact: true }).click();

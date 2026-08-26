@@ -1046,7 +1046,12 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
             )}
           </div>
           {translationOpen && (
-            <TranslationPanel kind={kind} tabId={activeTabId} networkReady={networkReady} />
+            <TranslationPanel
+              key={`${kind}:${activeTabId}`}
+              kind={kind}
+              tabId={activeTabId}
+              networkReady={networkReady}
+            />
           )}
         </div>
       </div>

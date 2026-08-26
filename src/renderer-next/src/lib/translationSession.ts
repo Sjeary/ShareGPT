@@ -23,3 +23,19 @@ export function isCurrentTranslationRequest(
     current.requestGeneration === token.generation
   )
 }
+
+export function hasPendingAutoTranslation(
+  current: {
+    kind: AiKind
+    tabId: string
+    autoTranslateGeneration: number
+    autoTranslateConsumedGeneration: number
+  },
+  kind: AiKind,
+  tabId: string,
+) {
+  return (
+    isTranslationTarget(current, kind, tabId) &&
+    current.autoTranslateGeneration > current.autoTranslateConsumedGeneration
+  )
+}

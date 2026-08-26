@@ -19,8 +19,8 @@ import { runAi } from '@/lib/notes/aiClient'
 import { REMOTE_HTTP_WARNING, usesRemoteHttp } from '@/lib/remoteHttp'
 import { describeTranslationTarget } from '@/lib/translationTarget'
 import { cn } from '@/lib/utils'
+import { useAiStore, type AiKind } from '@/store/useAiStore'
 import { useTranslationStore } from '@/store/useTranslationStore'
-import type { AiKind } from '@/store/useAiStore'
 import type { TranslationProvider, TranslationSettings } from '@/types/settings'
 
 const LANGUAGES = [
@@ -48,16 +48,22 @@ interface TranslationPanelProps {
   networkReady: boolean
 }
 
+function translationAbortError() {
+  const error = new Error('翻译已取消')
+  error.name = 'AbortError'
+  return error
+}
+
 export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanelProps) {
   const state = useTranslationStore()
   const cancelRef = useRef<null | (() => void)>(null)
+  const outgoingRequestRef = useRef(0)
   const [copied, setCopied] = useCopyIndicator()
   const [mode, setMode] = useState<'read' | 'compose'>('read')
   const [outgoingText, setOutgoingText] = useState('')
   const [outgoingResult, setOutgoingResult] = useState('')
   const [outgoingStatus, setOutgoingStatus] = useState('')
   const [outgoingLoading, setOutgoingLoading] = useState(false)
-  const autoTranslateRef = useRef(0)
   const targetMatches = state.kind === kind && state.tabId === tabId
   const canUseTranslation = networkReady && Boolean(tabId) && targetMatches
   const sourceText = targetMatches ? state.sourceText : ''
@@ -84,6 +90,7 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
     cancelRef.current?.()
     cancelRef.current = null
     return () => {
+      outgoingRequestRef.current += 1
       cancelRef.current?.()
       cancelRef.current = null
       useTranslationStore.getState().invalidateRequests(kind, tabId)
@@ -104,6 +111,7 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
   }
 
   const closePanel = () => {
+    outgoingRequestRef.current += 1
     cancelRef.current?.()
     cancelRef.current = null
     useTranslationStore.getState().close()
@@ -157,7 +165,7 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
         return
       }
       let cancel: () => void = () => undefined
-      cancel = runAi(
+      const stop = runAi(
         {
           provider,
           mode: 'translate',
@@ -184,6 +192,13 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
           },
         },
       )
+      cancel = () => {
+        stop()
+        useTranslationStore.getState().applyRequest(token, {
+          loading: false,
+          status: '翻译已取消',
+        })
+      }
       cancelRef.current = cancel
       return
     }
@@ -221,13 +236,20 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
   }
 
   useEffect(() => {
-    if (state.autoTranslateGeneration <= autoTranslateRef.current || !sourceText.trim()) return
-    autoTranslateRef.current = state.autoTranslateGeneration
-    setMode('read')
-    void translate()
-    // Selection events carry their own monotonically increasing generation.
+    if (!sourceText.trim()) return
+    if (!useTranslationStore.getState().consumeAutoTranslate(kind, tabId)) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      setMode('read')
+      void translate()
+    })
+    // The consumed generation lives in the store so closing and reopening cannot replay it.
+    return () => {
+      cancelled = true
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.autoTranslateGeneration])
+  }, [kind, sourceText, state.autoTranslateGeneration, tabId])
 
   const translateOutgoing = async (action: 'preview' | 'fill' | 'send') => {
     if (!networkReady || !tabId || outgoingLoading) return
@@ -238,6 +260,11 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
     }
     cancelRef.current?.()
     cancelRef.current = null
+    const requestGeneration = outgoingRequestRef.current + 1
+    outgoingRequestRef.current = requestGeneration
+    const isCurrentRequest = () =>
+      outgoingRequestRef.current === requestGeneration &&
+      useAiStore.getState().activeTabIdByKind[kind] === tabId
     setOutgoingLoading(true)
     setOutgoingResult('')
     setOutgoingStatus(action === 'preview' ? '正在翻译为网页语言…' : '正在翻译并准备填入网页…')
@@ -254,7 +281,14 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
         translated = await new Promise<string>((resolve, reject) => {
           let accumulated = ''
           let cancel: () => void = () => undefined
-          cancel = runAi(
+          let settled = false
+          const settle = (callback: (value: string | PromiseLike<string>) => void, value: string) => {
+            if (settled) return
+            settled = true
+            if (cancelRef.current === cancel) cancelRef.current = null
+            callback(value)
+          }
+          const stop = runAi(
             {
               provider,
               mode: 'translate',
@@ -264,20 +298,30 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
             {
               onDelta: (delta) => {
                 accumulated += delta
-                setOutgoingResult(accumulated)
+                if (isCurrentRequest()) setOutgoingResult(accumulated)
               },
-              onStatus: setOutgoingStatus,
+              onStatus: (message) => {
+                if (isCurrentRequest()) setOutgoingStatus(message)
+              },
               onDone: () => {
-                if (cancelRef.current === cancel) cancelRef.current = null
-                resolve(accumulated.trim())
+                settle(resolve, accumulated.trim())
               },
               onError: (message) => {
+                if (settled) return
+                settled = true
                 if (cancelRef.current === cancel) cancelRef.current = null
                 reject(new Error(message))
               },
             },
           )
-          cancelRef.current = cancel
+          cancel = () => {
+            stop()
+            if (settled) return
+            settled = true
+            if (cancelRef.current === cancel) cancelRef.current = null
+            reject(translationAbortError())
+          }
+          if (!settled) cancelRef.current = cancel
         })
       } else {
         const provider = current.config.provider
@@ -296,8 +340,9 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
         })
         if (cancelRef.current === cancel) cancelRef.current = null
         translated = response.translatedText.trim()
-        setOutgoingResult(translated)
+        if (isCurrentRequest()) setOutgoingResult(translated)
       }
+      if (!isCurrentRequest()) throw translationAbortError()
       if (!translated) throw new Error('翻译服务没有返回内容')
       if (action !== 'preview') {
         await api.writeAiComposer({
@@ -308,13 +353,21 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
           send: action === 'send',
         })
       }
-      setOutgoingStatus(
-        action === 'send' ? '已翻译并发送' : action === 'fill' ? '已填入网页输入框' : '翻译完成',
-      )
+      if (isCurrentRequest()) {
+        setOutgoingStatus(
+          action === 'send'
+            ? '已翻译并发送'
+            : action === 'fill'
+              ? '已填入网页输入框'
+              : '翻译完成',
+        )
+      }
     } catch (error) {
-      setOutgoingStatus(error instanceof Error ? error.message : String(error))
+      if (isCurrentRequest() && (!(error instanceof Error) || error.name !== 'AbortError')) {
+        setOutgoingStatus(error instanceof Error ? error.message : String(error))
+      }
     } finally {
-      setOutgoingLoading(false)
+      if (isCurrentRequest()) setOutgoingLoading(false)
     }
   }
 

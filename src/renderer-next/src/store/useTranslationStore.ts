@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
 import {
+  hasPendingAutoTranslation,
   isCurrentTranslationRequest,
   isTranslationTarget,
   type TranslationRequestToken,
@@ -55,6 +56,7 @@ interface TranslationState {
   loading: boolean
   settingsOpen: boolean
   autoTranslateGeneration: number
+  autoTranslateConsumedGeneration: number
   pendingSend: {
     kind: AiKind
     tabId: string
@@ -84,6 +86,7 @@ interface TranslationState {
   invalidateRequests: (kind: AiKind, tabId: string) => void
   toggle: (kind: AiKind, tabId: string) => void
   openSelection: (kind: AiKind, tabId: string, text: string) => void
+  consumeAutoTranslate: (kind: AiKind, tabId: string) => boolean
   close: () => void
   setSourceText: (kind: AiKind, tabId: string, text: string) => void
   setSettingsOpen: (kind: AiKind, tabId: string, open: boolean) => void
@@ -101,6 +104,7 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   loading: false,
   settingsOpen: false,
   autoTranslateGeneration: 0,
+  autoTranslateConsumedGeneration: 0,
   pendingSend: null,
   requestGeneration: 0,
   loaded: false,
@@ -216,6 +220,12 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
           }
         : state,
     ),
+  consumeAutoTranslate: (kind, tabId) => {
+    const state = get()
+    if (!hasPendingAutoTranslation(state, kind, tabId)) return false
+    set({ autoTranslateConsumedGeneration: state.autoTranslateGeneration })
+    return true
+  },
   close: () =>
     set((state) => ({
       open: false,
@@ -239,6 +249,8 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
       loading: false,
       settingsOpen: false,
       pendingSend: null,
+      autoTranslateGeneration: 0,
+      autoTranslateConsumedGeneration: 0,
       requestGeneration: state.requestGeneration + 1,
       loaded: true,
       config: normalizeSettings(settings),
