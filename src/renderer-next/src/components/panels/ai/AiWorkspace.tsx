@@ -17,6 +17,8 @@ import {
   Globe2,
   Languages,
   ArrowUpRight,
+  CircleAlert,
+  Send,
   SlidersHorizontal,
   X,
   type LucideIcon,
@@ -174,6 +176,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const tabs = useAiStore((s) => s.tabsByKind[kind])
   const activeTabId = useAiStore((s) => s.activeTabIdByKind[kind])
   const translationOpen = useTranslationStore((s) => advancedAiAllowed && s.open && s.kind === kind)
+  const pendingSend = useTranslationStore((s) =>
+    s.pendingSend?.kind === kind && s.pendingSend.tabId === activeTabId ? s.pendingSend : null,
+  )
   const toggleTranslation = useTranslationStore((s) => s.toggle)
   const feedback = useAiStore((s) => s.feedbackByKind[kind])
   const setFeedback = useAiStore((s) => s.setFeedback)
@@ -182,6 +187,31 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const addressInputRef = useRef<HTMLInputElement>(null)
   const [addressValue, setAddressValue] = useState('')
   const [webAddressOpen, setWebAddressOpen] = useState(false)
+  const [resolvingPendingSend, setResolvingPendingSend] = useState(false)
+
+  const resolvePendingSend = useCallback(
+    async (confirmed: boolean) => {
+      const pending = useTranslationStore.getState().pendingSend
+      if (!pending || pending.kind !== kind || pending.tabId !== activeTabId) return
+      setResolvingPendingSend(true)
+      try {
+        await api.resolveAiComposerSend({
+          ...currentAiEnvironmentOperation(kind),
+          kind,
+          tabId: pending.tabId,
+          requestId: pending.requestId,
+          confirmed,
+        })
+        useTranslationStore.getState().setPendingSend(null)
+        setFeedback(kind, confirmed ? '已按原文发送' : '已取消发送')
+      } catch (error) {
+        setFeedback(kind, error instanceof Error ? error.message : String(error), 'error')
+      } finally {
+        setResolvingPendingSend(false)
+      }
+    },
+    [activeTabId, kind, setFeedback],
+  )
 
   useEffect(() => {
     if (networkReady && activeTabId) return
@@ -592,7 +622,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   )
 
   // 运行态 / 遮罩内容变化时, 重新同步宿主定位。
-  const overlayKey = `${networkReady}|${environmentId}|${activeTabId}|${view.initialized}|${webAddressOpen}|${proxyOpen}|${environmentPanelOpen}|${aiHeaderHidden}|${translationOpen}|${proxyReport?.hosts?.length ?? 0}|${feedback.text ? 1 : 0}`
+  const overlayKey = `${networkReady}|${environmentId}|${activeTabId}|${view.initialized}|${webAddressOpen}|${proxyOpen}|${environmentPanelOpen}|${aiHeaderHidden}|${translationOpen}|${pendingSend?.requestId || ''}|${proxyReport?.hosts?.length ?? 0}|${feedback.text ? 1 : 0}`
   const overlayRef = useRef(overlayKey)
   useEffect(() => {
     if (overlayRef.current !== overlayKey) {
@@ -923,6 +953,39 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
             >
               <X className="size-3.5" />
             </button>
+          </div>
+        )}
+
+        {pendingSend && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/45 bg-amber-500/10 px-4 py-2 text-xs text-amber-800 dark:text-amber-200">
+            <CircleAlert className="size-4 shrink-0" />
+            <span className="min-w-48 flex-1">
+              检测到内容不是目标语言（{pendingSend.targetLanguage.toUpperCase()}）：
+              <span className="ml-1 font-medium">{pendingSend.text.slice(0, 100)}</span>
+              {pendingSend.text.length > 100 ? '…' : ''}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7"
+              disabled={resolvingPendingSend}
+              onClick={() => void resolvePendingSend(false)}
+            >
+              取消
+            </Button>
+            <Button
+              size="sm"
+              className="h-7 gap-1.5"
+              disabled={resolvingPendingSend}
+              onClick={() => void resolvePendingSend(true)}
+            >
+              {resolvingPendingSend ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Send className="size-3.5" />
+              )}
+              仍然发送
+            </Button>
           </div>
         )}
 

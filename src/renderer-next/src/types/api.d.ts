@@ -266,6 +266,22 @@ export interface ShareGptApi {
     tabId?: string,
     context?: { environmentId: string; generation: number },
   ) => Promise<{ title: string; url: string; text: string; truncated: boolean }>
+  writeAiComposer: (payload: {
+    kind: 'gpt' | 'gemini' | 'claude'
+    tabId: string
+    environmentId: string
+    generation: number
+    text: string
+    send: boolean
+  }) => Promise<{ ok: boolean; sent: boolean; replacedTextLength: number }>
+  resolveAiComposerSend: (payload: {
+    kind: 'gpt' | 'gemini' | 'claude'
+    tabId: string
+    environmentId: string
+    generation: number
+    requestId: string
+    confirmed: boolean
+  }) => Promise<{ ok: boolean; sent: boolean }>
   exportUserData: () => Promise<unknown>
   importUserData: () => Promise<unknown>
   readClipboardAttachment: () => Promise<unknown>

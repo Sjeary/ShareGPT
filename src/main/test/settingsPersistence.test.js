@@ -25,6 +25,8 @@ test("settings use an empty remote translation endpoint and reject stale writes"
   const backend = createBackend(t);
   const initial = backend.loadSettings();
   assert.equal(initial.translation.ai.baseUrl, "");
+  assert.equal(initial.translation.siteLanguage, "en");
+  assert.equal(initial.translation.confirmNonTargetSend, true);
   assert.equal(initial.settingsRevision, 0);
 
   const saved = backend.patchSettings("ui", { theme: "dark" }, 0);

@@ -55,6 +55,9 @@ contextBridge.exposeInMainWorld("api", {
   cancelTranslation: (requestId) => ipcRenderer.invoke("translation:cancel", requestId),
   captureAiPageText: (kind, tabId, context) =>
     ipcRenderer.invoke("translation:capture-page", { ...(context || {}), kind, tabId }),
+  writeAiComposer: (payload) => ipcRenderer.invoke("translation:write-composer", payload),
+  resolveAiComposerSend: (payload) =>
+    ipcRenderer.invoke("translation:resolve-composer-send", payload),
   exportUserData: () => ipcRenderer.invoke("user-data:export"),
   importUserData: () => ipcRenderer.invoke("user-data:import"),
   readClipboardAttachment: () => ipcRenderer.invoke("clipboard:read-attachment"),

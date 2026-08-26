@@ -204,6 +204,21 @@ export function useAiEvents() {
         return
       }
 
+      if (payload?.type === 'confirm-non-target-send') {
+        const tabId = safeText(payload.tabId)
+        const requestId = safeText(payload.requestId)
+        const text = safeText(payload.text)
+        if (!tabId || !requestId || !text) return
+        useTranslationStore.getState().setPendingSend({
+          kind,
+          tabId,
+          requestId,
+          text,
+          targetLanguage: safeText(payload.targetLanguage) || 'en',
+        })
+        return
+      }
+
       if (payload?.type === 'tabs-changed') {
         applyTabsPayload(kind, payload)
         return

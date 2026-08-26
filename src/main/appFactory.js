@@ -28,6 +28,13 @@ const {
 const { collectPageFingerprint, snapshotDigest, newLocalProfile } = require("./browserFingerprint");
 const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
 const { translateText } = require("./translation");
+const {
+  composerClickGuardScript,
+  hasClearlyNonTargetLanguage,
+  inspectAiComposer,
+  replaceAiComposerText,
+  sendComposerEnter,
+} = require("./aiComposer");
 const { createAiEnvironmentGenerationGuard } = require("./aiEnvironmentGeneration");
 const {
   normalizeAiEnvironmentId,
@@ -128,6 +135,8 @@ const AI_ALLOWED_PERMISSIONS = new Set([
   "top-level-storage-access",
 ]);
 const GPT_TAB_TITLE_LIMIT = 48;
+const COMPOSER_GUARD_MARKER = "__SHAREGPT_COMPOSER_GUARD__";
+const COMPOSER_GUARD_WORLD_ID = 1001;
 
 function getEventWindow(event, fallbackWindow) {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
@@ -506,6 +515,7 @@ function createElectronApp(baseMode = "all") {
   const configuredAiPartitions = new Set();
   const aiWorkspaces = new Map();
   const translationRequests = new Map();
+  const pendingComposerSends = new Map();
   // GPT 与 Gemini 均支持多标签: 标签顺序 / 活动标签 / 宿主矩形 均按 kind 索引。
   const tabOrderByKind = { gpt: [], gemini: [], claude: [] };
   const activeTabIdByKind = { gpt: "", gemini: "", claude: "" };
@@ -600,6 +610,97 @@ function createElectronApp(baseMode = "all") {
     };
     mainWindow.webContents.send("app:event", eventPayload);
     return eventPayload;
+  }
+
+  function replayComposerEnter(workspace) {
+    const wc = workspace?.view?.webContents;
+    if (!wc || wc.isDestroyed()) return;
+    workspace.composerGuardBypass = true;
+    sendComposerEnter(wc);
+    setTimeout(() => {
+      workspace.composerGuardBypass = false;
+    }, 1000);
+  }
+
+  function queueComposerConfirmation(workspace, text, targetLanguage, options = {}) {
+    const requestId = crypto.randomUUID();
+    const expiresAt = Date.now() + 2 * 60 * 1000;
+    pendingComposerSends.set(requestId, {
+      kind: workspace.kind,
+      tabId: workspace.id,
+      environmentId: safeText(workspace.environmentId),
+      principalId: backend.getPrincipalContext().principalId,
+      text,
+      findAny: Boolean(options.findAny),
+      expiresAt,
+    });
+    emitAiEvent(workspace.kind, "confirm-non-target-send", {
+      tabId: workspace.id,
+      requestId,
+      text,
+      targetLanguage,
+    });
+    setTimeout(
+      () => {
+        if (pendingComposerSends.get(requestId)?.expiresAt === expiresAt) {
+          pendingComposerSends.delete(requestId);
+        }
+      },
+      2 * 60 * 1000,
+    );
+  }
+
+  function guardComposerEnter(workspace, event, input) {
+    if (
+      input?.type !== "keyDown" ||
+      input.key !== "Enter" ||
+      input.alt ||
+      input.control ||
+      input.meta ||
+      input.shift ||
+      input.isAutoRepeat
+    ) {
+      return false;
+    }
+    if (workspace.composerGuardBypass) {
+      workspace.composerGuardBypass = false;
+      return false;
+    }
+    const translation = backend?.loadSettings()?.translation || {};
+    if (translation.confirmNonTargetSend === false) return false;
+    const targetLanguage = safeText(translation.siteLanguage) || "en";
+
+    event.preventDefault();
+    void inspectAiComposer(workspace.view.webContents)
+      .then((composer) => {
+        const text = safeText(composer.text);
+        if (!composer.editable || !text || !hasClearlyNonTargetLanguage(text, targetLanguage)) {
+          replayComposerEnter(workspace);
+          return;
+        }
+        queueComposerConfirmation(workspace, text, targetLanguage);
+      })
+      .catch(() => replayComposerEnter(workspace));
+    return true;
+  }
+
+  async function syncComposerClickGuard(workspace) {
+    const wc = workspace?.view?.webContents;
+    if (!wc || wc.isDestroyed() || !isWorkspaceDocumentAllowed(workspace)) return false;
+    const translation = backend?.loadSettings()?.translation || {};
+    const code = composerClickGuardScript({
+      enabled: translation.confirmNonTargetSend !== false,
+      targetLanguage: safeText(translation.siteLanguage) || "en",
+      marker: COMPOSER_GUARD_MARKER,
+    });
+    await wc.mainFrame.executeJavaScriptInIsolatedWorld(COMPOSER_GUARD_WORLD_ID, [{ code }], false);
+    return true;
+  }
+
+  function syncAllComposerClickGuards() {
+    for (const workspace of aiWorkspaces.values()) {
+      void syncComposerClickGuard(workspace).catch(() => {});
+    }
   }
 
   // 初始化 electron-updater (Windows 打包版)。更新源由 electron-builder 写入的 app-update.yml 决定
@@ -1382,6 +1483,7 @@ function createElectronApp(baseMode = "all") {
 
     wc.on("dom-ready", () => {
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
+      void syncComposerClickGuard(workspace).catch(() => {});
       emitAiState(workspace, "dom-ready");
     });
 
@@ -1476,7 +1578,22 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("console-message", (_event, _level, message) => {
-      emitAiEvent(workspace.kind, "console-message", { message: String(message || "") });
+      const value = String(message || "");
+      if (value.startsWith(COMPOSER_GUARD_MARKER)) {
+        try {
+          const payload = JSON.parse(value.slice(COMPOSER_GUARD_MARKER.length));
+          const text = safeText(payload?.text);
+          const translation = backend?.loadSettings()?.translation || {};
+          const targetLanguage = safeText(translation.siteLanguage) || "en";
+          if (text && translation.confirmNonTargetSend !== false) {
+            queueComposerConfirmation(workspace, text, targetLanguage, { findAny: true });
+          } else {
+            replayComposerEnter(workspace);
+          }
+        } catch {}
+        return;
+      }
+      emitAiEvent(workspace.kind, "console-message", { message: value });
     });
 
     // F11: 嵌入的 AI 网页获得焦点时, 渲染层收不到键盘事件; 在此拦截 F11 切换窗口全屏。
@@ -1496,6 +1613,7 @@ function createElectronApp(baseMode = "all") {
         }
         return;
       }
+      if (guardComposerEnter(workspace, event, input)) return;
       const zoomAction = aiZoomAction(input);
       if (zoomAction) {
         event.preventDefault();
@@ -1888,9 +2006,15 @@ function createElectronApp(baseMode = "all") {
       return { principalId: backend.getPrincipalContext().principalId, settings };
     });
     ipcMain.handle("settings:save", (_event, settings) => backend.saveSettings(settings));
-    ipcMain.handle("settings:patch", (_event, payload) =>
-      backend.patchSettings(payload?.section, payload?.patch, payload?.expectedRevision),
-    );
+    ipcMain.handle("settings:patch", (_event, payload) => {
+      const result = backend.patchSettings(
+        payload?.section,
+        payload?.patch,
+        payload?.expectedRevision,
+      );
+      if (payload?.section === "translation") syncAllComposerClickGuards();
+      return result;
+    });
     ipcMain.handle("settings:operate", (_event, payload) => {
       const expectedPrincipalId = safeText(payload?.expectedPrincipalId);
       if (
@@ -1899,11 +2023,13 @@ function createElectronApp(baseMode = "all") {
       ) {
         throw new Error("设置 principal 已变化，请重试");
       }
-      return backend.operateSettings(
+      const result = backend.operateSettings(
         payload?.section,
         payload?.operations,
         payload?.expectedRevision,
       );
+      if (payload?.section === "translation") syncAllComposerClickGuards();
+      return result;
     });
     ipcMain.handle("settings:import", () => backend.importSettings());
     ipcMain.handle("chat-history:load", () => backend.loadChatHistory());
@@ -1964,6 +2090,47 @@ function createElectronApp(baseMode = "all") {
       const result = await captureAiPageText(kind, safeText(payload?.tabId));
       assertCurrentAiEnvironmentOperation(payload);
       return result;
+    });
+    ipcMain.handle("translation:write-composer", async (_event, payload) => {
+      const { kind, environmentId } = assertCurrentAiEnvironmentOperation(payload);
+      const workspace = getWorkspace(kind, safeText(payload?.tabId));
+      if (!workspace || safeText(workspace.environmentId) !== environmentId) {
+        throw new Error("目标会话不属于当前环境");
+      }
+      const result = await replaceAiComposerText(workspace.view.webContents, payload?.text);
+      assertCurrentAiEnvironmentOperation(payload);
+      if (payload?.send === true) replayComposerEnter(workspace);
+      return { ...result, sent: payload?.send === true };
+    });
+    ipcMain.handle("translation:resolve-composer-send", async (_event, payload) => {
+      const { kind, environmentId } = assertCurrentAiEnvironmentOperation(payload);
+      const requestId = safeText(payload?.requestId);
+      const pending = pendingComposerSends.get(requestId);
+      if (!pending || pending.expiresAt < Date.now()) {
+        pendingComposerSends.delete(requestId);
+        throw new Error("发送确认已过期，请重新发送");
+      }
+      if (
+        pending.kind !== kind ||
+        pending.tabId !== safeText(payload?.tabId) ||
+        pending.environmentId !== environmentId ||
+        pending.principalId !== backend.getPrincipalContext().principalId
+      ) {
+        throw new Error("发送确认不属于当前会话");
+      }
+      pendingComposerSends.delete(requestId);
+      if (payload?.confirmed !== true) return { ok: true, sent: false };
+      const workspace = getWorkspace(kind, pending.tabId);
+      if (!workspace) throw new Error("当前网页尚未打开");
+      const composer = await inspectAiComposer(workspace.view.webContents, {
+        findAny: pending.findAny,
+        focus: pending.findAny,
+      });
+      if (!composer.editable || safeText(composer.text) !== pending.text) {
+        throw new Error("网页输入内容已经变化，请重新确认");
+      }
+      replayComposerEnter(workspace);
+      return { ok: true, sent: true };
     });
     ipcMain.handle("user-data:export", () => backend.exportUserData());
     ipcMain.handle("user-data:import", () => backend.importUserData());

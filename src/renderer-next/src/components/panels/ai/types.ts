@@ -24,6 +24,9 @@ export interface AiEventPayload {
   message?: string
   // translate-selection
   text?: string
+  // confirm-non-target-send
+  requestId?: string
+  targetLanguage?: string
   // external-open-failed
   [k: string]: unknown
 }
