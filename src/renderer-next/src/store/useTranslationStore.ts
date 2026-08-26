@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
+import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
 import {
   isCurrentTranslationRequest,
   isTranslationTarget,
@@ -44,6 +45,7 @@ function normalizeSettings(
 }
 
 interface TranslationState {
+  principalId: string
   open: boolean
   kind: AiKind
   tabId: string
@@ -77,10 +79,11 @@ interface TranslationState {
   close: () => void
   setSourceText: (kind: AiKind, tabId: string, text: string) => void
   setSettingsOpen: (kind: AiKind, tabId: string, open: boolean) => void
-  resetForPrincipal: (settings?: Partial<TranslationSettings>) => void
+  resetForPrincipal: (principalId: string, settings?: Partial<TranslationSettings>) => void
 }
 
 export const useTranslationStore = create<TranslationState>((set, get) => ({
+  principalId: 'local-device',
   open: false,
   kind: 'gpt',
   tabId: '',
@@ -95,8 +98,13 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
 
   load: async () => {
     if (get().loaded) return
+    const principalSnapshot = settingsPrincipalRuntime.snapshot()
     try {
-      const settings = (await api.loadSettings()) as Record<string, unknown>
+      const settings = (await api.loadSettings({
+        expectedPrincipalId: principalSnapshot.principalId,
+      })) as Record<string, unknown>
+      settingsPrincipalRuntime.assertCurrent(principalSnapshot)
+      if (get().principalId !== principalSnapshot.principalId) return
       set({
         config: normalizeSettings(
           settings.translation as Partial<TranslationSettings> | undefined,
@@ -105,20 +113,29 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
         loaded: true,
       })
     } catch {
-      set({ loaded: true })
+      if (settingsPrincipalRuntime.current().generation === principalSnapshot.generation) {
+        set({ loaded: true })
+      }
     }
   },
 
   saveConfig: async (patch) => {
+    const principalSnapshot = settingsPrincipalRuntime.snapshot()
+    if (get().principalId !== principalSnapshot.principalId) {
+      throw new Error('当前翻译配置账号已失效，请重新登录')
+    }
     const previous = get().config
     const config = normalizeSettings({ ...get().config, ...patch })
+    settingsPrincipalRuntime.assertCurrent(principalSnapshot)
     set({ config })
     try {
       await useAppStore.getState().patchSection('translation', config)
     } catch (error) {
+      settingsPrincipalRuntime.assertCurrent(principalSnapshot)
       set({ config: normalizeSettings(useAppStore.getState().settings?.translation || previous) })
       throw error
     }
+    settingsPrincipalRuntime.assertCurrent(principalSnapshot)
     const saved = useAppStore.getState().settings
     set({
       config: normalizeSettings(saved?.translation),
@@ -214,8 +231,9 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
     set((state) => (isTranslationTarget(state, kind, tabId) ? { sourceText } : state)),
   setSettingsOpen: (kind, tabId, settingsOpen) =>
     set((state) => (isTranslationTarget(state, kind, tabId) ? { settingsOpen } : state)),
-  resetForPrincipal: (settings) =>
+  resetForPrincipal: (principalId, settings) =>
     set((state) => ({
+      principalId: String(principalId || ''),
       open: false,
       tabId: '',
       sourceText: '',

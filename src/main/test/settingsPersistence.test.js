@@ -21,22 +21,34 @@ function createBackend(t) {
   return new Backend(app, () => null, "all");
 }
 
+function activePrincipalId(backend) {
+  return backend.getPrincipalContext().principalId;
+}
+
 test("settings use an empty remote translation endpoint and reject stale writes", (t) => {
   const backend = createBackend(t);
   const initial = backend.loadSettings();
   assert.equal(initial.translation.ai.baseUrl, "");
   assert.equal(initial.settingsRevision, 0);
 
-  const saved = backend.patchSettings("ui", { theme: "dark" }, 0);
+  const saved = backend.patchSettings("ui", { theme: "dark" }, 0, activePrincipalId(backend));
   assert.equal(saved.settingsRevision, 1);
   assert.equal(saved.ui.theme, "dark");
-  assert.throws(() => backend.patchSettings("ui", { theme: "light" }, 0), /设置已被其他操作更新/);
+  assert.throws(
+    () => backend.patchSettings("ui", { theme: "light" }, 0, activePrincipalId(backend)),
+    /设置已被其他操作更新/,
+  );
 });
 
 test("settings recover from the atomic backup without overwriting the corrupt file", (t) => {
   const backend = createBackend(t);
-  const first = backend.patchSettings("ui", { theme: "dark" }, 0);
-  backend.patchSettings("ui", { sidebarSide: "right" }, first.settingsRevision);
+  const first = backend.patchSettings("ui", { theme: "dark" }, 0, activePrincipalId(backend));
+  backend.patchSettings(
+    "ui",
+    { sidebarSide: "right" },
+    first.settingsRevision,
+    activePrincipalId(backend),
+  );
   fs.writeFileSync(backend.settingsFile, "{broken", "utf8");
 
   const recovered = backend.loadSettings();
@@ -56,11 +68,13 @@ test("translation settings survive save and reload without overwriting other sec
       api: { baseUrl: "https://translate.example", apiKey: "test-key" },
     },
     0,
+    activePrincipalId(backend),
   );
   const themed = backend.patchSettings(
     "ui",
     { theme: "light", sidebarSide: "right" },
     translated.settingsRevision,
+    activePrincipalId(backend),
   );
 
   const reloaded = backend.loadSettings();
@@ -133,11 +147,13 @@ test("advanced AI and translation settings are isolated and persistent per princ
       activeByKind: { gpt: "alice-gpt", gemini: "", claude: "" },
     },
     alice.settings.settingsRevision,
+    alice.principalId,
   );
   backend.patchSettings(
     "translation",
     { api: { baseUrl: "https://alice.example", apiKey: "alice-secret" } },
     aliceSaved.settingsRevision,
+    alice.principalId,
   );
 
   const bob = backend.activatePrincipal("https://collab.example", "bob").settings;
@@ -148,6 +164,7 @@ test("advanced AI and translation settings are isolated and persistent per princ
     "translation",
     { api: { baseUrl: "https://bob.example", apiKey: "bob-secret" } },
     bob.settingsRevision,
+    activePrincipalId(backend),
   );
 
   const uppercaseAlice = backend.activatePrincipal("https://collab.example", "Alice").settings;
@@ -258,6 +275,109 @@ test("an unclaimed root legacy bucket can later be claimed only by its exact own
   assert.equal(exact.translation.api.apiKey, "alice-secret");
 });
 
+test("failed principal migration keeps the previously active principal", (t) => {
+  const backend = createBackend(t);
+  const alice = backend.activatePrincipal("https://collab.example/team-a", "Alice");
+  fs.writeFileSync(
+    backend.settingsFile,
+    JSON.stringify({
+      settingsRevision: alice.settings.settingsRevision,
+      collab: { server_url: "https://collab.example/team-b", last_username: "Bob" },
+      translation: { api: { baseUrl: "https://bob.example", apiKey: "bob-secret" } },
+    }),
+    "utf8",
+  );
+  const renameSync = fs.renameSync;
+  fs.renameSync = (source, destination) => {
+    if (destination === backend.settingsFile) throw new Error("forced migration failure");
+    return renameSync(source, destination);
+  };
+  try {
+    assert.throws(
+      () => backend.activatePrincipal("https://collab.example/team-b", "Bob"),
+      /forced migration failure/,
+    );
+  } finally {
+    fs.renameSync = renameSync;
+  }
+
+  assert.equal(backend.getPrincipalContext().principalId, alice.principalId);
+});
+
+test("failed principal clear restores the previous principal", (t) => {
+  const backend = createBackend(t);
+  const alice = backend.activatePrincipal("https://collab.example", "Alice");
+  const loadSettings = backend.loadSettings;
+  backend.loadSettings = () => {
+    throw new Error("forced clear failure");
+  };
+  assert.throws(() => backend.clearPrincipal(), /forced clear failure/);
+  backend.loadSettings = loadSettings;
+  assert.equal(backend.getPrincipalContext().principalId, alice.principalId);
+});
+
+test("settings writes reject a stale expected principal after an account switch", (t) => {
+  const backend = createBackend(t);
+  const alice = backend.activatePrincipal("https://collab.example", "Alice");
+  const bob = backend.activatePrincipal("https://collab.example", "Bob");
+  const before = backend.loadSettings();
+
+  assert.throws(
+    () =>
+      backend.patchSettings(
+        "sender",
+        { proxy_server: "alice-only" },
+        before.settingsRevision,
+        alice.principalId,
+      ),
+    /principal 已变化/,
+  );
+  assert.throws(
+    () => backend.saveSettingsForPrincipal(before, alice.principalId),
+    /principal 已变化/,
+  );
+  assert.throws(
+    () =>
+      backend.operateSettings(
+        "translation",
+        [{ op: "set", path: ["api", "apiKey"], value: "alice-secret" }],
+        before.settingsRevision,
+        alice.principalId,
+      ),
+    /principal 已变化/,
+  );
+  assert.throws(
+    () =>
+      backend.operateSettings(
+        "advancedAi",
+        [{ op: "set", path: ["enabled"], value: true }],
+        before.settingsRevision,
+        alice.principalId,
+      ),
+    /principal 已变化/,
+  );
+  assert.throws(
+    () =>
+      backend.patchSettings(
+        "sender",
+        { proxy_server: "missing-principal" },
+        before.settingsRevision,
+      ),
+    /principal 已变化/,
+  );
+  assert.throws(
+    () =>
+      backend.operateSettings(
+        "translation",
+        [{ op: "set", path: ["api", "apiKey"], value: "missing-principal" }],
+        before.settingsRevision,
+      ),
+    /principal 已变化/,
+  );
+  assert.equal(backend.getPrincipalContext().principalId, bob.principalId);
+  assert.deepEqual(backend.loadSettings(), before);
+});
+
 test("same-section nested operations survive a revision conflict without lost updates", (t) => {
   const backend = createBackend(t);
   const activated = backend.activatePrincipal("https://collab.example", "alice").settings;
@@ -277,11 +397,13 @@ test("same-section nested operations survive a revision conflict without lost up
       },
     ],
     activated.settingsRevision,
+    activePrincipalId(backend),
   );
   const renamed = backend.operateSettings(
     "advancedAi",
     [{ op: "set", path: ["environments", "env-one", "name"], value: "Renamed" }],
     seeded.settingsRevision,
+    activePrincipalId(backend),
   );
   assert.throws(
     () =>
@@ -289,6 +411,7 @@ test("same-section nested operations survive a revision conflict without lost up
         "advancedAi",
         [{ op: "set", path: ["environments", "env-one", "routeId"], value: "route-two" }],
         seeded.settingsRevision,
+        activePrincipalId(backend),
       ),
     /设置已被其他操作更新/,
   );
@@ -296,6 +419,7 @@ test("same-section nested operations survive a revision conflict without lost up
     "advancedAi",
     [{ op: "set", path: ["environments", "env-one", "routeId"], value: "route-two" }],
     renamed.settingsRevision,
+    activePrincipalId(backend),
   );
   assert.deepEqual(routed.advancedAi.environments[0], {
     id: "env-one",
@@ -312,11 +436,13 @@ test("translation provider fields update independently and malicious paths are r
     "translation",
     [{ op: "set", path: ["api", "baseUrl"], value: "https://translate.example" }],
     0,
+    activePrincipalId(backend),
   );
   const second = backend.operateSettings(
     "translation",
     [{ op: "set", path: ["api", "apiKey"], value: "secret" }],
     first.settingsRevision,
+    activePrincipalId(backend),
   );
   assert.equal(second.translation.api.baseUrl, "https://translate.example");
   assert.equal(second.translation.api.apiKey, "secret");
@@ -327,6 +453,7 @@ test("translation provider fields update independently and malicious paths are r
           "translation",
           [{ op: "set", path, value: "x" }],
           second.settingsRevision,
+          activePrincipalId(backend),
         ),
       /路径/,
     );

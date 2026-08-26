@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
 import { api } from '@/lib/api'
+import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore, type AuthProfile } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
@@ -272,15 +273,28 @@ export function useAuth() {
 
       // 在暴露新会话前先清除上一账号的远程线路，再读取服务器的权威 bootstrap。
       // bootstrap 失败仍允许基础聊天登录，但高级 AI 保持 fail-closed。
+      const previousSettingsPrincipal = settingsPrincipalRuntime.current()
+      settingsPrincipalRuntime.invalidate()
       await api.stopSender().catch(() => {})
       await api.closeAllAiWorkspaces().catch(() => {})
-      const principal = await api.activateSettingsPrincipal({
-        serverUrl: cleanedServer,
-        username: confirmedUsername,
-      })
+      let principal: Awaited<ReturnType<typeof api.activateSettingsPrincipal>>
+      try {
+        principal = await api.activateSettingsPrincipal({
+          serverUrl: cleanedServer,
+          username: confirmedUsername,
+        })
+      } catch (error) {
+        if (previousSettingsPrincipal.principalId) {
+          settingsPrincipalRuntime.activate(previousSettingsPrincipal.principalId)
+        }
+        throw error
+      }
+      settingsPrincipalRuntime.activate(principal.principalId)
       const principalSettings = principal.settings as unknown as AppSettings
       useAppStore.setState({ settings: principalSettings })
-      useTranslationStore.getState().resetForPrincipal(principalSettings.translation)
+      useTranslationStore
+        .getState()
+        .resetForPrincipal(principal.principalId, principalSettings.translation)
       useNotesAiStore
         .getState()
         .resetForPrincipal(principal.principalId, principalSettings.translation)
@@ -351,6 +365,7 @@ export function useAuth() {
   )
 
   const logout = useCallback(async () => {
+    settingsPrincipalRuntime.invalidate()
     const { token, profile } = useAuthStore.getState()
     const serverUrl = trimTrailingSlash(
       String(useAppStore.getState().settings?.collab?.server_url ?? '').trim(),
@@ -383,12 +398,13 @@ export function useAuth() {
     await clearRemoteRouteState().catch(() => {})
     const local = await api.clearSettingsPrincipal().catch(() => null)
     if (local?.settings) {
+      settingsPrincipalRuntime.activate(local.principalId)
       const localSettings = local.settings as unknown as AppSettings
       useAppStore.setState({ settings: localSettings })
-      useTranslationStore.getState().resetForPrincipal(localSettings.translation)
+      useTranslationStore.getState().resetForPrincipal(local.principalId, localSettings.translation)
       useNotesAiStore.getState().resetForPrincipal(local.principalId, localSettings.translation)
     } else {
-      useTranslationStore.getState().resetForPrincipal()
+      useTranslationStore.getState().resetForPrincipal('')
       useNotesAiStore.getState().invalidatePrincipal()
     }
 

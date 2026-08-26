@@ -210,7 +210,7 @@ export interface ShareGptApi {
   setThemeSource: (source: 'dark' | 'light' | 'system') => Promise<unknown>
 
   // 设置 / 数据
-  loadSettings: () => Promise<Record<string, unknown>>
+  loadSettings: (payload?: { expectedPrincipalId?: string }) => Promise<Record<string, unknown>>
   activateSettingsPrincipal: (payload: { serverUrl: string; username: string }) => Promise<{
     principalId: string
     settings: Record<string, unknown>
@@ -219,19 +219,24 @@ export interface ShareGptApi {
     principalId: string
     settings: Record<string, unknown>
   }>
-  saveSettings: (settings: Record<string, unknown>) => Promise<unknown>
+  getSettingsPrincipal: () => Promise<{ principalId: string }>
+  saveSettings: (payload: {
+    settings: Record<string, unknown>
+    expectedPrincipalId: string
+  }) => Promise<unknown>
   patchSettings: (payload: {
     section: string
     patch: Record<string, unknown>
     expectedRevision?: number
+    expectedPrincipalId: string
   }) => Promise<Record<string, unknown>>
   operateSettings: (payload: {
     section: 'advancedAi' | 'translation'
     operations: Array<{ op: 'set' | 'delete'; path: string[]; value?: unknown }>
     expectedRevision?: number
-    expectedPrincipalId?: string
+    expectedPrincipalId: string
   }) => Promise<Record<string, unknown>>
-  importSettings: () => Promise<unknown>
+  importSettings: (payload: { expectedPrincipalId: string }) => Promise<unknown>
   loadChatHistory: () => Promise<unknown>
   saveChatHistory: (payload: unknown) => Promise<unknown>
   // 个人日历 / 任务+备忘录 本地存储 (结构由各自 store 维护; 这里用宽松的文件壳类型)。
@@ -266,8 +271,8 @@ export interface ShareGptApi {
     tabId?: string,
     context?: { environmentId: string; generation: number },
   ) => Promise<{ title: string; url: string; text: string; truncated: boolean }>
-  exportUserData: () => Promise<unknown>
-  importUserData: () => Promise<unknown>
+  exportUserData: (payload: { expectedPrincipalId: string }) => Promise<unknown>
+  importUserData: (payload: { expectedPrincipalId: string }) => Promise<unknown>
   readClipboardAttachment: () => Promise<unknown>
 
   // 应用 / 状态

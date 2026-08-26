@@ -102,7 +102,7 @@ export const useNotesAiStore = create<NotesAiState>((set, get) => ({
   },
   invalidatePrincipal: () => {
     setRendererProvider(DEFAULTS)
-    useTranslationStore.getState().resetForPrincipal()
+    useTranslationStore.getState().resetForPrincipal('')
     set((state) => ({
       principalId: '',
       principalGeneration: state.principalGeneration + 1,

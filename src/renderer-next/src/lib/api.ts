@@ -8,6 +8,7 @@ const fallback = {
   loadSettings: async () => ({}),
   activateSettingsPrincipal: async () => ({ principalId: '', settings: {} }),
   clearSettingsPrincipal: async () => ({ principalId: 'local-device', settings: {} }),
+  getSettingsPrincipal: async () => ({ principalId: 'local-device' }),
   saveSettings: async () => undefined,
   patchSettings: async () => ({}),
   operateSettings: async () => ({}),

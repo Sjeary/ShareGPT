@@ -3,14 +3,15 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("api", {
   platform: process.platform,
   setThemeSource: (source) => ipcRenderer.invoke("app:set-theme-source", source),
-  loadSettings: () => ipcRenderer.invoke("settings:load"),
+  loadSettings: (payload) => ipcRenderer.invoke("settings:load", payload),
   activateSettingsPrincipal: (payload) =>
     ipcRenderer.invoke("settings:principal-activate", payload),
   clearSettingsPrincipal: () => ipcRenderer.invoke("settings:principal-clear"),
-  saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
+  getSettingsPrincipal: () => ipcRenderer.invoke("settings:principal-context"),
+  saveSettings: (payload) => ipcRenderer.invoke("settings:save", payload),
   patchSettings: (payload) => ipcRenderer.invoke("settings:patch", payload),
   operateSettings: (payload) => ipcRenderer.invoke("settings:operate", payload),
-  importSettings: () => ipcRenderer.invoke("settings:import"),
+  importSettings: (payload) => ipcRenderer.invoke("settings:import", payload),
   loadChatHistory: () => ipcRenderer.invoke("chat-history:load"),
   saveChatHistory: (payload) => ipcRenderer.invoke("chat-history:save", payload),
   loadCalendar: () => ipcRenderer.invoke("calendar:load"),
@@ -55,8 +56,8 @@ contextBridge.exposeInMainWorld("api", {
   cancelTranslation: (requestId) => ipcRenderer.invoke("translation:cancel", requestId),
   captureAiPageText: (kind, tabId, context) =>
     ipcRenderer.invoke("translation:capture-page", { ...(context || {}), kind, tabId }),
-  exportUserData: () => ipcRenderer.invoke("user-data:export"),
-  importUserData: () => ipcRenderer.invoke("user-data:import"),
+  exportUserData: (payload) => ipcRenderer.invoke("user-data:export", payload),
+  importUserData: (payload) => ipcRenderer.invoke("user-data:import", payload),
   readClipboardAttachment: () => ipcRenderer.invoke("clipboard:read-attachment"),
 
   getStatus: () => ipcRenderer.invoke("service:status"),

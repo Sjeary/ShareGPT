@@ -29,6 +29,7 @@ const { collectPageFingerprint, snapshotDigest, newLocalProfile } = require("./b
 const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
 const { translateText } = require("./translation");
 const { createAiEnvironmentGenerationGuard } = require("./aiEnvironmentGeneration");
+const { runSettingsPrincipalTransition } = require("./settingsPrincipalTransition");
 const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
@@ -1866,46 +1867,56 @@ function createElectronApp(baseMode = "all") {
         source === "dark" ? "dark" : source === "light" ? "light" : "system";
       return true;
     });
-    ipcMain.handle("settings:load", () => backend.loadSettings());
+    ipcMain.handle("settings:load", (_event, payload) => {
+      if (payload?.expectedPrincipalId) {
+        backend.assertSettingsPrincipal(payload.expectedPrincipalId);
+      }
+      return backend.loadSettings();
+    });
     ipcMain.handle("settings:principal-activate", (_event, payload) => {
       disposeAiWorkspaces();
       aiEnvironmentGuard.invalidateAll();
-      backend.notesAi.invalidatePrincipal();
       for (const controller of translationRequests.values()) controller.abort();
       translationRequests.clear();
-      const result = backend.activatePrincipal(payload?.serverUrl, payload?.username);
-      backend.notesAi.activatePrincipal();
-      return result;
+      return runSettingsPrincipalTransition(backend.notesAi, () =>
+        backend.activatePrincipal(payload?.serverUrl, payload?.username),
+      );
     });
     ipcMain.handle("settings:principal-clear", () => {
       disposeAiWorkspaces();
       aiEnvironmentGuard.invalidateAll();
-      backend.notesAi.invalidatePrincipal();
       for (const controller of translationRequests.values()) controller.abort();
       translationRequests.clear();
-      const settings = backend.clearPrincipal();
-      backend.notesAi.activatePrincipal();
-      return { principalId: backend.getPrincipalContext().principalId, settings };
+      return runSettingsPrincipalTransition(backend.notesAi, () => {
+        const settings = backend.clearPrincipal();
+        return { principalId: backend.getPrincipalContext().principalId, settings };
+      });
     });
-    ipcMain.handle("settings:save", (_event, settings) => backend.saveSettings(settings));
+    ipcMain.handle("settings:principal-context", () => ({
+      principalId: backend.getPrincipalContext().principalId,
+    }));
+    ipcMain.handle("settings:save", (_event, payload) =>
+      backend.saveSettingsForPrincipal(payload?.settings, payload?.expectedPrincipalId),
+    );
     ipcMain.handle("settings:patch", (_event, payload) =>
-      backend.patchSettings(payload?.section, payload?.patch, payload?.expectedRevision),
+      backend.patchSettings(
+        payload?.section,
+        payload?.patch,
+        payload?.expectedRevision,
+        payload?.expectedPrincipalId,
+      ),
     );
     ipcMain.handle("settings:operate", (_event, payload) => {
-      const expectedPrincipalId = safeText(payload?.expectedPrincipalId);
-      if (
-        expectedPrincipalId &&
-        expectedPrincipalId !== backend.getPrincipalContext().principalId
-      ) {
-        throw new Error("设置 principal 已变化，请重试");
-      }
       return backend.operateSettings(
         payload?.section,
         payload?.operations,
         payload?.expectedRevision,
+        payload?.expectedPrincipalId,
       );
     });
-    ipcMain.handle("settings:import", () => backend.importSettings());
+    ipcMain.handle("settings:import", (_event, payload) =>
+      backend.importSettings(payload?.expectedPrincipalId),
+    );
     ipcMain.handle("chat-history:load", () => backend.loadChatHistory());
     ipcMain.handle("chat-history:save", (_event, payload) => backend.saveChatHistory(payload));
     // 个人日历 / 任务+备忘录 本地存储。
@@ -1965,8 +1976,12 @@ function createElectronApp(baseMode = "all") {
       assertCurrentAiEnvironmentOperation(payload);
       return result;
     });
-    ipcMain.handle("user-data:export", () => backend.exportUserData());
-    ipcMain.handle("user-data:import", () => backend.importUserData());
+    ipcMain.handle("user-data:export", (_event, payload) =>
+      backend.exportUserData(payload?.expectedPrincipalId),
+    );
+    ipcMain.handle("user-data:import", (_event, payload) =>
+      backend.importUserData(payload?.expectedPrincipalId),
+    );
     ipcMain.handle("clipboard:read-attachment", () => buildClipboardAttachmentPayload());
     ipcMain.handle("service:status", () => backend.getStatus());
     ipcMain.handle("app:paths", () => backend.getPaths());
@@ -2201,6 +2216,7 @@ function createElectronApp(baseMode = "all") {
         "advancedAi",
         operations,
         currentSettings.settingsRevision,
+        principalId,
       );
       const principal = backend.getPrincipalContext();
       const partition = partitionForAiEnvironment(
@@ -2228,6 +2244,7 @@ function createElectronApp(baseMode = "all") {
           "ui",
           { pendingAiPartitionCleanup: [...new Set([...pending, partition])] },
           latest.settingsRevision,
+          principalId,
         );
       }
       aiContactedHostsByPartition.get(partition)?.clear();
@@ -2813,6 +2830,7 @@ function createElectronApp(baseMode = "all") {
         "ui",
         { pendingAiPartitionCleanup: remaining },
         backend.loadSettings().settingsRevision,
+        backend.getPrincipalContext().principalId,
       );
     }
 

@@ -1149,25 +1149,49 @@ class Backend {
       serverUrl: confirmedServer,
       username: confirmedUsername,
     });
-    this.activePrincipalId = principalId;
-    this.activePrincipalServerUrl = confirmedServer;
-    this.activePrincipalUsername = confirmedUsername;
     if (migrated) {
       stored.principalSettings = state;
       stored.settingsRevision = Math.max(0, Number(stored.settingsRevision) || 0) + 1;
       writeJsonAtomic(this.settingsFile, transformSensitiveValues(stored, "encrypt"));
     }
-    return {
-      principalId,
-      settings: this.materializePrincipalSettings({ ...stored, principalSettings: state }),
+    const previous = {
+      principalId: this.activePrincipalId,
+      serverUrl: this.activePrincipalServerUrl,
+      username: this.activePrincipalUsername,
     };
+    try {
+      this.activePrincipalId = principalId;
+      this.activePrincipalServerUrl = confirmedServer;
+      this.activePrincipalUsername = confirmedUsername;
+      return {
+        principalId,
+        settings: this.materializePrincipalSettings({ ...stored, principalSettings: state }),
+      };
+    } catch (error) {
+      this.activePrincipalId = previous.principalId;
+      this.activePrincipalServerUrl = previous.serverUrl;
+      this.activePrincipalUsername = previous.username;
+      throw error;
+    }
   }
 
   clearPrincipal() {
-    this.activePrincipalId = LOCAL_PRINCIPAL_ID;
-    this.activePrincipalServerUrl = "";
-    this.activePrincipalUsername = "";
-    return this.loadSettings();
+    const previous = {
+      principalId: this.activePrincipalId,
+      serverUrl: this.activePrincipalServerUrl,
+      username: this.activePrincipalUsername,
+    };
+    try {
+      this.activePrincipalId = LOCAL_PRINCIPAL_ID;
+      this.activePrincipalServerUrl = "";
+      this.activePrincipalUsername = "";
+      return this.loadSettings();
+    } catch (error) {
+      this.activePrincipalId = previous.principalId;
+      this.activePrincipalServerUrl = previous.serverUrl;
+      this.activePrincipalUsername = previous.username;
+      throw error;
+    }
   }
 
   getPrincipalContext() {
@@ -1176,6 +1200,15 @@ class Backend {
       principalId: this.activePrincipalId,
       legacyPartitionOwnerId: normalizePrincipalId(state.legacyPartitionOwnerId),
     };
+  }
+
+  assertSettingsPrincipal(expectedPrincipalId) {
+    const expected = normalizePrincipalId(expectedPrincipalId, { allowLocal: true });
+    const active = normalizePrincipalId(this.activePrincipalId, { allowLocal: true });
+    if (!expected || !active || expected !== active) {
+      throw new Error("设置 principal 已变化，请重试");
+    }
+    return active;
   }
 
   saveSettings(data) {
@@ -1213,7 +1246,13 @@ class Backend {
     return merged;
   }
 
-  patchSettings(section, patch, expectedRevision) {
+  saveSettingsForPrincipal(data, expectedPrincipalId) {
+    this.assertSettingsPrincipal(expectedPrincipalId);
+    return this.saveSettings(data);
+  }
+
+  patchSettings(section, patch, expectedRevision, expectedPrincipalId) {
+    this.assertSettingsPrincipal(expectedPrincipalId);
     const allowed = new Set([
       "sender",
       "receiver",
@@ -1249,7 +1288,8 @@ class Backend {
     });
   }
 
-  operateSettings(section, operations, expectedRevision) {
+  operateSettings(section, operations, expectedRevision, expectedPrincipalId) {
+    this.assertSettingsPrincipal(expectedPrincipalId);
     const target = String(section || "");
     if (target !== "advancedAi" && target !== "translation") {
       throw new Error("该设置区域不支持路径操作");
@@ -1454,7 +1494,8 @@ class Backend {
     return this.writeLocalStore(this.focusFile, data);
   }
 
-  async exportUserData() {
+  async exportUserData(expectedPrincipalId) {
+    this.assertSettingsPrincipal(expectedPrincipalId);
     const { dialog } = require("electron");
     const window = this.getWindow();
     if (!window) return null;
@@ -1469,6 +1510,7 @@ class Backend {
     });
 
     if (result.canceled || !result.filePath) return null;
+    this.assertSettingsPrincipal(expectedPrincipalId);
 
     const payload = {
       format: "sharegpt-user-data",
@@ -1483,7 +1525,8 @@ class Backend {
     return { filePath: result.filePath };
   }
 
-  async importUserData() {
+  async importUserData(expectedPrincipalId) {
+    this.assertSettingsPrincipal(expectedPrincipalId);
     const { dialog } = require("electron");
     const window = this.getWindow();
     if (!window) return null;
@@ -1495,6 +1538,7 @@ class Backend {
     });
 
     if (result.canceled || !result.filePaths.length) return null;
+    this.assertSettingsPrincipal(expectedPrincipalId);
 
     try {
       const filePath = result.filePaths[0];
@@ -1553,7 +1597,8 @@ class Backend {
     };
   }
 
-  async importSettings() {
+  async importSettings(expectedPrincipalId) {
+    this.assertSettingsPrincipal(expectedPrincipalId);
     const { dialog } = require("electron");
     const window = this.getWindow();
     if (!window) return null;
@@ -1565,6 +1610,7 @@ class Backend {
     });
 
     if (result.canceled || !result.filePaths.length) return null;
+    this.assertSettingsPrincipal(expectedPrincipalId);
 
     try {
       const filePath = result.filePaths[0];

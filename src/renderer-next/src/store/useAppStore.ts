@@ -2,6 +2,11 @@ import { create } from 'zustand'
 import { api } from '@/lib/api'
 import type { NavKey } from '@/lib/nav'
 import { principalSectionOperations } from '@/lib/settingsOperations'
+import {
+  applyPrincipalOperation,
+  persistPrincipalSettings,
+  settingsPrincipalRuntime,
+} from '@/lib/settingsPrincipalRuntime'
 import type { AppSettings, StatusPayload } from '@/types/settings'
 
 interface AppState {
@@ -386,12 +391,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   setTourOpen: (v) => set({ tourOpen: v }),
 
   init: async () => {
-    const [settings, mode, meta, status] = await Promise.all([
-      api.loadSettings().catch(() => ({})),
+    const [principal, mode, meta, status] = await Promise.all([
+      api.getSettingsPrincipal().catch(() => ({ principalId: '' })),
       api.getMode().catch(() => 'all'),
       api.getAppMeta().catch(() => ({})),
       api.getStatus().catch(() => ({})),
     ])
+    const principalSnapshot = principal.principalId
+      ? settingsPrincipalRuntime.activate(principal.principalId)
+      : settingsPrincipalRuntime.invalidate()
+    const settings = principal.principalId
+      ? await api.loadSettings({ expectedPrincipalId: principal.principalId }).catch(() => ({}))
+      : {}
+    if (principal.principalId) settingsPrincipalRuntime.assertCurrent(principalSnapshot)
     const mergedSettings = { ...EMPTY_SETTINGS, ...(settings as AppSettings) }
     set({
       settings: mergedSettings,
@@ -437,17 +449,28 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   reloadSettings: async () => {
-    const raw = (await api.loadSettings().catch(() => ({}))) as AppSettings
-    const merged = { ...EMPTY_SETTINGS, ...raw }
-    set({ settings: merged })
-    return merged
+    const principalSnapshot = settingsPrincipalRuntime.snapshot()
+    return applyPrincipalOperation({
+      snapshot: principalSnapshot,
+      operation: async (expectedPrincipalId) => {
+        const raw = (await api.loadSettings({ expectedPrincipalId })) as unknown as AppSettings
+        return { ...EMPTY_SETTINGS, ...raw }
+      },
+      apply: (merged) => set({ settings: merged }),
+    })
   },
 
   saveSettings: async (next) => {
-    const saved = (await api.saveSettings(
-      next as unknown as Record<string, unknown>,
-    )) as AppSettings
-    set({ settings: { ...EMPTY_SETTINGS, ...saved } })
+    const principalSnapshot = settingsPrincipalRuntime.snapshot()
+    await applyPrincipalOperation({
+      snapshot: principalSnapshot,
+      operation: async (expectedPrincipalId) =>
+        (await api.saveSettings({
+          settings: next as unknown as Record<string, unknown>,
+          expectedPrincipalId,
+        })) as AppSettings,
+      apply: (saved) => set({ settings: { ...EMPTY_SETTINGS, ...saved } }),
+    })
   },
 
   patchSection: async (section, patch) => {
@@ -459,43 +482,33 @@ export const useAppStore = create<AppState>((set, get) => ({
       [section]: nextSection,
     }
     const operations = principalSectionOperations(section, currentSection, nextSection)
+    const principalSnapshot = settingsPrincipalRuntime.snapshot()
+    settingsPrincipalRuntime.assertCurrent(principalSnapshot)
     set({ settings: next })
-    try {
-      const saved = (await (operations
-        ? operations.length
-          ? api.operateSettings({
-              section: section as 'advancedAi' | 'translation',
-              operations,
-              expectedRevision: cur.settingsRevision,
-            })
-          : Promise.resolve(cur as unknown as Record<string, unknown>)
-        : api.patchSettings({
-            section: String(section),
-            patch: patch as Record<string, unknown>,
-            expectedRevision: cur.settingsRevision,
-          }))) as unknown as AppSettings
-      set({ settings: { ...EMPTY_SETTINGS, ...saved } })
-    } catch (error) {
-      const latest = (await api
-        .loadSettings()
-        .catch(() => cur as unknown as Record<string, unknown>)) as unknown as AppSettings
-      if (String(error).includes('设置已被其他操作更新')) {
-        const saved = (await (operations
-          ? api.operateSettings({
-              section: section as 'advancedAi' | 'translation',
-              operations,
-              expectedRevision: latest.settingsRevision,
-            })
-          : api.patchSettings({
-              section: String(section),
-              patch: patch as Record<string, unknown>,
-              expectedRevision: latest.settingsRevision,
-            }))) as unknown as AppSettings
-        set({ settings: { ...EMPTY_SETTINGS, ...saved } })
-        return
-      }
-      set({ settings: { ...EMPTY_SETTINGS, ...latest } })
-      throw error
-    }
+    await persistPrincipalSettings({
+      snapshot: principalSnapshot,
+      current: cur,
+      write: async (expectedRevision, expectedPrincipalId) => {
+        if (operations) {
+          if (!operations.length) return cur
+          return (await api.operateSettings({
+            section: section as 'advancedAi' | 'translation',
+            operations,
+            expectedRevision,
+            expectedPrincipalId,
+          })) as unknown as AppSettings
+        }
+        return (await api.patchSettings({
+          section: String(section),
+          patch: patch as Record<string, unknown>,
+          expectedRevision,
+          expectedPrincipalId,
+        })) as unknown as AppSettings
+      },
+      loadLatest: async (expectedPrincipalId) =>
+        (await api.loadSettings({ expectedPrincipalId })) as unknown as AppSettings,
+      apply: (saved) => set({ settings: { ...EMPTY_SETTINGS, ...saved } }),
+      isRevisionConflict: (error) => String(error).includes('设置已被其他操作更新'),
+    })
   },
 }))

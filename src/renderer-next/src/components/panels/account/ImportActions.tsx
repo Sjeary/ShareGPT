@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { FileDown, FileUp, FolderInput } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
+import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
 import { useAppStore } from '@/store/useAppStore'
 import { useChatStore, type ChatMessage } from '@/store/useChatStore'
 
@@ -31,7 +32,9 @@ export function ImportActions() {
     if (busy) return
     setBusy('settings')
     try {
-      const imported = await api.importSettings()
+      const principal = settingsPrincipalRuntime.snapshot()
+      const imported = await api.importSettings({ expectedPrincipalId: principal.principalId })
+      settingsPrincipalRuntime.assertCurrent(principal)
       // 旧版: 用户取消选择文件时返回 falsy, 不提示成功。
       if (!imported) return
       await reloadSettings()
@@ -47,7 +50,11 @@ export function ImportActions() {
     if (busy) return
     setBusy('userData')
     try {
-      const payload = (await api.importUserData()) as ImportUserDataPayload | undefined | null
+      const principal = settingsPrincipalRuntime.snapshot()
+      const payload = (await api.importUserData({
+        expectedPrincipalId: principal.principalId,
+      })) as ImportUserDataPayload | undefined | null
+      settingsPrincipalRuntime.assertCurrent(principal)
       if (!payload) return
       // 设置部分: 资料包内含 settings 时也以磁盘为准重新加载, 保证各面板同步。
       await reloadSettings()
@@ -70,7 +77,11 @@ export function ImportActions() {
     if (busy) return
     setBusy('export')
     try {
-      const payload = (await api.exportUserData()) as ExportUserDataPayload | undefined | null
+      const principal = settingsPrincipalRuntime.snapshot()
+      const payload = (await api.exportUserData({
+        expectedPrincipalId: principal.principalId,
+      })) as ExportUserDataPayload | undefined | null
+      settingsPrincipalRuntime.assertCurrent(principal)
       const filePath = payload?.filePath
       if (!filePath) return
       toast.success(`本机资料包已导出：${filePath}`)
