@@ -29,6 +29,7 @@ const { collectPageFingerprint, snapshotDigest, newLocalProfile } = require("./b
 const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
 const { translateText } = require("./translation");
 const { createAiEnvironmentGenerationGuard } = require("./aiEnvironmentGeneration");
+const { createNavTooltipController, normalizeNavTooltipBounds } = require("./navTooltip");
 const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
@@ -510,9 +511,7 @@ function createElectronApp(baseMode = "all") {
   const tabOrderByKind = { gpt: [], gemini: [], claude: [] };
   const activeTabIdByKind = { gpt: "", gemini: "", claude: "" };
   let activeAiKind = "";
-  let navTooltipView = null;
-  let navTooltipReady = null;
-  let navTooltipToken = 0;
+  let navTooltipController = null;
   const aiEnvironmentGuard = createAiEnvironmentGenerationGuard();
   let aiTabCounter = 0;
   const hostStateByKind = {
@@ -551,9 +550,7 @@ function createElectronApp(baseMode = "all") {
       const wc = workspace?.view?.webContents;
       if (wc && !wc.isDestroyed()) wc.setZoomLevel(next);
     }
-    const tooltipContents = navTooltipView?.webContents;
-    if (tooltipContents && !tooltipContents.isDestroyed()) tooltipContents.setZoomLevel(next);
-    hideNavTooltip();
+    navTooltipController?.setZoomLevel(next);
     for (const kind of Object.keys(hostStateByKind)) {
       hostStateByKind[kind] = {
         visible: hostStateByKind[kind].visible,
@@ -1117,39 +1114,22 @@ function createElectronApp(baseMode = "all") {
     }
     mainWindow.contentView.addChildView(workspace.view);
     workspace.attached = true;
-    if (navTooltipView?.getVisible()) {
-      mainWindow.contentView.addChildView(navTooltipView);
-    }
+    navTooltipController?.bringToFrontIfVisible();
   }
 
   function hideNavTooltip() {
-    navTooltipToken += 1;
-    if (!navTooltipView) return false;
-    navTooltipView.setVisible(false);
-    navTooltipView.setBounds({ x: 0, y: 0, width: 1, height: 1 });
-    return true;
+    return navTooltipController?.hide() || false;
   }
 
-  function ensureNavTooltipView() {
-    if (navTooltipView && !navTooltipView.webContents.isDestroyed()) {
-      return navTooltipView;
-    }
+  function closeNavTooltip() {
+    const controller = navTooltipController;
+    navTooltipController = null;
+    return controller?.close() || false;
+  }
 
-    const view = new WebContentsView({
-      webPreferences: {
-        contextIsolation: true,
-        nodeIntegration: false,
-        sandbox: true,
-        backgroundThrottling: false,
-      },
-    });
-    view.setBackgroundColor("#00000000");
-    view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
-    view.setVisible(false);
-    navTooltipView = view;
-    view.webContents.setZoomLevel(mainWindow.webContents.getZoomLevel());
-    navTooltipReady = view.webContents.loadURL(
-      `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
+  function ensureNavTooltipController() {
+    if (navTooltipController) return navTooltipController;
+    const documentUrl = `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
         <meta charset="utf-8">
         <style>
           * { box-sizing: border-box; }
@@ -1176,9 +1156,41 @@ function createElectronApp(baseMode = "all") {
             document.body.dataset.side = side === "left" ? "left" : "right";
             document.getElementById("tip").textContent = label;
           };
-        </script>`)}`,
-    );
-    return view;
+        </script>`)}`;
+    navTooltipController = createNavTooltipController({
+      createView() {
+        const view = new WebContentsView({
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+            backgroundThrottling: false,
+          },
+        });
+        view.setBackgroundColor("#00000000");
+        view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
+        view.setVisible(false);
+        const shell = mainWindow?.webContents;
+        if (shell && !shell.isDestroyed()) view.webContents.setZoomLevel(shell.getZoomLevel());
+        return view;
+      },
+      getHost: () => mainWindow,
+      loadView: (view) => view.webContents.loadURL(documentUrl),
+      renderView: (view, payload) =>
+        view.webContents.executeJavaScript(
+          `window.setTooltip(${JSON.stringify({ label: payload.label, side: payload.side })})`,
+        ),
+      resolveBounds(bounds, host) {
+        const shellZoomFactor = host.webContents.getZoomFactor?.() || 1;
+        const contentBounds = host.getContentBounds();
+        const normalized = normalizeNavTooltipBounds(bounds, {
+          width: contentBounds.width / shellZoomFactor,
+          height: contentBounds.height / shellZoomFactor,
+        });
+        return normalized ? scaleAiHostBounds(normalized, shellZoomFactor) : null;
+      },
+    });
+    return navTooltipController;
   }
 
   async function setNavTooltip(payload = {}) {
@@ -1186,27 +1198,9 @@ function createElectronApp(baseMode = "all") {
     if (!mainWindow || mainWindow.isDestroyed()) return false;
 
     const label = safeText(payload.label).slice(0, 80);
-    const bounds = payload.bounds;
-    if (!label || !bounds || Number(bounds.width) <= 1 || Number(bounds.height) <= 1) {
-      return hideNavTooltip();
-    }
-
-    const token = ++navTooltipToken;
-    const view = ensureNavTooltipView();
-    await navTooltipReady;
-    if (token !== navTooltipToken || view.webContents.isDestroyed()) return false;
-
+    if (!label) return hideNavTooltip();
     const side = payload.side === "left" ? "left" : "right";
-    await view.webContents.executeJavaScript(
-      `window.setTooltip(${JSON.stringify({ label, side })})`,
-    );
-    if (token !== navTooltipToken || !mainWindow || mainWindow.isDestroyed()) return false;
-
-    const shellZoomFactor = mainWindow.webContents.getZoomFactor?.() || 1;
-    view.setBounds(scaleAiHostBounds(bounds, shellZoomFactor));
-    mainWindow.contentView.addChildView(view);
-    view.setVisible(true);
-    return true;
+    return ensureNavTooltipController().show({ label, side, bounds: payload.bounds });
   }
 
   function detachWorkspaceView(workspace) {
@@ -1798,6 +1792,7 @@ function createElectronApp(baseMode = "all") {
   }
 
   function disposeAiWorkspaces() {
+    hideNavTooltip();
     for (const workspace of aiWorkspaces.values()) {
       detachWorkspaceView(workspace);
 
@@ -1922,13 +1917,13 @@ function createElectronApp(baseMode = "all") {
     }
     mainWindow.removeMenu();
     mainWindow.on("blur", hideNavTooltip);
+    mainWindow.on("close", closeNavTooltip);
     loadMainRenderer(mainWindow);
     mainWindow.on("closed", () => {
       for (const controller of translationRequests.values()) controller.abort();
       translationRequests.clear();
       disposeAiWorkspaces();
-      navTooltipView = null;
-      navTooltipReady = null;
+      closeNavTooltip();
       mainWindow = null;
     });
   }
@@ -2927,6 +2922,7 @@ function createElectronApp(baseMode = "all") {
   });
 
   app.on("before-quit", () => {
+    closeNavTooltip();
     disposeAiWorkspaces();
     if (backend) backend.stopAll();
   });

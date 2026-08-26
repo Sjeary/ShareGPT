@@ -478,6 +478,51 @@ async function main() {
 
     await window.locator('[data-tour="nav-gpt"]').click();
     await window.getByRole("tab").first().waitFor({ state: "visible", timeout: 10_000 });
+    await window.evaluate(() =>
+      window.api.setNavTooltip({
+        visible: true,
+        label: "Tooltip bounds verification",
+        side: "right",
+        bounds: { x: -500, y: -500, width: 5000, height: 5000 },
+      }),
+    );
+    const tooltipSnapshot = await electronApp.evaluate(({ BrowserWindow }) => {
+      const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+      const tooltip = main?.contentView.children.find((view) =>
+        view.webContents?.getURL().includes("window.setTooltip"),
+      );
+      return {
+        bounds: tooltip?.getBounds(),
+        contentBounds: main?.getContentBounds(),
+        visible: tooltip?.getVisible(),
+      };
+    });
+    assert.strictEqual(tooltipSnapshot.visible, true);
+    assert.ok(tooltipSnapshot.bounds && tooltipSnapshot.contentBounds);
+    assert.ok(tooltipSnapshot.bounds.x >= 0 && tooltipSnapshot.bounds.y >= 0);
+    assert.ok(tooltipSnapshot.bounds.width <= 320 && tooltipSnapshot.bounds.height <= 96);
+    assert.ok(
+      tooltipSnapshot.bounds.x + tooltipSnapshot.bounds.width <=
+        tooltipSnapshot.contentBounds.width,
+    );
+    assert.ok(
+      tooltipSnapshot.bounds.y + tooltipSnapshot.bounds.height <=
+        tooltipSnapshot.contentBounds.height,
+    );
+    await window.evaluate(() => window.api.setNavTooltip({ visible: false }));
+    const tooltipHidden = await electronApp.evaluate(({ BrowserWindow }) => {
+      const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+      const tooltip = main?.contentView.children.find((view) =>
+        view.webContents?.getURL().includes("window.setTooltip"),
+      );
+      return tooltip ? { bounds: tooltip.getBounds(), visible: tooltip.getVisible() } : null;
+    });
+    assert.deepStrictEqual(tooltipHidden, {
+      bounds: { x: 0, y: 0, width: 1, height: 1 },
+      visible: false,
+    });
+    results.push("native AI navigation tooltip bounds and hidden state are enforced");
+
     const firstTab = window.getByRole("tab").first();
     assert.strictEqual(await firstTab.getAttribute("aria-selected"), "true");
     await window.getByLabel("新建标签页").click();

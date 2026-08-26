@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -94,6 +94,23 @@ export function NavList({
       holdTimer.current = null
     }
   }
+
+  const dragging = Boolean(drag)
+  useEffect(() => {
+    if (!collapsed || !useNativeTooltip || dragging) hideNativeTooltip()
+  }, [collapsed, dragging, useNativeTooltip])
+
+  useEffect(() => {
+    hideNativeTooltip()
+  }, [activeKey, tooltipSide])
+
+  useEffect(
+    () => () => {
+      if (holdTimer.current) clearTimeout(holdTimer.current)
+      hideNativeTooltip()
+    },
+    [],
+  )
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>, index: number, key: NavKey) => {
     if (e.button !== 0) return // 仅主键/触摸
