@@ -8,6 +8,11 @@ import { useAuthStore } from '@/store/useAuthStore'
 import { useTranslationStore } from '@/store/useTranslationStore'
 import { registerAiQuery } from './reportGptUsage'
 import {
+  composerGuardFailureMessage,
+  isComposerGuardEligible,
+  shouldClearPendingComposerSend,
+} from '@/lib/translationSession'
+import {
   AI_QUERY_MARKER,
   isGptAllowedUrl,
   isGeminiAllowedUrl,
@@ -205,6 +210,7 @@ export function useAiEvents() {
       }
 
       if (payload?.type === 'confirm-non-target-send') {
+        if (!isComposerGuardEligible(useAuthStore.getState().profile)) return
         const tabId = safeText(payload.tabId)
         const requestId = safeText(payload.requestId)
         const text = safeText(payload.text)
@@ -216,6 +222,22 @@ export function useAiEvents() {
           text,
           targetLanguage: safeText(payload.targetLanguage) || 'en',
         })
+        return
+      }
+
+      if (payload?.type === 'composer-send-invalidated') {
+        const requestId = safeText(payload.requestId)
+        const translation = useTranslationStore.getState()
+        if (shouldClearPendingComposerSend(translation.pendingSend, requestId)) {
+          translation.setPendingSend(null)
+        }
+        return
+      }
+
+      if (payload?.type === 'composer-send-guard-failed') {
+        useAiStore
+          .getState()
+          .setFeedback(kind, composerGuardFailureMessage(payload.message), 'error')
         return
       }
 

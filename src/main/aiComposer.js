@@ -1,4 +1,8 @@
+const crypto = require("node:crypto");
+
 const MAX_COMPOSER_CHARS = 30000;
+const COMPOSER_GUARD_CHANNEL_PREFIX = "__SHAREGPT_COMPOSER_GUARD_V2__:";
+const COMPOSER_GUARD_TOKEN_PATTERN = /^[a-zA-Z0-9_-]{32,128}$/;
 
 const NON_LATIN_SCRIPT =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Cyrillic}\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Thai}\p{Script=Devanagari}]/u;
@@ -37,15 +41,183 @@ function hasClearlyNonTargetLanguage(text, targetLanguage = "en") {
 function isPlainComposerSubmit(input) {
   return Boolean(
     input &&
-      input.type === "keyDown" &&
-      input.key === "Enter" &&
-      !input.alt &&
-      !input.control &&
-      !input.meta &&
-      !input.shift &&
-      !input.isAutoRepeat &&
-      !input.isComposing,
+    input.type === "keyDown" &&
+    input.key === "Enter" &&
+    !input.alt &&
+    !input.control &&
+    !input.meta &&
+    !input.shift &&
+    !input.isAutoRepeat &&
+    !input.isComposing,
   );
+}
+
+function createComposerGuardToken() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+function composerGuardMarker(token) {
+  const value = String(token || "");
+  if (!COMPOSER_GUARD_TOKEN_PATTERN.test(value)) {
+    throw new Error("Composer guard token is invalid");
+  }
+  return `${COMPOSER_GUARD_CHANNEL_PREFIX}${value}:`;
+}
+
+function parseComposerGuardConsoleMessage(message, expectedToken) {
+  const value = String(message || "");
+  if (!value.startsWith(COMPOSER_GUARD_CHANNEL_PREFIX)) return { kind: "other" };
+
+  let marker;
+  try {
+    marker = composerGuardMarker(expectedToken);
+  } catch {
+    return { kind: "invalid" };
+  }
+  if (!value.startsWith(marker) || value.length > marker.length + MAX_COMPOSER_CHARS + 100) {
+    return { kind: "invalid" };
+  }
+
+  try {
+    const payload = JSON.parse(value.slice(marker.length));
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return { kind: "invalid" };
+    }
+    const keys = Object.keys(payload);
+    if (keys.length !== 1 || keys[0] !== "text" || typeof payload.text !== "string") {
+      return { kind: "invalid" };
+    }
+    const text = payload.text.trim();
+    if (!text || text.length > MAX_COMPOSER_CHARS) return { kind: "invalid" };
+    return { kind: "valid", text };
+  } catch {
+    return { kind: "invalid" };
+  }
+}
+
+function createComposerConfirmationRegistry(options = {}) {
+  const ttlMs = Number.isFinite(options.ttlMs) ? Math.max(1, Number(options.ttlMs)) : 120000;
+  const now = typeof options.now === "function" ? options.now : Date.now;
+  const createId = typeof options.createId === "function" ? options.createId : crypto.randomUUID;
+  const schedule = typeof options.setTimeout === "function" ? options.setTimeout : setTimeout;
+  const cancel = typeof options.clearTimeout === "function" ? options.clearTimeout : clearTimeout;
+  const onExpire = typeof options.onExpire === "function" ? options.onExpire : () => {};
+  const byId = new Map();
+  const byWorkspace = new Map();
+
+  function remove(requestId) {
+    const pending = byId.get(requestId);
+    if (!pending) return null;
+    byId.delete(requestId);
+    if (byWorkspace.get(pending.workspaceId) === requestId) {
+      byWorkspace.delete(pending.workspaceId);
+    }
+    if (pending.timer) cancel(pending.timer);
+    return pending;
+  }
+
+  function get(requestId) {
+    const pending = byId.get(String(requestId || ""));
+    if (!pending) return null;
+    if (pending.expiresAt <= now()) {
+      const expired = remove(pending.requestId);
+      if (expired) onExpire(expired);
+      return null;
+    }
+    return pending;
+  }
+
+  function invalidateWorkspace(workspaceId) {
+    const requestId = byWorkspace.get(String(workspaceId || ""));
+    return requestId ? remove(requestId) : null;
+  }
+
+  return {
+    queue(workspaceId, payload) {
+      const key = String(workspaceId || "");
+      if (!key) throw new Error("Composer workspace is required");
+      const replaced = invalidateWorkspace(key);
+      const requestId = String(createId());
+      const expiresAt = now() + ttlMs;
+      const pending = { ...payload, workspaceId: key, requestId, expiresAt, timer: null };
+      pending.timer = schedule(() => {
+        const current = byId.get(requestId);
+        if (current !== pending) return;
+        const expired = remove(requestId);
+        if (expired) onExpire(expired);
+      }, ttlMs);
+      pending.timer?.unref?.();
+      byId.set(requestId, pending);
+      byWorkspace.set(key, requestId);
+      return { pending, replaced };
+    },
+    get,
+    take(requestId) {
+      const pending = get(requestId);
+      return pending ? remove(pending.requestId) : null;
+    },
+    invalidateWorkspace,
+    clear() {
+      const removed = [...byId.keys()].map(remove).filter(Boolean);
+      return removed;
+    },
+    size() {
+      return byId.size;
+    },
+  };
+}
+
+function createOneShotComposerBypass(options = {}) {
+  const ttlMs = Number.isFinite(options.ttlMs) ? Math.max(1, Number(options.ttlMs)) : 500;
+  const now = typeof options.now === "function" ? options.now : Date.now;
+  const schedule = typeof options.setTimeout === "function" ? options.setTimeout : setTimeout;
+  const cancel = typeof options.clearTimeout === "function" ? options.clearTimeout : clearTimeout;
+  const createToken =
+    typeof options.createToken === "function" ? options.createToken : crypto.randomUUID;
+  let armed = null;
+
+  function clear() {
+    if (!armed) return false;
+    if (armed.timer) cancel(armed.timer);
+    armed = null;
+    return true;
+  }
+
+  return {
+    arm(contextGeneration) {
+      clear();
+      const token = String(createToken());
+      const expiresAt = now() + ttlMs;
+      const entry = {
+        token,
+        contextGeneration: Number(contextGeneration || 0),
+        expiresAt,
+        timer: null,
+      };
+      entry.timer = schedule(() => {
+        if (armed?.token === token) clear();
+      }, ttlMs);
+      entry.timer?.unref?.();
+      armed = entry;
+      return token;
+    },
+    consume(contextGeneration) {
+      if (
+        !armed ||
+        armed.expiresAt <= now() ||
+        armed.contextGeneration !== Number(contextGeneration || 0)
+      ) {
+        clear();
+        return false;
+      }
+      clear();
+      return true;
+    },
+    clear,
+    isArmed() {
+      return Boolean(armed && armed.expiresAt > now());
+    },
+  };
 }
 
 /**
@@ -86,7 +258,17 @@ function composerInspectionScript(options = false) {
 function composerClickGuardScript(options = {}) {
   const enabled = options.enabled !== false;
   const targetLanguage = String(options.targetLanguage || "en").toLowerCase();
-  const marker = String(options.marker || "__SHAREGPT_COMPOSER_GUARD__");
+  const marker = String(options.marker || "");
+  const markerToken = marker.endsWith(":")
+    ? marker.slice(COMPOSER_GUARD_CHANNEL_PREFIX.length, -1)
+    : "";
+  if (
+    !marker.startsWith(COMPOSER_GUARD_CHANNEL_PREFIX) ||
+    !COMPOSER_GUARD_TOKEN_PATTERN.test(markerToken) ||
+    marker !== composerGuardMarker(markerToken)
+  ) {
+    throw new Error("Authenticated composer guard marker is required");
+  }
   return `
     (() => {
       const state = globalThis.__shareGptComposerGuard || {};
@@ -138,6 +320,26 @@ async function installComposerClickGuard(webContents, options = {}) {
   );
 }
 
+async function disableComposerClickGuard(webContents, worldId = 1001) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  await webContents.executeJavaScriptInIsolatedWorld(
+    worldId,
+    [
+      {
+        code: `(() => {
+          const state = globalThis.__shareGptComposerGuard;
+          if (!state) return false;
+          state.enabled = false;
+          state.marker = '';
+          return true;
+        })();`,
+      },
+    ],
+    false,
+  );
+  return true;
+}
+
 /**
  * @param {any} webContents
  * @param {{ selectAll?: boolean, findAny?: boolean, focus?: boolean }} options
@@ -151,14 +353,37 @@ async function inspectAiComposer(webContents, options = {}) {
   };
 }
 
-async function replaceAiComposerText(webContents, text) {
+async function inspectComposerSubmit(webContents, targetLanguage, options = {}) {
+  const assertCurrent =
+    typeof options.assertCurrent === "function" ? options.assertCurrent : () => undefined;
+  assertCurrent();
+  const composer = await inspectAiComposer(webContents);
+  assertCurrent();
+  const text = String(composer.text || "").trim();
+  return {
+    action:
+      composer.editable && text && hasClearlyNonTargetLanguage(text, targetLanguage)
+        ? "confirm"
+        : "replay",
+    text,
+  };
+}
+
+async function replaceAiComposerText(webContents, text, options = {}) {
   const value = String(text || "").trim();
   if (!value) throw new Error("没有可填入的译文");
   if (value.length > MAX_COMPOSER_CHARS) throw new Error("待发送内容过长");
+  const assertCurrent =
+    typeof options.assertCurrent === "function" ? options.assertCurrent : () => undefined;
+  assertCurrent();
   const composer = await inspectAiComposer(webContents, { selectAll: true });
+  assertCurrent();
   if (!composer.editable) throw new Error("请先在网页中点一下提问输入框");
+  assertCurrent();
   webContents.focus();
+  assertCurrent();
   await webContents.insertText(value);
+  assertCurrent();
   return { ok: true, replacedTextLength: value.length };
 }
 
@@ -169,13 +394,21 @@ function sendComposerEnter(webContents) {
 }
 
 module.exports = {
+  COMPOSER_GUARD_CHANNEL_PREFIX,
   MAX_COMPOSER_CHARS,
+  composerGuardMarker,
   composerClickGuardScript,
   composerInspectionScript,
+  createComposerConfirmationRegistry,
+  createComposerGuardToken,
+  createOneShotComposerBypass,
+  disableComposerClickGuard,
   hasClearlyNonTargetLanguage,
   installComposerClickGuard,
   inspectAiComposer,
+  inspectComposerSubmit,
   isPlainComposerSubmit,
+  parseComposerGuardConsoleMessage,
   replaceAiComposerText,
   sendComposerEnter,
 };

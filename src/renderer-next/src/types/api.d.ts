@@ -282,6 +282,10 @@ export interface ShareGptApi {
     requestId: string
     confirmed: boolean
   }) => Promise<{ ok: boolean; sent: boolean }>
+  setAiComposerEligibility: (payload: {
+    principalId: string
+    eligible: boolean
+  }) => Promise<{ ok: boolean; principalId: string; eligible: boolean }>
   exportUserData: () => Promise<unknown>
   importUserData: () => Promise<unknown>
   readClipboardAttachment: () => Promise<unknown>

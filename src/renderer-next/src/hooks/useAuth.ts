@@ -13,6 +13,7 @@ import {
   type BootstrapSender,
 } from '@/components/panels/account/bootstrap'
 import type { AppSettings, SenderSettings } from '@/types/settings'
+import { isComposerGuardEligible } from '@/lib/translationSession'
 
 // 协作服务器登录/退出逻辑 (移植自旧 renderer.js performCollabLogin / collabLogout)。
 // 端点 (渲染层直连协作服务器, 非 IPC):
@@ -105,7 +106,11 @@ async function fetchWithTimeout(
 //   - 服务器下发的 sender 本身不完整 -> 不动 (return)。
 //   - 本机 sender 已完整 -> 不覆盖用户已填内容 (return)。
 //   - 否则合并 (服务器值优先填空位) 并 patchSection('sender',...) 落盘。
-async function applySenderBootstrapConfig(serverSender: BootstrapSender): Promise<boolean> {
+async function applySenderBootstrapConfig(
+  serverSender: BootstrapSender,
+  isCurrent?: () => boolean,
+): Promise<boolean> {
+  if (isCurrent && !isCurrent()) return false
   if (!hasCompleteSenderBootstrap(serverSender)) {
     return false
   }
@@ -120,7 +125,10 @@ async function applySenderBootstrapConfig(serverSender: BootstrapSender): Promis
     const changed = Object.entries(expectedIdentity).some(
       ([key, value]) => String(current[key as keyof SenderSettings] || '') !== value,
     )
-    if (changed) await useAppStore.getState().patchSection('sender', expectedIdentity)
+    if (changed) {
+      if (isCurrent && !isCurrent()) return false
+      await useAppStore.getState().patchSection('sender', expectedIdentity)
+    }
     return changed
   }
 
@@ -138,6 +146,7 @@ async function applySenderBootstrapConfig(serverSender: BootstrapSender): Promis
     target_domains: serverSender.target_domains || current.target_domains || '',
   }
 
+  if (isCurrent && !isCurrent()) return false
   await useAppStore.getState().patchSection('sender', merged)
   return true
 }
@@ -169,7 +178,8 @@ export async function fetchClientBootstrap(
   return payload
 }
 
-export async function clearRemoteRouteState(): Promise<void> {
+export async function clearRemoteRouteState(isCurrent?: () => boolean): Promise<void> {
+  if (isCurrent && !isCurrent()) return
   await useAppStore.getState().patchSection('sender', {
     managed_proxy_routes: [],
     authorized_proxy_route_ids: [],
@@ -178,8 +188,13 @@ export async function clearRemoteRouteState(): Promise<void> {
   })
 }
 
-export async function applyClientBootstrap(payload: BootstrapPayload): Promise<void> {
-  await applySenderBootstrapConfig(payload.sender)
+export async function applyClientBootstrap(
+  payload: BootstrapPayload,
+  isCurrent?: () => boolean,
+): Promise<void> {
+  if (isCurrent && !isCurrent()) return
+  await applySenderBootstrapConfig(payload.sender, isCurrent)
+  if (isCurrent && !isCurrent()) return
   // 管理端节点是权威配置：更新时覆盖，撤销时也清掉本机旧副本。
   // 缺少权威 routes 数组时保持 fail-closed，不沿用旧账号授权。
   await useAppStore.getState().patchSection('sender', {
@@ -316,6 +331,10 @@ export function useAuth() {
         saved_password: rememberPassword ? password : '',
       })
 
+      await api.setAiComposerEligibility({
+        principalId: principal.principalId,
+        eligible: isComposerGuardEligible(profile),
+      })
       setSession({ token: payload.token, profile, password })
 
       // 把登录身份写入聊天 store, 触发 useChat 的 WS 连接与鉴权统计。
@@ -380,6 +399,12 @@ export function useAuth() {
     // 注意: 4002/4003/静默重登失败时的 stopSender 归 chat 域 (useChat.ts), 本域只管主动退出。
     await api.stopSender().catch(() => {})
     await api.closeAllAiWorkspaces().catch(() => {})
+    const currentPrincipalId = useNotesAiStore.getState().principalId
+    if (currentPrincipalId) {
+      await api
+        .setAiComposerEligibility({ principalId: currentPrincipalId, eligible: false })
+        .catch(() => {})
+    }
     await clearRemoteRouteState().catch(() => {})
     const local = await api.clearSettingsPrincipal().catch(() => null)
     if (local?.settings) {

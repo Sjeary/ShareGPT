@@ -58,6 +58,7 @@ contextBridge.exposeInMainWorld("api", {
   writeAiComposer: (payload) => ipcRenderer.invoke("translation:write-composer", payload),
   resolveAiComposerSend: (payload) =>
     ipcRenderer.invoke("translation:resolve-composer-send", payload),
+  setAiComposerEligibility: (payload) => ipcRenderer.invoke("ai:set-composer-eligibility", payload),
   exportUserData: () => ipcRenderer.invoke("user-data:export"),
   importUserData: () => ipcRenderer.invoke("user-data:import"),
   readClipboardAttachment: () => ipcRenderer.invoke("clipboard:read-attachment"),

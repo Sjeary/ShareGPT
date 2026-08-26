@@ -34,6 +34,7 @@ import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { useAiStore } from '@/store/useAiStore'
 import { useAuthStore } from '@/store/useAuthStore'
+import { useNotesAiStore } from '@/store/useNotesAiStore'
 import { useTranslationStore } from '@/store/useTranslationStore'
 import type { AiKind } from '@/store/useAiStore'
 import { isSenderRunning } from '@/components/panels/service/helpers'
@@ -68,6 +69,7 @@ import {
   isCurrentAiEnvironmentOperation,
   startAiEnvironmentOperation,
 } from '@/lib/aiEnvironmentRuntime'
+import { isComposerGuardEligible } from '@/lib/translationSession'
 
 function isEditableTarget(target: EventTarget | null): boolean {
   return (
@@ -122,6 +124,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       s.profile?.routeAuthorizationVerified && (s.profile?.isAdmin || s.profile?.advancedAiAllowed),
     ),
   )
+  const composerGuardEligible = useAuthStore((s) => isComposerGuardEligible(s.profile))
+  const notesAiPrincipalId = useNotesAiStore((s) => s.principalId)
+  const notesAiPrincipalGeneration = useNotesAiStore((s) => s.principalGeneration)
   const senderRunning = isSenderRunning(status)
   const advancedAi = useMemo(
     () => normalizeAdvancedAiSettings(settings?.advancedAi),
@@ -177,7 +182,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const activeTabId = useAiStore((s) => s.activeTabIdByKind[kind])
   const translationOpen = useTranslationStore((s) => advancedAiAllowed && s.open && s.kind === kind)
   const pendingSend = useTranslationStore((s) =>
-    s.pendingSend?.kind === kind && s.pendingSend.tabId === activeTabId ? s.pendingSend : null,
+    composerGuardEligible && s.pendingSend?.kind === kind && s.pendingSend.tabId === activeTabId
+      ? s.pendingSend
+      : null,
   )
   const toggleTranslation = useTranslationStore((s) => s.toggle)
   const feedback = useAiStore((s) => s.feedbackByKind[kind])
@@ -192,7 +199,13 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const resolvePendingSend = useCallback(
     async (confirmed: boolean) => {
       const pending = useTranslationStore.getState().pendingSend
-      if (!pending || pending.kind !== kind || pending.tabId !== activeTabId) return
+      if (
+        !composerGuardEligible ||
+        !pending ||
+        pending.kind !== kind ||
+        pending.tabId !== activeTabId
+      )
+        return
       setResolvingPendingSend(true)
       try {
         await api.resolveAiComposerSend({
@@ -210,7 +223,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         setResolvingPendingSend(false)
       }
     },
-    [activeTabId, kind, setFeedback],
+    [activeTabId, composerGuardEligible, kind, setFeedback],
   )
 
   useEffect(() => {
@@ -1047,7 +1060,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           </div>
           {translationOpen && (
             <TranslationPanel
-              key={`${kind}:${activeTabId}`}
+              key={`${kind}:${activeTabId}:${environmentRuntimeKey}:${networkReady ? 'ready' : 'offline'}:${notesAiPrincipalId}:${notesAiPrincipalGeneration}`}
               kind={kind}
               tabId={activeTabId}
               networkReady={networkReady}

@@ -14,14 +14,19 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { api } from '@/lib/api'
-import { currentAiEnvironmentOperation } from '@/lib/aiEnvironmentRuntime'
+import {
+  currentAiEnvironmentOperation,
+  isCurrentAiEnvironmentOperation,
+} from '@/lib/aiEnvironmentRuntime'
 import { runAi } from '@/lib/notes/aiClient'
 import { REMOTE_HTTP_WARNING, usesRemoteHttp } from '@/lib/remoteHttp'
 import { describeTranslationTarget } from '@/lib/translationTarget'
 import { cn } from '@/lib/utils'
 import { useAiStore, type AiKind } from '@/store/useAiStore'
+import { useNotesAiStore } from '@/store/useNotesAiStore'
 import { useTranslationStore } from '@/store/useTranslationStore'
 import type { TranslationProvider, TranslationSettings } from '@/types/settings'
+import { isCurrentOutgoingTranslationSession } from '@/lib/translationSession'
 
 const LANGUAGES = [
   ['auto', '自动检测'],
@@ -262,9 +267,33 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
     cancelRef.current = null
     const requestGeneration = outgoingRequestRef.current + 1
     outgoingRequestRef.current = requestGeneration
-    const isCurrentRequest = () =>
-      outgoingRequestRef.current === requestGeneration &&
-      useAiStore.getState().activeTabIdByKind[kind] === tabId
+    const environmentOperation = currentAiEnvironmentOperation(kind)
+    const principalSession = useNotesAiStore.getState()
+    const requestSession = {
+      kind,
+      tabId,
+      requestGeneration,
+      environmentId: environmentOperation.environmentId,
+      environmentGeneration: environmentOperation.generation,
+      principalId: principalSession.principalId,
+      principalGeneration: principalSession.principalGeneration,
+    }
+    const isCurrentRequest = () => {
+      const operation = currentAiEnvironmentOperation(kind)
+      const principal = useNotesAiStore.getState()
+      return (
+        isCurrentAiEnvironmentOperation(environmentOperation) &&
+        isCurrentOutgoingTranslationSession(requestSession, {
+          kind,
+          tabId: useAiStore.getState().activeTabIdByKind[kind],
+          requestGeneration: outgoingRequestRef.current,
+          environmentId: operation.environmentId,
+          environmentGeneration: operation.generation,
+          principalId: principal.principalId,
+          principalGeneration: principal.principalGeneration,
+        })
+      )
+    }
     setOutgoingLoading(true)
     setOutgoingResult('')
     setOutgoingStatus(action === 'preview' ? '正在翻译为网页语言…' : '正在翻译并准备填入网页…')
@@ -282,7 +311,10 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
           let accumulated = ''
           let cancel: () => void = () => undefined
           let settled = false
-          const settle = (callback: (value: string | PromiseLike<string>) => void, value: string) => {
+          const settle = (
+            callback: (value: string | PromiseLike<string>) => void,
+            value: string,
+          ) => {
             if (settled) return
             settled = true
             if (cancelRef.current === cancel) cancelRef.current = null
@@ -345,8 +377,9 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
       if (!isCurrentRequest()) throw translationAbortError()
       if (!translated) throw new Error('翻译服务没有返回内容')
       if (action !== 'preview') {
+        if (!isCurrentRequest()) throw translationAbortError()
         await api.writeAiComposer({
-          ...currentAiEnvironmentOperation(kind),
+          ...environmentOperation,
           kind,
           tabId,
           text: translated,
@@ -355,11 +388,7 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
       }
       if (isCurrentRequest()) {
         setOutgoingStatus(
-          action === 'send'
-            ? '已翻译并发送'
-            : action === 'fill'
-              ? '已填入网页输入框'
-              : '翻译完成',
+          action === 'send' ? '已翻译并发送' : action === 'fill' ? '已填入网页输入框' : '翻译完成',
         )
       }
     } catch (error) {
