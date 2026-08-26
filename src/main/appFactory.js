@@ -510,6 +510,9 @@ function createElectronApp(baseMode = "all") {
   const tabOrderByKind = { gpt: [], gemini: [], claude: [] };
   const activeTabIdByKind = { gpt: "", gemini: "", claude: "" };
   let activeAiKind = "";
+  let navTooltipView = null;
+  let navTooltipReady = null;
+  let navTooltipToken = 0;
   const aiEnvironmentGuard = createAiEnvironmentGenerationGuard();
   let aiTabCounter = 0;
   const hostStateByKind = {
@@ -548,6 +551,9 @@ function createElectronApp(baseMode = "all") {
       const wc = workspace?.view?.webContents;
       if (wc && !wc.isDestroyed()) wc.setZoomLevel(next);
     }
+    const tooltipContents = navTooltipView?.webContents;
+    if (tooltipContents && !tooltipContents.isDestroyed()) tooltipContents.setZoomLevel(next);
+    hideNavTooltip();
     for (const kind of Object.keys(hostStateByKind)) {
       hostStateByKind[kind] = {
         visible: hostStateByKind[kind].visible,
@@ -562,6 +568,7 @@ function createElectronApp(baseMode = "all") {
   function setActiveAiKind(rawKind) {
     const nextKind = isAiKind(safeText(rawKind)) ? safeText(rawKind) : "";
     if (nextKind === activeAiKind) return activeAiKind;
+    hideNavTooltip();
     activeAiKind = nextKind;
     for (const workspace of aiWorkspaces.values()) {
       detachWorkspaceView(workspace);
@@ -1110,6 +1117,96 @@ function createElectronApp(baseMode = "all") {
     }
     mainWindow.contentView.addChildView(workspace.view);
     workspace.attached = true;
+    if (navTooltipView?.getVisible()) {
+      mainWindow.contentView.addChildView(navTooltipView);
+    }
+  }
+
+  function hideNavTooltip() {
+    navTooltipToken += 1;
+    if (!navTooltipView) return false;
+    navTooltipView.setVisible(false);
+    navTooltipView.setBounds({ x: 0, y: 0, width: 1, height: 1 });
+    return true;
+  }
+
+  function ensureNavTooltipView() {
+    if (navTooltipView && !navTooltipView.webContents.isDestroyed()) {
+      return navTooltipView;
+    }
+
+    const view = new WebContentsView({
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        backgroundThrottling: false,
+      },
+    });
+    view.setBackgroundColor("#00000000");
+    view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
+    view.setVisible(false);
+    navTooltipView = view;
+    view.webContents.setZoomLevel(mainWindow.webContents.getZoomLevel());
+    navTooltipReady = view.webContents.loadURL(
+      `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
+        <meta charset="utf-8">
+        <style>
+          * { box-sizing: border-box; }
+          html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+          body { position: relative; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+          #tip {
+            position: absolute; top: 3px; bottom: 3px; left: 10px; right: 2px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 10px; background: #1d1d1f; color: #f5f5f7;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, .22);
+            font-size: 14px; font-weight: 600; line-height: 1; white-space: nowrap;
+          }
+          #tip::before {
+            content: ""; position: absolute; left: -4px; top: 50%;
+            width: 9px; height: 9px; background: #1d1d1f;
+            transform: translateY(-50%) rotate(45deg); border-radius: 2px;
+          }
+          body[data-side="left"] #tip { left: 2px; right: 10px; }
+          body[data-side="left"] #tip::before { left: auto; right: -4px; }
+        </style>
+        <div id="tip"></div>
+        <script>
+          window.setTooltip = ({ label, side }) => {
+            document.body.dataset.side = side === "left" ? "left" : "right";
+            document.getElementById("tip").textContent = label;
+          };
+        </script>`)}`,
+    );
+    return view;
+  }
+
+  async function setNavTooltip(payload = {}) {
+    if (!payload.visible) return hideNavTooltip();
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+
+    const label = safeText(payload.label).slice(0, 80);
+    const bounds = payload.bounds;
+    if (!label || !bounds || Number(bounds.width) <= 1 || Number(bounds.height) <= 1) {
+      return hideNavTooltip();
+    }
+
+    const token = ++navTooltipToken;
+    const view = ensureNavTooltipView();
+    await navTooltipReady;
+    if (token !== navTooltipToken || view.webContents.isDestroyed()) return false;
+
+    const side = payload.side === "left" ? "left" : "right";
+    await view.webContents.executeJavaScript(
+      `window.setTooltip(${JSON.stringify({ label, side })})`,
+    );
+    if (token !== navTooltipToken || !mainWindow || mainWindow.isDestroyed()) return false;
+
+    const shellZoomFactor = mainWindow.webContents.getZoomFactor?.() || 1;
+    view.setBounds(scaleAiHostBounds(bounds, shellZoomFactor));
+    mainWindow.contentView.addChildView(view);
+    view.setVisible(true);
+    return true;
   }
 
   function detachWorkspaceView(workspace) {
@@ -1824,11 +1921,14 @@ function createElectronApp(baseMode = "all") {
       mainWindow.setWindowButtonVisibility(true);
     }
     mainWindow.removeMenu();
+    mainWindow.on("blur", hideNavTooltip);
     loadMainRenderer(mainWindow);
     mainWindow.on("closed", () => {
       for (const controller of translationRequests.values()) controller.abort();
       translationRequests.clear();
       disposeAiWorkspaces();
+      navTooltipView = null;
+      navTooltipReady = null;
       mainWindow = null;
     });
   }
@@ -2093,6 +2193,7 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("ai:set-active-kind", (_event, payload) => {
       return { activeKind: setActiveAiKind(payload?.kind) };
     });
+    ipcMain.handle("nav:tooltip", (_event, payload) => setNavTooltip(payload));
     ipcMain.handle("ai:close-all", () => {
       disposeAiWorkspaces();
       return { ok: true };

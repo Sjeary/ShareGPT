@@ -295,6 +295,12 @@ export interface ShareGptApi {
   switchAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
   closeAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
   setActiveAiKind: (kind: 'gpt' | 'gemini' | 'claude' | '') => Promise<unknown>
+  setNavTooltip: (payload: {
+    visible: boolean
+    label?: string
+    side?: 'left' | 'right'
+    bounds?: { x: number; y: number; width: number; height: number }
+  }) => Promise<unknown>
   closeAllAiWorkspaces: () => Promise<unknown>
   ensureAiWorkspace: (payload: unknown) => Promise<unknown>
   activateAiEnvironment: (payload: unknown) => Promise<unknown>

@@ -71,6 +71,7 @@ const fallback = {
   switchAiView: async () => undefined,
   closeAiView: async () => undefined,
   setActiveAiKind: async () => ({ activeKind: '' }),
+  setNavTooltip: async () => undefined,
   closeAllAiWorkspaces: async () => ({ ok: true }),
   ensureAiWorkspace: async () => undefined,
   activateAiEnvironment: async () => ({ ok: true }),

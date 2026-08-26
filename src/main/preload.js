@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("ai-tabs:switch", { ...(payload || {}), kind }),
   closeAiView: (kind, payload) => ipcRenderer.invoke("ai-tabs:close", { ...(payload || {}), kind }),
   setActiveAiKind: (kind) => ipcRenderer.invoke("ai:set-active-kind", { kind }),
+  setNavTooltip: (payload) => ipcRenderer.invoke("nav:tooltip", payload),
   closeAllAiWorkspaces: () => ipcRenderer.invoke("ai:close-all"),
   ensureAiWorkspace: (payload) => ipcRenderer.invoke("ai:ensure", payload),
   activateAiEnvironment: (payload) => ipcRenderer.invoke("ai:environment-activate", payload),

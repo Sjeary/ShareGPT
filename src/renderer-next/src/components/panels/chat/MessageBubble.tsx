@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import {
   CornerUpLeft,
   FileText,
@@ -9,6 +9,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { Theme, EmojiStyle, type EmojiClickData } from 'emoji-picker-react'
+import { DropdownMenu } from 'radix-ui'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { emojiClusters, JUMBO_MAX } from '@/lib/chat/emoji'
@@ -91,22 +92,27 @@ export function MessageBubble({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [confirmRecall, setConfirmRecall] = useState(false)
   const [readersOpen, setReadersOpen] = useState(false)
+  const [menuBoundary, setMenuBoundary] = useState<HTMLElement | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const readersRef = useRef<HTMLDivElement>(null)
   const dark = useAppStore((s) => s.dark)
+  const setMenuElement = useCallback((element: HTMLDivElement | null) => {
+    menuRef.current = element
+    if (element) {
+      setMenuBoundary(element.closest<HTMLElement>('[data-chat-scroll-viewport]'))
+    }
+  }, [])
 
   useEffect(() => {
-    if (!menuOpen && !pickerOpen) return
+    if (!pickerOpen) return
     const onDown = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false)
         setPickerOpen(false)
-        setConfirmRecall(false)
       }
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
-  }, [menuOpen, pickerOpen])
+  }, [pickerOpen])
 
   useEffect(() => {
     if (!readersOpen) return
@@ -182,7 +188,6 @@ export function MessageBubble({
     readNames.length <= 3
       ? readNames.join('、')
       : `${readNames.slice(0, 3).join('、')} 等${readNames.length}人`
-
   // 正文富文本 + 首个 URL 链接预览卡。
   const richBody = message.text ? renderMessageRichText(message.text) : null
   const linkPreview = message.text ? buildMessageLinkPreview(extractFirstUrl(message.text)) : null
@@ -302,7 +307,7 @@ export function MessageBubble({
 
           {menuItems.length > 0 && (
             <div
-              ref={menuRef}
+              ref={setMenuElement}
               className={cn(
                 'absolute top-0 z-10 flex gap-0.5',
                 mine ? 'left-0 -translate-x-full pr-1' : 'right-0 translate-x-full pl-1',
@@ -349,63 +354,74 @@ export function MessageBubble({
                   </Suspense>
                 </div>
               )}
-              <button
-                type="button"
-                aria-label="消息操作"
-                onClick={() => {
-                  setMenuOpen((v) => !v)
-                  setPickerOpen(false)
-                  setConfirmRecall(false)
+              <DropdownMenu.Root
+                open={menuOpen}
+                onOpenChange={(open) => {
+                  setMenuOpen(open)
+                  if (!open) setConfirmRecall(false)
                 }}
-                className={cn(
-                  'grid size-6 place-items-center rounded-full bg-secondary text-muted-foreground opacity-0 outline-none transition-opacity hover:text-foreground',
-                  'group-hover/bubble:opacity-100 group-focus-within/bubble:opacity-100',
-                  'focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring',
-                  menuOpen && 'opacity-100',
-                )}
               >
-                <MoreHorizontal className="size-4" />
-              </button>
-              {menuOpen && (
-                <div
-                  className={cn(
-                    'absolute top-7 z-20 min-w-32 origin-top overflow-hidden rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-md',
-                    'animate-in fade-in zoom-in-95',
-                    mine ? 'left-0' : 'right-0',
-                  )}
-                >
-                  {menuItems.map((item) => {
-                    const needsConfirm = item.danger && !confirmRecall
-                    return (
-                      <button
-                        key={item.label}
-                        type="button"
-                        onClick={() => {
-                          if (needsConfirm) {
-                            setConfirmRecall(true)
-                            return
-                          }
-                          setMenuOpen(false)
-                          setConfirmRecall(false)
-                          item.run()
-                        }}
-                        className={cn(
-                          'flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent',
-                          item.danger && 'text-destructive',
-                        )}
-                      >
-                        <item.icon
+                <DropdownMenu.Trigger asChild>
+                  <button
+                    type="button"
+                    aria-label="消息操作"
+                    onClick={() => {
+                      setPickerOpen(false)
+                      setConfirmRecall(false)
+                    }}
+                    className={cn(
+                      'grid size-6 place-items-center rounded-full bg-secondary text-muted-foreground opacity-0 outline-none transition-opacity hover:text-foreground',
+                      'group-hover/bubble:opacity-100 group-focus-within/bubble:opacity-100',
+                      'focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring',
+                      menuOpen && 'opacity-100',
+                    )}
+                  >
+                    <MoreHorizontal className="size-4" />
+                  </button>
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content
+                    side="bottom"
+                    align={mine ? 'start' : 'end'}
+                    sideOffset={4}
+                    collisionBoundary={menuBoundary}
+                    collisionPadding={8}
+                    className={cn(
+                      'z-50 min-w-32 max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-md',
+                      'origin-[var(--radix-dropdown-menu-content-transform-origin)] animate-in fade-in zoom-in-95',
+                    )}
+                  >
+                    {menuItems.map((item) => {
+                      const needsConfirm = item.danger && !confirmRecall
+                      return (
+                        <DropdownMenu.Item
+                          key={item.label}
+                          onSelect={(event) => {
+                            if (needsConfirm) {
+                              event.preventDefault()
+                              setConfirmRecall(true)
+                              return
+                            }
+                            item.run()
+                          }}
                           className={cn(
-                            'size-4',
-                            item.danger ? 'text-destructive' : 'text-muted-foreground',
+                            'flex cursor-default items-center gap-2 px-3 py-1.5 text-left text-sm outline-none select-none data-[highlighted]:bg-accent',
+                            item.danger && 'text-destructive',
                           )}
-                        />
-                        {item.danger && confirmRecall ? '确认撤回？' : item.label}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
+                        >
+                          <item.icon
+                            className={cn(
+                              'size-4',
+                              item.danger ? 'text-destructive' : 'text-muted-foreground',
+                            )}
+                          />
+                          {item.danger && confirmRecall ? '确认撤回？' : item.label}
+                        </DropdownMenu.Item>
+                      )
+                    })}
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
             </div>
           )}
         </div>
