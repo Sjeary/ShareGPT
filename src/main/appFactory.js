@@ -1870,24 +1870,41 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("settings:principal-activate", (_event, payload) => {
       disposeAiWorkspaces();
       aiEnvironmentGuard.invalidateAll();
+      backend.notesAi.invalidatePrincipal();
       for (const controller of translationRequests.values()) controller.abort();
       translationRequests.clear();
-      return backend.activatePrincipal(payload?.serverUrl, payload?.username);
+      const result = backend.activatePrincipal(payload?.serverUrl, payload?.username);
+      backend.notesAi.activatePrincipal();
+      return result;
     });
     ipcMain.handle("settings:principal-clear", () => {
       disposeAiWorkspaces();
       aiEnvironmentGuard.invalidateAll();
+      backend.notesAi.invalidatePrincipal();
       for (const controller of translationRequests.values()) controller.abort();
       translationRequests.clear();
-      return { settings: backend.clearPrincipal() };
+      const settings = backend.clearPrincipal();
+      backend.notesAi.activatePrincipal();
+      return { principalId: backend.getPrincipalContext().principalId, settings };
     });
     ipcMain.handle("settings:save", (_event, settings) => backend.saveSettings(settings));
     ipcMain.handle("settings:patch", (_event, payload) =>
       backend.patchSettings(payload?.section, payload?.patch, payload?.expectedRevision),
     );
-    ipcMain.handle("settings:operate", (_event, payload) =>
-      backend.operateSettings(payload?.section, payload?.operations, payload?.expectedRevision),
-    );
+    ipcMain.handle("settings:operate", (_event, payload) => {
+      const expectedPrincipalId = safeText(payload?.expectedPrincipalId);
+      if (
+        expectedPrincipalId &&
+        expectedPrincipalId !== backend.getPrincipalContext().principalId
+      ) {
+        throw new Error("设置 principal 已变化，请重试");
+      }
+      return backend.operateSettings(
+        payload?.section,
+        payload?.operations,
+        payload?.expectedRevision,
+      );
+    });
     ipcMain.handle("settings:import", () => backend.importSettings());
     ipcMain.handle("chat-history:load", () => backend.loadChatHistory());
     ipcMain.handle("chat-history:save", (_event, payload) => backend.saveChatHistory(payload));
@@ -1917,6 +1934,9 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("vault:remove", (_event, p) => backend.vault.remove(p));
     ipcMain.handle("notes-ai:complete", (_event, req) => backend.notesAi.complete(req));
     ipcMain.handle("notes-ai:cancel", (_event, id) => backend.notesAi.cancel(id));
+    ipcMain.handle("notes-ai:invalidate-principal", (_event, principalId) =>
+      backend.notesAi.invalidatePrincipal(safeText(principalId)),
+    );
     ipcMain.handle("translation:translate", async (_event, payload) => {
       const requestId = safeText(payload?.requestId);
       if (!/^[a-z0-9-]{8,100}$/i.test(requestId)) throw new Error("翻译请求 ID 无效");

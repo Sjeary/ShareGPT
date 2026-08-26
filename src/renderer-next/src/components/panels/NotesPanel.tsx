@@ -39,7 +39,6 @@ import { InlineAiEdit, SelectionAiButton } from './notes/InlineAiEdit'
 import { AutoLinkDialog } from './notes/AutoLinkDialog'
 import { SyncCompareDialog } from './notes/SyncCompareDialog'
 import { useNotesSync, useNotesSyncStore, type NotesSyncState } from '@/hooks/useNotesSync'
-import { useNotesAiStore } from '@/store/useNotesAiStore'
 import { Cloud, CloudOff, RefreshCw } from 'lucide-react'
 
 const SYNC_LABEL: Record<NotesSyncState, string> = {
@@ -104,7 +103,6 @@ export function NotesPanel() {
 
   useEffect(() => {
     void init()
-    void useNotesAiStore.getState().load() // 预加载 AI 配置, 供内联编辑/选区问 AI 使用
   }, [init])
 
   // 云端同步 (登录态自动; 未登录静默本地)。

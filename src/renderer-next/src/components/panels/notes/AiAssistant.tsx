@@ -12,6 +12,8 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
+import { useAppStore } from '@/store/useAppStore'
+import { REMOTE_HTTP_WARNING, usesRemoteHttp } from '@/lib/remoteHttp'
 import { useVaultStore } from '@/store/useVaultStore'
 import { useNotesAiStore } from '@/store/useNotesAiStore'
 import { runAi } from '@/lib/notes/aiClient'
@@ -29,11 +31,20 @@ const QUICK: { mode: NotesAiMode; label: string }[] = [
 ]
 
 function SettingsForm({ onDone }: { onDone: () => void }) {
-  const s = useNotesAiStore()
-  const [baseUrl, setBaseUrl] = useState(s.baseUrl)
-  const [apiKey, setApiKey] = useState(s.apiKey)
-  const [model, setModel] = useState(s.model)
-  const [effort, setEffort] = useState(s.effort)
+  const provider = useAppStore((s) => s.settings?.translation?.ai)
+  const principalGeneration = useNotesAiStore((s) => s.principalGeneration)
+  const [baseUrl, setBaseUrl] = useState(provider?.baseUrl || '')
+  const [apiKey, setApiKey] = useState(provider?.apiKey || '')
+  const [model, setModel] = useState(provider?.model || 'gpt-5.5')
+  const [effort, setEffort] = useState(provider?.effort || 'medium')
+  useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setBaseUrl(provider?.baseUrl || '')
+    setApiKey(provider?.apiKey || '')
+    setModel(provider?.model || 'gpt-5.5')
+    setEffort(provider?.effort || 'medium')
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [principalGeneration, provider])
   return (
     <div className="space-y-2.5 p-3 text-sm">
       <p className="text-xs text-muted-foreground">
@@ -47,6 +58,14 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
           className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-primary/60"
         />
       </label>
+      {usesRemoteHttp(baseUrl) && (
+        <p
+          className="rounded-md border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-300"
+          role="status"
+        >
+          {REMOTE_HTTP_WARNING}
+        </p>
+      )}
       <label className="block space-y-1">
         <span className="text-xs text-muted-foreground">API Key</span>
         <input
@@ -99,8 +118,11 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
 export function AiAssistant() {
   const currentPath = useVaultStore((s) => s.currentPath)
   const note = useVaultStore((s) => (s.currentPath ? s.notesByPath[s.currentPath] : null))
-  const configured = useNotesAiStore((s) => Boolean(s.apiKey && s.baseUrl))
-  const [showSettings, setShowSettings] = useState(false)
+  const configured = useAppStore((s) =>
+    Boolean(s.settings?.translation?.ai?.apiKey && s.settings?.translation?.ai?.baseUrl),
+  )
+  const principalGeneration = useNotesAiStore((s) => s.principalGeneration)
+  const [showSettings, setShowSettings] = useState(!configured)
 
   const [result, setResult] = useState('')
   const [running, setRunning] = useState(false)
@@ -109,15 +131,17 @@ export function AiAssistant() {
   const [q, setQ] = useState('')
   const cancelRef = useRef<(() => void) | null>(null)
 
-  useEffect(() => {
-    void useNotesAiStore
-      .getState()
-      .load()
-      .then(() => {
-        if (!useNotesAiStore.getState().apiKey) setShowSettings(true)
-      })
-  }, [])
   useEffect(() => () => cancelRef.current?.(), [])
+  useEffect(() => {
+    cancelRef.current?.()
+    cancelRef.current = null
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setResult('')
+    setErr('')
+    setRunning(false)
+    setShowSettings(!useNotesAiStore.getState().configured())
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [principalGeneration])
 
   const start = (
     mode: NotesAiMode,

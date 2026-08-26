@@ -253,6 +253,126 @@ test("notes AI handles a synchronous request constructor error exactly once", as
   assert.match(events[0].message, /invalid header/);
 });
 
+test("notes AI requires and stamps the active principal in production mode", async () => {
+  let principalId = "alice";
+  const events = [];
+  const notesAi = createNotesAi({
+    getWindow: () => ({
+      isDestroyed: () => false,
+      webContents: { send: (_channel, payload) => events.push(payload) },
+    }),
+    getPrincipalId: () => principalId,
+    requirePrincipalContext: true,
+    lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+    httpsRequest: responseRequest(['data: {"type":"response.completed"}\n']),
+  });
+
+  assert.throws(
+    () =>
+      notesAi.complete({
+        principalId: "bob",
+        provider: { baseUrl: "https://example.test", apiKey: "test", model: "test" },
+        mode: "summary",
+        text: "内容",
+      }),
+    /principal 已变化/,
+  );
+
+  const result = notesAi.complete({
+    principalId,
+    provider: { baseUrl: "https://example.test", apiKey: "test", model: "test" },
+    mode: "summary",
+    text: "内容",
+  });
+  await waitForTurn();
+  assert.equal(result.principalId, "alice");
+  assert.equal(events.at(-1)?.principalId, "alice");
+});
+
+test("notes AI cancelAll suppresses late delta, done and error events after a principal switch", async () => {
+  let principalId = "alice";
+  let responseCallback = /** @type {any} */ (null);
+  let pendingRequest = /** @type {any} */ (null);
+  let destroyed = false;
+  const events = [];
+  const notesAi = createNotesAi({
+    getWindow: () => ({
+      isDestroyed: () => false,
+      webContents: { send: (_channel, payload) => events.push(payload) },
+    }),
+    getPrincipalId: () => principalId,
+    requirePrincipalContext: true,
+    lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+    httpsRequest: /** @type {any} */ (
+      (_options, callback) => {
+        responseCallback = callback;
+        const request = /** @type {any} */ (new EventEmitter());
+        request.end = () => {};
+        request.destroy = () => {
+          destroyed = true;
+        };
+        pendingRequest = request;
+        return request;
+      }
+    ),
+  });
+
+  notesAi.complete({
+    principalId,
+    provider: { baseUrl: "https://example.test", apiKey: "alice-key", model: "test" },
+    mode: "summary",
+    text: "alice content",
+  });
+  await waitForTurn();
+  assert.equal(typeof responseCallback, "function");
+
+  const cancelled = notesAi.cancelAll();
+  principalId = "bob";
+  const response = /** @type {any} */ (new PassThrough());
+  response.statusCode = 200;
+  responseCallback(response);
+  response.write('data: {"type":"response.output_text.delta","delta":"late"}\n');
+  response.write('data: {"type":"response.completed"}\n');
+  pendingRequest.emit("error", new Error("late error"));
+  response.end();
+  await waitForTurn();
+
+  assert.deepEqual(cancelled, { ok: true, count: 1 });
+  assert.equal(destroyed, true);
+  assert.deepEqual(events, []);
+});
+
+test("notes AI rejects queued work after invalidation until a principal is activated", () => {
+  let principalId = "alice";
+  const notesAi = createNotesAi({
+    getWindow: () => null,
+    getPrincipalId: () => principalId,
+    requirePrincipalContext: true,
+    lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+  });
+  const request = {
+    principalId,
+    provider: { baseUrl: "https://example.test", apiKey: "alice-key", model: "test" },
+    mode: "summary",
+    text: "alice content",
+  };
+
+  notesAi.invalidatePrincipal();
+  assert.throws(() => notesAi.complete(request), /principal 已变化/);
+
+  principalId = "bob";
+  assert.deepEqual(notesAi.invalidatePrincipal("alice"), { ok: false, count: 0 });
+  notesAi.activatePrincipal();
+  assert.doesNotThrow(() =>
+    notesAi.complete({
+      ...request,
+      principalId,
+      provider: { ...request.provider, apiKey: "bob-key" },
+    }),
+  );
+  notesAi.cancelAll();
+});
+
 test("notes AI bounds oversized non-2xx response bodies", async () => {
   const { notesAi, events } = createHarness({
     httpsRequest: responseRequest(["x".repeat(256 * 1024)], 400),

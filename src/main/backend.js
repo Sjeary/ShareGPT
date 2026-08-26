@@ -18,7 +18,13 @@ const {
   normalizeAiEnvironmentId,
   validateAiRouteIsolation,
 } = require("./aiEnvironments");
-const { LOCAL_PRINCIPAL_ID, normalizePrincipalId, principalIdFor } = require("./principal");
+const {
+  LOCAL_PRINCIPAL_ID,
+  normalizePrincipalId,
+  normalizePrincipalUsername,
+  normalizeServerBaseUrl,
+  principalIdFor,
+} = require("./principal");
 
 // 自动更新源 = GitHub Releases (参考 cc-switch 的做法)。仓库地址从 package.json 推导,
 // fork 的人只要改 package.json 的 homepage/repository 就指向自己的仓库, 不写死任何自建服务器。
@@ -742,7 +748,11 @@ class Backend {
     // 知识库 vault 管理器 (笔记真源 = 磁盘 .md 文件夹; 仅做文件 IO + 监听, 解析/索引在渲染层)。
     this.vault = new VaultManager(this.app, this.getWindow);
     // 知识库 AI 助手 (OpenAI Responses / Codex 中转, 流式; provider 由渲染层传入, 不持久化密钥)。
-    this.notesAi = createNotesAi({ getWindow: this.getWindow });
+    this.notesAi = createNotesAi({
+      getWindow: this.getWindow,
+      getPrincipalId: () => this.activePrincipalId,
+      requirePrincipalContext: true,
+    });
     this.runtimeDir = path.join(this.app.getPath("userData"), "runtime");
     this.updatesDir = path.join(this.app.getPath("downloads"), "ShareGPT Updates");
     this.updateBackupsDir = path.join(this.app.getPath("appData"), "ShareGPT Backups");
@@ -756,6 +766,8 @@ class Backend {
     this.activeAiProxyRoutes = [];
     this.senderState = "stopped";
     this.activePrincipalId = LOCAL_PRINCIPAL_ID;
+    this.activePrincipalServerUrl = "";
+    this.activePrincipalUsername = "";
   }
 
   // 当前发送端配置里「走代理(梯子)」的域名后缀集合。路由规则(buildSenderConfig)与
@@ -1008,27 +1020,103 @@ class Backend {
     }
   }
 
-  principalSettingsState(stored) {
+  principalSettingsState(stored, owner = null) {
     const existing = stored?.principalSettings;
+    const requestedServer = normalizeServerBaseUrl(owner?.serverUrl);
+    const requestedUsername = normalizePrincipalUsername(owner?.username);
+
+    if (
+      existing?.version === 2 &&
+      existing.byPrincipal &&
+      typeof existing.byPrincipal === "object"
+    ) {
+      const state = structuredClone(existing);
+      const legacyRoot = state.unowned?.legacyRoot;
+      const legacyOwnerServer = normalizeServerBaseUrl(legacyRoot?.ownerServer);
+      const legacyOwnerUsername = normalizePrincipalUsername(legacyRoot?.ownerUsername);
+      if (
+        requestedServer &&
+        requestedUsername &&
+        legacyOwnerServer === requestedServer &&
+        legacyOwnerUsername === requestedUsername
+      ) {
+        const principalId = principalIdFor(requestedServer, requestedUsername);
+        state.byPrincipal[principalId] = {
+          ownerServer: requestedServer,
+          ownerUsername: requestedUsername,
+          advancedAi: structuredClone(
+            legacyRoot.settings?.advancedAi || PUBLIC_DEFAULT_SETTINGS.advancedAi,
+          ),
+          translation: structuredClone(
+            legacyRoot.settings?.translation || DEFAULT_TRANSLATION_SETTINGS,
+          ),
+        };
+        state.unowned.legacyRoot = null;
+        state.legacyPartitionOwnerId = principalId;
+        return { state, migrated: true };
+      }
+      return { state, migrated: false };
+    }
+
     if (
       existing?.version === 1 &&
       existing.byPrincipal &&
       typeof existing.byPrincipal === "object"
     ) {
-      return { state: structuredClone(existing), migrated: false };
+      return {
+        migrated: true,
+        state: {
+          version: 2,
+          byPrincipal: {},
+          unowned: {
+            legacyRoot: null,
+            legacyByPrincipal: structuredClone(existing.byPrincipal),
+            legacyUnowned: existing.unowned ? structuredClone(existing.unowned) : null,
+          },
+          // V1 的 owner 使用可碰撞 hash，不能授权任何 V2 principal 复用旧 partition。
+          legacyPartitionOwnerId: "",
+        },
+      };
     }
 
-    const ownerId = principalIdFor(stored?.collab?.server_url, stored?.collab?.last_username);
     const legacy = {
       advancedAi: structuredClone(stored?.advancedAi || PUBLIC_DEFAULT_SETTINGS.advancedAi),
       translation: structuredClone(stored?.translation || DEFAULT_TRANSLATION_SETTINGS),
     };
+    const legacyOwnerServer = normalizeServerBaseUrl(stored?.collab?.server_url);
+    const legacyOwnerUsername = normalizePrincipalUsername(stored?.collab?.last_username);
+    const ownerMatches = Boolean(
+      requestedServer &&
+      requestedUsername &&
+      legacyOwnerServer === requestedServer &&
+      legacyOwnerUsername === requestedUsername,
+    );
+    const ownerId = ownerMatches ? principalIdFor(requestedServer, requestedUsername) : "";
     return {
       migrated: true,
       state: {
-        version: 1,
-        byPrincipal: ownerId ? { [ownerId]: legacy } : {},
-        unowned: ownerId ? null : legacy,
+        version: 2,
+        byPrincipal: ownerId
+          ? {
+              [ownerId]: {
+                ownerServer: requestedServer,
+                ownerUsername: requestedUsername,
+                ...legacy,
+              },
+            }
+          : {},
+        unowned: {
+          legacyRoot:
+            legacyOwnerServer && legacyOwnerUsername
+              ? {
+                  ownerServer: legacyOwnerServer,
+                  ownerUsername: legacyOwnerUsername,
+                  settings: legacy,
+                }
+              : null,
+          legacyByPrincipal: {},
+          legacyUnowned: legacyOwnerServer && legacyOwnerUsername ? null : structuredClone(legacy),
+        },
         legacyPartitionOwnerId: ownerId,
       },
     };
@@ -1054,9 +1142,16 @@ class Backend {
   activatePrincipal(serverUrl, username) {
     const principalId = principalIdFor(serverUrl, username);
     if (!principalId) throw new Error("协作账号 principal 信息不合法");
+    const confirmedServer = normalizeServerBaseUrl(serverUrl);
+    const confirmedUsername = normalizePrincipalUsername(username);
     const stored = this.readStoredSettings();
-    const { state, migrated } = this.principalSettingsState(stored);
+    const { state, migrated } = this.principalSettingsState(stored, {
+      serverUrl: confirmedServer,
+      username: confirmedUsername,
+    });
     this.activePrincipalId = principalId;
+    this.activePrincipalServerUrl = confirmedServer;
+    this.activePrincipalUsername = confirmedUsername;
     if (migrated) {
       stored.principalSettings = state;
       stored.settingsRevision = Math.max(0, Number(stored.settingsRevision) || 0) + 1;
@@ -1070,6 +1165,8 @@ class Backend {
 
   clearPrincipal() {
     this.activePrincipalId = LOCAL_PRINCIPAL_ID;
+    this.activePrincipalServerUrl = "";
+    this.activePrincipalUsername = "";
     return this.loadSettings();
   }
 
@@ -1096,6 +1193,12 @@ class Backend {
     const principalId = normalizePrincipalId(this.activePrincipalId, { allowLocal: true });
     if (!principalId) throw new Error("当前 principal 标识不合法");
     state.byPrincipal[principalId] = {
+      ...(principalId === LOCAL_PRINCIPAL_ID
+        ? {}
+        : {
+            ownerServer: this.activePrincipalServerUrl,
+            ownerUsername: this.activePrincipalUsername,
+          }),
       advancedAi: structuredClone(merged.advancedAi),
       translation: structuredClone(merged.translation),
     };

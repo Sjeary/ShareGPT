@@ -7,7 +7,7 @@ const fallback = {
   setThemeSource: async () => undefined,
   loadSettings: async () => ({}),
   activateSettingsPrincipal: async () => ({ principalId: '', settings: {} }),
-  clearSettingsPrincipal: async () => ({ settings: {} }),
+  clearSettingsPrincipal: async () => ({ principalId: 'local-device', settings: {} }),
   saveSettings: async () => undefined,
   patchSettings: async () => ({}),
   operateSettings: async () => ({}),
@@ -36,8 +36,12 @@ const fallback = {
   },
   onVaultChanged: () => noop,
   notesAi: {
-    complete: async () => ({ streamId: '' }),
+    complete: async (req: { principalId: string }) => ({
+      streamId: '',
+      principalId: req.principalId,
+    }),
     cancel: async () => ({ ok: true }),
+    invalidatePrincipal: async () => ({ ok: true, count: 0 }),
   },
   onNotesAiEvent: () => noop,
   translateText: async () => {

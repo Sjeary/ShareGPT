@@ -7,6 +7,27 @@
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-08-27
+
+> **多 AI 环境与账号隔离更新**：新增独立 AI Environment 和翻译侧栏，并收紧协作账号切换时的网页数据、本机配置与运行中请求隔离。
+
+### 新增
+
+- 高级用户可为 ChatGPT、Claude 和 Gemini 创建多个独立 AI Environment，并从管理员授权的线路中为每个环境选择出口。
+- AI 网页新增翻译侧栏，支持共用 AI provider、翻译 API 和只能连接本机回环地址的离线翻译服务。
+
+### 隔离与稳定性
+
+- 协作账号身份保留服务器 base path 和服务端确认的精确用户名，避免同主机不同服务路径或大小写不同的账号共用本机数据。
+- Cookie、LocalStorage、IndexedDB、AI Environment、Translation 和 Notes AI 设置按协作账号隔离；A/B/A 切换后只恢复各自数据。
+- 切换或退出账号时会取消旧账号的 Notes AI 请求；旧请求后续的 delta、done 或 error 不会进入新账号界面。
+
+### 网络与风险提示
+
+- Translation API 与 Notes AI/共用 AI provider 允许用户配置公网 HTTP 或 HTTPS，不增加额外开关或二次确认。
+- 非回环 HTTP 配置入口会持续显示内容和接口密钥明文传输的风险。
+- 允许 HTTP 不改变现有 SSRF 防护：私网、metadata 与其他危险 DNS 结果仍被拒绝，连接仍 pin 到已验证地址。
+
 ## [1.0.8] - 2026-08-20
 
 > **Claude 网页入口更新**：需要验证码、登录或授权页面时，可从 Claude 工具栏按需打开网页；输入区默认隐藏，不影响日常对话视野。建议使用 Claude 网页的用户升级。

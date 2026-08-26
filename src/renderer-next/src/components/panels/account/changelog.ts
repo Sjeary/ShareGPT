@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.0.9',
+    date: '2026-08-27',
+    highlights: [
+      '新增多 AI Environment：可为 ChatGPT、Claude 和 Gemini 创建独立环境，并在管理员授权的线路中选择各自出口。',
+      '新增 AI 网页翻译侧栏，支持 AI、翻译 API 和本机离线服务，并按协作账号保存配置。',
+      '加强协作账号隔离：切换账号后，网页数据、AI 环境、翻译与 Notes AI 配置及正在进行的请求不会串号。',
+      'Translation 与 Notes AI 均支持公网 HTTP/HTTPS；HTTP 配置会持续提示内容和密钥的明文传输风险，SSRF 与危险地址防护保持生效。',
+    ],
+  },
+  {
     version: '1.0.8',
     date: '2026-08-20',
     highlights: [

@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
 import { currentAiEnvironmentOperation } from '@/lib/aiEnvironmentRuntime'
 import { runAi } from '@/lib/notes/aiClient'
+import { REMOTE_HTTP_WARNING, usesRemoteHttp } from '@/lib/remoteHttp'
 import { describeTranslationTarget } from '@/lib/translationTarget'
 import { cn } from '@/lib/utils'
 import { useTranslationStore } from '@/store/useTranslationStore'
@@ -402,17 +403,7 @@ function TranslationSettingsForm({
   const [draft, setDraft] = useState(config)
   const changed = JSON.stringify(draft) !== JSON.stringify(config)
   const remoteUrl = draft.provider === 'ai' ? draft.ai.baseUrl : draft.api.baseUrl
-  const usesRemoteHttp = (() => {
-    try {
-      const url = new URL(remoteUrl)
-      return (
-        url.protocol === 'http:' &&
-        !['localhost', '127.0.0.1', '::1'].includes(url.hostname.toLowerCase())
-      )
-    } catch {
-      return false
-    }
-  })()
+  const showRemoteHttpWarning = usesRemoteHttp(remoteUrl)
   return (
     <div className="max-h-[42vh] shrink-0 space-y-2 overflow-y-auto border-b border-border bg-muted/20 p-3">
       {draft.provider === 'ai' && (
@@ -521,10 +512,9 @@ function TranslationSettingsForm({
           </p>
         </>
       )}
-      {usesRemoteHttp && (
+      {showRemoteHttpWarning && (
         <p className="rounded-md border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
-          当前远程地址使用
-          HTTP。翻译内容和接口密钥会以明文在网络中传输；应用仍允许保存并使用该地址。
+          {REMOTE_HTTP_WARNING}
         </p>
       )}
       <div className="flex justify-end gap-2 pt-1">

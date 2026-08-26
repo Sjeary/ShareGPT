@@ -3,34 +3,43 @@ const { URL } = require("node:url");
 
 const LOCAL_PRINCIPAL_ID = "local-device";
 const PRINCIPAL_ID_PATTERN = /^[a-f0-9]{64}$/;
+const PRINCIPAL_ID_DOMAIN = "sharegpt-principal-v2";
 
-function normalizeServerOrigin(rawUrl) {
+function normalizeServerBaseUrl(rawUrl) {
+  const raw = String(rawUrl || "").trim();
   let url;
   try {
-    url = new URL(String(rawUrl || "").trim());
+    url = new URL(raw);
   } catch {
     return "";
   }
-  if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) {
+  if (
+    (url.protocol !== "http:" && url.protocol !== "https:") ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    raw.includes("?") ||
+    raw.includes("#")
+  ) {
     return "";
   }
-  return url.origin.toLowerCase();
+  const pathname = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
+  return `${url.origin}${pathname}`;
 }
 
 function normalizePrincipalUsername(value) {
-  return String(value || "")
-    .normalize("NFKC")
-    .trim()
-    .toLowerCase();
+  const username = String(value ?? "");
+  return username.trim() ? username : "";
 }
 
 function principalIdFor(serverUrl, username) {
-  const origin = normalizeServerOrigin(serverUrl);
-  const normalizedUsername = normalizePrincipalUsername(username);
-  if (!origin || !normalizedUsername) return "";
+  const serverBaseUrl = normalizeServerBaseUrl(serverUrl);
+  const confirmedUsername = normalizePrincipalUsername(username);
+  if (!serverBaseUrl || !confirmedUsername) return "";
   return crypto
     .createHash("sha256")
-    .update(`${origin}\0${normalizedUsername}`, "utf8")
+    .update(`${PRINCIPAL_ID_DOMAIN}\0${serverBaseUrl}\0${confirmedUsername}`, "utf8")
     .digest("hex");
 }
 
@@ -46,6 +55,6 @@ module.exports = {
   LOCAL_PRINCIPAL_ID,
   normalizePrincipalId,
   normalizePrincipalUsername,
-  normalizeServerOrigin,
+  normalizeServerBaseUrl,
   principalIdFor,
 };

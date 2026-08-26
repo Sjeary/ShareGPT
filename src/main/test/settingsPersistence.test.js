@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -75,7 +76,7 @@ test("translation settings survive save and reload without overwriting other sec
   assert.equal(reloaded.ui.sidebarSide, "right");
 });
 
-test("legacy notesAi settings migrate into translation as the single source of truth", (t) => {
+test("legacy notesAi settings migrate only for an exact principal owner", (t) => {
   const backend = createBackend(t);
   fs.mkdirSync(path.dirname(backend.settingsFile), { recursive: true });
   fs.writeFileSync(
@@ -93,7 +94,7 @@ test("legacy notesAi settings migrate into translation as the single source of t
     "utf8",
   );
 
-  const migrated = backend.activatePrincipal("https://collab.example", "alice").settings;
+  const migrated = backend.activatePrincipal("https://collab.example/path", "Alice").settings;
   assert.equal(migrated.settingsRevision, 5);
   assert.deepEqual(migrated.translation.ai, {
     baseUrl: "https://ai.example",
@@ -102,6 +103,15 @@ test("legacy notesAi settings migrate into translation as the single source of t
     effort: "high",
   });
   assert.equal(Object.hasOwn(migrated, "notesAi"), false);
+  const stored = JSON.parse(fs.readFileSync(backend.settingsFile, "utf8"));
+  const principal = backend.getPrincipalContext();
+  assert.equal(stored.principalSettings.version, 2);
+  assert.equal(
+    stored.principalSettings.byPrincipal[principal.principalId].ownerServer,
+    "https://collab.example/path",
+  );
+  assert.equal(stored.principalSettings.byPrincipal[principal.principalId].ownerUsername, "Alice");
+  assert.equal(principal.legacyPartitionOwnerId, principal.principalId);
 });
 
 test("advanced AI and translation settings are isolated and persistent per principal", (t) => {
@@ -140,7 +150,17 @@ test("advanced AI and translation settings are isolated and persistent per princ
     bob.settingsRevision,
   );
 
-  const aliceAgain = backend.activatePrincipal("https://collab.example", "ALICE").settings;
+  const uppercaseAlice = backend.activatePrincipal("https://collab.example", "Alice").settings;
+  assert.deepEqual(uppercaseAlice.advancedAi.environments, []);
+  assert.equal(uppercaseAlice.translation.api.baseUrl, "");
+  const otherServerPath = backend.activatePrincipal(
+    "https://collab.example/team-a",
+    "alice",
+  ).settings;
+  assert.deepEqual(otherServerPath.advancedAi.environments, []);
+  assert.equal(otherServerPath.translation.api.baseUrl, "");
+
+  const aliceAgain = backend.activatePrincipal("https://collab.example", "alice").settings;
   assert.equal(aliceAgain.settingsRevision, bobSaved.settingsRevision);
   assert.deepEqual(
     aliceAgain.advancedAi.environments.map((environment) => environment.id),
@@ -166,7 +186,76 @@ test("legacy sensitive settings without a reliable owner stay preserved but unex
   const bob = backend.activatePrincipal("https://collab.example", "bob").settings;
   assert.equal(bob.translation.api.baseUrl, "");
   const stored = JSON.parse(fs.readFileSync(backend.settingsFile, "utf8"));
-  assert.equal(stored.principalSettings.unowned.translation.api.baseUrl, "https://unowned.example");
+  assert.equal(
+    stored.principalSettings.unowned.legacyUnowned.translation.api.baseUrl,
+    "https://unowned.example",
+  );
+});
+
+test("V1 principal buckets remain archived and cannot be claimed by a colliding V2 identity", (t) => {
+  const backend = createBackend(t);
+  const legacyPrincipalId = crypto
+    .createHash("sha256")
+    .update("https://collab.example\0alice", "utf8")
+    .digest("hex");
+  fs.mkdirSync(path.dirname(backend.settingsFile), { recursive: true });
+  fs.writeFileSync(
+    backend.settingsFile,
+    JSON.stringify({
+      settingsRevision: 7,
+      collab: { server_url: "https://collab.example", last_username: "Alice" },
+      principalSettings: {
+        version: 1,
+        byPrincipal: {
+          [legacyPrincipalId]: {
+            advancedAi: { enabled: true, environments: [] },
+            translation: {
+              api: { baseUrl: "https://legacy-alice.example", apiKey: "legacy-secret" },
+            },
+          },
+        },
+        unowned: null,
+        legacyPartitionOwnerId: legacyPrincipalId,
+      },
+    }),
+    "utf8",
+  );
+
+  const alice = backend.activatePrincipal("https://collab.example", "alice").settings;
+  assert.equal(alice.translation.api.baseUrl, "");
+  assert.notEqual(backend.getPrincipalContext().principalId, legacyPrincipalId);
+  assert.equal(backend.getPrincipalContext().legacyPartitionOwnerId, "");
+
+  const stored = JSON.parse(fs.readFileSync(backend.settingsFile, "utf8"));
+  assert.equal(stored.principalSettings.version, 2);
+  assert.equal(
+    stored.principalSettings.unowned.legacyByPrincipal[legacyPrincipalId].translation.api.baseUrl,
+    "https://legacy-alice.example",
+  );
+  assert.deepEqual(stored.principalSettings.byPrincipal, {});
+});
+
+test("an unclaimed root legacy bucket can later be claimed only by its exact owner", (t) => {
+  const backend = createBackend(t);
+  fs.mkdirSync(path.dirname(backend.settingsFile), { recursive: true });
+  fs.writeFileSync(
+    backend.settingsFile,
+    JSON.stringify({
+      settingsRevision: 2,
+      collab: { server_url: "https://collab.example/team-a", last_username: "Alice" },
+      translation: { api: { baseUrl: "https://alice.example", apiKey: "alice-secret" } },
+    }),
+    "utf8",
+  );
+
+  const wrongPath = backend.activatePrincipal("https://collab.example/team-b", "Alice").settings;
+  assert.equal(wrongPath.translation.api.baseUrl, "");
+  const wrongCase = backend.activatePrincipal("https://collab.example/team-a", "alice").settings;
+  assert.equal(wrongCase.translation.api.baseUrl, "");
+
+  const exact = backend.activatePrincipal("https://collab.example/team-a", "Alice").settings;
+  assert.equal(exact.translation.api.baseUrl, "https://alice.example");
+  assert.equal(exact.translation.api.apiKey, "alice-secret");
 });
 
 test("same-section nested operations survive a revision conflict without lost updates", (t) => {

@@ -3,6 +3,7 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore, type AuthProfile } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import { useNotesAiStore } from '@/store/useNotesAiStore'
 import { useTranslationStore } from '@/store/useTranslationStore'
 import { normalizeChatMessage, normalizeDirectory } from '@/components/panels/chat/normalize'
 import {
@@ -15,7 +16,8 @@ import type { AppSettings, SenderSettings } from '@/types/settings'
 
 // 协作服务器登录/退出逻辑 (移植自旧 renderer.js performCollabLogin / collabLogout)。
 // 端点 (渲染层直连协作服务器, 非 IPC):
-//   POST {server}/api/login   body: { username, password, client }  -> { token, profile:{avatar,displayName}, ... }
+//   POST {server}/api/login   body: { username, password, client }
+//     -> { token, username, profile:{avatar,displayName}, ... }
 //   POST {server}/api/logout  header: Authorization: Bearer <token>
 //
 // 登录成功后: 写 useAuthStore(token/profile/runtimePassword)、useAppStore.setAuthed(true)、
@@ -34,6 +36,7 @@ export interface LoginParams {
 
 interface LoginResponse {
   token?: string
+  username?: string
   profile?: {
     avatar?: string
     displayName?: string
@@ -221,6 +224,23 @@ export function useAuth() {
       if (!/^https?:\/\//i.test(cleanedServer)) {
         throw new Error('服务地址需要以 http:// 或 https:// 开头')
       }
+      let parsedServer: URL
+      try {
+        parsedServer = new URL(cleanedServer)
+      } catch {
+        throw new Error('服务地址格式不正确')
+      }
+      if (
+        (parsedServer.protocol !== 'http:' && parsedServer.protocol !== 'https:') ||
+        parsedServer.username ||
+        parsedServer.password ||
+        parsedServer.search ||
+        parsedServer.hash ||
+        cleanedServer.includes('?') ||
+        cleanedServer.includes('#')
+      ) {
+        throw new Error('服务地址不能包含账号信息、查询参数或片段')
+      }
 
       const response = await fetchWithTimeout(
         `${cleanedServer}/api/login`,
@@ -245,6 +265,10 @@ export function useAuth() {
       if (!payload?.token) {
         throw new Error('登录未成功，请稍后重试')
       }
+      const confirmedUsername = typeof payload.username === 'string' ? payload.username : ''
+      if (!confirmedUsername.trim()) {
+        throw new Error('服务器未返回已确认的账号身份')
+      }
 
       // 在暴露新会话前先清除上一账号的远程线路，再读取服务器的权威 bootstrap。
       // bootstrap 失败仍允许基础聊天登录，但高级 AI 保持 fail-closed。
@@ -252,11 +276,14 @@ export function useAuth() {
       await api.closeAllAiWorkspaces().catch(() => {})
       const principal = await api.activateSettingsPrincipal({
         serverUrl: cleanedServer,
-        username: cleanedUser,
+        username: confirmedUsername,
       })
       const principalSettings = principal.settings as unknown as AppSettings
       useAppStore.setState({ settings: principalSettings })
       useTranslationStore.getState().resetForPrincipal(principalSettings.translation)
+      useNotesAiStore
+        .getState()
+        .resetForPrincipal(principal.principalId, principalSettings.translation)
       await clearRemoteRouteState()
       let bootstrap: BootstrapPayload | null = null
       try {
@@ -268,8 +295,8 @@ export function useAuth() {
 
       const routeAuthorizationVerified = Boolean(bootstrap?.proxyRoutesAuthoritative)
       const profile: AuthProfile = {
-        username: cleanedUser,
-        displayName: (payload.profile?.displayName ?? '').trim() || cleanedUser,
+        username: confirmedUsername,
+        displayName: (payload.profile?.displayName ?? '').trim() || confirmedUsername,
         avatar: (payload.profile?.avatar ?? '').trim(),
         isAdmin: Boolean(payload.profile?.isAdmin),
         advancedAiAllowed: Boolean(payload.profile?.advancedAiAllowed),
@@ -283,7 +310,7 @@ export function useAuth() {
       // 持久化登录偏好成功后才公开运行期会话，避免半登录状态。
       await patchSection('collab', {
         server_url: cleanedServer,
-        last_username: cleanedUser,
+        last_username: confirmedUsername,
         last_avatar: profile.avatar,
         remember_password: rememberPassword,
         saved_password: rememberPassword ? password : '',
@@ -297,7 +324,7 @@ export function useAuth() {
       useChatStore.getState().setIdentity({
         serverUrl: cleanedServer,
         token: payload.token,
-        username: cleanedUser,
+        username: confirmedUsername,
         displayName: profile.displayName,
         avatar: profile.avatar,
       })
@@ -359,8 +386,10 @@ export function useAuth() {
       const localSettings = local.settings as unknown as AppSettings
       useAppStore.setState({ settings: localSettings })
       useTranslationStore.getState().resetForPrincipal(localSettings.translation)
+      useNotesAiStore.getState().resetForPrincipal(local.principalId, localSettings.translation)
     } else {
       useTranslationStore.getState().resetForPrincipal()
+      useNotesAiStore.getState().invalidatePrincipal()
     }
 
     clearSession()

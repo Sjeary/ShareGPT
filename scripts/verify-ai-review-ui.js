@@ -7,6 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { _electron: electron } = require("playwright");
+const { principalIdFor: principalId } = require("../src/main/principal");
 
 // Full desktop smoke test for the advanced AI review fixes. It uses a temporary
 // user-data directory and loopback-only services, so real account cookies and routes stay untouched.
@@ -225,13 +226,6 @@ async function sendZoomShortcut(electronApp, keyCode) {
   }, keyCode);
 }
 
-function principalId(baseUrl, username) {
-  return crypto
-    .createHash("sha256")
-    .update(`${new URL(baseUrl).origin.toLowerCase()}\0${username.trim().toLowerCase()}`)
-    .digest("hex");
-}
-
 async function partitionStorage(electronApp, partition, fixtureUrl, writeValue) {
   return electronApp.evaluate(
     async ({ BrowserWindow }, args) => {
@@ -384,10 +378,20 @@ async function main() {
       ],
       activeByKind: { gpt: "env-gpt-one", gemini: "", claude: "env-claude-one" },
     });
+    await patchSection(window, "translation", {
+      provider: "ai",
+      ai: {
+        baseUrl: "http://notes-a.example/v1",
+        apiKey: "alice-notes-key",
+        model: "gpt-5.5",
+        effort: "medium",
+      },
+    });
     await window.reload();
     await login(window, baseUrl, USERNAME);
     const advancedLoginState = await window.evaluate(async () => window.api.loadSettings());
     assert.strictEqual(advancedLoginState.advancedAi.enabled, true);
+    assert.strictEqual(advancedLoginState.translation.ai.apiKey, "alice-notes-key");
     assert.deepStrictEqual(
       advancedLoginState.sender.authorized_proxy_route_ids,
       ["route-a", "route-b"],
@@ -397,6 +401,23 @@ async function main() {
       advancedLoginState.sender.managed_proxy_routes.map((route) => route.id),
       ["route-a", "route-b"],
     );
+    await window.locator('[data-tour="nav-notes"]').click();
+    await window.getByTitle("今日笔记").click();
+    await window.getByRole("button", { name: "AI", exact: true }).click();
+    await window.getByTitle("AI 设置").click();
+    const notesEndpointInput = window.getByLabel("接口地址");
+    const notesApiKeyInput = window.getByLabel("API Key");
+    await notesEndpointInput.waitFor();
+    assert.strictEqual(await notesApiKeyInput.inputValue(), "alice-notes-key");
+    await window.getByRole("status").filter({ hasText: "明文" }).waitFor();
+    await notesEndpointInput.fill("https://notes.example/v1");
+    assert.strictEqual(await window.getByRole("status").filter({ hasText: "明文" }).count(), 0);
+    await notesEndpointInput.fill("http://127.0.0.1:8080/v1");
+    assert.strictEqual(await window.getByRole("status").filter({ hasText: "明文" }).count(), 0);
+    await notesEndpointInput.fill("http://notes.example/v1");
+    await window.getByRole("status").filter({ hasText: "明文" }).waitFor();
+    results.push("Notes AI HTTP warning is visible while HTTPS and loopback stay unflagged");
+
     await window.locator('[data-tour="nav-gpt"]').click();
     await window.getByRole("button", { name: "管理环境与线路" }).click();
     await window.getByText("ChatGPT 环境", { exact: true }).waitFor();
@@ -576,6 +597,15 @@ async function main() {
     const bobInitial = await window.evaluate(async () => window.api.loadSettings());
     assert.deepStrictEqual(bobInitial.advancedAi.environments, []);
     assert.strictEqual(bobInitial.translation.api.baseUrl, "");
+    assert.strictEqual(bobInitial.translation.ai.apiKey, "");
+    await window.locator('[data-tour="nav-notes"]').click();
+    await window.getByTitle("今日笔记").click();
+    await window.getByRole("button", { name: "AI", exact: true }).click();
+    const bobNotesApiKeyInput = window.getByLabel("API Key");
+    await bobNotesApiKeyInput.waitFor();
+    assert.strictEqual(await bobNotesApiKeyInput.inputValue(), "");
+    results.push("Notes AI runtime drops the previous principal provider on A-to-B switch");
+    await window.locator('[data-tour="nav-account"]').click();
     await patchSection(window, "advancedAi", {
       version: 1,
       enabled: true,
@@ -600,6 +630,7 @@ async function main() {
     assert.ok(aliceAgain.advancedAi.environments.some((item) => item.id === "env-gpt-one"));
     assert.ok(!aliceAgain.advancedAi.environments.some((item) => item.id === "env-bob"));
     assert.notStrictEqual(aliceAgain.translation.api.baseUrl, `${fixtureUrl}/bob`);
+    assert.strictEqual(aliceAgain.translation.ai.apiKey, "alice-notes-key");
     const restoredAliceMarker = await partitionStorage(electronApp, alicePartition, fixtureUrl);
     assert.strictEqual(restoredAliceMarker.local, "alice-only");
     assert.match(restoredAliceMarker.cookie, /principal-marker=alice-only/);

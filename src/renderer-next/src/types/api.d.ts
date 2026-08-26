@@ -186,15 +186,21 @@ export interface NotesAiRequest {
   }
   instructions?: string
 }
+export interface NotesAiCompletionRequest extends NotesAiRequest {
+  principalId: string
+  principalGeneration: number
+}
 export interface NotesAiEvent {
   streamId: string
+  principalId: string
   type: 'delta' | 'done' | 'error' | 'status'
   text?: string
   message?: string
 }
 export interface NotesAiApi {
-  complete: (req: NotesAiRequest) => Promise<{ streamId: string }>
+  complete: (req: NotesAiCompletionRequest) => Promise<{ streamId: string; principalId: string }>
   cancel: (streamId: string) => Promise<{ ok: boolean }>
+  invalidatePrincipal: (principalId: string) => Promise<{ ok: boolean; count: number }>
 }
 
 export interface ShareGptApi {
@@ -209,7 +215,10 @@ export interface ShareGptApi {
     principalId: string
     settings: Record<string, unknown>
   }>
-  clearSettingsPrincipal: () => Promise<{ settings: Record<string, unknown> }>
+  clearSettingsPrincipal: () => Promise<{
+    principalId: string
+    settings: Record<string, unknown>
+  }>
   saveSettings: (settings: Record<string, unknown>) => Promise<unknown>
   patchSettings: (payload: {
     section: string
@@ -220,6 +229,7 @@ export interface ShareGptApi {
     section: 'advancedAi' | 'translation'
     operations: Array<{ op: 'set' | 'delete'; path: string[]; value?: unknown }>
     expectedRevision?: number
+    expectedPrincipalId?: string
   }) => Promise<Record<string, unknown>>
   importSettings: () => Promise<unknown>
   loadChatHistory: () => Promise<unknown>

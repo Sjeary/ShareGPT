@@ -3,6 +3,7 @@ import { api } from '@/lib/api'
 import { wsBus } from '@/lib/wsBus'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
+import { useNotesAiStore } from '@/store/useNotesAiStore'
 import {
   privateConversationKey,
   roomConversationKey,
@@ -427,8 +428,11 @@ export function useChat() {
     // 账号断开就不应继续以本机转发流量 (对齐旧版 stopSenderBecauseAccountOffline)。
     // 仅在终态调用; socket/静默重登等瞬断会自动重连, 不在此停, 避免代理频繁起停。
     const stopSenderForAccountOffline = () => {
+      const notesAiPrincipalId = useNotesAiStore.getState().principalId
       void api.stopSender().catch(() => {})
       void api.closeAllAiWorkspaces().catch(() => {})
+      void api.notesAi.invalidatePrincipal(notesAiPrincipalId).catch(() => {})
+      useNotesAiStore.getState().invalidatePrincipal()
       void useAppStore
         .getState()
         .patchSection('sender', {
@@ -520,6 +524,7 @@ export function useChat() {
         }
         const payload = (await res.json().catch(() => null)) as {
           token?: string
+          username?: string
           profile?: {
             avatar?: string
             displayName?: string
@@ -530,7 +535,11 @@ export function useChat() {
           }
         } | null
         if (!payload?.token) throw new Error('登录未成功')
-        const displayName = (payload.profile?.displayName ?? '').trim() || username
+        const confirmedUsername = typeof payload.username === 'string' ? payload.username : ''
+        if (!confirmedUsername.trim() || confirmedUsername !== username) {
+          throw new Error('服务器返回的账号身份已变化，请重新登录')
+        }
+        const displayName = (payload.profile?.displayName ?? '').trim() || confirmedUsername
         const avatar = (payload.profile?.avatar ?? '').trim()
         await refreshAuthoritativeRoutes(serverUrl, payload.token)
         const refreshedProfile = useAuthStore.getState().profile
@@ -538,7 +547,7 @@ export function useChat() {
         setSession({
           token: payload.token,
           profile: {
-            username,
+            username: confirmedUsername,
             displayName,
             avatar,
             isAdmin: Boolean(payload.profile?.isAdmin),

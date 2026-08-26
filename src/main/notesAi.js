@@ -54,38 +54,83 @@ function endpointFor(baseUrl) {
 
 function createNotesAi({
   getWindow,
+  getPrincipalId = () => "",
+  requirePrincipalContext = false,
   lookup = undefined,
   httpRequest = http.request,
   httpsRequest = https.request,
 }) {
   let counter = 0;
+  let blockedPrincipalId = "";
   const live = new Map();
   const MAX_RETRY = 2;
   const MAX_ERROR_BODY_BYTES = 64 * 1024;
 
-  function emit(streamId, payload) {
+  function emit(stream, payload) {
+    if (stream.cancelled || stream.principalId !== String(getPrincipalId() || "")) return false;
     const win = getWindow();
-    if (win && !win.isDestroyed()) win.webContents.send("notes-ai:event", { streamId, ...payload });
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("notes-ai:event", {
+        streamId: stream.id,
+        principalId: stream.principalId,
+        ...payload,
+      });
+      return true;
+    }
+    return false;
   }
 
   function complete(req) {
     const streamId = `ai_${++counter}`;
+    const principalId = String(getPrincipalId() || "");
+    const expectedPrincipalId = String(req?.principalId || "");
+    if (
+      requirePrincipalContext &&
+      (!principalId ||
+        !expectedPrincipalId ||
+        expectedPrincipalId !== principalId ||
+        blockedPrincipalId === principalId)
+    ) {
+      throw new Error("Notes AI principal 已变化，请重试");
+    }
     const provider = (req && req.provider) || {};
     const baseUrl = String(provider.baseUrl || "").trim();
     const apiKey = String(provider.apiKey || "").trim();
     const model = String(provider.model || "gpt-5.5").trim();
     const effort = String(provider.effort || "medium").trim();
+    const stream = {
+      id: streamId,
+      principalId,
+      request: null,
+      retryTimer: null,
+      attempt: 0,
+      terminal: false,
+      cancelled: false,
+      gotDelta: false,
+    };
+    live.set(streamId, stream);
+
+    const finishOnce = (payload) => {
+      if (stream.terminal || stream.cancelled) return false;
+      stream.terminal = true;
+      if (stream.retryTimer) clearTimeout(stream.retryTimer);
+      stream.retryTimer = null;
+      emit(stream, payload);
+      live.delete(streamId);
+      return true;
+    };
+
     if (!baseUrl || !apiKey) {
-      setImmediate(() => emit(streamId, { type: "error", message: "未配置 AI 接口地址或密钥" }));
-      return { streamId };
+      setImmediate(() => finishOnce({ type: "error", message: "未配置 AI 接口地址或密钥" }));
+      return { streamId, principalId };
     }
 
     let endpoint;
     try {
       endpoint = parseEndpoint(endpointFor(baseUrl), { label: "AI 接口", allowRemoteHttp: true });
     } catch (error) {
-      setImmediate(() => emit(streamId, { type: "error", message: error.message }));
-      return { streamId };
+      setImmediate(() => finishOnce({ type: "error", message: error.message }));
+      return { streamId, principalId };
     }
 
     const payload = {
@@ -107,31 +152,12 @@ function createNotesAi({
         String(msg || ""),
       );
     };
-    const stream = {
-      request: null,
-      retryTimer: null,
-      attempt: 0,
-      terminal: false,
-      cancelled: false,
-      gotDelta: false,
-    };
-    live.set(streamId, stream);
-
-    const finishOnce = (payload) => {
-      if (stream.terminal || stream.cancelled) return false;
-      stream.terminal = true;
-      if (stream.retryTimer) clearTimeout(stream.retryTimer);
-      stream.retryTimer = null;
-      emit(streamId, payload);
-      live.delete(streamId);
-      return true;
-    };
 
     const scheduleRetry = () => {
       if (stream.cancelled || stream.terminal) return;
       const nextAttempt = stream.attempt + 1;
       const delay = 800 * nextAttempt + 400 * (nextAttempt - 1);
-      emit(streamId, {
+      emit(stream, {
         type: "status",
         message: `服务繁忙, 正在重试(${nextAttempt}/${MAX_RETRY})…`,
       });
@@ -166,7 +192,7 @@ function createNotesAi({
         const event = JSON.parse(data);
         if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
           stream.gotDelta = true;
-          emit(streamId, { type: "delta", text: event.delta });
+          emit(stream, { type: "delta", text: event.delta });
         } else if (event.type === "response.completed") {
           finishOnce({ type: "done" });
         } else if (event.type === "response.failed" || event.type === "error") {
@@ -262,7 +288,7 @@ function createNotesAi({
     }
 
     send(0);
-    return { streamId };
+    return { streamId, principalId };
   }
 
   function cancel(streamId) {
@@ -279,7 +305,27 @@ function createNotesAi({
     return { ok: true };
   }
 
-  return { complete, cancel };
+  function cancelAll() {
+    const count = live.size;
+    for (const streamId of [...live.keys()]) cancel(streamId);
+    return { ok: true, count };
+  }
+
+  function invalidatePrincipal(expectedPrincipalId = "") {
+    const principalId = String(getPrincipalId() || "");
+    if (expectedPrincipalId && String(expectedPrincipalId) !== principalId) {
+      return { ok: false, count: 0 };
+    }
+    blockedPrincipalId = principalId;
+    return cancelAll();
+  }
+
+  function activatePrincipal() {
+    blockedPrincipalId = "";
+    return { ok: true, principalId: String(getPrincipalId() || "") };
+  }
+
+  return { complete, cancel, cancelAll, invalidatePrincipal, activatePrincipal };
 }
 
 module.exports = { createNotesAi };

@@ -4,6 +4,7 @@ import { Loader2, Send, Sparkles, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useEditorBridge } from '@/store/useEditorBridge'
 import { useNotesAiStore } from '@/store/useNotesAiStore'
+import { useAppStore } from '@/store/useAppStore'
 import { runAi } from '@/lib/notes/aiClient'
 
 // 选中文本后的浮动「问 AI」按钮 (Cursor/Notion 式入口)。
@@ -71,7 +72,10 @@ export function InlineAiEdit() {
   const aiEdit = useEditorBridge((s) => s.aiEdit)
   const close = useEditorBridge((s) => s.closeAiEdit)
   const replaceRange = useEditorBridge((s) => s.replaceRange)
-  const configured = useNotesAiStore((s) => Boolean(s.apiKey && s.baseUrl))
+  const configured = useAppStore((s) =>
+    Boolean(s.settings?.translation?.ai?.apiKey && s.settings?.translation?.ai?.baseUrl),
+  )
+  const principalGeneration = useNotesAiStore((s) => s.principalGeneration)
   const [instruction, setInstruction] = useState('')
   const [result, setResult] = useState('')
   const [running, setRunning] = useState(false)
@@ -92,6 +96,15 @@ export function InlineAiEdit() {
     return () => clearTimeout(t)
   }, [open])
   useEffect(() => () => cancelRef.current?.(), [])
+  useEffect(() => {
+    cancelRef.current?.()
+    cancelRef.current = null
+    /* eslint-disable react-hooks/set-state-in-effect */
+    setResult('')
+    setErr('')
+    setRunning(false)
+    /* eslint-enable react-hooks/set-state-in-effect */
+  }, [principalGeneration])
 
   if (!aiEdit?.open) return null
   const hasSel = aiEdit.original.trim().length > 0

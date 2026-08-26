@@ -328,7 +328,7 @@ export function LoginForm() {
           </div>
           {showPreviewEntry && (
             <p className="mt-2 text-center text-[11px] text-muted-foreground">
-              v{String(meta.version || '1.0.8')}
+              v{String(meta.version || '1.0.9')}
             </p>
           )}
         </div>
