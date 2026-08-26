@@ -204,8 +204,13 @@ async function login(window, baseUrl, username) {
 
 async function patchSection(window, section, patch) {
   return window.evaluate(
-    ({ sectionName, sectionPatch }) => {
-      return window.api.patchSettings({ section: sectionName, patch: sectionPatch });
+    async ({ sectionName, sectionPatch }) => {
+      const { principalId } = await window.api.getSettingsPrincipal();
+      return window.api.patchSettings({
+        section: sectionName,
+        patch: sectionPatch,
+        expectedPrincipalId: principalId,
+      });
     },
     { sectionName: section, sectionPatch: patch },
   );
