@@ -4,8 +4,12 @@ contextBridge.exposeInMainWorld("api", {
   platform: process.platform,
   setThemeSource: (source) => ipcRenderer.invoke("app:set-theme-source", source),
   loadSettings: () => ipcRenderer.invoke("settings:load"),
+  activateSettingsPrincipal: (payload) =>
+    ipcRenderer.invoke("settings:principal-activate", payload),
+  clearSettingsPrincipal: () => ipcRenderer.invoke("settings:principal-clear"),
   saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
   patchSettings: (payload) => ipcRenderer.invoke("settings:patch", payload),
+  operateSettings: (payload) => ipcRenderer.invoke("settings:operate", payload),
   importSettings: () => ipcRenderer.invoke("settings:import"),
   loadChatHistory: () => ipcRenderer.invoke("chat-history:load"),
   saveChatHistory: (payload) => ipcRenderer.invoke("chat-history:save", payload),
@@ -47,8 +51,8 @@ contextBridge.exposeInMainWorld("api", {
   },
   translateText: (payload) => ipcRenderer.invoke("translation:translate", payload),
   cancelTranslation: (requestId) => ipcRenderer.invoke("translation:cancel", requestId),
-  captureAiPageText: (kind, tabId) =>
-    ipcRenderer.invoke("translation:capture-page", { kind, tabId }),
+  captureAiPageText: (kind, tabId, context) =>
+    ipcRenderer.invoke("translation:capture-page", { ...(context || {}), kind, tabId }),
   exportUserData: () => ipcRenderer.invoke("user-data:export"),
   importUserData: () => ipcRenderer.invoke("user-data:import"),
   readClipboardAttachment: () => ipcRenderer.invoke("clipboard:read-attachment"),
@@ -66,7 +70,7 @@ contextBridge.exposeInMainWorld("api", {
   showSystemNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),
   openExternal: (url) => ipcRenderer.invoke("shell:open-external", url),
   // AI 标签 (GPT / Gemini 通用, 传 kind)。
-  listAiViews: (kind) => ipcRenderer.invoke("ai-tabs:list", { kind }),
+  listAiViews: (payload) => ipcRenderer.invoke("ai-tabs:list", payload),
   createAiView: (kind, payload) =>
     ipcRenderer.invoke("ai-tabs:create", { ...(payload || {}), kind }),
   switchAiView: (kind, payload) =>
@@ -80,7 +84,8 @@ contextBridge.exposeInMainWorld("api", {
   checkAiEnvironmentEgress: (payload) => ipcRenderer.invoke("ai:environment-egress-check", payload),
   syncAiViewHost: (payload) => ipcRenderer.invoke("ai:sync-host", payload),
   navigateAiWorkspace: (payload) => ipcRenderer.invoke("ai:navigate", payload),
-  checkAiProxy: (kind, tabId) => ipcRenderer.invoke("ai:proxy-check", { kind, tabId }),
+  checkAiProxy: (kind, tabId, context) =>
+    ipcRenderer.invoke("ai:proxy-check", { ...(context || {}), kind, tabId }),
   clearAiBrowserData: (kind, confirmation) =>
     ipcRenderer.invoke("ai:data-clear", { kind, ...(confirmation || {}) }),
   rebuildAiBrowserProfile: (kind, confirmation) =>

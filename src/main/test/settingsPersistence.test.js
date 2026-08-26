@@ -82,6 +82,7 @@ test("legacy notesAi settings migrate into translation as the single source of t
     backend.settingsFile,
     JSON.stringify({
       settingsRevision: 4,
+      collab: { server_url: "https://collab.example/path", last_username: "Alice" },
       notesAi: {
         baseUrl: "https://ai.example",
         apiKey: "legacy-key",
@@ -92,8 +93,8 @@ test("legacy notesAi settings migrate into translation as the single source of t
     "utf8",
   );
 
-  const migrated = backend.loadSettings();
-  assert.equal(migrated.settingsRevision, 4);
+  const migrated = backend.activatePrincipal("https://collab.example", "alice").settings;
+  assert.equal(migrated.settingsRevision, 5);
   assert.deepEqual(migrated.translation.ai, {
     baseUrl: "https://ai.example",
     apiKey: "legacy-key",
@@ -101,4 +102,144 @@ test("legacy notesAi settings migrate into translation as the single source of t
     effort: "high",
   });
   assert.equal(Object.hasOwn(migrated, "notesAi"), false);
+});
+
+test("advanced AI and translation settings are isolated and persistent per principal", (t) => {
+  const backend = createBackend(t);
+  const alice = backend.activatePrincipal("https://collab.example", "alice");
+  const aliceSaved = backend.patchSettings(
+    "advancedAi",
+    {
+      enabled: true,
+      environments: [
+        {
+          id: "alice-gpt",
+          kind: "gpt",
+          name: "Alice only",
+          routeId: "internal-unified",
+          createdAt: "2026-08-26T00:00:00.000Z",
+        },
+      ],
+      activeByKind: { gpt: "alice-gpt", gemini: "", claude: "" },
+    },
+    alice.settings.settingsRevision,
+  );
+  backend.patchSettings(
+    "translation",
+    { api: { baseUrl: "https://alice.example", apiKey: "alice-secret" } },
+    aliceSaved.settingsRevision,
+  );
+
+  const bob = backend.activatePrincipal("https://collab.example", "bob").settings;
+  assert.deepEqual(bob.advancedAi.environments, []);
+  assert.equal(bob.translation.api.baseUrl, "");
+  assert.equal(bob.translation.api.apiKey, "");
+  const bobSaved = backend.patchSettings(
+    "translation",
+    { api: { baseUrl: "https://bob.example", apiKey: "bob-secret" } },
+    bob.settingsRevision,
+  );
+
+  const aliceAgain = backend.activatePrincipal("https://collab.example", "ALICE").settings;
+  assert.equal(aliceAgain.settingsRevision, bobSaved.settingsRevision);
+  assert.deepEqual(
+    aliceAgain.advancedAi.environments.map((environment) => environment.id),
+    ["alice-gpt"],
+  );
+  assert.equal(aliceAgain.translation.api.baseUrl, "https://alice.example");
+  assert.equal(aliceAgain.translation.api.apiKey, "alice-secret");
+  assert.equal(Object.hasOwn(aliceAgain, "principalSettings"), false);
+});
+
+test("legacy sensitive settings without a reliable owner stay preserved but unexposed", (t) => {
+  const backend = createBackend(t);
+  fs.mkdirSync(path.dirname(backend.settingsFile), { recursive: true });
+  fs.writeFileSync(
+    backend.settingsFile,
+    JSON.stringify({
+      settingsRevision: 2,
+      translation: { api: { baseUrl: "https://unowned.example", apiKey: "unowned-secret" } },
+    }),
+    "utf8",
+  );
+
+  const bob = backend.activatePrincipal("https://collab.example", "bob").settings;
+  assert.equal(bob.translation.api.baseUrl, "");
+  const stored = JSON.parse(fs.readFileSync(backend.settingsFile, "utf8"));
+  assert.equal(stored.principalSettings.unowned.translation.api.baseUrl, "https://unowned.example");
+});
+
+test("same-section nested operations survive a revision conflict without lost updates", (t) => {
+  const backend = createBackend(t);
+  const activated = backend.activatePrincipal("https://collab.example", "alice").settings;
+  const seeded = backend.operateSettings(
+    "advancedAi",
+    [
+      {
+        op: "set",
+        path: ["environments", "env-one"],
+        value: {
+          id: "env-one",
+          kind: "gpt",
+          name: "Original",
+          routeId: "route-one",
+          createdAt: "2026-08-26T00:00:00.000Z",
+        },
+      },
+    ],
+    activated.settingsRevision,
+  );
+  const renamed = backend.operateSettings(
+    "advancedAi",
+    [{ op: "set", path: ["environments", "env-one", "name"], value: "Renamed" }],
+    seeded.settingsRevision,
+  );
+  assert.throws(
+    () =>
+      backend.operateSettings(
+        "advancedAi",
+        [{ op: "set", path: ["environments", "env-one", "routeId"], value: "route-two" }],
+        seeded.settingsRevision,
+      ),
+    /设置已被其他操作更新/,
+  );
+  const routed = backend.operateSettings(
+    "advancedAi",
+    [{ op: "set", path: ["environments", "env-one", "routeId"], value: "route-two" }],
+    renamed.settingsRevision,
+  );
+  assert.deepEqual(routed.advancedAi.environments[0], {
+    id: "env-one",
+    kind: "gpt",
+    name: "Renamed",
+    routeId: "route-two",
+    createdAt: "2026-08-26T00:00:00.000Z",
+  });
+});
+
+test("translation provider fields update independently and malicious paths are rejected", (t) => {
+  const backend = createBackend(t);
+  const first = backend.operateSettings(
+    "translation",
+    [{ op: "set", path: ["api", "baseUrl"], value: "https://translate.example" }],
+    0,
+  );
+  const second = backend.operateSettings(
+    "translation",
+    [{ op: "set", path: ["api", "apiKey"], value: "secret" }],
+    first.settingsRevision,
+  );
+  assert.equal(second.translation.api.baseUrl, "https://translate.example");
+  assert.equal(second.translation.api.apiKey, "secret");
+  for (const path of [["__proto__"], ["api", "constructor"], ["api", "unknown"]]) {
+    assert.throws(
+      () =>
+        backend.operateSettings(
+          "translation",
+          [{ op: "set", path, value: "x" }],
+          second.settingsRevision,
+        ),
+      /路径/,
+    );
+  }
 });

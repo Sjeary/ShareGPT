@@ -77,6 +77,7 @@ interface TranslationState {
   close: () => void
   setSourceText: (kind: AiKind, tabId: string, text: string) => void
   setSettingsOpen: (kind: AiKind, tabId: string, open: boolean) => void
+  resetForPrincipal: (settings?: Partial<TranslationSettings>) => void
 }
 
 export const useTranslationStore = create<TranslationState>((set, get) => ({
@@ -213,4 +214,17 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
     set((state) => (isTranslationTarget(state, kind, tabId) ? { sourceText } : state)),
   setSettingsOpen: (kind, tabId, settingsOpen) =>
     set((state) => (isTranslationTarget(state, kind, tabId) ? { settingsOpen } : state)),
+  resetForPrincipal: (settings) =>
+    set((state) => ({
+      open: false,
+      tabId: '',
+      sourceText: '',
+      result: '',
+      status: '',
+      loading: false,
+      settingsOpen: false,
+      requestGeneration: state.requestGeneration + 1,
+      loaded: true,
+      config: normalizeSettings(settings),
+    })),
 }))

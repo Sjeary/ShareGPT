@@ -15,8 +15,10 @@ const {
 const {
   hasCompleteUnifiedProxy,
   internalAiProxyRoutes,
+  normalizeAiEnvironmentId,
   validateAiRouteIsolation,
 } = require("./aiEnvironments");
+const { LOCAL_PRINCIPAL_ID, normalizePrincipalId, principalIdFor } = require("./principal");
 
 // 自动更新源 = GitHub Releases (参考 cc-switch 的做法)。仓库地址从 package.json 推导,
 // fork 的人只要改 package.json 的 homepage/repository 就指向自己的仓库, 不写死任何自建服务器。
@@ -166,6 +168,7 @@ const PUBLIC_DEFAULT_SETTINGS = {
     activeByKind: { gpt: "", gemini: "", claude: "" },
   },
   translation: structuredClone(DEFAULT_TRANSLATION_SETTINGS),
+  principalSettings: null,
   ui: {
     setup_guide_dismissed: false,
     theme: "dark",
@@ -317,6 +320,10 @@ function mergeSettings(base, override = {}) {
       override.translation || (override.notesAi ? undefined : base.translation),
       override.notesAi,
     ),
+    principalSettings:
+      override.principalSettings && typeof override.principalSettings === "object"
+        ? structuredClone(override.principalSettings)
+        : null,
     ui: { ...base.ui, ...(override.ui || {}) },
   };
 }
@@ -748,6 +755,7 @@ class Backend {
     this.activeProxiedSuffixes = null;
     this.activeAiProxyRoutes = [];
     this.senderState = "stopped";
+    this.activePrincipalId = LOCAL_PRINCIPAL_ID;
   }
 
   // 当前发送端配置里「走代理(梯子)」的域名后缀集合。路由规则(buildSenderConfig)与
@@ -972,7 +980,7 @@ class Backend {
     return uniqueCandidates[0];
   }
 
-  loadSettings() {
+  readStoredSettings() {
     const defaultSettings = this.loadPrivateDefaults();
     if (!fs.existsSync(this.settingsFile)) {
       return structuredClone(defaultSettings);
@@ -1000,8 +1008,82 @@ class Backend {
     }
   }
 
+  principalSettingsState(stored) {
+    const existing = stored?.principalSettings;
+    if (
+      existing?.version === 1 &&
+      existing.byPrincipal &&
+      typeof existing.byPrincipal === "object"
+    ) {
+      return { state: structuredClone(existing), migrated: false };
+    }
+
+    const ownerId = principalIdFor(stored?.collab?.server_url, stored?.collab?.last_username);
+    const legacy = {
+      advancedAi: structuredClone(stored?.advancedAi || PUBLIC_DEFAULT_SETTINGS.advancedAi),
+      translation: structuredClone(stored?.translation || DEFAULT_TRANSLATION_SETTINGS),
+    };
+    return {
+      migrated: true,
+      state: {
+        version: 1,
+        byPrincipal: ownerId ? { [ownerId]: legacy } : {},
+        unowned: ownerId ? null : legacy,
+        legacyPartitionOwnerId: ownerId,
+      },
+    };
+  }
+
+  materializePrincipalSettings(stored) {
+    const { state } = this.principalSettingsState(stored);
+    const principalId = normalizePrincipalId(this.activePrincipalId, { allowLocal: true });
+    const scoped = principalId ? state.byPrincipal?.[principalId] : null;
+    const result = {
+      ...stored,
+      advancedAi: structuredClone(scoped?.advancedAi || PUBLIC_DEFAULT_SETTINGS.advancedAi),
+      translation: normalizeTranslationSettings(scoped?.translation),
+    };
+    delete result.principalSettings;
+    return result;
+  }
+
+  loadSettings() {
+    return this.materializePrincipalSettings(this.readStoredSettings());
+  }
+
+  activatePrincipal(serverUrl, username) {
+    const principalId = principalIdFor(serverUrl, username);
+    if (!principalId) throw new Error("协作账号 principal 信息不合法");
+    const stored = this.readStoredSettings();
+    const { state, migrated } = this.principalSettingsState(stored);
+    this.activePrincipalId = principalId;
+    if (migrated) {
+      stored.principalSettings = state;
+      stored.settingsRevision = Math.max(0, Number(stored.settingsRevision) || 0) + 1;
+      writeJsonAtomic(this.settingsFile, transformSensitiveValues(stored, "encrypt"));
+    }
+    return {
+      principalId,
+      settings: this.materializePrincipalSettings({ ...stored, principalSettings: state }),
+    };
+  }
+
+  clearPrincipal() {
+    this.activePrincipalId = LOCAL_PRINCIPAL_ID;
+    return this.loadSettings();
+  }
+
+  getPrincipalContext() {
+    const { state } = this.principalSettingsState(this.readStoredSettings());
+    return {
+      principalId: this.activePrincipalId,
+      legacyPartitionOwnerId: normalizePrincipalId(state.legacyPartitionOwnerId),
+    };
+  }
+
   saveSettings(data) {
-    const currentRevision = this.loadSettings().settingsRevision || 0;
+    const stored = this.readStoredSettings();
+    const currentRevision = this.materializePrincipalSettings(stored).settingsRevision || 0;
     const suppliedRevision = Number(data?.settingsRevision);
     if (Number.isInteger(suppliedRevision) && suppliedRevision !== currentRevision) {
       throw Object.assign(new Error("设置已被其他操作更新，请重试"), {
@@ -1010,7 +1092,21 @@ class Backend {
     }
     const merged = mergeSettings(this.loadPrivateDefaults(), data);
     merged.settingsRevision = Math.max(currentRevision, merged.settingsRevision || 0) + 1;
-    writeJsonAtomic(this.settingsFile, transformSensitiveValues(merged, "encrypt"));
+    const { state } = this.principalSettingsState(stored);
+    const principalId = normalizePrincipalId(this.activePrincipalId, { allowLocal: true });
+    if (!principalId) throw new Error("当前 principal 标识不合法");
+    state.byPrincipal[principalId] = {
+      advancedAi: structuredClone(merged.advancedAi),
+      translation: structuredClone(merged.translation),
+    };
+    const persisted = {
+      ...merged,
+      // 根级值仅作为旧版迁移归档保留；有效配置始终来自 principalSettings。
+      advancedAi: stored.advancedAi || PUBLIC_DEFAULT_SETTINGS.advancedAi,
+      translation: stored.translation || DEFAULT_TRANSLATION_SETTINGS,
+      principalSettings: state,
+    };
+    writeJsonAtomic(this.settingsFile, transformSensitiveValues(persisted, "encrypt"));
     return merged;
   }
 
@@ -1046,6 +1142,127 @@ class Backend {
     return this.saveSettings({
       ...current,
       [target]: { ...(current[target] || {}), ...patch },
+      settingsRevision: current.settingsRevision,
+    });
+  }
+
+  operateSettings(section, operations, expectedRevision) {
+    const target = String(section || "");
+    if (target !== "advancedAi" && target !== "translation") {
+      throw new Error("该设置区域不支持路径操作");
+    }
+    if (!Array.isArray(operations) || !operations.length || operations.length > 100) {
+      throw new Error("设置操作列表不合法");
+    }
+    const current = this.loadSettings();
+    if (
+      Number.isInteger(expectedRevision) &&
+      expectedRevision >= 0 &&
+      expectedRevision !== current.settingsRevision
+    ) {
+      throw Object.assign(new Error("设置已被其他操作更新，请重试"), {
+        code: "SETTINGS_REVISION_CONFLICT",
+        current,
+      });
+    }
+    const nextSection = structuredClone(current[target]);
+    const blocked = new Set(["__proto__", "constructor", "prototype"]);
+    const assertSegments = (path) => {
+      if (!Array.isArray(path) || !path.length || path.length > 4)
+        throw new Error("设置路径不合法");
+      for (const segment of path) {
+        if (typeof segment !== "string" || !segment || blocked.has(segment)) {
+          throw new Error("设置路径不合法");
+        }
+      }
+    };
+    const allowedTranslation = new Set([
+      "version",
+      "provider",
+      "sourceLanguage",
+      "targetLanguage",
+      "ai.baseUrl",
+      "ai.apiKey",
+      "ai.model",
+      "ai.effort",
+      "api.baseUrl",
+      "api.apiKey",
+      "offline.baseUrl",
+    ]);
+    const environmentFields = new Set(["name", "routeId"]);
+
+    for (const operation of operations) {
+      if (!operation || typeof operation !== "object" || typeof operation.value === "function") {
+        throw new Error("设置操作不合法");
+      }
+      const path = operation.path;
+      assertSegments(path);
+      const op = operation.op === "delete" ? "delete" : operation.op === "set" ? "set" : "";
+      if (!op) throw new Error("设置操作不合法");
+
+      if (target === "translation") {
+        if (op !== "set" || !allowedTranslation.has(path.join("."))) {
+          throw new Error("不允许修改该翻译设置路径");
+        }
+        let parent = nextSection;
+        for (const segment of path.slice(0, -1)) parent = parent[segment];
+        parent[path.at(-1)] = structuredClone(operation.value);
+        continue;
+      }
+
+      if (path[0] === "enabled" && path.length === 1 && op === "set") {
+        nextSection.enabled = Boolean(operation.value);
+        continue;
+      }
+      if (
+        path[0] === "activeByKind" &&
+        path.length === 2 &&
+        ["gpt", "gemini", "claude"].includes(path[1]) &&
+        op === "set"
+      ) {
+        nextSection.activeByKind[path[1]] = normalizeAiEnvironmentId(operation.value);
+        continue;
+      }
+      if (path[0] !== "environments" || path.length < 2) {
+        throw new Error("不允许修改该高级环境设置路径");
+      }
+      const environmentId = normalizeAiEnvironmentId(path[1]);
+      if (!environmentId || environmentId !== path[1]) throw new Error("AI 环境标识不合法");
+      const index = nextSection.environments.findIndex(
+        (environment) => normalizeAiEnvironmentId(environment?.id) === environmentId,
+      );
+      if (path.length === 2) {
+        if (op === "delete") {
+          if (index >= 0) nextSection.environments.splice(index, 1);
+          for (const kind of ["gpt", "gemini", "claude"]) {
+            if (nextSection.activeByKind[kind] === environmentId)
+              nextSection.activeByKind[kind] = "";
+          }
+          continue;
+        }
+        if (index >= 0) throw new Error("AI 环境已存在");
+        const value = operation.value;
+        if (
+          !value ||
+          typeof value !== "object" ||
+          normalizeAiEnvironmentId(value.id) !== environmentId ||
+          !["gpt", "gemini", "claude"].includes(String(value.kind))
+        ) {
+          throw new Error("AI 环境配置不合法");
+        }
+        nextSection.environments.push(structuredClone(value));
+        continue;
+      }
+      if (path.length !== 3 || op !== "set" || !environmentFields.has(path[2])) {
+        throw new Error("不允许修改该高级环境设置路径");
+      }
+      if (index < 0) throw new Error("AI 环境不存在");
+      nextSection.environments[index][path[2]] = String(operation.value || "").trim();
+    }
+
+    return this.saveSettings({
+      ...current,
+      [target]: nextSection,
       settingsRevision: current.settingsRevision,
     });
   }
@@ -1650,6 +1867,7 @@ class Backend {
       senderRunning: this.senderState === "running",
       senderStarting: this.senderState === "starting",
       sender: this.senderState,
+      credentialStorage: getSafeStorage() ? "encrypted" : "plaintext-compatibility",
       aiProxyRoutes: this.activeAiProxyRoutes.map(({ id, label }) => ({ id, label })),
       receiverFrpcRunning: !!this.receiverFrpc,
       receiverSingboxRunning: !!this.receiverSingbox,
@@ -1841,8 +2059,20 @@ class Backend {
       sender.airport_outbound && typeof sender.airport_outbound === "object"
         ? sender.airport_outbound
         : null;
+    const authorizedRouteIds = new Set(
+      (Array.isArray(sender.authorized_proxy_route_ids) ? sender.authorized_proxy_route_ids : [])
+        .map((id) =>
+          String(id || "")
+            .trim()
+            .toLowerCase(),
+        )
+        .filter(Boolean),
+    );
     if (proxyMode === "unified" && !hasUnified) throw new Error("统一代理配置不完整");
     if (proxyMode === "airport" && !airportOutbound) throw new Error("管理员尚未下发机场节点");
+    if (proxyMode === "airport" && !authorizedRouteIds.has("internal-airport")) {
+      throw new Error("当前账号未获授权使用机场节点");
+    }
     const selectedProxyTag = proxyMode === "airport" ? "proxy-airport" : "proxy-unified";
     const aiProxyRoutes = internalAiProxyRoutes(sender);
     // 测试用「全部流量走代理」: 除私有 IP 直连外, 所有流量(含 DNS)都走 proxy(梯子),

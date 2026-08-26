@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
 import { createAiEnvironmentId } from '@/lib/aiEnvironments'
+import { currentAiEnvironmentOperation } from '@/lib/aiEnvironmentRuntime'
 import { normalizeEnvironmentNameDraft } from '@/lib/environmentName'
 import type { AiKind } from '@/store/useAiStore'
 import { useAppStore } from '@/store/useAppStore'
@@ -102,8 +103,8 @@ export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }
     try {
       setSavingId(environment.id)
       const result = (await api.deleteAiEnvironment({
-        kind,
-        environmentId: environment.id,
+        ...currentAiEnvironmentOperation(kind),
+        targetEnvironmentId: environment.id,
       })) as { settings?: AppSettings; dataCleared?: boolean }
       if (result.settings) {
         useAppStore.setState({ settings: result.settings })
@@ -124,8 +125,8 @@ export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }
     setCheckingId(environment.id)
     try {
       const result = (await api.checkAiEnvironmentEgress({
-        kind,
-        environmentId: environment.id,
+        ...currentAiEnvironmentOperation(kind),
+        targetEnvironmentId: environment.id,
       })) as RouteHealth & { route?: string }
       const currentRoute = routes.find((route) => route.id === environment.routeId)
       const currentResult = { ...result, configKey: currentRoute?.configKey }

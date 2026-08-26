@@ -61,12 +61,11 @@ import {
   routeForEnvironment,
 } from '@/lib/aiEnvironments'
 import type { AdvancedAiSettings } from '@/types/settings'
-
-const environmentActivationGeneration: Record<AiKind, number> = {
-  gpt: 0,
-  gemini: 0,
-  claude: 0,
-}
+import {
+  currentAiEnvironmentOperation,
+  isCurrentAiEnvironmentOperation,
+  startAiEnvironmentOperation,
+} from '@/lib/aiEnvironmentRuntime'
 
 function isEditableTarget(target: EventTarget | null): boolean {
   return (
@@ -259,7 +258,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     setProxyCheckingTarget(checkedTargetKey)
     setProxyResult(null)
     try {
-      const report = await api.checkAiProxy(kind, checkedTabId)
+      const report = await api.checkAiProxy(kind, checkedTabId, currentAiEnvironmentOperation(kind))
       if (generation === proxyCheckGeneration.current) {
         setProxyResult({ targetKey: checkedTargetKey, report })
       }
@@ -400,6 +399,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         ? normalizeHttpUrl(tab.url)
         : normalizeUrlFor(kind, tab.url || homeUrlFor(kind))
       const payload = (await api.ensureAiWorkspace({
+        ...currentAiEnvironmentOperation(kind),
         kind,
         tabId: tab.id,
         partition: advancedMode ? undefined : partitionFor(kind),
@@ -431,35 +431,37 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   useEffect(() => {
     let cancelled = false
-    const generation = ++environmentActivationGeneration[kind]
+    const operation = startAiEnvironmentOperation(kind, environmentId)
+    const { generation } = operation
     void (async () => {
       try {
         await api.activateAiEnvironment({ kind, environmentId, generation })
-        if (cancelled || generation !== environmentActivationGeneration[kind]) return
+        if (cancelled || !isCurrentAiEnvironmentOperation(operation)) return
         useAiStore.getState().setTabs(kind, [], '')
-        const payload = (await api.listAiViews(kind)) as AiEventPayload
-        if (cancelled || generation !== environmentActivationGeneration[kind]) return
+        const payload = (await api.listAiViews(operation)) as AiEventPayload
+        if (cancelled || !isCurrentAiEnvironmentOperation(operation)) return
         applyAiTabsPayload(kind, payload)
       } catch (error) {
-        if (!cancelled && generation === environmentActivationGeneration[kind]) {
+        if (!cancelled && isCurrentAiEnvironmentOperation(operation)) {
           setFeedback(kind, error instanceof Error ? error.message : String(error), 'error')
         }
         return
       }
-      if (!cancelled && generation === environmentActivationGeneration[kind] && networkReady) {
+      if (!cancelled && isCurrentAiEnvironmentOperation(operation) && networkReady) {
         try {
           const store = useAiStore.getState()
           if (!store.tabsByKind[kind].length) {
             const created = (await api.createAiView(kind, {
+              ...operation,
               lastUrl: homeUrlFor(kind),
               environmentId,
             })) as AiEventPayload
-            if (cancelled || generation !== environmentActivationGeneration[kind]) return
+            if (cancelled || !isCurrentAiEnvironmentOperation(operation)) return
             applyAiTabsPayload(kind, created)
             // activeTabId 更新会触发下面的 effect，再统一执行 ensure，避免并发初始化同一视图。
             return
           }
-          if (!cancelled && generation === environmentActivationGeneration[kind]) {
+          if (!cancelled && isCurrentAiEnvironmentOperation(operation)) {
             await ensureWorkspace()
           }
         } catch (err) {
@@ -489,7 +491,11 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const navigate = useCallback(
     async (action: 'back' | 'forward' | 'reload') => {
       try {
-        await api.navigateAiWorkspace({ kind, tabId: activeTabId, action })
+        await api.navigateAiWorkspace({
+          ...currentAiEnvironmentOperation(kind),
+          tabId: activeTabId,
+          action,
+        })
       } catch (err) {
         setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
       }
@@ -500,6 +506,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const goHome = useCallback(async () => {
     try {
       await api.navigateAiWorkspace({
+        ...currentAiEnvironmentOperation(kind),
         kind,
         tabId: activeTabId,
         action: 'load',
@@ -514,6 +521,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const createTab = useCallback(async () => {
     try {
       const payload = (await api.createAiView(kind, {
+        ...currentAiEnvironmentOperation(kind),
         lastUrl: homeUrlFor(kind),
         environmentId,
       })) as AiEventPayload
@@ -534,6 +542,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
     try {
       const payload = (await api.createAiView(kind, {
+        ...currentAiEnvironmentOperation(kind),
         lastUrl: url,
         title: new URL(url).hostname,
         allowExternalBrowsing: true,
@@ -552,7 +561,10 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     async (tabId: string) => {
       if (!tabId || tabId === useAiStore.getState().activeTabIdByKind[kind]) return
       try {
-        const payload = (await api.switchAiView(kind, { tabId })) as AiEventPayload
+        const payload = (await api.switchAiView(kind, {
+          ...currentAiEnvironmentOperation(kind),
+          tabId,
+        })) as AiEventPayload
         applyAiTabsPayload(kind, payload)
         if (networkReady) await ensureWorkspace()
       } catch (err) {
@@ -566,7 +578,10 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     async (tabId: string) => {
       if (!tabId) return
       try {
-        const payload = (await api.closeAiView(kind, { tabId })) as AiEventPayload
+        const payload = (await api.closeAiView(kind, {
+          ...currentAiEnvironmentOperation(kind),
+          tabId,
+        })) as AiEventPayload
         applyAiTabsPayload(kind, payload)
         if (networkReady) await ensureWorkspace()
       } catch (err) {

@@ -218,13 +218,51 @@ test("notes AI rejects a private DNS result before starting the request", async 
   assert.match(events.find((event) => event.type === "error")?.message || "", /禁止访问/);
 });
 
-test("notes AI rejects remote plaintext HTTP", async () => {
-  const { notesAi, events } = createHarness();
+test("notes AI allows explicitly supported public plaintext HTTP", async () => {
+  let requested = false;
+  const notesAi = createNotesAi({
+    getWindow: () => null,
+    lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+    httpRequest: (...args) => {
+      requested = true;
+      return responseRequest([])(...args);
+    },
+  });
   notesAi.complete({
     provider: { baseUrl: "http://example.test", apiKey: "test", model: "test" },
     mode: "summary",
     text: "内容",
   });
   await waitForTurn();
-  assert.match(events.find((event) => event.type === "error")?.message || "", /必须使用 HTTPS/);
+  assert.equal(requested, true);
+});
+
+test("notes AI handles a synchronous request constructor error exactly once", async () => {
+  const { notesAi, events } = createHarness({
+    httpsRequest: () => {
+      throw new Error("invalid header");
+    },
+  });
+  notesAi.complete({
+    provider: { baseUrl: "https://example.test", apiKey: "bad", model: "test" },
+    mode: "summary",
+    text: "内容",
+  });
+  await waitForTurn();
+  assert.equal(events.filter((event) => event.type === "error").length, 1);
+  assert.match(events[0].message, /invalid header/);
+});
+
+test("notes AI bounds oversized non-2xx response bodies", async () => {
+  const { notesAi, events } = createHarness({
+    httpsRequest: responseRequest(["x".repeat(256 * 1024)], 400),
+  });
+  notesAi.complete({
+    provider: { baseUrl: "https://example.test", apiKey: "test", model: "test" },
+    mode: "summary",
+    text: "内容",
+  });
+  await waitForTurn();
+  assert.equal(events.filter((event) => event.type === "error").length, 1);
+  assert.ok(events[0].message.length < 400);
 });

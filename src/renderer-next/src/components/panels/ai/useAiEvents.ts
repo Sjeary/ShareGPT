@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { api } from '@/lib/api'
+import { currentAiEnvironmentOperation } from '@/lib/aiEnvironmentRuntime'
 import { useAiStore } from '@/store/useAiStore'
 import type { AiKind, AiTab } from '@/store/useAiStore'
 import { useAppStore } from '@/store/useAppStore'
@@ -169,7 +170,9 @@ function installQueryTracker(kind: AiKind, tabId: string) {
   const targetId = safeText(tabId) || store.activeTabIdByKind[kind]
   const tab = store.tabsByKind[kind].find((item) => item.id === targetId)
   if (!api.installAiQueryTracker || !tab || !isTabUrlAllowed(kind, tab.url)) return
-  void api.installAiQueryTracker({ kind, tabId: targetId }).catch(() => undefined)
+  void api
+    .installAiQueryTracker({ ...currentAiEnvironmentOperation(kind), tabId: targetId })
+    .catch(() => undefined)
 }
 
 let bound = false

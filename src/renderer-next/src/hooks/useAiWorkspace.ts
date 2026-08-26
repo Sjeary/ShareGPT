@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { api } from '@/lib/api'
 import type { AiKind } from '@/store/useAiStore'
+import { currentAiEnvironmentOperation } from '@/lib/aiEnvironmentRuntime'
 
 // 宿主定位 hook (对齐旧 renderer.js syncSingleAiHost / initAiHostObservers / scheduleAiHostsLayoutSync)。
 //
@@ -23,7 +24,9 @@ export function useAiHostSync(kind: AiKind, visible: boolean) {
     if (!host || !api.syncAiViewHost) return
 
     if (!visible) {
-      void api.syncAiViewHost({ kind, visible: false }).catch(() => undefined)
+      void api
+        .syncAiViewHost({ ...currentAiEnvironmentOperation(kind), visible: false })
+        .catch(() => undefined)
       return
     }
 
@@ -37,7 +40,7 @@ export function useAiHostSync(kind: AiKind, visible: boolean) {
 
     void api
       .syncAiViewHost({
-        kind,
+        ...currentAiEnvironmentOperation(kind),
         // 与旧逻辑一致: 宽高需 > 1 才认为真正可见 (避免布局未完成时的 1px 占位)。
         visible: rect.width > 1 && rect.height > 1,
         bounds,
@@ -89,7 +92,9 @@ export function useAiHostSync(kind: AiKind, visible: boolean) {
   useEffect(
     () => () => {
       if (api.syncAiViewHost) {
-        void api.syncAiViewHost({ kind, visible: false }).catch(() => undefined)
+        void api
+          .syncAiViewHost({ ...currentAiEnvironmentOperation(kind), visible: false })
+          .catch(() => undefined)
       }
     },
     [kind],

@@ -205,10 +205,20 @@ export interface ShareGptApi {
 
   // 设置 / 数据
   loadSettings: () => Promise<Record<string, unknown>>
+  activateSettingsPrincipal: (payload: { serverUrl: string; username: string }) => Promise<{
+    principalId: string
+    settings: Record<string, unknown>
+  }>
+  clearSettingsPrincipal: () => Promise<{ settings: Record<string, unknown> }>
   saveSettings: (settings: Record<string, unknown>) => Promise<unknown>
   patchSettings: (payload: {
     section: string
     patch: Record<string, unknown>
+    expectedRevision?: number
+  }) => Promise<Record<string, unknown>>
+  operateSettings: (payload: {
+    section: 'advancedAi' | 'translation'
+    operations: Array<{ op: 'set' | 'delete'; path: string[]; value?: unknown }>
     expectedRevision?: number
   }) => Promise<Record<string, unknown>>
   importSettings: () => Promise<unknown>
@@ -244,6 +254,7 @@ export interface ShareGptApi {
   captureAiPageText: (
     kind: 'gpt' | 'gemini' | 'claude',
     tabId?: string,
+    context?: { environmentId: string; generation: number },
   ) => Promise<{ title: string; url: string; text: string; truncated: boolean }>
   exportUserData: () => Promise<unknown>
   importUserData: () => Promise<unknown>
@@ -265,7 +276,11 @@ export interface ShareGptApi {
 
   // GPT / AI webview (原生 WebContentsView, 主进程管理)
   // AI 标签 (GPT / Gemini / Claude 通用, 传 kind)
-  listAiViews: (kind: 'gpt' | 'gemini' | 'claude') => Promise<unknown>
+  listAiViews: (payload: {
+    kind: 'gpt' | 'gemini' | 'claude'
+    environmentId: string
+    generation: number
+  }) => Promise<unknown>
   createAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
   switchAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
   closeAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
@@ -278,7 +293,11 @@ export interface ShareGptApi {
   syncAiViewHost: (payload: unknown) => Promise<unknown>
   navigateAiWorkspace: (payload: unknown) => Promise<unknown>
   // 代理检测: 检查该 AI 页面流量是否全部经发送代理 (梯子)。
-  checkAiProxy: (kind: 'gpt' | 'gemini' | 'claude', tabId?: string) => Promise<AiProxyReport>
+  checkAiProxy: (
+    kind: 'gpt' | 'gemini' | 'claude',
+    tabId?: string,
+    context?: { environmentId: string; generation: number },
+  ) => Promise<AiProxyReport>
   clearAiBrowserData: (
     kind: 'gpt' | 'gemini' | 'claude',
     confirmation: { password: string; serverUrl: string; token: string },

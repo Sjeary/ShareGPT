@@ -3,6 +3,7 @@ import { Check, Clipboard, FileText, Languages, Loader2, Settings2, X } from 'lu
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
+import { currentAiEnvironmentOperation } from '@/lib/aiEnvironmentRuntime'
 import { runAi } from '@/lib/notes/aiClient'
 import { describeTranslationTarget } from '@/lib/translationTarget'
 import { cn } from '@/lib/utils'
@@ -98,7 +99,7 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
     })
     if (!token) return
     try {
-      const page = await api.captureAiPageText(kind, tabId)
+      const page = await api.captureAiPageText(kind, tabId, currentAiEnvironmentOperation(kind))
       useTranslationStore.getState().applyRequest(token, {
         sourceText: page.text,
         result: '',

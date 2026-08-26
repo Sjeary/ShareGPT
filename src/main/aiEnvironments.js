@@ -1,4 +1,5 @@
 const AI_KINDS = new Set(["gpt", "gemini", "claude"]);
+const { LOCAL_PRINCIPAL_ID, normalizePrincipalId } = require("./principal");
 
 function safeText(value, maxLength = 120) {
   return String(value ?? "")
@@ -11,13 +12,50 @@ function normalizeAiEnvironmentId(value) {
   return /^[a-z0-9][a-z0-9-]{0,47}$/.test(id) ? id : "";
 }
 
-function partitionForAiEnvironment(kind, environmentId) {
+function normalizedPartitionPrincipal(principalId) {
+  const normalized = normalizePrincipalId(principalId, { allowLocal: true });
+  if (!normalized) throw new Error("AI principal 标识不合法");
+  return normalized;
+}
+
+function partitionForAiEnvironment(
+  kind,
+  environmentId,
+  principalId = LOCAL_PRINCIPAL_ID,
+  legacyPartitionOwnerId = "",
+) {
   const targetKind = safeText(kind, 16).toLowerCase();
   const targetEnvironmentId = normalizeAiEnvironmentId(environmentId);
   if (!AI_KINDS.has(targetKind) || !targetEnvironmentId) {
     throw new Error("AI 环境标识不合法");
   }
-  return `persist:sharegpt-ai-${targetKind}-${targetEnvironmentId}`;
+  const targetPrincipalId = normalizedPartitionPrincipal(principalId);
+  if (targetPrincipalId === normalizePrincipalId(legacyPartitionOwnerId)) {
+    return `persist:sharegpt-ai-${targetKind}-${targetEnvironmentId}`;
+  }
+  return `persist:sharegpt-ai-${targetPrincipalId}-${targetKind}-${targetEnvironmentId}`;
+}
+
+function partitionForAiKind(kind, principalId = LOCAL_PRINCIPAL_ID, legacyPartitionOwnerId = "") {
+  const targetKind = safeText(kind, 16).toLowerCase();
+  if (!AI_KINDS.has(targetKind)) throw new Error("AI 类型不合法");
+  const targetPrincipalId = normalizedPartitionPrincipal(principalId);
+  if (targetPrincipalId === normalizePrincipalId(legacyPartitionOwnerId)) {
+    return `persist:${targetKind}-chat`;
+  }
+  return `persist:sharegpt-${targetPrincipalId}-${targetKind}`;
+}
+
+function partitionForAiProfile(kind, profileId, principalId = LOCAL_PRINCIPAL_ID) {
+  const targetKind = safeText(kind, 16).toLowerCase();
+  if (!AI_KINDS.has(targetKind)) throw new Error("AI 类型不合法");
+  const targetPrincipalId = normalizedPartitionPrincipal(principalId);
+  const suffix = safeText(profileId, 100)
+    .replace(new RegExp(`^${targetKind}-`, "i"), "")
+    .replace(/[^a-z0-9-]/gi, "")
+    .slice(0, 64);
+  if (!suffix) throw new Error("AI 浏览器资料标识不合法");
+  return `persist:sharegpt-${targetPrincipalId}-${targetKind}-profile-${suffix}`;
 }
 
 function normalizeAiRouteId(value) {
@@ -247,6 +285,8 @@ module.exports = {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   partitionForAiEnvironment,
+  partitionForAiKind,
+  partitionForAiProfile,
   resolvedProxyMatchesRoute,
   scaleAiHostBounds,
   shouldCloseAiWorkspacesForEnvironment,

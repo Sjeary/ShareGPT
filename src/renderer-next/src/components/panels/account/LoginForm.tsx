@@ -95,6 +95,7 @@ type ErrorField = 'server' | 'username' | 'password'
 export function LoginForm() {
   const collab = useAppStore((s) => s.settings?.collab)
   const meta = useAppStore((s) => s.meta)
+  const credentialStorage = useAppStore((s) => s.status.credentialStorage)
   const previewMode = useAppStore((s) => s.previewMode)
   const setPreviewMode = useAppStore((s) => s.setPreviewMode)
   const { login } = useAuth()
@@ -191,6 +192,16 @@ export function LoginForm() {
           )}
 
           <LoginUpdateBanner />
+
+          {credentialStorage === 'plaintext-compatibility' && (
+            <div
+              role="alert"
+              className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300"
+            >
+              系统凭据加密当前不可用。记住的密码与 API Key
+              可能以明文保存在本机，请勿在共享设备启用记住密码。
+            </div>
+          )}
 
           <div className="mt-3 rounded-lg border border-border bg-card p-5 shadow-sm sm:p-6">
             <form className="grid gap-3" onSubmit={handleSubmit}>

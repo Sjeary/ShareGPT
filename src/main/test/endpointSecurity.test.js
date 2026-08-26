@@ -14,6 +14,7 @@ test("remote endpoints require HTTPS while exact loopback endpoints may use HTTP
   assert.equal(parseEndpoint("http://127.0.0.1:8080/v1").protocol, "http:");
   assert.equal(parseEndpoint("http://[::1]:8080/v1").protocol, "http:");
   assert.throws(() => parseEndpoint("http://api.example/v1"), /必须使用 HTTPS/);
+  assert.equal(parseEndpoint("http://api.example/v1", { allowRemoteHttp: true }).protocol, "http:");
   assert.throws(() => parseEndpoint("ftp://api.example/v1"), /HTTP 或 HTTPS/);
   assert.throws(() => parseEndpoint("https://user:pass@api.example/v1"), /账号凭据/);
 });
@@ -66,6 +67,23 @@ test("DNS resolution rejects any non-public answer for a remote hostname", async
       address,
     );
   }
+});
+
+test("public HTTP opt-in does not weaken DNS or private literal SSRF checks", async () => {
+  for (const rawUrl of ["http://10.0.0.2/v1", "https://192.168.1.2/v1"]) {
+    const endpoint = parseEndpoint(rawUrl, { allowRemoteHttp: true });
+    await assert.rejects(resolveEndpoint(endpoint), /禁止访问/);
+  }
+  const endpoint = parseEndpoint("http://api.example/v1", { allowRemoteHttp: true });
+  await assert.rejects(
+    resolveEndpoint(endpoint, {
+      lookup: async () => [
+        { address: "93.184.216.34", family: 4 },
+        { address: "169.254.169.254", family: 4 },
+      ],
+    }),
+    /禁止访问/,
+  );
 });
 
 test("localhost must resolve exclusively to loopback addresses", async () => {

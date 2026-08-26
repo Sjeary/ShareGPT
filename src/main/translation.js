@@ -17,7 +17,7 @@ function translationAbortError() {
 }
 
 function translationEndpoint(rawBaseUrl) {
-  const url = parseEndpoint(rawBaseUrl, { label: "翻译接口" });
+  const url = parseEndpoint(rawBaseUrl, { label: "翻译接口", allowRemoteHttp: true });
   if (!/\/translate\/?$/.test(url.pathname)) {
     url.pathname = `${url.pathname.replace(/\/+$/, "")}/translate`;
   }

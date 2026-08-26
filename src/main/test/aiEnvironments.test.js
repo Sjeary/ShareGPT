@@ -14,7 +14,10 @@ const {
 } = require("../aiEnvironments");
 
 test("高级 AI 环境为每个服务和环境生成独立 partition", () => {
-  assert.equal(partitionForAiEnvironment("gpt", "env-work"), "persist:sharegpt-ai-gpt-env-work");
+  assert.equal(
+    partitionForAiEnvironment("gpt", "env-work"),
+    "persist:sharegpt-ai-local-device-gpt-env-work",
+  );
   assert.notEqual(
     partitionForAiEnvironment("gpt", "env-work"),
     partitionForAiEnvironment("gpt", "env-personal"),

@@ -15,7 +15,10 @@ function isLoopbackHostname(hostname) {
   return LOOPBACK_HOSTNAMES.has(normalizeHostname(hostname));
 }
 
-function parseEndpoint(rawUrl, { label = "接口", loopbackOnly = false } = {}) {
+function parseEndpoint(
+  rawUrl,
+  { label = "接口", loopbackOnly = false, allowRemoteHttp = false } = {},
+) {
   const value = String(rawUrl || "").trim();
   if (!value) throw new Error(`未配置${label}地址`);
 
@@ -40,7 +43,7 @@ function parseEndpoint(rawUrl, { label = "接口", loopbackOnly = false } = {}) 
   if (loopbackOnly && !loopback) {
     throw new Error(`${label}只允许连接 localhost、127.0.0.1 或 ::1`);
   }
-  if (endpoint.protocol === "http:" && !loopback) {
+  if (endpoint.protocol === "http:" && !loopback && !allowRemoteHttp) {
     throw new Error(`${label}的非回环地址必须使用 HTTPS`);
   }
   return endpoint;

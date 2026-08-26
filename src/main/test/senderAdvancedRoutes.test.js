@@ -37,6 +37,22 @@ test("普通统一代理不依赖高级 AI 线路授权", () => {
   assert.ok(!config.inbounds.some((inbound) => inbound.tag === "ai-unified-in"));
 });
 
+test("普通机场模式在最终配置边界要求 internal-airport 授权", () => {
+  const backend = Object.create(Backend.prototype);
+  backend.appMode = "sender";
+  const sender = {
+    socks_listen_port: "1080",
+    fallback_mode: "direct",
+    proxy_mode: "airport",
+    airport_outbound: { type: "socks", server: "127.0.0.1", server_port: 1088 },
+    authorized_proxy_route_ids: [],
+  };
+  assert.throws(() => backend.buildSenderConfig(sender), /未获授权/);
+  assert.doesNotThrow(() =>
+    backend.buildSenderConfig({ ...sender, authorized_proxy_route_ids: ["internal-airport"] }),
+  );
+});
+
 test("sender 配置在同一 sing-box 中固定两条高级 AI 出口", () => {
   const backend = Object.create(Backend.prototype);
   backend.appMode = "sender";

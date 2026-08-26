@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
 import type { NavKey } from '@/lib/nav'
+import { principalSectionOperations } from '@/lib/settingsOperations'
 import type { AppSettings, StatusPayload } from '@/types/settings'
 
 interface AppState {
@@ -451,28 +452,45 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   patchSection: async (section, patch) => {
     const cur = get().settings ?? EMPTY_SETTINGS
+    const currentSection = cur[section]
+    const nextSection = { ...(currentSection as object), ...(patch as object) }
     const next: AppSettings = {
       ...cur,
-      [section]: { ...(cur[section] as object), ...(patch as object) },
+      [section]: nextSection,
     }
+    const operations = principalSectionOperations(section, currentSection, nextSection)
     set({ settings: next })
     try {
-      const saved = (await api.patchSettings({
-        section: String(section),
-        patch: patch as Record<string, unknown>,
-        expectedRevision: cur.settingsRevision,
-      })) as unknown as AppSettings
+      const saved = (await (operations
+        ? operations.length
+          ? api.operateSettings({
+              section: section as 'advancedAi' | 'translation',
+              operations,
+              expectedRevision: cur.settingsRevision,
+            })
+          : Promise.resolve(cur as unknown as Record<string, unknown>)
+        : api.patchSettings({
+            section: String(section),
+            patch: patch as Record<string, unknown>,
+            expectedRevision: cur.settingsRevision,
+          }))) as unknown as AppSettings
       set({ settings: { ...EMPTY_SETTINGS, ...saved } })
     } catch (error) {
       const latest = (await api
         .loadSettings()
         .catch(() => cur as unknown as Record<string, unknown>)) as unknown as AppSettings
       if (String(error).includes('设置已被其他操作更新')) {
-        const saved = (await api.patchSettings({
-          section: String(section),
-          patch: patch as Record<string, unknown>,
-          expectedRevision: latest.settingsRevision,
-        })) as unknown as AppSettings
+        const saved = (await (operations
+          ? api.operateSettings({
+              section: section as 'advancedAi' | 'translation',
+              operations,
+              expectedRevision: latest.settingsRevision,
+            })
+          : api.patchSettings({
+              section: String(section),
+              patch: patch as Record<string, unknown>,
+              expectedRevision: latest.settingsRevision,
+            }))) as unknown as AppSettings
         set({ settings: { ...EMPTY_SETTINGS, ...saved } })
         return
       }

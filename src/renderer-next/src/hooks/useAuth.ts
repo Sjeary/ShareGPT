@@ -3,6 +3,7 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore, type AuthProfile } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import { useTranslationStore } from '@/store/useTranslationStore'
 import { normalizeChatMessage, normalizeDirectory } from '@/components/panels/chat/normalize'
 import {
   hasCompleteSenderBootstrap,
@@ -10,7 +11,7 @@ import {
   type BootstrapPayload,
   type BootstrapSender,
 } from '@/components/panels/account/bootstrap'
-import type { SenderSettings } from '@/types/settings'
+import type { AppSettings, SenderSettings } from '@/types/settings'
 
 // 协作服务器登录/退出逻辑 (移植自旧 renderer.js performCollabLogin / collabLogout)。
 // 端点 (渲染层直连协作服务器, 非 IPC):
@@ -249,6 +250,13 @@ export function useAuth() {
       // bootstrap 失败仍允许基础聊天登录，但高级 AI 保持 fail-closed。
       await api.stopSender().catch(() => {})
       await api.closeAllAiWorkspaces().catch(() => {})
+      const principal = await api.activateSettingsPrincipal({
+        serverUrl: cleanedServer,
+        username: cleanedUser,
+      })
+      const principalSettings = principal.settings as unknown as AppSettings
+      useAppStore.setState({ settings: principalSettings })
+      useTranslationStore.getState().resetForPrincipal(principalSettings.translation)
       await clearRemoteRouteState()
       let bootstrap: BootstrapPayload | null = null
       try {
@@ -346,6 +354,14 @@ export function useAuth() {
     await api.stopSender().catch(() => {})
     await api.closeAllAiWorkspaces().catch(() => {})
     await clearRemoteRouteState().catch(() => {})
+    const local = await api.clearSettingsPrincipal().catch(() => null)
+    if (local?.settings) {
+      const localSettings = local.settings as unknown as AppSettings
+      useAppStore.setState({ settings: localSettings })
+      useTranslationStore.getState().resetForPrincipal(localSettings.translation)
+    } else {
+      useTranslationStore.getState().resetForPrincipal()
+    }
 
     clearSession()
     setAuthed(false)

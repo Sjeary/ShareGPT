@@ -218,5 +218,6 @@ export interface StatusPayload {
   senderRunning?: boolean
   senderStarting?: boolean
   aiProxyRoutes?: Array<{ id: string; label: string }>
+  credentialStorage?: 'encrypted' | 'plaintext-compatibility'
   [k: string]: unknown
 }

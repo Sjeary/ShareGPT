@@ -49,7 +49,7 @@ test("offline translation accepts loopback hosts only", () => {
 
 test("translation endpoints reject unsupported protocols", () => {
   assert.throws(() => translationEndpoint("file:///tmp/translation"), /HTTP/);
-  assert.throws(() => translationEndpoint("http://translate.example"), /必须使用 HTTPS/);
+  assert.equal(translationEndpoint("http://translate.example").protocol, "http:");
 });
 
 test("translatedTextFromResponse supports common compatible payloads", () => {

@@ -12,6 +12,7 @@ const { _electron: electron } = require("playwright");
 // user-data directory and loopback-only services, so real account cookies and routes stay untouched.
 const ROOT = path.resolve(__dirname, "..");
 const USERNAME = "ai-review-verifier";
+const SECOND_ADVANCED_USERNAME = "ai-review-verifier-b";
 const BASIC_USERNAME = "ai-review-basic";
 const PASSWORD = "correct-password";
 
@@ -224,6 +225,41 @@ async function sendZoomShortcut(electronApp, keyCode) {
   }, keyCode);
 }
 
+function principalId(baseUrl, username) {
+  return crypto
+    .createHash("sha256")
+    .update(`${new URL(baseUrl).origin.toLowerCase()}\0${username.trim().toLowerCase()}`)
+    .digest("hex");
+}
+
+async function partitionStorage(electronApp, partition, fixtureUrl, writeValue) {
+  return electronApp.evaluate(
+    async ({ BrowserWindow }, args) => {
+      const probe = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          partition: args.partition,
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      });
+      try {
+        await probe.loadURL(`${args.fixtureUrl}/page`);
+        return await probe.webContents.executeJavaScript(
+          args.writeValue
+            ? `localStorage.setItem("principal-marker", ${JSON.stringify(args.writeValue)}); document.cookie = "principal-marker=${encodeURIComponent(args.writeValue)}; SameSite=Lax"; ({ local: localStorage.getItem("principal-marker"), cookie: document.cookie })`
+            : `({ local: localStorage.getItem("principal-marker"), cookie: document.cookie })`,
+          true,
+        );
+      } finally {
+        probe.destroy();
+      }
+    },
+    { partition, fixtureUrl, writeValue },
+  );
+}
+
 async function main() {
   const keepOpen = process.env.SHAREGPT_KEEP_TEST_APP === "1";
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-ai-review-ui-"));
@@ -244,7 +280,13 @@ async function main() {
   fs.writeFileSync(
     usersFile,
     JSON.stringify(
-      { users: [passwordRecord(USERNAME, true), passwordRecord(BASIC_USERNAME, false)] },
+      {
+        users: [
+          passwordRecord(USERNAME, true),
+          passwordRecord(SECOND_ADVANCED_USERNAME, true),
+          passwordRecord(BASIC_USERNAME, false),
+        ],
+      },
       null,
       2,
     ),
@@ -323,6 +365,7 @@ async function main() {
     );
     results.push("login action is visible without scrolling");
 
+    await login(window, baseUrl, USERNAME);
     const now = new Date().toISOString();
     await patchSection(window, "advancedAi", {
       version: 1,
@@ -406,6 +449,7 @@ async function main() {
           proxy_mode: "airport",
           airport_name: "Local UI verification chain",
           airport_outbound: { type: "socks", server: "127.0.0.1", server_port: upstreamPort },
+          authorized_proxy_route_ids: ["internal-airport"],
           target_domains: "chatgpt.com\nopenai.com\nclaude.ai\nanthropic.com",
         }),
       { listenPort: senderPort, upstreamPort: socksPort },
@@ -513,6 +557,96 @@ async function main() {
     await window.waitForTimeout(600);
     assert.strictEqual(await window.getByTestId("claude-address-input").count(), 0);
     results.push("Claude address field is opt-in and opens a separate internal tab");
+
+    const alicePrincipal = principalId(baseUrl, USERNAME);
+    const alicePartition = `persist:sharegpt-ai-${alicePrincipal}-gpt-env-gpt-one`;
+    const aliceMarker = await partitionStorage(
+      electronApp,
+      alicePartition,
+      fixtureUrl,
+      "alice-only",
+    );
+    assert.strictEqual(aliceMarker.local, "alice-only");
+    assert.match(aliceMarker.cookie, /principal-marker=alice-only/);
+
+    await window.locator('[data-tour="nav-account"]').click();
+    await window.getByRole("button", { name: "退出登录", exact: true }).click();
+    await window.locator("#account-server").waitFor({ state: "visible" });
+    await login(window, baseUrl, SECOND_ADVANCED_USERNAME);
+    const bobInitial = await window.evaluate(async () => window.api.loadSettings());
+    assert.deepStrictEqual(bobInitial.advancedAi.environments, []);
+    assert.strictEqual(bobInitial.translation.api.baseUrl, "");
+    await patchSection(window, "advancedAi", {
+      version: 1,
+      enabled: true,
+      environments: [
+        { id: "env-bob", kind: "gpt", name: "Bob only", routeId: "route-a", createdAt: now },
+      ],
+      activeByKind: { gpt: "env-bob", gemini: "", claude: "" },
+    });
+    await patchSection(window, "translation", {
+      provider: "api",
+      api: { baseUrl: `${fixtureUrl}/bob`, apiKey: "" },
+    });
+    const bobPrincipal = principalId(baseUrl, SECOND_ADVANCED_USERNAME);
+    const bobPartition = `persist:sharegpt-ai-${bobPrincipal}-gpt-env-bob`;
+    const bobMarker = await partitionStorage(electronApp, bobPartition, fixtureUrl);
+    assert.strictEqual(bobMarker.local, null);
+    assert.doesNotMatch(bobMarker.cookie, /principal-marker/);
+    await window.locator('[data-tour="nav-account"]').click();
+    await window.getByRole("button", { name: "退出登录", exact: true }).click();
+    await login(window, baseUrl, USERNAME);
+    const aliceAgain = await window.evaluate(async () => window.api.loadSettings());
+    assert.ok(aliceAgain.advancedAi.environments.some((item) => item.id === "env-gpt-one"));
+    assert.ok(!aliceAgain.advancedAi.environments.some((item) => item.id === "env-bob"));
+    assert.notStrictEqual(aliceAgain.translation.api.baseUrl, `${fixtureUrl}/bob`);
+    const restoredAliceMarker = await partitionStorage(electronApp, alicePartition, fixtureUrl);
+    assert.strictEqual(restoredAliceMarker.local, "alice-only");
+    assert.match(restoredAliceMarker.cookie, /principal-marker=alice-only/);
+    results.push(
+      "two advanced principals isolate environments, translation, cookies and local storage",
+    );
+
+    await patchSection(window, "advancedAi", { ...aliceAgain.advancedAi, enabled: true });
+    const staleError = await window.evaluate(async () => {
+      await window.api.closeAllAiWorkspaces();
+      await window.api.activateAiEnvironment({
+        kind: "gpt",
+        environmentId: "env-gpt-one",
+        generation: 5000,
+      });
+      await window.api.activateAiEnvironment({
+        kind: "gpt",
+        environmentId: "env-gpt-two",
+        generation: 5001,
+      });
+      try {
+        await window.api.ensureAiWorkspace({
+          kind: "gpt",
+          environmentId: "env-gpt-one",
+          generation: 5000,
+          tabId: "stale-a",
+          host: "127.0.0.1",
+          port: "1",
+        });
+        return "";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+    assert.match(staleError, /已失效/);
+    const staleWorkspaceCount = await electronApp.evaluate(
+      ({ session, webContents }, partition) => {
+        const targetSession = session.fromPartition(partition);
+        return webContents
+          .getAllWebContents()
+          .filter((contents) => !contents.isDestroyed() && contents.session === targetSession)
+          .length;
+      },
+      alicePartition,
+    );
+    assert.strictEqual(staleWorkspaceCount, 0);
+    results.push("stale generation is rejected before recreating the old workspace");
 
     await window.locator('[data-tour="nav-account"]').click();
     await window.getByRole("button", { name: "退出登录", exact: true }).click();

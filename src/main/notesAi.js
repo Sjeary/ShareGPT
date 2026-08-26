@@ -61,6 +61,7 @@ function createNotesAi({
   let counter = 0;
   const live = new Map();
   const MAX_RETRY = 2;
+  const MAX_ERROR_BODY_BYTES = 64 * 1024;
 
   function emit(streamId, payload) {
     const win = getWindow();
@@ -81,7 +82,7 @@ function createNotesAi({
 
     let endpoint;
     try {
-      endpoint = parseEndpoint(endpointFor(baseUrl), { label: "AI 接口" });
+      endpoint = parseEndpoint(endpointFor(baseUrl), { label: "AI 接口", allowRemoteHttp: true });
     } catch (error) {
       setImmediate(() => emit(streamId, { type: "error", message: error.message }));
       return { streamId };
@@ -188,49 +189,63 @@ function createNotesAi({
         return;
       }
       if (stream.cancelled || stream.terminal) return;
-      const r = requestImpl(
-        {
-          ...endpointRequestOptions(endpoint, record),
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-            Accept: "text/event-stream",
-            "Content-Length": body.length,
+      let r;
+      try {
+        r = requestImpl(
+          {
+            ...endpointRequestOptions(endpoint, record),
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+              Accept: "text/event-stream",
+              "Content-Length": body.length,
+            },
+            timeout: 120000,
           },
-          timeout: 120000,
-        },
-        (res) => {
-          if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
-            let err = "";
-            res.on("data", (c) => (err += c));
-            res.on("end", () => {
-              if (attemptSettled) return;
-              attemptSettled = true;
-              failAttempt(res.statusCode, `接口错误 ${res.statusCode}: ${err.slice(0, 300)}`);
+          (res) => {
+            if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+              let err = "";
+              let errorBytes = 0;
+              res.on("data", (chunk) => {
+                if (errorBytes >= MAX_ERROR_BODY_BYTES) return;
+                const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+                const remaining = MAX_ERROR_BODY_BYTES - errorBytes;
+                err += value.subarray(0, remaining).toString("utf8");
+                errorBytes += Math.min(value.length, remaining);
+              });
+              res.on("end", () => {
+                if (attemptSettled) return;
+                attemptSettled = true;
+                failAttempt(res.statusCode, `接口错误 ${res.statusCode}: ${err.slice(0, 300)}`);
+              });
+              return;
+            }
+            let buf = "";
+            res.setEncoding("utf8");
+            res.on("data", (chunk) => {
+              buf += chunk;
+              let idx;
+              while ((idx = buf.indexOf("\n")) >= 0) {
+                const line = buf.slice(0, idx).trim();
+                buf = buf.slice(idx + 1);
+                handleSseLine(line);
+              }
             });
-            return;
-          }
-          let buf = "";
-          res.setEncoding("utf8");
-          res.on("data", (chunk) => {
-            buf += chunk;
-            let idx;
-            while ((idx = buf.indexOf("\n")) >= 0) {
-              const line = buf.slice(0, idx).trim();
-              buf = buf.slice(idx + 1);
-              handleSseLine(line);
-            }
-          });
-          res.on("end", () => {
-            if (buf.trim()) handleSseLine(buf);
-            if (!attemptSettled) {
-              attemptSettled = true;
-              finishOnce({ type: "done" });
-            }
-          });
-        },
-      );
+            res.on("end", () => {
+              if (buf.trim()) handleSseLine(buf);
+              if (!attemptSettled) {
+                attemptSettled = true;
+                finishOnce({ type: "done" });
+              }
+            });
+          },
+        );
+      } catch (error) {
+        attemptSettled = true;
+        failAttempt(0, error?.message || "请求创建失败");
+        return;
+      }
       r.on("error", (e) => {
         if (attemptSettled || stream.cancelled || stream.terminal) return;
         attemptSettled = true;

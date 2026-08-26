@@ -25,20 +25,17 @@ const {
   normalizeBrowserPrivacySettings,
   runtimeEnvironment,
 } = require("./browserPrivacy");
-const {
-  collectPageFingerprint,
-  snapshotDigest,
-  newLocalProfile,
-  normalizeAiPartition,
-  partitionForProfile,
-} = require("./browserFingerprint");
+const { collectPageFingerprint, snapshotDigest, newLocalProfile } = require("./browserFingerprint");
 const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
 const { translateText } = require("./translation");
+const { createAiEnvironmentGenerationGuard } = require("./aiEnvironmentGeneration");
 const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   evaluateAiRouteHealth,
   partitionForAiEnvironment,
+  partitionForAiKind,
+  partitionForAiProfile,
   resolvedProxyMatchesRoute,
   scaleAiHostBounds,
   shouldCloseAiWorkspacesForEnvironment,
@@ -513,7 +510,7 @@ function createElectronApp(baseMode = "all") {
   const tabOrderByKind = { gpt: [], gemini: [], claude: [] };
   const activeTabIdByKind = { gpt: "", gemini: "", claude: "" };
   let activeAiKind = "";
-  const aiEnvironmentGenerationByKind = { gpt: 0, gemini: 0, claude: 0 };
+  const aiEnvironmentGuard = createAiEnvironmentGenerationGuard();
   let aiTabCounter = 0;
   const hostStateByKind = {
     gpt: { visible: false, bounds: null },
@@ -570,6 +567,18 @@ function createElectronApp(baseMode = "all") {
       detachWorkspaceView(workspace);
     }
     return activeAiKind;
+  }
+
+  function assertCurrentAiEnvironmentOperation(payload) {
+    return aiEnvironmentGuard.assert(payload);
+  }
+
+  function assertPrincipalUnchanged(principalId) {
+    if (backend.getPrincipalContext().principalId !== principalId) {
+      throw Object.assign(new Error("协作账号已切换，操作已终止"), {
+        code: "PRINCIPAL_CHANGED",
+      });
+    }
   }
 
   function emitAiEvent(kind, type, payload = {}) {
@@ -652,15 +661,33 @@ function createElectronApp(baseMode = "all") {
     const base = AI_WORKSPACE_POLICIES[targetKind];
     if (!base) return null;
     const targetEnvironmentId = normalizeAiEnvironmentId(environmentId);
+    const principal = backend.getPrincipalContext();
     if (targetEnvironmentId) {
       getConfiguredAiEnvironment(targetKind, targetEnvironmentId);
       return {
         ...base,
-        partition: partitionForAiEnvironment(targetKind, targetEnvironmentId),
+        partition: partitionForAiEnvironment(
+          targetKind,
+          targetEnvironmentId,
+          principal.principalId,
+          principal.legacyPartitionOwnerId,
+        ),
       };
     }
+    const basePartition = partitionForAiKind(
+      targetKind,
+      principal.principalId,
+      principal.legacyPartitionOwnerId,
+    );
     const configured = safeText(backend?.loadSettings()?.[targetKind]?.partition);
-    const partition = normalizeAiPartition(targetKind, configured || base.partition);
+    const principalPrefix = `persist:sharegpt-${principal.principalId}-${targetKind}-profile-`;
+    const legacyProfile = new RegExp(`^persist:${targetKind}-profile-[a-z0-9-]+$`, "i");
+    const partition =
+      configured === basePartition ||
+      configured.startsWith(principalPrefix) ||
+      (principal.principalId === principal.legacyPartitionOwnerId && legacyProfile.test(configured))
+        ? configured
+        : basePartition;
     return { ...base, partition };
   }
 
@@ -935,6 +962,7 @@ function createElectronApp(baseMode = "all") {
   async function captureWorkspaceFingerprint(kind, tabId = "", options = {}) {
     const targetKind = safeText(kind);
     if (!isAiKind(targetKind)) throw new Error("不支持的 AI 服务");
+    const principalId = backend.getPrincipalContext().principalId;
     const workspace =
       getWorkspace(targetKind, safeText(tabId)) ||
       getWorkspace(targetKind, activeTabIdByKind[targetKind]);
@@ -977,6 +1005,7 @@ function createElectronApp(baseMode = "all") {
       networkPromise,
       proxyPromise,
     ]);
+    assertPrincipalUnchanged(principalId);
 
     const settings = backend.loadSettings();
     const privacy = normalizeBrowserPrivacySettings(settings.browserPrivacy);
@@ -1005,6 +1034,7 @@ function createElectronApp(baseMode = "all") {
     snapshot.digest = snapshotDigest(snapshot);
 
     if (options.save !== false) {
+      assertPrincipalUnchanged(principalId);
       privacy.audit.current[targetKind] = snapshot;
       settings.browserPrivacy = privacy;
       backend.saveSettings(settings);
@@ -1012,7 +1042,7 @@ function createElectronApp(baseMode = "all") {
     return snapshot;
   }
 
-  async function rememberBeforeClear(kind) {
+  async function rememberBeforeClear(kind, principalId) {
     const targetKind = safeText(kind);
     const settings = backend.loadSettings();
     const privacy = normalizeBrowserPrivacySettings(settings.browserPrivacy);
@@ -1022,6 +1052,7 @@ function createElectronApp(baseMode = "all") {
     } catch {
       // 页面可能未打开或仍在导航；此时回退到最后一次已保存的当前快照。
     }
+    assertPrincipalUnchanged(principalId);
     privacy.audit.beforeClear[targetKind] = snapshot || privacy.audit.current[targetKind] || null;
     privacy.audit.current[targetKind] = null;
     settings.browserPrivacy = privacy;
@@ -1836,9 +1867,26 @@ function createElectronApp(baseMode = "all") {
       return true;
     });
     ipcMain.handle("settings:load", () => backend.loadSettings());
+    ipcMain.handle("settings:principal-activate", (_event, payload) => {
+      disposeAiWorkspaces();
+      aiEnvironmentGuard.invalidateAll();
+      for (const controller of translationRequests.values()) controller.abort();
+      translationRequests.clear();
+      return backend.activatePrincipal(payload?.serverUrl, payload?.username);
+    });
+    ipcMain.handle("settings:principal-clear", () => {
+      disposeAiWorkspaces();
+      aiEnvironmentGuard.invalidateAll();
+      for (const controller of translationRequests.values()) controller.abort();
+      translationRequests.clear();
+      return { settings: backend.clearPrincipal() };
+    });
     ipcMain.handle("settings:save", (_event, settings) => backend.saveSettings(settings));
     ipcMain.handle("settings:patch", (_event, payload) =>
       backend.patchSettings(payload?.section, payload?.patch, payload?.expectedRevision),
+    );
+    ipcMain.handle("settings:operate", (_event, payload) =>
+      backend.operateSettings(payload?.section, payload?.operations, payload?.expectedRevision),
     );
     ipcMain.handle("settings:import", () => backend.importSettings());
     ipcMain.handle("chat-history:load", () => backend.loadChatHistory());
@@ -1891,9 +1939,12 @@ function createElectronApp(baseMode = "all") {
       controller.abort();
       return { ok: true };
     });
-    ipcMain.handle("translation:capture-page", (_event, payload) =>
-      captureAiPageText(safeText(payload?.kind), safeText(payload?.tabId)),
-    );
+    ipcMain.handle("translation:capture-page", async (_event, payload) => {
+      const { kind } = assertCurrentAiEnvironmentOperation(payload);
+      const result = await captureAiPageText(kind, safeText(payload?.tabId));
+      assertCurrentAiEnvironmentOperation(payload);
+      return result;
+    });
     ipcMain.handle("user-data:export", () => backend.exportUserData());
     ipcMain.handle("user-data:import", () => backend.importUserData());
     ipcMain.handle("clipboard:read-attachment", () => buildClipboardAttachmentPayload());
@@ -2029,7 +2080,7 @@ function createElectronApp(baseMode = "all") {
 
     // 标签管理 (GPT / Gemini / Claude 通用, 由 payload.kind 区分)。
     ipcMain.handle("ai-tabs:list", (_event, payload) => {
-      const kind = safeText(payload?.kind) || "gpt";
+      const { kind } = assertCurrentAiEnvironmentOperation(payload);
       const active = getWorkspace(kind, activeTabIdByKind[kind]);
       return {
         ...listTabsPayload(kind),
@@ -2038,12 +2089,13 @@ function createElectronApp(baseMode = "all") {
     });
 
     ipcMain.handle("ai-tabs:create", (_event, payload) => {
-      const kind = safeText(payload?.kind) || "gpt";
+      const { kind, environmentId } = assertCurrentAiEnvironmentOperation(payload);
+      assertCurrentAiEnvironmentOperation(payload);
       const workspace = createTabWorkspace(kind, {
         title: safeText(payload?.title),
         lastUrl: safeText(payload?.lastUrl),
         allowExternalBrowsing: Boolean(payload?.allowExternalBrowsing),
-        environmentId: safeText(payload?.environmentId),
+        environmentId,
       });
       activeTabIdByKind[kind] = workspace.id;
       syncActiveWorkspace(kind);
@@ -2055,12 +2107,15 @@ function createElectronApp(baseMode = "all") {
     });
 
     ipcMain.handle("ai-tabs:switch", (_event, payload) => {
-      const kind = safeText(payload?.kind) || "gpt";
+      const { kind, environmentId } = assertCurrentAiEnvironmentOperation(payload);
       const tabId = safeText(payload?.tabId);
       const workspace = getWorkspace(kind, tabId);
       if (!workspace) {
         throw new Error("目标会话不存在");
       }
+      if (safeText(workspace.environmentId) !== environmentId)
+        throw new Error("目标会话不属于当前环境");
+      assertCurrentAiEnvironmentOperation(payload);
       activeTabIdByKind[kind] = workspace.id;
       syncActiveWorkspace(kind);
       emitTabsChanged(kind);
@@ -2071,7 +2126,8 @@ function createElectronApp(baseMode = "all") {
     });
 
     ipcMain.handle("ai-tabs:close", (_event, payload) => {
-      const kind = safeText(payload?.kind) || "gpt";
+      const { kind } = assertCurrentAiEnvironmentOperation(payload);
+      assertCurrentAiEnvironmentOperation(payload);
       return closeTabWorkspace(kind, payload?.tabId);
     });
 
@@ -2080,24 +2136,25 @@ function createElectronApp(baseMode = "all") {
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
       const generation = Number.parseInt(String(payload?.generation || "0"), 10);
       if (!Number.isInteger(generation) || generation < 1) throw new Error("环境切换请求已失效");
-      if (generation < aiEnvironmentGenerationByKind[kind]) {
-        return { ok: false, stale: true, kind };
-      }
-      aiEnvironmentGenerationByKind[kind] = generation;
-      const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
+      const rawEnvironmentId = safeText(payload?.environmentId);
+      const environmentId = normalizeAiEnvironmentId(rawEnvironmentId);
+      if (rawEnvironmentId && !environmentId) throw new Error("AI 环境标识不合法");
       if (environmentId) getConfiguredAiEnvironment(kind, environmentId);
+      const activation = aiEnvironmentGuard.activate({ kind, environmentId, generation });
+      if (activation.stale) return { ok: false, stale: true, kind, environmentId };
       const workspaces = listWorkspaces(kind);
       const changed = shouldCloseAiWorkspacesForEnvironment(workspaces, environmentId);
       if (changed) await closeWorkspacesForKind(kind);
-      if (generation !== aiEnvironmentGenerationByKind[kind]) {
+      if (!aiEnvironmentGuard.isCurrent(activation)) {
         return { ok: false, stale: true, kind, environmentId };
       }
       return { ok: true, kind, environmentId, changed, generation };
     });
 
     ipcMain.handle("ai:environment-delete", async (_event, payload) => {
-      const kind = safeText(payload?.kind);
-      const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
+      const { kind } = assertCurrentAiEnvironmentOperation(payload);
+      const principalId = backend.getPrincipalContext().principalId;
+      const environmentId = normalizeAiEnvironmentId(payload?.targetEnvironmentId);
       if (!isAiKind(kind) || !environmentId) throw new Error("AI 环境标识不合法");
       getConfiguredAiEnvironment(kind, environmentId);
       const currentSettings = backend.loadSettings();
@@ -2106,21 +2163,32 @@ function createElectronApp(baseMode = "all") {
       const remaining = environments.filter(
         (environment) => normalizeAiEnvironmentId(environment?.id) !== environmentId,
       );
-      const activeByKind = { ...(advanced.activeByKind || {}) };
-      if (normalizeAiEnvironmentId(activeByKind[kind]) === environmentId) {
-        activeByKind[kind] =
-          remaining.find((environment) => safeText(environment?.kind) === kind)?.id || "";
+      const operations = [{ op: "delete", path: ["environments", environmentId] }];
+      if (normalizeAiEnvironmentId(advanced.activeByKind?.[kind]) === environmentId) {
+        operations.push({
+          op: "set",
+          path: ["activeByKind", kind],
+          value: remaining.find((environment) => safeText(environment?.kind) === kind)?.id || "",
+        });
       }
       const targetLoaded = listWorkspaces(kind).some(
         (workspace) => safeText(workspace.environmentId) === environmentId,
       );
       if (targetLoaded) await closeWorkspacesForKind(kind);
-      let savedSettings = backend.patchSettings(
+      assertCurrentAiEnvironmentOperation(payload);
+      assertPrincipalUnchanged(principalId);
+      let savedSettings = backend.operateSettings(
         "advancedAi",
-        { ...advanced, environments: remaining, activeByKind },
+        operations,
         currentSettings.settingsRevision,
       );
-      const partition = partitionForAiEnvironment(kind, environmentId);
+      const principal = backend.getPrincipalContext();
+      const partition = partitionForAiEnvironment(
+        kind,
+        environmentId,
+        principal.principalId,
+        principal.legacyPartitionOwnerId,
+      );
       let dataCleared = true;
       await clearAiSessionData(session.fromPartition(partition)).catch((error) => {
         dataCleared = false;
@@ -2130,6 +2198,7 @@ function createElectronApp(baseMode = "all") {
           error: error?.message || String(error),
         });
       });
+      assertPrincipalUnchanged(principalId);
       if (!dataCleared) {
         const latest = backend.loadSettings();
         const pending = Array.isArray(latest.ui?.pendingAiPartitionCleanup)
@@ -2146,19 +2215,21 @@ function createElectronApp(baseMode = "all") {
     });
 
     ipcMain.handle("ai:environment-egress-check", async (_event, payload) => {
-      const kind = safeText(payload?.kind);
-      if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
+      const { kind } = assertCurrentAiEnvironmentOperation(payload);
       const sender = {
         host: "127.0.0.1",
         port: Number(backend?.activeSocksPort),
       };
-      const route = getWorkspaceProxyRoute(kind, payload?.environmentId, sender);
-      return checkAiRouteHealth(route, { force: true });
+      const targetEnvironmentId = normalizeAiEnvironmentId(payload?.targetEnvironmentId);
+      if (!targetEnvironmentId) throw new Error("AI 环境标识不合法");
+      const route = getWorkspaceProxyRoute(kind, targetEnvironmentId, sender);
+      const result = await checkAiRouteHealth(route, { force: true });
+      assertCurrentAiEnvironmentOperation(payload);
+      return result;
     });
 
     ipcMain.handle("ai:ensure", async (_event, payload) => {
-      const kind = safeText(payload?.kind);
-      const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
+      const { kind, environmentId } = assertCurrentAiEnvironmentOperation(payload);
       const requestedTabId = safeText(payload?.tabId);
       if (!requestedTabId && !activeTabIdByKind[kind]) {
         return null;
@@ -2170,10 +2241,12 @@ function createElectronApp(baseMode = "all") {
       const route = getWorkspaceProxyRoute(kind, environmentId, sender);
       if (environmentId) {
         const health = await checkAiRouteHealth(route);
+        assertCurrentAiEnvironmentOperation(payload);
         if (!health.ok) {
           throw new Error(`线路 ${route.label} 未通过出口身份预检，已阻止页面访问`);
         }
       }
+      assertCurrentAiEnvironmentOperation(payload);
       const workspace = getOrCreateAiWorkspace(kind, requestedTabId || activeTabIdByKind[kind], {
         lastUrl: safeText(payload?.lastUrl),
         allowExternalBrowsing: Boolean(payload?.allowExternalBrowsing),
@@ -2195,18 +2268,23 @@ function createElectronApp(baseMode = "all") {
         .resolveProxy(workspace.lastUrl || workspace.policy.homeUrl)
         .then((value) => safeText(value))
         .catch(() => "");
+      assertCurrentAiEnvironmentOperation(payload);
       if (
         workspace.proxySignature !== proxySignature ||
         !resolvedProxyMatchesRoute(resolvedSessionProxy, route)
       ) {
+        assertCurrentAiEnvironmentOperation(payload);
         await targetSession.setProxy({
           proxyRules: `socks5://${route.host}:${route.port}`,
           proxyBypassRules: "",
         });
+        assertCurrentAiEnvironmentOperation(payload);
         await targetSession.closeAllConnections();
+        assertCurrentAiEnvironmentOperation(payload);
         const verifiedProxy = safeText(
           await targetSession.resolveProxy(workspace.lastUrl || workspace.policy.homeUrl),
         );
+        assertCurrentAiEnvironmentOperation(payload);
         if (!resolvedProxyMatchesRoute(verifiedProxy, route)) {
           throw new Error(`AI 会话未能绑定指定线路 ${proxySignature}，已阻止页面访问`);
         }
@@ -2221,6 +2299,7 @@ function createElectronApp(baseMode = "all") {
         workspace.view.webContents.setUserAgent(userAgent);
       }
       await applyWorkspacePrivacy(workspace);
+      assertCurrentAiEnvironmentOperation(payload);
 
       const targetUrl =
         normalizeAiWorkspaceUrl(
@@ -2233,6 +2312,7 @@ function createElectronApp(baseMode = "all") {
         ) || workspace.policy.homeUrl;
 
       const currentWorkspaceUrl = safeText(workspace.view.webContents.getURL());
+      assertCurrentAiEnvironmentOperation(payload);
       if (!workspace.initialized || !isWorkspaceUrlAllowed(workspace, currentWorkspaceUrl)) {
         workspace.initialized = false;
         workspace.loading = true;
@@ -2260,12 +2340,17 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("ai:data-clear", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
+      const principalId = backend.getPrincipalContext().principalId;
       await verifyBrowserDestructiveAction(payload);
-      const beforeSnapshot = await rememberBeforeClear(kind);
+      assertPrincipalUnchanged(principalId);
+      const beforeSnapshot = await rememberBeforeClear(kind, principalId);
+      assertPrincipalUnchanged(principalId);
       const policy = getAiPolicy(kind);
       await closeWorkspacesForKind(kind);
+      assertPrincipalUnchanged(principalId);
       const targetSession = session.fromPartition(policy.partition);
       await clearAiSessionData(targetSession);
+      assertPrincipalUnchanged(principalId);
       aiContactedHostsByPartition.get(policy.partition)?.clear();
 
       const settings = backend.loadSettings();
@@ -2284,18 +2369,24 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("ai:profile-rebuild", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
+      const principalId = backend.getPrincipalContext().principalId;
       await verifyBrowserDestructiveAction(payload);
-      const beforeSnapshot = await rememberBeforeClear(kind);
+      assertPrincipalUnchanged(principalId);
+      const beforeSnapshot = await rememberBeforeClear(kind, principalId);
+      assertPrincipalUnchanged(principalId);
       const oldPolicy = getAiPolicy(kind);
       await closeWorkspacesForKind(kind);
+      assertPrincipalUnchanged(principalId);
       const oldSession = session.fromPartition(oldPolicy.partition);
       await clearAiSessionData(oldSession);
+      assertPrincipalUnchanged(principalId);
       aiContactedHostsByPartition.get(oldPolicy.partition)?.clear();
 
       const settings = backend.loadSettings();
       const privacy = normalizeBrowserPrivacySettings(settings.browserPrivacy);
       const profile = newLocalProfile(kind);
-      const partition = partitionForProfile(kind, profile);
+      const principal = backend.getPrincipalContext();
+      const partition = partitionForAiProfile(kind, profile.id, principal.principalId);
       privacy.localProfiles[kind] = profile;
       privacy.lastClearedAt[kind] = profile.rebuiltAt;
       privacy.audit.current[kind] = null;
@@ -2347,7 +2438,7 @@ function createElectronApp(baseMode = "all") {
     });
 
     ipcMain.handle("ai:sync-host", (_event, payload) => {
-      const kind = safeText(payload?.kind);
+      const { kind } = assertCurrentAiEnvironmentOperation(payload);
       const bounds = payload?.bounds;
       const visible = Boolean(payload?.visible);
       if (hostStateByKind[kind]) {
@@ -2369,12 +2460,14 @@ function createElectronApp(baseMode = "all") {
     // 路由级: 把会话实际访问过的每个主机, 按 backend 的发送路由清单逐域判定
     //   命中 target_domains -> 走发送代理(梯子); 未命中 -> 回落(本机代理/直连), 即未走发送代理。
     ipcMain.handle("ai:proxy-check", async (_event, payload) => {
-      const kind = safeText(payload?.kind);
+      const { kind, environmentId } = assertCurrentAiEnvironmentOperation(payload);
       const workspace =
         getWorkspace(kind, safeText(payload?.tabId)) || getWorkspace(kind, activeTabIdByKind[kind]);
       if (!workspace) {
         return { ok: false, reason: "no-workspace" };
       }
+      if (safeText(workspace.environmentId) !== environmentId)
+        throw new Error("目标会话不属于当前环境");
 
       const targetSession = session.fromPartition(workspace.policy.partition);
       const wc = workspace.view.webContents;
@@ -2384,6 +2477,7 @@ function createElectronApp(baseMode = "all") {
       try {
         sessionProxy = safeText(await targetSession.resolveProxy(currentUrl));
       } catch {}
+      assertCurrentAiEnvironmentOperation(payload);
       const expectedRoute = {
         host: "127.0.0.1",
         port: workspace.proxyPort,
@@ -2437,11 +2531,13 @@ function createElectronApp(baseMode = "all") {
     });
 
     ipcMain.handle("ai:navigate", async (_event, payload) => {
-      const kind = safeText(payload?.kind);
+      const { kind, environmentId } = assertCurrentAiEnvironmentOperation(payload);
       const action = safeText(payload?.action);
       const url = safeText(payload?.url);
       const workspace = getWorkspace(kind, safeText(payload?.tabId));
       if (!workspace) return null;
+      if (safeText(workspace.environmentId) !== environmentId)
+        throw new Error("目标会话不属于当前环境");
 
       const wc = workspace.view.webContents;
       switch (action) {
@@ -2452,6 +2548,7 @@ function createElectronApp(baseMode = "all") {
           if (wc.canGoForward()) wc.goForward();
           break;
         case "reload":
+          assertCurrentAiEnvironmentOperation(payload);
           workspace.loading = true;
           emitAiState(workspace, "did-start-loading");
           wc.reload();
@@ -2461,6 +2558,7 @@ function createElectronApp(baseMode = "all") {
             throw new Error("不允许加载该页面");
           }
           const targetUrl = normalizeAiWorkspaceUrl(workspace, url);
+          assertCurrentAiEnvironmentOperation(payload);
           workspace.loading = true;
           workspace.initialized = true;
           workspace.lastUrl = targetUrl;
@@ -2483,7 +2581,7 @@ function createElectronApp(baseMode = "all") {
     });
 
     ipcMain.handle("ai:install-query-tracker", async (_event, payload) => {
-      const kind = safeText(payload?.kind);
+      const { kind, environmentId } = assertCurrentAiEnvironmentOperation(payload);
       const workspace = getWorkspace(kind, safeText(payload?.tabId));
       const currentUrl = safeText(workspace?.view?.webContents?.getURL());
       if (
@@ -2493,6 +2591,8 @@ function createElectronApp(baseMode = "all") {
       ) {
         return false;
       }
+      if (safeText(workspace.environmentId) !== environmentId)
+        throw new Error("目标会话不属于当前环境");
       const marker = {
         gpt: "__GPT_QUERY__",
         gemini: "__GEMINI_QUERY__",
