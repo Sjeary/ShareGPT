@@ -722,6 +722,18 @@ function TranslationSettingsForm({
         />
       </div>
       <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-background/60 px-2.5 py-2">
+        <label htmlFor="auto-translate-selection" className="text-xs">
+          选中网页文字后自动翻译
+        </label>
+        <Switch
+          id="auto-translate-selection"
+          checked={draft.autoTranslateSelection}
+          onCheckedChange={(autoTranslateSelection) =>
+            setDraft((current) => ({ ...current, autoTranslateSelection }))
+          }
+        />
+      </div>
+      <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-background/60 px-2.5 py-2">
         <label htmlFor="confirm-non-target-send" className="text-xs">
           非目标语言发送前确认
         </label>

@@ -31,6 +31,7 @@ test("settings use an empty remote translation endpoint and reject stale writes"
   assert.equal(initial.translation.ai.baseUrl, "");
   assert.equal(initial.translation.siteLanguage, "en");
   assert.equal(initial.translation.confirmNonTargetSend, true);
+  assert.equal(initial.translation.autoTranslateSelection, false);
   assert.equal(initial.settingsRevision, 0);
 
   const saved = backend.patchSettings("ui", { theme: "dark" }, 0, activePrincipalId(backend));
@@ -67,6 +68,7 @@ test("translation settings survive save and reload without overwriting other sec
       provider: "api",
       sourceLanguage: "en",
       targetLanguage: "zh",
+      autoTranslateSelection: true,
       api: { baseUrl: "https://translate.example", apiKey: "test-key" },
     },
     0,
@@ -84,6 +86,7 @@ test("translation settings survive save and reload without overwriting other sec
   assert.equal(reloaded.translation.provider, "api");
   assert.equal(reloaded.translation.sourceLanguage, "en");
   assert.equal(reloaded.translation.targetLanguage, "zh");
+  assert.equal(reloaded.translation.autoTranslateSelection, true);
   assert.deepEqual(reloaded.translation.api, {
     baseUrl: "https://translate.example",
     apiKey: "test-key",
@@ -153,7 +156,10 @@ test("advanced AI and translation settings are isolated and persistent per princ
   );
   backend.patchSettings(
     "translation",
-    { api: { baseUrl: "https://alice.example", apiKey: "alice-secret" } },
+    {
+      autoTranslateSelection: true,
+      api: { baseUrl: "https://alice.example", apiKey: "alice-secret" },
+    },
     aliceSaved.settingsRevision,
     alice.principalId,
   );
@@ -162,6 +168,7 @@ test("advanced AI and translation settings are isolated and persistent per princ
   assert.deepEqual(bob.advancedAi.environments, []);
   assert.equal(bob.translation.api.baseUrl, "");
   assert.equal(bob.translation.api.apiKey, "");
+  assert.equal(bob.translation.autoTranslateSelection, false);
   const bobSaved = backend.patchSettings(
     "translation",
     { api: { baseUrl: "https://bob.example", apiKey: "bob-secret" } },
@@ -172,12 +179,14 @@ test("advanced AI and translation settings are isolated and persistent per princ
   const uppercaseAlice = backend.activatePrincipal("https://collab.example", "Alice").settings;
   assert.deepEqual(uppercaseAlice.advancedAi.environments, []);
   assert.equal(uppercaseAlice.translation.api.baseUrl, "");
+  assert.equal(uppercaseAlice.translation.autoTranslateSelection, false);
   const otherServerPath = backend.activatePrincipal(
     "https://collab.example/team-a",
     "alice",
   ).settings;
   assert.deepEqual(otherServerPath.advancedAi.environments, []);
   assert.equal(otherServerPath.translation.api.baseUrl, "");
+  assert.equal(otherServerPath.translation.autoTranslateSelection, false);
 
   const aliceAgain = backend.activatePrincipal("https://collab.example", "alice").settings;
   assert.equal(aliceAgain.settingsRevision, bobSaved.settingsRevision);
@@ -187,6 +196,7 @@ test("advanced AI and translation settings are isolated and persistent per princ
   );
   assert.equal(aliceAgain.translation.api.baseUrl, "https://alice.example");
   assert.equal(aliceAgain.translation.api.apiKey, "alice-secret");
+  assert.equal(aliceAgain.translation.autoTranslateSelection, true);
   assert.equal(Object.hasOwn(aliceAgain, "principalSettings"), false);
 });
 
@@ -476,4 +486,34 @@ test("translation provider fields update independently and malicious paths are r
       /路径/,
     );
   }
+});
+
+test("translation behavior operations are normalized as booleans", (t) => {
+  const backend = createBackend(t);
+  const saved = backend.operateSettings(
+    "translation",
+    [
+      { op: "set", path: ["siteLanguage"], value: "ja" },
+      { op: "set", path: ["confirmNonTargetSend"], value: "false" },
+      { op: "set", path: ["autoTranslateSelection"], value: "true" },
+    ],
+    0,
+    activePrincipalId(backend),
+  );
+
+  assert.equal(saved.translation.siteLanguage, "ja");
+  assert.equal(saved.translation.confirmNonTargetSend, true);
+  assert.equal(saved.translation.autoTranslateSelection, false);
+
+  const enabled = backend.operateSettings(
+    "translation",
+    [
+      { op: "set", path: ["confirmNonTargetSend"], value: false },
+      { op: "set", path: ["autoTranslateSelection"], value: true },
+    ],
+    saved.settingsRevision,
+    activePrincipalId(backend),
+  );
+  assert.equal(enabled.translation.confirmNonTargetSend, false);
+  assert.equal(enabled.translation.autoTranslateSelection, true);
 });

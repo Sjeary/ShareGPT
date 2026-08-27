@@ -35,6 +35,9 @@ test('settings operations emit only changed nested translation fields', () => {
     provider: 'api',
     sourceLanguage: 'auto',
     targetLanguage: 'zh-CN',
+    siteLanguage: 'en',
+    confirmNonTargetSend: true,
+    autoTranslateSelection: false,
     ai: { baseUrl: '', apiKey: '', model: '', effort: 'medium' },
     api: { baseUrl: 'https://translate.example/v1', apiKey: 'old' },
     offline: { baseUrl: '' },
@@ -47,4 +50,33 @@ test('settings operations emit only changed nested translation fields', () => {
   assert.deepEqual(principalSectionOperations('translation', current, next), [
     { op: 'set', path: ['api', 'apiKey'], value: 'new' },
   ])
+})
+
+test('translation behavior fields are persisted as independent principal operations', () => {
+  const current: TranslationSettings = {
+    version: 1,
+    provider: 'ai',
+    sourceLanguage: 'auto',
+    targetLanguage: 'zh',
+    siteLanguage: 'en',
+    confirmNonTargetSend: true,
+    autoTranslateSelection: false,
+    ai: { baseUrl: '', apiKey: '', model: 'gpt-5.5', effort: 'medium' },
+    api: { baseUrl: '', apiKey: '' },
+    offline: { baseUrl: 'http://127.0.0.1:5000' },
+  }
+
+  assert.deepEqual(
+    principalSectionOperations('translation', current, {
+      ...current,
+      siteLanguage: 'ja',
+      confirmNonTargetSend: false,
+      autoTranslateSelection: true,
+    }),
+    [
+      { op: 'set', path: ['siteLanguage'], value: 'ja' },
+      { op: 'set', path: ['confirmNonTargetSend'], value: false },
+      { op: 'set', path: ['autoTranslateSelection'], value: true },
+    ],
+  )
 })

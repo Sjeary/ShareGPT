@@ -197,6 +197,7 @@ export interface TranslationSettings {
   targetLanguage: string
   siteLanguage: string
   confirmNonTargetSend: boolean
+  autoTranslateSelection: boolean
   ai: {
     baseUrl: string
     apiKey: string
