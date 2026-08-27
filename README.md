@@ -2,14 +2,14 @@
 
 # ShareGPT 桌面客户端
 
-**把 ChatGPT / Claude / Gemini「装进一个客户端」，由管理员统一配置网络、面向团队/小组协作使用的跨平台桌面应用。**
+**把 ChatGPT / Claude / Gemini「装进一个客户端」，由管理员统一配置网络，并整合团队协作与个人知识工作的跨平台桌面应用。**
 
-_A cross-platform desktop app that embeds ChatGPT / Claude / Gemini, routes them through an admin-managed proxy, and adds team chat._
+_A cross-platform desktop app that embeds ChatGPT / Claude / Gemini with admin-managed networking, bilingual workflows, team collaboration, and local-first productivity tools._
 
 [![CI](https://github.com/Sjeary/ShareGPT/actions/workflows/ci.yml/badge.svg)](https://github.com/Sjeary/ShareGPT/actions/workflows/ci.yml)
 [![version](https://img.shields.io/github/v/release/Sjeary/ShareGPT)](https://github.com/Sjeary/ShareGPT/releases)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue)
-![electron](https://img.shields.io/badge/Electron-31-47848F)
+![electron](https://img.shields.io/badge/Electron-43-47848F)
 ![react](https://img.shields.io/badge/React-19-61DAFB)
 [![license](https://img.shields.io/github/license/Sjeary/ShareGPT)](LICENSE)
 
@@ -34,35 +34,57 @@ _A cross-platform desktop app that embeds ChatGPT / Claude / Gemini, routes them
 
 团队里常常很多人都要用 ChatGPT / Claude / Gemini，但**共用账号**时，大家来自各不相同的网络出口，**IP 不统一很容易被服务商风控、导致回答质量下降（俗称"降智"）**；再加上各自配置网络门槛高、又难以统一管理。
 
-ShareGPT 把这些一次性收拢：**装上、登录、即用**——网络与配置由管理员集中下发，所有成员的 AI 流量可从**同一个出口 IP** 出网，既省去各自配置，也让共用账号更稳定可信；同时内置团队协作聊天、用量统计与统一的管理后台。
+ShareGPT 把这些一次性收拢：**装上、登录、即用**——网络与配置由管理员集中下发，所有成员的 AI 流量可从**同一个出口 IP** 出网，既省去各自配置，也让共用账号更稳定可信；同时内置双语网页交互、团队协作聊天、日历待办、知识库、专注计时、用量统计与统一的管理后台。
 
 整套由三部分组成：
 
-- **客户端**：内嵌三家 AI 网页（多标签、各自独立会话、登录态持久化），把 AI 站点流量按域名清单走代理；内置协作聊天与用量统计。
+- **客户端**：内嵌三家 AI 网页（多标签、各自独立会话、登录态持久化），把 AI 站点流量按域名清单走代理；内置双语交互、协作聊天与本地优先的个人生产力工具。
 - **协作服务端**（`collab_server2/`）：纯 Node.js 的 http + WebSocket，负责账号、聊天、配置下发、版本分发。零外部依赖、可多实例（多群）。
 - **管理控制台**（`admin_console/`）：管理员用来管用户、下发代理配置、查看反馈、发布版本。
 
 ## ✨ 功能特性
 
-- **AI 工作区**：内嵌 ChatGPT / Claude / Gemini（可在设置里开关入口），多标签同构，明暗主题跟随，沉浸/全屏（F11）。
+- **AI 工作区**：内嵌 ChatGPT / Claude / Gemini（可在设置里开关入口），支持多标签、明暗主题跟随、沉浸/全屏（F11）；Claude 可将明确打开的外部 HTTP/HTTPS 页面放入独立内部标签。
+- **高级 AI 多环境（按权限开放）**：同一 AI 服务可建立多个相互隔离的工作环境，每个环境拥有独立网页登录状态和管理员分配的托管线路；支持线路健康检查，并按用户控制高级功能权限。
+- **三网页端双语翻译（按权限开放）**：支持右键或自动翻译网页选区、整页翻译，以及把中文提问预览、翻译填入或翻译后发送；目标语言默认英文，直接发送非目标语言内容前会要求确认。译文显示在 ShareGPT 侧栏，不替换原网页内容。
 - **网络 / 代理（基于 [sing-box](https://sing-box.sagernet.org/)）**：
   - 管理员统一下发连接配置，成员**首登自动拉取**，无需手配。
   - 只对 AI 站点**按内置域名清单**走代理，其余直连/走本机代理。
   - **代理检测**：实时显示页面流量是否全部走代理；发现"会用到却没走代理"的域名时**自动加入本机清单并上报管理员**，一键重启即时生效。
   - **可选「机场订阅」模式**：管理员粘贴 Clash 订阅、选一个节点下发，客户端可选择走机场节点（与统一代理并存，默认统一）。
-- **协作聊天**：私聊 / 房间消息、图片与文件、撤回 / 已读 / 回复 / 转发、离线补同步、可自定义提醒；管理员可禁止某人使用聊天。
+- **协作聊天**：私聊 / 房间消息、图片与文件、撤回 / 已读 / 回复 / 转发、离线补同步、可自定义提醒；支持 emoji 输入、消息表情回应、动态大表情和 Emoji Kitchen 组合；管理员可禁止某人使用聊天。
+- **日历、待办与备忘**：个人日历提供月 / 周 / 日视图、多日历、重复事件和 `.ics` 导入；团队日历支持共享、邀请与 RSVP；待办支持智能视图、优先级、标签、子任务、重复规则和自然语言快速添加，并可同步到个人日历。
+- **笔记 / 知识库**：本地真实 `.md` 仓库，可直接与 Obsidian vault 配合；支持双链与反链、全文检索、标签与属性、关系图谱、Canvas、数据库视图、AI 写作辅助和可选云同步。
+- **专注 / 番茄钟**：专注、短休和长休计时，可绑定待办、播放白 / 棕 / 雨声，查看个人统计、连续天数和团队专注排行。
 - **使用统计**：按 ChatGPT / Gemini / Claude 维度统计每人查询量与排行。
-- **管理控制台**：用户增删改、客户端代理默认配置下发、机场节点下发、用户反馈查看、"漏走代理域名"汇总、版本发布。
-- **应用内更新**：以 **GitHub Releases** 为更新源（参考 [cc-switch](https://github.com/farion1231/cc-switch)，**不经过任何自建服务器**）。**Windows 原地无感更新**——后台下载、自动安装并重启，快捷方式与安装位置不变，账号/聊天记录/网页登录态全部保留；macOS 暂为下载安装包方式。
-- **网页隐私与环境**：可分别重置 ChatGPT / Gemini / Claude 的网页登录数据（密码二次确认）；支持美国/代理出口一致的语言、时区和可选粗略位置，并阻止 WebRTC 非代理 UDP 泄漏。环境策略可跨设备同步，Cookie 和网页登录态不上传。
+- **管理控制台**：用户增删改、高级 AI 权限与托管线路分配、客户端代理默认配置下发、机场节点下发、用户反馈查看、"漏走代理域名"汇总、版本发布。
+- **应用内更新**：以 **GitHub Releases** 为更新源（参考 [cc-switch](https://github.com/farion1231/cc-switch)，**不经过任何自建服务器**）。**Windows 原地无感更新**——安装时可选择位置，后续后台下载、自动安装并重启，快捷方式与安装位置不变，账号/聊天记录/网页登录态全部保留；macOS 暂为下载安装包方式。
+- **网页隐私与环境**：可分别清除或重建 ChatGPT / Gemini / Claude 的网页环境（密码二次确认）；网页可见信息表盘集中展示出口网络、时区语言、WebRTC、浏览器、硬件和图形摘要，提示明显矛盾，并支持清除前后及跨设备快照对比。可选环境标准化默认关闭；环境策略可跨设备同步，Cookie、网页登录态和本机审计快照不上传。
+- **可定制导航**：可隐藏不需要的内容入口，并通过长按调整导航顺序。
 - **跨平台**：Windows 与 macOS（Apple Silicon）。
+
+## 🌐 双语网页翻译
+
+ChatGPT、Gemini 和 Claude 共用同一套翻译流程。入口仅对管理员或已获管理员授权的高级 AI 用户显示，并要求当前托管线路授权校验通过。打开 AI 工作区工具栏中的翻译面板，选择翻译引擎、目标语言并保存后即可长期使用。
+
+| 使用场景     | 操作与结果                                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------------ |
+| 临时翻译选区 | 选中文字后右键选择「翻译选中文字」，译文显示在 ShareGPT 侧栏。                                               |
+| 连续划词翻译 | 开启「选中网页文字后自动翻译」；此开关默认关闭，开启后选中正文即可自动翻译，输入框和编辑器中的选区会被忽略。 |
+| 阅读全文     | 在翻译面板点击「整页翻译」；提取结果和译文显示在侧栏，不修改网站 DOM。                                       |
+| 用中文提问   | 输入中文后选择「预览译文」「翻译并填入」或「翻译并发送」，网站输入框最终接收目标语言文本。                   |
+| 防止误发中文 | 直接在网站输入框按 Enter 或点击发送时，如果内容明显不是目标语言，会先弹出确认。                              |
+
+翻译引擎可以选择 **OpenAI 兼容的 AI 接口**、**LibreTranslate 兼容接口**，或只允许回环地址的**本地离线服务**，所以翻译不一定由 AI 完成。选区、页面正文或提问内容会发送给你配置的翻译服务；使用本地离线服务时不会发送到远程翻译接口。
+
+API 密钥按当前登录身份长期保存在本机设置中，系统支持时使用 Electron `safeStorage` 加密，导出配置时会自动剔除密钥；如果当前系统无法提供 `safeStorage`，兼容模式可能以本机明文保存，因此只建议在可信设备上使用。翻译与发送保护采用 Chromium 隔离世界和不改写页面 DOM 的低侵入设计，但任何内嵌浏览器都不能承诺对网站“绝对不可检测”。完整边界见 [三网页端双语翻译说明](docs/bilingual-web-translation.md)。
 
 ## 🚀 快速开始（普通用户）
 
 1. 到 [Releases](../../releases) 下载对应平台安装包（Windows `.exe` / macOS `.dmg`）。
 2. 打开应用，**登录**管理员给你的账号；或在登录页「导入配置」导入管理员发的配置文件。
 3. 首次登录会自动拉取代理配置。进入「网络 / 代理」，点击**开启代理**。
-4. 左侧导航打开 **ChatGPT / Claude**，即可使用；用「协作聊天」与同组成员沟通。
+4. 左侧导航打开 **ChatGPT / Gemini / Claude**，即可使用；用「协作聊天」与同组成员沟通。
 
 > **Windows 提示**：安装包未做代码签名，首次运行 Defender SmartScreen 会提示「发布者未知」——点**「更多信息（More info）」→「仍要运行（Run anyway）」**即可。从管理员处拿到的包可放心运行。
 
@@ -95,7 +117,7 @@ ShareGPT 把这些一次性收拢：**装上、登录、即用**——网络与�
 
 ### 2. 管理控制台
 
-[`admin_console/`](admin_console/) 是独立 Electron 管理端。构建：`npm run dist:admin:win`。登录后可：用户管理、客户端代理默认配置下发、（可选）粘贴 Clash 订阅下发机场节点、查看反馈/漏走代理域名、发布版本。
+[`admin_console/`](admin_console/) 是独立 Electron 管理端。构建：`npm run dist:admin:win`。登录后可：用户管理、高级 AI 权限与托管线路分配、客户端代理默认配置下发、（可选）粘贴 Clash 订阅下发机场节点、查看反馈/漏走代理域名、发布版本。
 
 ### 3. 集中代理出口（统一出口 IP，可选）
 
@@ -112,7 +134,7 @@ ShareGPT 把这些一次性收拢：**装上、登录、即用**——网络与�
 
 ## 👩‍💻 从源码构建 / 开发
 
-**环境**：Node.js 18+、npm。
+**环境**：Node.js 22.12+、npm。
 
 ```bash
 # 安装依赖（主程序 + 渲染层 + 管理端）
@@ -143,7 +165,7 @@ scripts/              构建前二进制准备脚本
 build/                打包资源（图标、bin/ 放第三方二进制）
 ```
 
-**技术栈**：Electron 31（Chromium 126）· electron-vite · React 19 · TypeScript · Tailwind v4 · shadcn/ui · Zustand；代理基于 sing-box；服务端为纯 Node http/ws。
+**技术栈**：Electron 43 · Vite 8 · React 19 · TypeScript · Tailwind v4 · shadcn/ui · Zustand；代理基于 sing-box；服务端为纯 Node http/ws。
 
 > 架构图与端间协议详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
