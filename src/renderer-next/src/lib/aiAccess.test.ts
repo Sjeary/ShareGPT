@@ -20,7 +20,7 @@ test('translation is available to every authenticated user', () => {
   )
 })
 
-test('advanced AI requires both permission and verified managed routes', () => {
+test('advanced AI capability is independent from current route synchronization', () => {
   assert.equal(
     canUseAdvancedAi(
       {
@@ -43,7 +43,7 @@ test('advanced AI requires both permission and verified managed routes', () => {
       },
       'verified-token',
     ),
-    false,
+    true,
   )
   assert.equal(
     canUseAdvancedAi(

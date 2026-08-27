@@ -4,13 +4,21 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { Backend } = require("../backend");
+const {
+  Backend,
+  ENCRYPTED_SECRET_PREFIX,
+  SECRET_DECRYPTION_FAILED,
+  SECRET_STORAGE_UNAVAILABLE,
+  transformSensitiveValues,
+} = require("../backend");
 
 function createBackend(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-settings-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const app = {
     isPackaged: true,
+    getName: () => "ShareGPT",
+    getVersion: () => "1.0.9-test",
     getPath(name) {
       if (name === "exe") return path.join(root, "ShareGPT.exe");
       const target = path.join(root, name);
@@ -23,6 +31,10 @@ function createBackend(t) {
 
 function activePrincipalId(backend) {
   return backend.getPrincipalContext().principalId;
+}
+
+function errorHasCode(error, code) {
+  return Boolean(error && typeof error === "object" && error.code === code);
 }
 
 test("settings use an empty remote translation endpoint and reject stale writes", (t) => {
@@ -58,6 +70,79 @@ test("settings recover from the atomic backup without overwriting the corrupt fi
   assert.equal(recovered.ui.theme, "dark");
   assert.equal(recovered.ui.sidebarSide, undefined);
   assert.equal(fs.readFileSync(backend.settingsFile, "utf8"), "{broken");
+});
+
+test("encrypted settings fail closed when system credential storage is unavailable", (t) => {
+  const backend = createBackend(t);
+  const encrypted = `${ENCRYPTED_SECRET_PREFIX}${Buffer.from("ciphertext").toString("base64")}`;
+  const stored = JSON.stringify({ collab: { saved_password: encrypted }, ui: { theme: "dark" } });
+  fs.mkdirSync(path.dirname(backend.settingsFile), { recursive: true });
+  fs.writeFileSync(backend.settingsFile, stored, "utf8");
+
+  assert.throws(
+    () => backend.loadSettings(),
+    (error) => errorHasCode(error, SECRET_STORAGE_UNAVAILABLE),
+  );
+  assert.throws(
+    () => backend.patchSettings("ui", { theme: "light" }, 0, activePrincipalId(backend)),
+    (error) => errorHasCode(error, SECRET_STORAGE_UNAVAILABLE),
+  );
+  assert.equal(fs.readFileSync(backend.settingsFile, "utf8"), stored);
+});
+
+test("credential decryption errors never collapse encrypted values to empty strings", () => {
+  const encrypted = `${ENCRYPTED_SECRET_PREFIX}${Buffer.from("ciphertext").toString("base64")}`;
+  assert.throws(
+    () =>
+      transformSensitiveValues({ apiKey: encrypted }, "decrypt", "", {
+        decryptString() {
+          throw new Error("temporary keychain failure");
+        },
+        encryptString() {
+          return Buffer.from("encrypted");
+        },
+      }),
+    (error) => errorHasCode(error, SECRET_DECRYPTION_FAILED),
+  );
+});
+
+test("update backup and missing-data restore cover all durable user stores", (t) => {
+  const backend = createBackend(t);
+  const userDataDir = backend.app.getPath("userData");
+  const fixtures = {
+    "settings.json": "settings",
+    "settings.json.bak": "settings-backup",
+    "chat_history.json": "chat",
+    "calendar.json": "calendar",
+    "tasks.json": "tasks",
+    "focus.json": "focus",
+    "private.defaults.local.json": "defaults",
+  };
+  for (const [name, value] of Object.entries(fixtures)) {
+    fs.writeFileSync(path.join(userDataDir, name), value, "utf8");
+  }
+  fs.mkdirSync(path.join(userDataDir, "ShareGPT-Vault"), { recursive: true });
+  fs.writeFileSync(path.join(userDataDir, "ShareGPT-Vault", "note.md"), "note", "utf8");
+  fs.mkdirSync(path.join(userDataDir, "Partitions", "gpt-chat"), { recursive: true });
+  fs.writeFileSync(path.join(userDataDir, "Partitions", "gpt-chat", "marker"), "session", "utf8");
+
+  const { backupDir } = backend.createUpdateBackup("test");
+  assert.equal(fs.readFileSync(path.join(backupDir, "calendar.json"), "utf8"), "calendar");
+  assert.equal(fs.readFileSync(path.join(backupDir, "ShareGPT-Vault", "note.md"), "utf8"), "note");
+  assert.equal(
+    fs.readFileSync(path.join(backupDir, "Partitions", "gpt-chat", "marker"), "utf8"),
+    "session",
+  );
+
+  fs.rmSync(path.join(userDataDir, "calendar.json"));
+  fs.rmSync(path.join(userDataDir, "ShareGPT-Vault"), { recursive: true });
+  const restored = backend.restoreMissingDataFromLatestUpdateBackup();
+  assert.deepEqual(restored.restored.sort(), ["ShareGPT-Vault", "calendar.json"]);
+  assert.equal(fs.readFileSync(path.join(userDataDir, "calendar.json"), "utf8"), "calendar");
+  assert.equal(
+    fs.readFileSync(path.join(userDataDir, "ShareGPT-Vault", "note.md"), "utf8"),
+    "note",
+  );
 });
 
 test("translation settings survive save and reload without overwriting other sections", (t) => {

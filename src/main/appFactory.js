@@ -60,9 +60,11 @@ const { createAiEnvironmentGenerationGuard } = require("./aiEnvironmentGeneratio
 const {
   createAuthorizationEpochGuard,
   fetchAuthenticatedJson,
+  legacyCompatibleProxyRoutes,
   resolveAiSessionCapability,
 } = require("./aiSessionAuthorization");
 const { runSettingsPrincipalTransition } = require("./settingsPrincipalTransition");
+const { createStorageFlushCoordinator } = require("./storageFlush");
 const {
   createNavTooltipController,
   normalizeNavTooltipBounds,
@@ -237,22 +239,21 @@ function applyStableUserDataPath(appInstance) {
   appInstance.setPath("userData", stableUserDataDir);
 }
 
-async function flushAiSessionStorage(extraPartitions = []) {
+const storageFlushCoordinator = createStorageFlushCoordinator({
+  fromPartition: (partition) => session.fromPartition(partition),
+  timeoutMs: 5000,
+  onWarning: (partition, error) =>
+    console.warn(`Unable to flush ${partition}:`, error instanceof Error ? error.message : error),
+});
+
+function flushAiSessionStorage(extraPartitions = []) {
   const partitions = [
     ...new Set([
       ...Object.values(AI_WORKSPACE_POLICIES).map((policy) => policy.partition),
       ...extraPartitions.map((partition) => safeText(partition)).filter(Boolean),
     ]),
   ];
-  await Promise.all(
-    partitions.map(async (partition) => {
-      try {
-        await session.fromPartition(partition).flushStorageData();
-      } catch (err) {
-        console.warn(`Unable to flush ${partition}:`, err.message || err);
-      }
-    }),
-  );
+  return storageFlushCoordinator.flush(partitions);
 }
 
 function safeText(value) {
@@ -751,6 +752,9 @@ function createElectronApp(baseMode = "all") {
       `${serverUrl}/api/client/bootstrap`,
       token,
     );
+    if (!Array.isArray(payload.proxyRoutes)) {
+      payload.proxyRoutes = legacyCompatibleProxyRoutes(payload);
+    }
     aiAuthorizationEpoch.assert(authorizationEpoch);
     assertPrincipalUnchanged(principal);
     const legacyProfile = payload?.authorization
@@ -807,7 +811,18 @@ function createElectronApp(baseMode = "all") {
       principalId: principal.principalId,
       eligible: true,
       advancedAllowed: aiAuthorization.advancedAllowed,
+      isAdmin: aiAuthorization.isAdmin,
       allowedProxyRouteIds: [...routeIds],
+      authorizedAiRoutes: aiAuthorization.routes.map((route) => ({
+        id: route.id,
+        name: route.name,
+        mode: "singbox",
+        configKey: crypto
+          .createHash("sha256")
+          .update(JSON.stringify([route, aiAuthorization.sender]))
+          .digest("hex")
+          .slice(0, 16),
+      })),
     };
   }
 
@@ -1331,6 +1346,7 @@ function createElectronApp(baseMode = "all") {
   }
 
   function getAiStoragePartitions() {
+    const principal = backend.getPrincipalContext();
     const legacy = Object.keys(AI_WORKSPACE_POLICIES)
       .map((kind) => getAiPolicy(kind)?.partition)
       .filter(Boolean);
@@ -1338,13 +1354,20 @@ function createElectronApp(baseMode = "all") {
     const isolated = Array.isArray(advanced?.environments)
       ? advanced.environments.flatMap((environment) => {
           try {
-            return [partitionForAiEnvironment(environment?.kind, environment?.id)];
+            return [
+              partitionForAiEnvironment(
+                environment?.kind,
+                environment?.id,
+                principal.principalId,
+                principal.legacyPartitionOwnerId,
+              ),
+            ];
           } catch {
             return [];
           }
         })
       : [];
-    return [...new Set([...legacy, ...isolated])];
+    return [...new Set([...legacy, ...isolated, ...configuredAiPartitions])];
   }
 
   async function verifyBrowserDestructiveAction(payload) {
@@ -2580,6 +2603,11 @@ function createElectronApp(baseMode = "all") {
     }
   }
 
+  async function flushAndDisposeAiWorkspaces() {
+    if (backend) await flushAiSessionStorage(getAiStoragePartitions()).catch(() => {});
+    disposeAiWorkspaces();
+  }
+
   function attachWindowGuards(targetWindow) {
     if (!targetWindow) return;
 
@@ -2738,10 +2766,10 @@ function createElectronApp(baseMode = "all") {
       }
       return backend.loadSettings();
     });
-    ipcMain.handle("settings:principal-activate", (_event, payload) => {
+    ipcMain.handle("settings:principal-activate", async (_event, payload) => {
       stopAuthorizedSender();
       clearAiAuthorization("principal-activating");
-      disposeAiWorkspaces();
+      await flushAndDisposeAiWorkspaces();
       aiEnvironmentGuard.invalidateAll();
       for (const controller of translationRequests.values()) controller.abort();
       translationRequests.clear();
@@ -2749,10 +2777,10 @@ function createElectronApp(baseMode = "all") {
         backend.activatePrincipal(payload?.serverUrl, payload?.username),
       );
     });
-    ipcMain.handle("settings:principal-clear", () => {
+    ipcMain.handle("settings:principal-clear", async () => {
       stopAuthorizedSender();
       clearAiAuthorization("principal-clearing");
-      disposeAiWorkspaces();
+      await flushAndDisposeAiWorkspaces();
       aiEnvironmentGuard.invalidateAll();
       for (const controller of translationRequests.values()) controller.abort();
       translationRequests.clear();
@@ -3018,11 +3046,16 @@ function createElectronApp(baseMode = "all") {
           };
           const onDownloaded = async () => {
             cleanup();
-            await flushAiSessionStorage(getAiStoragePartitions()).catch(() => {});
             try {
+              await flushAiSessionStorage(getAiStoragePartitions());
               backend && backend.createUpdateBackup("before-autoupdate");
-            } catch (_e) {
-              /* 数据已在固定 userData 目录, 备份失败不阻断安装 */
+            } catch (error) {
+              reject(
+                new Error("更新前资料写盘或备份失败，已停止自动安装", {
+                  cause: error,
+                }),
+              );
+              return;
             }
             resolve({ updated: true, installing: true });
             // 静默安装 NSIS 包并自动重启 (isSilent=true, isForceRunAfter=true)。
@@ -3107,8 +3140,8 @@ function createElectronApp(baseMode = "all") {
       return { activeKind };
     });
     ipcMain.handle("nav:tooltip", (_event, payload) => setNavTooltip(payload));
-    ipcMain.handle("ai:close-all", () => {
-      disposeAiWorkspaces();
+    ipcMain.handle("ai:close-all", async () => {
+      await flushAndDisposeAiWorkspaces();
       return { ok: true };
     });
 
@@ -3853,7 +3886,9 @@ function createElectronApp(baseMode = "all") {
       ? startupSettings.ui.pendingAiPartitionCleanup
           .map(safeText)
           .filter((partition) =>
-            /^persist:sharegpt-ai-(?:gpt|gemini|claude)-env-[a-z0-9-]{1,80}$/.test(partition),
+            /^persist:sharegpt-ai-(?:(?:[a-f0-9]{64}|local-device)-)?(?:gpt|gemini|claude)-env-[a-z0-9-]{1,80}$/.test(
+              partition,
+            ),
           )
       : [];
     if (pendingPartitions.length) {
@@ -3883,10 +3918,25 @@ function createElectronApp(baseMode = "all") {
     });
   });
 
-  app.on("before-quit", () => {
+  let storageFlushedBeforeQuit = false;
+  let storageFlushBeforeQuit = null;
+  app.on("before-quit", (event) => {
     closeNavTooltip();
-    disposeAiWorkspaces();
-    if (backend) backend.stopAll();
+    if (!backend || storageFlushedBeforeQuit) {
+      disposeAiWorkspaces();
+      if (backend) backend.stopAll();
+      return;
+    }
+    event.preventDefault();
+    if (storageFlushBeforeQuit) return;
+    storageFlushBeforeQuit = flushAiSessionStorage(getAiStoragePartitions())
+      .catch(() => {})
+      .finally(() => {
+        storageFlushedBeforeQuit = true;
+        disposeAiWorkspaces();
+        backend.stopAll();
+        app.quit();
+      });
   });
 
   app.on("window-all-closed", () => {

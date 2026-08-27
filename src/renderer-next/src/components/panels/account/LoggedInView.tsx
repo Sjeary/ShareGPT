@@ -39,6 +39,7 @@ import { CHANGELOG } from './changelog'
 import type { CollabSettings } from '@/types/settings'
 import { BrowserPrivacySection } from './BrowserPrivacySection'
 import { normalizeAdvancedAiSettings } from '@/lib/aiEnvironments'
+import { canUseAdvancedAi } from '@/lib/aiAccess'
 
 // 协作通知开关项 (对应 collab.notify_* 字段)。
 const NOTIFY_FIELDS: ReadonlyArray<{
@@ -501,10 +502,9 @@ export function LoggedInView() {
   const setNavHidden = useAppStore((s) => s.setNavHidden)
   const advancedAiRaw = useAppStore((s) => s.settings?.advancedAi)
   const advancedAi = useMemo(() => normalizeAdvancedAiSettings(advancedAiRaw), [advancedAiRaw])
+  const authToken = useAuthStore((s) => s.token)
   const profile = useAuthStore((s) => s.profile)
-  const advancedAiAllowed = Boolean(
-    profile?.routeAuthorizationVerified && (profile?.isAdmin || profile?.advancedAiAllowed),
-  )
+  const advancedAiAllowed = canUseAdvancedAi(profile, authToken)
   const { logout } = useAuth()
 
   const [loggingOut, setLoggingOut] = useState(false)
@@ -687,9 +687,11 @@ export function LoggedInView() {
                   id="advanced-ai-environments"
                   checked={advancedAi.enabled}
                   onCheckedChange={(enabled) =>
-                    void patchSection('advancedAi', { ...advancedAi, enabled }).catch(() =>
-                      toast.error('保存高级功能设置失败'),
-                    )
+                    void patchSection('advancedAi', {
+                      ...advancedAi,
+                      initialized: true,
+                      enabled,
+                    }).catch(() => toast.error('保存高级功能设置失败'))
                   }
                 />
               </div>

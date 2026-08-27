@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { isCurrentRouteRefreshSession, type CurrentRouteSession } from './authSession.ts'
+import {
+  isCurrentRouteRefreshSession,
+  withRuntimeAuthorization,
+  type CurrentRouteSession,
+} from './authSession.ts'
 
 test('a deferred route refresh cannot apply after another principal activates', async () => {
   const captured = {
@@ -54,4 +58,44 @@ test('a silent relogin refresh accepts only the captured old or replacement toke
   assert.equal(isCurrentRouteRefreshSession(captured, { ...current, token: 'token-old' }), true)
   assert.equal(isCurrentRouteRefreshSession(captured, { ...current, token: 'token-new' }), true)
   assert.equal(isCurrentRouteRefreshSession(captured, { ...current, token: 'token-other' }), false)
+})
+
+test('main-process authorization remains authoritative after a legacy silent relogin', () => {
+  const profile = withRuntimeAuthorization(
+    {
+      username: 'admin',
+      displayName: 'Admin',
+      isAdmin: false,
+      advancedAiAllowed: false,
+    },
+    {
+      eligible: true,
+      isAdmin: true,
+      advancedAllowed: true,
+      allowedProxyRouteIds: ['internal-unified'],
+      authorizedAiRoutes: [
+        {
+          id: 'internal-unified',
+          name: '内置统一代理',
+          mode: 'singbox',
+          configKey: 'runtime',
+        },
+      ],
+    },
+  )
+
+  assert.equal(profile.isAdmin, true)
+  assert.equal(profile.advancedAiAllowed, true)
+  assert.equal(profile.routeAuthorizationVerified, true)
+  assert.deepEqual(profile.allowedProxyRouteIds, ['internal-unified'])
+})
+
+test('renderer capability claims cannot override a fail-closed main authorization', () => {
+  const profile = withRuntimeAuthorization(
+    { username: 'user', isAdmin: true, advancedAiAllowed: true },
+    { eligible: false, isAdmin: false, advancedAllowed: false },
+  )
+  assert.equal(profile.isAdmin, false)
+  assert.equal(profile.advancedAiAllowed, false)
+  assert.equal(profile.routeAuthorizationVerified, false)
 })

@@ -197,11 +197,13 @@ async function closeServer(server) {
   await new Promise((resolve) => server.close(resolve));
 }
 
-async function login(window, baseUrl, username) {
+async function login(window, baseUrl, username, { remember = false } = {}) {
   await window.locator("#account-server").waitFor({ state: "visible" });
   await window.locator("#account-server").fill(baseUrl);
   await window.locator("#account-username").fill(username);
   await window.locator("#account-password").fill(PASSWORD);
+  const rememberSwitch = window.getByRole("switch", { name: "记住密码" });
+  if ((await rememberSwitch.isChecked()) !== remember) await rememberSwitch.click();
   await window.getByRole("button", { name: "登录", exact: true }).click();
   await window.locator('[data-tour="nav-account"]').waitFor({ state: "visible" });
   const skip = window.getByRole("button", { name: "跳过", exact: true });
@@ -556,6 +558,7 @@ async function main() {
         proxy_server: "127.0.0.1",
         proxy_port: String(socksPort),
         proxy_uuid: "11111111-1111-4111-8111-111111111111",
+        socks_listen_port: String(senderPort),
         fallback_mode: "direct",
       },
     }),
@@ -588,7 +591,7 @@ async function main() {
   const results = [];
   try {
     await waitForHealth(baseUrl, collab, serverOutput);
-    electronApp = await electron.launch({
+    const launchOptions = {
       args: [ROOT],
       cwd: ROOT,
       env: {
@@ -596,20 +599,23 @@ async function main() {
         SHAREGPT_USER_DATA: userDataDir,
         SHAREGPT_COMPOSER_CONFIRM_TTL_MS: "1500",
       },
-    });
+    };
+    electronApp = await electron.launch(launchOptions);
     const blockedRequests = [];
-    await electronApp.context().route("**/*", async (route) => {
-      const url = new URL(route.request().url());
-      const loopback = ["127.0.0.1", "localhost", "::1"].includes(url.hostname);
-      if (["file:", "data:", "devtools:"].includes(url.protocol) || loopback) {
-        await route.continue();
-      } else {
-        blockedRequests.push(url.toString());
-        await route.abort("blockedbyclient");
-      }
-    });
+    const guardRemoteRequests = (app) =>
+      app.context().route("**/*", async (route) => {
+        const url = new URL(route.request().url());
+        const loopback = ["127.0.0.1", "localhost", "::1"].includes(url.hostname);
+        if (["file:", "data:", "devtools:"].includes(url.protocol) || loopback) {
+          await route.continue();
+        } else {
+          blockedRequests.push(url.toString());
+          await route.abort("blockedbyclient");
+        }
+      });
+    await guardRemoteRequests(electronApp);
 
-    const window = await electronApp.firstWindow();
+    let window = await electronApp.firstWindow();
     const pageErrors = [];
     window.on("pageerror", (error) => pageErrors.push(error.message));
     await window.locator("#account-server").waitFor({ state: "visible" });
@@ -619,7 +625,7 @@ async function main() {
     );
     results.push("login action is visible without scrolling");
 
-    await login(window, baseUrl, USERNAME);
+    await login(window, baseUrl, USERNAME, { remember: true });
     const now = new Date().toISOString();
     await patchSection(window, "advancedAi", {
       version: 1,
@@ -647,20 +653,46 @@ async function main() {
         effort: "medium",
       },
     });
-    await window.reload();
-    await login(window, baseUrl, USERNAME);
+    await electronApp.close();
+    electronApp = await electron.launch(launchOptions);
+    await guardRemoteRequests(electronApp);
+    window = await electronApp.firstWindow();
+    window.on("pageerror", (error) => pageErrors.push(error.message));
+    await window.locator('[data-tour="nav-account"]').waitFor({ state: "visible" });
+    results.push("remembered credentials automatically restore login after a full app restart");
     const advancedLoginState = await window.evaluate(async () => window.api.loadSettings());
     assert.strictEqual(advancedLoginState.advancedAi.enabled, true);
     assert.strictEqual(advancedLoginState.translation.ai.apiKey, "alice-notes-key");
-    assert.deepStrictEqual(
-      advancedLoginState.sender.authorized_proxy_route_ids,
-      ["route-a", "route-b"],
-      `authoritative route sync failed; server=${serverOutput.join("")}`,
+    assert.deepStrictEqual(advancedLoginState.sender.authorized_proxy_route_ids ?? [], []);
+    assert.deepStrictEqual(advancedLoginState.sender.managed_proxy_routes ?? [], []);
+    results.push("authorized route descriptors stay in authenticated runtime state only");
+    await window.locator('[data-tour="nav-service"]').click();
+    assert.strictEqual(await window.getByLabel("服务器地址").inputValue(), "127.0.0.1");
+    assert.strictEqual(
+      await window.getByLabel("连接身份码").inputValue(),
+      "11111111-1111-4111-8111-111111111111",
     );
-    assert.deepStrictEqual(
-      advancedLoginState.sender.managed_proxy_routes.map((route) => route.id),
-      ["route-a", "route-b"],
+    assert.strictEqual(await window.getByLabel("本地代理端口").inputValue(), String(senderPort));
+    const startSenderButton = window.getByRole("button", { name: "开启代理", exact: true });
+    await waitUntil(async () => !(await startSenderButton.isDisabled()));
+    await startSenderButton.click();
+    await window.getByRole("button", { name: "停止代理", exact: true }).waitFor();
+    await window.getByRole("button", { name: "停止代理", exact: true }).click();
+    await window.getByRole("button", { name: "开启代理", exact: true }).waitFor();
+    const settingsAfterUiStart = await window.evaluate(async () => window.api.loadSettings());
+    assert.strictEqual(
+      settingsAfterUiStart.sender.proxy_server ?? "",
+      advancedLoginState.sender.proxy_server ?? "",
     );
+    assert.strictEqual(
+      settingsAfterUiStart.sender.proxy_uuid ?? "",
+      advancedLoginState.sender.proxy_uuid ?? "",
+    );
+    assert.notStrictEqual(
+      settingsAfterUiStart.sender.proxy_uuid,
+      "11111111-1111-4111-8111-111111111111",
+    );
+    results.push("server sender starts through the UI without persisting runtime credentials");
     await window.locator('[data-tour="nav-notes"]').click();
     await window.getByTitle("今日笔记").click();
     await window.getByRole("button", { name: "AI", exact: true }).click();
@@ -720,7 +752,7 @@ async function main() {
       offline: { baseUrl: fixtureUrl },
     });
     await window.reload();
-    await login(window, baseUrl, USERNAME);
+    await window.locator('[data-tour="nav-account"]').waitFor({ state: "visible" });
     await window.evaluate(
       ({ listenPort }) =>
         window.api.startSender({
@@ -1314,8 +1346,8 @@ async function main() {
     });
     assert.strictEqual((await composerFixtureAction(electronApp, fixtureUrl, "state")).clicks, 0);
     const basicSettings = await window.evaluate(async () => window.api.loadSettings());
-    assert.deepStrictEqual(basicSettings.sender.managed_proxy_routes, []);
-    assert.deepStrictEqual(basicSettings.sender.authorized_proxy_route_ids, []);
+    assert.deepStrictEqual(basicSettings.sender.managed_proxy_routes ?? [], []);
+    assert.deepStrictEqual(basicSettings.sender.authorized_proxy_route_ids ?? [], []);
     const forgedAirportError = await window.evaluate(async () => {
       try {
         await window.api.startSender({

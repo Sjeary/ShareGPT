@@ -58,11 +58,7 @@ import {
 import type { AiEventPayload } from './types'
 import { AiEnvironmentPanel } from './AiEnvironmentPanel'
 import { TranslationPanel } from './TranslationPanel'
-import {
-  availableAiRoutes,
-  normalizeAdvancedAiSettings,
-  routeForEnvironment,
-} from '@/lib/aiEnvironments'
+import { normalizeAdvancedAiSettings, routeForEnvironment } from '@/lib/aiEnvironments'
 import type { AdvancedAiSettings } from '@/types/settings'
 import {
   currentAiEnvironmentOperation,
@@ -133,7 +129,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     [settings?.advancedAi],
   )
   const advancedMode = advancedAiAllowed && advancedAi.enabled
-  const availableRoutes = useMemo(() => availableAiRoutes(settings?.sender), [settings?.sender])
+  const availableRoutes = profile?.routeAuthorizationVerified
+    ? profile.authorizedAiRoutes || []
+    : []
   const environments = advancedAi.environments.filter((environment) => environment.kind === kind)
   const activeEnvironment = advancedMode
     ? environments.find((environment) => environment.id === advancedAi.activeByKind[kind]) || null

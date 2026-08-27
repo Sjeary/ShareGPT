@@ -59,6 +59,8 @@ export interface CollabSettings {
   last_username: string
   last_avatar: string
   remember_password: boolean
+  // 缺失表示从旧版本迁移：只要已记住完整凭据就自动恢复登录。
+  auto_login?: boolean
   saved_password: string
   notify_message_popup: boolean
   notify_system_notification: boolean
@@ -108,6 +110,8 @@ export interface AdvancedAiEnvironment {
 
 export interface AdvancedAiSettings {
   version: 1
+  // 区分“从未选择过”与用户明确关闭，供管理员首次登录默认开启。
+  initialized?: boolean
   enabled: boolean
   environments: AdvancedAiEnvironment[]
   activeByKind: Record<'gpt' | 'gemini' | 'claude', string>

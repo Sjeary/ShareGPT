@@ -297,7 +297,14 @@ export interface ShareGptApi {
     principalId: string
     eligible: boolean
     advancedAllowed?: boolean
+    isAdmin?: boolean
     allowedProxyRouteIds?: string[]
+    authorizedAiRoutes?: Array<{
+      id: string
+      name: string
+      mode: 'singbox'
+      configKey: string
+    }>
   }>
   exportUserData: (payload: { expectedPrincipalId: string }) => Promise<unknown>
   importUserData: (payload: { expectedPrincipalId: string }) => Promise<unknown>

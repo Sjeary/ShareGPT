@@ -4,6 +4,7 @@ const test = require("node:test");
 const {
   createAuthorizationEpochGuard,
   fetchAuthenticatedJson,
+  legacyCompatibleProxyRoutes,
   readBoundedResponseText,
   resolveAiSessionCapability,
 } = require("../aiSessionAuthorization");
@@ -20,7 +21,7 @@ test("authorization epochs reject stale A/B/A completions and preserve the lates
   assert.doesNotThrow(() => guard.assert(secondA));
 });
 
-test("new bootstrap authorization preserves only explicit account capabilities", () => {
+test("new bootstrap authorization preserves explicit non-admin capabilities", () => {
   assert.deepEqual(
     resolveAiSessionCapability(
       {
@@ -44,7 +45,100 @@ test("new bootstrap authorization preserves only explicit account capabilities",
   );
 });
 
-test("legacy bootstrap uses an exact profile match and fails privileged access closed", () => {
+test("legacy bootstrap trusts exact authenticated admin profile and grants available routes", () => {
+  assert.deepEqual(
+    resolveAiSessionCapability(
+      {
+        proxyRoutes: [
+          { id: "route-us", enabled: true },
+          { id: "route-off", enabled: false },
+        ],
+      },
+      { profile: { username: "Alice", isAdmin: true } },
+      "Alice",
+    ),
+    {
+      legacy: true,
+      username: "Alice",
+      isAdmin: true,
+      advancedAiAllowed: true,
+      allowedProxyRouteIds: ["route-us"],
+    },
+  );
+  assert.throws(
+    () => resolveAiSessionCapability({}, { profile: { username: "alice" } }, "Alice"),
+    /未返回匹配的账号信息/,
+  );
+});
+
+test("legacy bootstrap synthesizes unified and airport routes from authenticated server config", () => {
+  const unifiedOutbound = {
+    proxy_server: "proxy.example.com",
+    proxy_port: "443",
+    proxy_uuid: "11111111-1111-4111-8111-111111111111",
+    proxy_expected_country: "us",
+  };
+  const routes = legacyCompatibleProxyRoutes({
+    sender: unifiedOutbound,
+    airport: {
+      name: "US legacy",
+      outbound: { type: "socks", server: "airport.example.com", server_port: 1080 },
+    },
+  });
+
+  assert.deepEqual(
+    routes.map((route) => route.id),
+    ["internal-unified", "internal-airport"],
+  );
+  assert.equal(routes[0].kind, "unified");
+  assert.equal(routes[0].expected.countryCode, "US");
+  assert.equal(routes[1].kind, "managed");
+});
+
+test("authoritative route arrays are never expanded from legacy sender fields", () => {
+  const routes = [];
+  assert.strictEqual(
+    legacyCompatibleProxyRoutes({
+      proxyRoutes: routes,
+      sender: {
+        proxy_server: "proxy.example.com",
+        proxy_port: "443",
+        proxy_uuid: "11111111-1111-4111-8111-111111111111",
+      },
+    }),
+    routes,
+  );
+});
+
+test("new bootstrap admins always receive every available enabled route", () => {
+  assert.deepEqual(
+    resolveAiSessionCapability(
+      {
+        authorization: {
+          username: "Admin",
+          isAdmin: true,
+          advancedAiAllowed: false,
+          allowedProxyRouteIds: [],
+        },
+        proxyRoutes: [
+          { id: "route-us", enabled: true },
+          { id: "route-jp", enabled: true },
+        ],
+      },
+      null,
+      "Admin",
+    ),
+    {
+      legacy: false,
+      username: "Admin",
+      isAdmin: true,
+      advancedAiAllowed: true,
+      allowedProxyRouteIds: ["route-us", "route-jp"],
+    },
+  );
+});
+
+test("legacy non-admin profile remains fail-closed without explicit capabilities", () => {
   assert.deepEqual(resolveAiSessionCapability({}, { profile: { username: "Alice" } }, "Alice"), {
     legacy: true,
     username: "Alice",
@@ -52,10 +146,6 @@ test("legacy bootstrap uses an exact profile match and fails privileged access c
     advancedAiAllowed: false,
     allowedProxyRouteIds: [],
   });
-  assert.throws(
-    () => resolveAiSessionCapability({}, { profile: { username: "alice" } }, "Alice"),
-    /未返回匹配的账号信息/,
-  );
 });
 
 test("new bootstrap username mismatch cannot fall back to a legacy profile", () => {

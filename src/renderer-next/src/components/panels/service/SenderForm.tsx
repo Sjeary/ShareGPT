@@ -9,6 +9,8 @@ import { useChatStore } from '@/store/useChatStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
+import { authorizedAirportRoute, runtimeSenderForPrincipal } from '@/lib/runtimeSender'
 import type { SenderSettings } from '@/types/settings'
 import { Field } from './Field'
 import {
@@ -19,16 +21,6 @@ import {
   safeText,
 } from './helpers'
 
-const EMPTY: SenderSettings = {
-  proxy_server: '',
-  proxy_port: '',
-  proxy_uuid: '',
-  socks_listen_port: '',
-  fallback_mode: 'system_proxy',
-  fallback_local_port: '',
-  target_domains: '',
-}
-
 export function SenderForm() {
   const authed = useAppStore((s) => s.authed)
   const settings = useAppStore((s) => s.settings)
@@ -38,16 +30,27 @@ export function SenderForm() {
   // 旧版 isCollabOnline() = token && connected; 新 store connection==='online' 即 token+WS 已连。
   const connection = useChatStore((s) => s.connection)
   // 仅管理员可见的「全部流量走代理」测试开关 (isAdmin 由服务端 /api/login 下发)。
-  const isAdmin = useAuthStore((s) => Boolean(s.profile?.isAdmin))
+  const profile = useAuthStore((s) => s.profile)
+  const isAdmin = Boolean(profile?.isAdmin)
+  const runtimeSender = useAuthStore((s) => s.runtimeSender)
   const [busy, setBusy] = useState(false)
 
   const running = isSenderRunning(status)
   // 账号在线(已登录且 WS 在线)才允许开启代理, 对齐旧 btnStartSender 的 isCollabOnline 门禁。
   const online = connection === 'online'
 
-  const form = useMemo<SenderSettings>(
-    () => ({ ...EMPTY, ...(settings?.sender ?? {}) }),
-    [settings?.sender],
+  const { settings: form, serverManaged } = useMemo(
+    () =>
+      runtimeSenderForPrincipal(
+        settings?.sender,
+        runtimeSender,
+        settingsPrincipalRuntime.current().principalId,
+      ),
+    [runtimeSender, settings?.sender],
+  )
+  const airportRoute = authorizedAirportRoute(
+    profile?.routeAuthorizationVerified === true,
+    profile?.authorizedAiRoutes,
   )
 
   const directMode = form.fallback_mode === 'direct'
@@ -76,8 +79,8 @@ export function SenderForm() {
   // 移植旧版启动前校验: 已填服务器时, 端口必须是数字, uuid 必填。
   function validate(): string | null {
     if (form.proxy_mode === 'airport') {
-      // 机场模式: 用下发节点出站, 不需要统一梯子的 server/port/uuid。
-      if (!form.airport_outbound) {
+      // 机场模式只认当前会话的安全授权描述，真正 outbound 由主进程在启动时注入。
+      if (!airportRoute) {
         return '当前没有可用的机场节点（管理员未下发），请改用「统一梯子」或联系管理员'
       }
     } else {
@@ -163,7 +166,7 @@ export function SenderForm() {
           </button>
           <button
             type="button"
-            disabled={locked || !form.airport_outbound}
+            disabled={locked || !airportRoute}
             onClick={() => update({ proxy_mode: 'airport' })}
             className={cn(
               'flex-1 rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-50',
@@ -174,8 +177,8 @@ export function SenderForm() {
           >
             <div className="text-sm font-medium">机场节点</div>
             <div className="truncate text-xs text-muted-foreground">
-              {form.airport_outbound
-                ? `当前：${safeText(form.airport_name) || '已下发节点'}`
+              {airportRoute
+                ? `当前：${safeText(airportRoute.name) || '已下发节点'}`
                 : '管理员暂未下发节点'}
             </div>
           </button>
@@ -230,7 +233,7 @@ export function SenderForm() {
           label="服务器地址"
           value={form.proxy_server}
           placeholder="例如 203.0.113.10 或 demo.example.com"
-          disabled={locked}
+          disabled={locked || serverManaged}
           onChange={(v) => update({ proxy_server: v })}
         />
         <Field
@@ -238,7 +241,7 @@ export function SenderForm() {
           label="连接端口"
           value={form.proxy_port}
           placeholder="例如 443"
-          disabled={locked}
+          disabled={locked || serverManaged}
           onChange={(v) => update({ proxy_port: v })}
         />
         <Field
@@ -246,7 +249,7 @@ export function SenderForm() {
           label="连接身份码"
           value={form.proxy_uuid}
           placeholder="请输入连接身份码"
-          disabled={locked}
+          disabled={locked || serverManaged}
           onChange={(v) => update({ proxy_uuid: v })}
         />
         <Field

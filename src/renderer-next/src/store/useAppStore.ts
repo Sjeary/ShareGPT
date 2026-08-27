@@ -150,6 +150,7 @@ const EMPTY_SETTINGS: AppSettings = {
   },
   advancedAi: {
     version: 1,
+    initialized: false,
     enabled: false,
     environments: [],
     activeByKind: { gpt: '', gemini: '', claude: '' },

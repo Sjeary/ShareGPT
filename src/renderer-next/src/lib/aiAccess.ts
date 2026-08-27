@@ -17,8 +17,6 @@ export function canUseAdvancedAi(
   token: string | null | undefined,
 ): boolean {
   return Boolean(
-    canUseTranslation(profile, token) &&
-    profile?.routeAuthorizationVerified &&
-    (profile.isAdmin || profile.advancedAiAllowed),
+    canUseTranslation(profile, token) && (profile?.isAdmin || profile?.advancedAiAllowed),
   )
 }

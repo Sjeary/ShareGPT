@@ -36,10 +36,16 @@ function hasCompleteUnifiedProxy(sender: Partial<SenderSettings>): boolean {
   )
 }
 
-export function availableAiRoutes(sender: Partial<SenderSettings> = {}): AdvancedAiRoute[] {
+export function availableAiRoutes(
+  sender: Partial<SenderSettings> = {},
+  runtimeAuthorizedRouteIds?: readonly string[],
+): AdvancedAiRoute[] {
   const routes: AdvancedAiRoute[] = []
-  const authorized = Array.isArray(sender.authorized_proxy_route_ids)
-    ? new Set(sender.authorized_proxy_route_ids.map((id) => text(id, 64).toLowerCase()))
+  const authorizedSource = Array.isArray(runtimeAuthorizedRouteIds)
+    ? runtimeAuthorizedRouteIds
+    : sender.authorized_proxy_route_ids
+  const authorized = Array.isArray(authorizedSource)
+    ? new Set(authorizedSource.map((id) => text(id, 64).toLowerCase()))
     : new Set<string>()
   const isAuthorized = (id: string) => authorized.has(id)
   if (hasCompleteUnifiedProxy(sender) && isAuthorized('internal-unified')) {
@@ -122,6 +128,8 @@ export function normalizeAdvancedAiSettings(raw: unknown): AdvancedAiSettings {
 
   return {
     version: 1,
+    initialized:
+      value.initialized === true || value.enabled === true || normalizedEnvironments.length > 0,
     enabled: value.enabled === true,
     environments,
     activeByKind,

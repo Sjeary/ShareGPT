@@ -25,9 +25,13 @@ import {
   serializeConversations,
 } from '@/components/panels/chat/normalize'
 import { messagePreview } from '@/components/panels/chat/format'
-import { applyClientBootstrap, clearRemoteRouteState, fetchClientBootstrap } from '@/hooks/useAuth'
+import { applyClientBootstrap, fetchClientBootstrap } from '@/hooks/useAuth'
 import { isComposerGuardEligible } from '@/lib/translationSession'
-import { isCurrentRouteRefreshSession, type RouteRefreshSession } from '@/lib/authSession'
+import {
+  isCurrentRouteRefreshSession,
+  withRuntimeAuthorization,
+  type RouteRefreshSession,
+} from '@/lib/authSession'
 import {
   buildWebSocketConnection,
   resolveWebSocketAuthMode,
@@ -432,17 +436,18 @@ export function useChat() {
           .setAiComposerEligibility({ principalId: notesAiPrincipalId, eligible: false })
           .catch(() => {})
       }
+      const authState = useAuthStore.getState()
+      authState.setRuntimeSender(null)
+      if (authState.profile) {
+        authState.setProfile({
+          ...authState.profile,
+          routeAuthorizationVerified: false,
+          allowedProxyRouteIds: [],
+          authorizedAiRoutes: [],
+        })
+      }
       void api.notesAi.invalidatePrincipal(notesAiPrincipalId).catch(() => {})
       useNotesAiStore.getState().invalidatePrincipal()
-      void useAppStore
-        .getState()
-        .patchSection('sender', {
-          managed_proxy_routes: [],
-          authorized_proxy_route_ids: [],
-          airport_outbound: null,
-          airport_name: '',
-        })
-        .catch(() => {})
     }
 
     const refreshAuthoritativeRoutes = (serverUrl: string, token: string): Promise<boolean> => {
@@ -474,30 +479,22 @@ export function useChat() {
           if (!isCurrent()) return false
           await api.closeAllAiWorkspaces().catch(() => {})
           if (!isCurrent()) return false
-          await clearRemoteRouteState(isCurrent)
-          if (!isCurrent()) return false
           const bootstrap = await fetchClientBootstrap(serverUrl, token)
           if (!isCurrent()) return false
           if (!bootstrap) throw new Error('服务器没有返回客户端线路配置')
-          await applyClientBootstrap(bootstrap, isCurrent)
+          await applyClientBootstrap(bootstrap, captured.principalId, isCurrent)
           if (!isCurrent()) return false
           const authState = useAuthStore.getState()
           if (authState.profile) {
-            const nextProfile = {
-              ...authState.profile,
-              routeAuthorizationVerified: bootstrap.proxyRoutesAuthoritative,
-              allowedProxyRouteIds: bootstrap.proxyRoutesAuthoritative
-                ? bootstrap.proxyRoutes.map((route) => route.id)
-                : [],
-            }
-            if (!isCurrent()) return false
-            authState.setProfile(nextProfile)
-            if (!isCurrent()) return false
-            await api.setAiComposerEligibility({
+            const authorization = await api.setAiComposerEligibility({
               principalId: captured.principalId,
-              eligible: isComposerGuardEligible(nextProfile, token),
+              eligible: isComposerGuardEligible(authState.profile, token),
               token,
             })
+            if (!isCurrent()) return false
+            const nextProfile = withRuntimeAuthorization(authState.profile, authorization)
+            if (!isCurrent()) return false
+            authState.setProfile(nextProfile)
             if (!isCurrent()) return false
           }
           if (wasRunning) {
@@ -613,23 +610,23 @@ export function useChat() {
           return
         }
         const refreshedProfile = useAuthStore.getState().profile
-        const nextProfile = {
+        const loginProfile = {
           username: confirmedUsername,
           displayName,
           avatar,
-          isAdmin: Boolean(payload.profile?.isAdmin),
-          advancedAiAllowed: Boolean(payload.profile?.advancedAiAllowed),
-          routeAuthorizationVerified: Boolean(refreshedProfile?.routeAuthorizationVerified),
-          allowedProxyRouteIds: refreshedProfile?.allowedProxyRouteIds || [],
           chatDisabled: Boolean(payload.profile?.chatDisabled),
         }
         if (!isReloginCurrent()) return
-        await api.setAiComposerEligibility({
+        const authorization = await api.setAiComposerEligibility({
           principalId: reloginPrincipalId,
-          eligible: isComposerGuardEligible(nextProfile, payload.token),
+          eligible: isComposerGuardEligible(loginProfile, payload.token),
           token: payload.token,
         })
         if (!isReloginCurrent()) return
+        const nextProfile = withRuntimeAuthorization(
+          { ...refreshedProfile, ...loginProfile },
+          authorization,
+        )
         // 写回运行期会话 (不动 setAuthed/持久化设置, 仅刷新 token)。
         setSession({
           token: payload.token,

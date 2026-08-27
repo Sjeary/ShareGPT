@@ -172,6 +172,7 @@ const PUBLIC_DEFAULT_SETTINGS = {
   browserPrivacy: structuredClone(DEFAULT_BROWSER_PRIVACY_SETTINGS),
   advancedAi: {
     version: 1,
+    initialized: false,
     enabled: false,
     environments: [],
     activeByKind: { gpt: "", gemini: "", claude: "" },
@@ -189,8 +190,13 @@ const LOCAL_CHAT_HISTORY_MAX_TOTAL = 6000;
 const UPDATE_BACKUP_KEEP = 5;
 const UPDATE_BACKUP_ENTRIES = [
   "settings.json",
+  "settings.json.bak",
   "chat_history.json",
+  "calendar.json",
+  "tasks.json",
+  "focus.json",
   "private.defaults.local.json",
+  "ShareGPT-Vault",
   "Partitions",
 ];
 const UPDATE_BACKUP_SKIP_NAMES = new Set([
@@ -248,6 +254,11 @@ function writeJsonAtomic(file, payload) {
 const ENCRYPTED_SECRET_PREFIX = "sharegpt-safe:v1:";
 const SECRET_KEY_PATTERN =
   /(?:password|passwd|api.?key|secret|token|uuid|private.?key|credential)/i;
+const SECRET_STORAGE_UNAVAILABLE = "SETTINGS_SECRET_STORAGE_UNAVAILABLE";
+const SECRET_DECRYPTION_FAILED = "SETTINGS_SECRET_DECRYPTION_FAILED";
+const DEFAULT_SAFE_STORAGE = Symbol("default-safe-storage");
+
+/** @typedef {{ decryptString: (value: Buffer) => string, encryptString: (value: string) => Buffer }} SecretStorage */
 
 function getSafeStorage() {
   if (!process.versions.electron) return null;
@@ -259,28 +270,56 @@ function getSafeStorage() {
   }
 }
 
-function transformSensitiveValues(value, mode, key = "") {
+function secretStorageError(code, message, cause) {
+  return Object.assign(new Error(message, cause ? { cause } : undefined), { code });
+}
+
+function isSecretStorageError(error) {
+  return error?.code === SECRET_STORAGE_UNAVAILABLE || error?.code === SECRET_DECRYPTION_FAILED;
+}
+
+/**
+ * @param {unknown} value
+ * @param {"encrypt" | "decrypt"} mode
+ * @param {string} [key]
+ * @param {SecretStorage | null | typeof DEFAULT_SAFE_STORAGE} [storageOverride]
+ * @returns {any}
+ */
+function transformSensitiveValues(value, mode, key = "", storageOverride = DEFAULT_SAFE_STORAGE) {
+  /** @type {SecretStorage | null} */
+  const storage =
+    storageOverride === DEFAULT_SAFE_STORAGE
+      ? getSafeStorage()
+      : /** @type {SecretStorage | null} */ (storageOverride);
   if (Array.isArray(value)) {
-    return value.map((item) => transformSensitiveValues(item, mode));
+    return value.map((item) => transformSensitiveValues(item, mode, "", storage));
   }
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value).map(([childKey, childValue]) => [
         childKey,
-        transformSensitiveValues(childValue, mode, childKey),
+        transformSensitiveValues(childValue, mode, childKey, storage),
       ]),
     );
   }
   if (typeof value !== "string") return value;
-  const storage = getSafeStorage();
   if (mode === "decrypt" && value.startsWith(ENCRYPTED_SECRET_PREFIX)) {
-    if (!storage) return "";
+    if (!storage) {
+      throw secretStorageError(
+        SECRET_STORAGE_UNAVAILABLE,
+        "系统凭据存储暂时不可用，已阻止读取和覆盖加密设置",
+      );
+    }
     try {
       return storage.decryptString(
         Buffer.from(value.slice(ENCRYPTED_SECRET_PREFIX.length), "base64"),
       );
-    } catch {
-      return "";
+    } catch (error) {
+      throw secretStorageError(
+        SECRET_DECRYPTION_FAILED,
+        "加密设置暂时无法解密，已阻止覆盖原始数据",
+        error,
+      );
     }
   }
   if (mode === "encrypt" && value && SECRET_KEY_PATTERN.test(key) && storage) {
@@ -1011,6 +1050,10 @@ class Backend {
       );
       return mergeSettings(defaultSettings, raw);
     } catch (error) {
+      if (isSecretStorageError(error)) {
+        this.log("app", error.message || String(error));
+        throw error;
+      }
       const backupFile = `${this.settingsFile}.bak`;
       try {
         const backup = transformSensitiveValues(
@@ -1019,7 +1062,11 @@ class Backend {
         );
         this.log("app", `设置文件损坏，已从上一份有效备份恢复：${error.message || error}`);
         return mergeSettings(defaultSettings, backup);
-      } catch {
+      } catch (backupError) {
+        if (isSecretStorageError(backupError)) {
+          this.log("app", backupError.message || String(backupError));
+          throw backupError;
+        }
         this.log("app", `设置文件损坏且无有效备份，已保留原文件：${error.message || error}`);
         return structuredClone(defaultSettings);
       }
@@ -2589,5 +2636,9 @@ module.exports = {
   DEFAULT_SETTINGS: PUBLIC_DEFAULT_SETTINGS,
   PUBLIC_DEFAULT_SETTINGS,
   DEFAULT_TARGET_DOMAINS,
+  ENCRYPTED_SECRET_PREFIX,
+  SECRET_DECRYPTION_FAILED,
+  SECRET_STORAGE_UNAVAILABLE,
+  transformSensitiveValues,
   waitForLoopbackPortsListening,
 };

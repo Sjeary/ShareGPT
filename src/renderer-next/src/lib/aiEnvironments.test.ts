@@ -30,6 +30,21 @@ test('availableAiRoutes fails closed when authorization is missing or empty', ()
   assert.deepEqual(availableAiRoutes({ ...sender, authorized_proxy_route_ids: [] }), [])
 })
 
+test('runtime authorization overrides stale persisted route ids', () => {
+  const sender = {
+    managed_proxy_routes: [
+      { id: 'route-a', name: 'A', enabled: true, outbound },
+      { id: 'route-b', name: 'B', enabled: true, outbound },
+    ],
+    authorized_proxy_route_ids: ['route-a'],
+  }
+  assert.deepEqual(
+    availableAiRoutes(sender, ['route-b']).map((route) => route.id),
+    ['route-b'],
+  )
+  assert.deepEqual(availableAiRoutes(sender, []), [])
+})
+
 test('availableAiRoutes deduplicates unified, managed and legacy route IDs', () => {
   const routes = availableAiRoutes({
     proxy_server: 'proxy.example',
@@ -64,4 +79,21 @@ test('normalizeAdvancedAiSettings removes duplicate environment partitions', () 
   assert.equal(settings.environments.length, 2)
   assert.equal(settings.environments[0].name, 'Duplicate')
   assert.equal(settings.activeByKind.gpt, 'env-one')
+  assert.equal(settings.initialized, true)
+})
+
+test('advanced AI disable and re-enable retain environments and active selections', () => {
+  const original = normalizeAdvancedAiSettings({
+    initialized: true,
+    enabled: true,
+    environments: [
+      { id: 'env-work', kind: 'gpt', name: 'Work', routeId: 'route-a', createdAt: 'now' },
+    ],
+    activeByKind: { gpt: 'env-work' },
+  })
+  const disabled = normalizeAdvancedAiSettings({ ...original, enabled: false })
+  const restored = normalizeAdvancedAiSettings({ ...disabled, enabled: true })
+  assert.deepEqual(restored.environments, original.environments)
+  assert.deepEqual(restored.activeByKind, original.activeByKind)
+  assert.equal(restored.initialized, true)
 })
