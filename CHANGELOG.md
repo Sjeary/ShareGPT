@@ -9,18 +9,25 @@
 
 ## [1.0.9] - 2026-08-27
 
-> **多 AI 环境与账号隔离更新**：新增独立 AI Environment 和翻译侧栏，并收紧协作账号切换时的网页数据、本机配置与运行中请求隔离。
+> **多 AI 环境、双语网页与账号隔离更新**：新增独立 AI Environment、网页双语输入与翻译侧栏，改进聊天和 AI 导航浮层，并收紧协作账号切换时的网页数据、本机配置与运行中请求隔离。
 
 ### 新增
 
 - 高级用户可为 ChatGPT、Claude 和 Gemini 创建多个独立 AI Environment，并从管理员授权的线路中为每个环境选择出口。
-- AI 网页新增翻译侧栏，支持共用 AI provider、翻译 API 和只能连接本机回环地址的离线翻译服务。
+- ChatGPT、Claude 和 Gemini 网页新增双语侧栏：可翻译网页选区或整页正文供侧栏阅读，不替换网页原文；支持共用 AI provider、翻译 API 和只能连接本机回环地址的离线翻译服务。
+- 高级用户和管理员可预览输入译文、翻译并填入或翻译并发送；站点语言默认英文且可配置。只有检测到明显不符合目标语言的文字时才暂停发送并要求确认，该提示基于文字系统启发式判断，不承诺区分所有拉丁语系语言。
+
+### 交互改进
+
+- 聊天消息操作菜单会根据滚动区域剩余空间自动翻转和限高，不再被消息列表边缘裁切。
+- AI 网页打开时，折叠导航的提示改用原生浮层显示在网页上方；窗口缩放、最大化或全屏切换时会及时隐藏，避免停在旧位置。
 
 ### 隔离与稳定性
 
 - 协作账号身份保留服务器 base path 和服务端确认的精确用户名，避免同主机不同服务路径或大小写不同的账号共用本机数据。
 - Cookie、LocalStorage、IndexedDB、AI Environment、Translation 和 Notes AI 设置按协作账号隔离；A/B/A 切换后只恢复各自数据。
 - 切换或退出账号时会取消旧账号的 Notes AI 请求；旧请求后续的 delta、done 或 error 不会进入新账号界面。
+- 翻译、填入、发送与发送确认均绑定发起时的账号代际、AI 环境、标签和导航状态；切换账号、环境、标签或页面，以及请求或确认过期后，旧结果均不会继续生效。
 
 ### 网络与风险提示
 
@@ -240,7 +247,8 @@
 
 - 更早的 5.x 为测试版本，不在此正式记录。
 
-[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.8...HEAD
+[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.9...HEAD
+[1.0.9]: https://github.com/Sjeary/ShareGPT/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/Sjeary/ShareGPT/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/Sjeary/ShareGPT/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/Sjeary/ShareGPT/compare/v1.0.5...v1.0.6
