@@ -146,7 +146,7 @@ function startFixtureServer(state) {
           <script>
             window.composerEvents = { enters: 0, clicks: 0 };
             document.querySelector('#prompt-textarea').addEventListener('keydown', (event) => {
-              if (event.key === 'Enter') window.composerEvents.enters += 1;
+              if (event.key === 'Enter' && event.isTrusted) window.composerEvents.enters += 1;
             });
             document.querySelector('[data-testid="send-button"]').addEventListener('click', () => {
               window.composerEvents.clicks += 1;
@@ -340,6 +340,59 @@ async function composerFixtureAction(electronApp, fixtureUrl, action, value = ""
       }
       if (args.action === "navigate") {
         return target.executeJavaScript(`location.href = '/page?navigated=1'`, true);
+      }
+      if (args.action === "guard-state") {
+        return target.executeJavaScriptInIsolatedWorld(
+          1001,
+          [
+            {
+              code: `(() => {
+                const documentState = globalThis.__shareGptComposerDocument;
+                const guard = globalThis.__shareGptComposerGuard;
+                return {
+                  ready: Boolean(
+                    documentState?.nonce &&
+                    documentState?.url === String(globalThis.location?.href || '') &&
+                    guard?.enabled &&
+                    guard?.marker?.startsWith('__SHAREGPT_COMPOSER_GUARD_V2__:')
+                  ),
+                  documentNonce: Boolean(documentState?.nonce),
+                  documentUrl: String(documentState?.url || ''),
+                  currentUrl: String(globalThis.location?.href || ''),
+                  listenersInstalled: Boolean(documentState?.listenersInstalled),
+                  guardInstalled: Boolean(guard?.installed),
+                  guardEnabled: Boolean(guard?.enabled),
+                  markerPresent: Boolean(guard?.marker),
+                };
+              })()`,
+            },
+          ],
+          false,
+        );
+      }
+      if (args.action === "probe-enter-gate-security") {
+        const runIsolated = (code) =>
+          target.executeJavaScriptInIsolatedWorld(1001, [{ code }], false);
+        return runIsolated(`(() => {
+          const state = globalThis.__shareGptComposerDocument;
+          const editor = document.querySelector('#prompt-textarea');
+          const token = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+          const ok = state?.armEnterGate?.({
+            token,
+            nonce: state.nonce,
+            url: state.url,
+            editor,
+            ttlMs: 1000,
+          });
+          editor.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Enter',
+            bubbles: true,
+            cancelable: true,
+          }));
+          const outcome = { ...state?.enterGateOutcome };
+          state?.invalidateEnterGate?.('test-cleanup');
+          return { ok, outcome };
+        })()`);
       }
       return target.executeJavaScript(`window.composerEvents`, true);
     },
@@ -775,6 +828,31 @@ async function main() {
     assert.strictEqual(await window.getByText("已翻译并发送", { exact: true }).count(), 0);
     await claudeTranslationPanel.getByLabel("关闭翻译侧栏").click();
     results.push("main-frame navigation aborts deferred outgoing translation before write or send");
+
+    let guardState = null;
+    try {
+      await waitUntil(async () => {
+        guardState = await composerFixtureAction(electronApp, fixtureUrl, "guard-state");
+        return guardState?.ready === true;
+      });
+    } catch (error) {
+      throw new Error(
+        `composer guard did not recover after navigation: ${JSON.stringify(guardState)}`,
+        {
+          cause: error,
+        },
+      );
+    }
+
+    const enterGateSecurity = await composerFixtureAction(
+      electronApp,
+      fixtureUrl,
+      "probe-enter-gate-security",
+    );
+    assert.strictEqual(enterGateSecurity.ok, true);
+    assert.strictEqual(enterGateSecurity.outcome?.status, "pending");
+    assert.strictEqual((await composerFixtureAction(electronApp, fixtureUrl, "state")).enters, 0);
+    results.push("page-generated Enter cannot consume the native Enter gate");
 
     await composerFixtureAction(electronApp, fixtureUrl, "forge");
     await window.waitForTimeout(250);

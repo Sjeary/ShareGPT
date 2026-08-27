@@ -3,6 +3,8 @@ const crypto = require("node:crypto");
 const MAX_COMPOSER_CHARS = 30000;
 const COMPOSER_GUARD_CHANNEL_PREFIX = "__SHAREGPT_COMPOSER_GUARD_V2__:";
 const COMPOSER_GUARD_TOKEN_PATTERN = /^[a-zA-Z0-9_-]{32,128}$/;
+const COMPOSER_ISOLATED_WORLD_ID = 1001;
+const COMPOSER_ENTER_GATE_TTL_MS = 1000;
 
 const NON_LATIN_SCRIPT =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Cyrillic}\p{Script=Arabic}\p{Script=Hebrew}\p{Script=Thai}\p{Script=Devanagari}]/u;
@@ -54,6 +56,427 @@ function isPlainComposerSubmit(input) {
 
 function createComposerGuardToken() {
   return crypto.randomBytes(32).toString("base64url");
+}
+
+function createComposerDocumentNonce() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+function createComposerEnterGateToken() {
+  return crypto.randomBytes(32).toString("base64url");
+}
+
+function serializeComposerScriptData(value) {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+function assertComposerDocumentNonce(nonce) {
+  const value = String(nonce || "");
+  if (!COMPOSER_GUARD_TOKEN_PATTERN.test(value)) {
+    throw new Error("Composer document nonce is invalid");
+  }
+  return value;
+}
+
+function composerDocumentNonceScript(nonce) {
+  const payload = serializeComposerScriptData({ nonce: assertComposerDocumentNonce(nonce) });
+  return `
+    (() => {
+      'use strict';
+      const payload = Object.freeze(${payload});
+      const state = globalThis.__shareGptComposerDocument || {
+        nonce: '',
+        url: '',
+        enterGate: null,
+        enterGateOutcome: null,
+        listenersInstalled: false,
+      };
+      globalThis.__shareGptComposerDocument = state;
+      const finishEnterGate = (token, status, reason) => {
+        const gate = state.enterGate;
+        if (!gate || gate.token !== token) return false;
+        if (gate.timer) globalThis.clearTimeout?.(gate.timer);
+        gate.timer = null;
+        // Keep an expired gate long enough to fail-close a native Enter that was already
+        // queued by the main process but reached the renderer after the deadline.
+        if (status === 'expired') gate.expired = true;
+        else state.enterGate = null;
+        state.enterGateOutcome = { token, status, reason: String(reason || '') };
+        return true;
+      };
+      const invalidateEnterGate = (reason) => {
+        const gate = state.enterGate;
+        return gate ? finishEnterGate(gate.token, 'blocked', reason) : false;
+      };
+      const deepActiveElement = () => {
+        let active = document.activeElement;
+        while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+        return active;
+      };
+      state.armEnterGate = (gate) => {
+        invalidateEnterGate('replaced');
+        if (
+          !gate ||
+          state.nonce !== gate.nonce ||
+          state.url !== gate.url ||
+          String(globalThis.location?.href || '') !== gate.url ||
+          !gate.editor?.isConnected
+        ) {
+          return false;
+        }
+        const entry = {
+          token: gate.token,
+          nonce: gate.nonce,
+          url: gate.url,
+          editor: gate.editor,
+          expiresAt: Date.now() + gate.ttlMs,
+          timer: null,
+        };
+        state.enterGate = entry;
+        state.enterGateOutcome = { token: entry.token, status: 'pending', reason: '' };
+        entry.timer = globalThis.setTimeout?.(() => {
+          if (state.enterGate === entry) finishEnterGate(entry.token, 'expired', 'timeout');
+        }, gate.ttlMs);
+        return true;
+      };
+      state.invalidateEnterGate = invalidateEnterGate;
+      if (!state.listenersInstalled) {
+        const invalidate = () => {
+          invalidateEnterGate('navigation');
+          state.nonce = '';
+          state.url = '';
+        };
+        globalThis.navigation?.addEventListener?.('navigate', invalidate);
+        globalThis.addEventListener?.('pagehide', invalidate, true);
+        globalThis.addEventListener?.('hashchange', invalidate, true);
+        globalThis.addEventListener?.('popstate', invalidate, true);
+        globalThis.addEventListener?.('keydown', (event) => {
+          const gate = state.enterGate;
+          if (
+            !gate ||
+            !event.isTrusted ||
+            event.key !== 'Enter' ||
+            event.altKey ||
+            event.ctrlKey ||
+            event.metaKey ||
+            event.shiftKey ||
+            event.repeat ||
+            event.isComposing
+          ) {
+            return;
+          }
+          const active = deepActiveElement();
+          const reason =
+            gate.expired || gate.expiresAt <= Date.now()
+              ? 'expired'
+              : state.nonce !== gate.nonce ||
+                  state.url !== gate.url ||
+                  String(globalThis.location?.href || '') !== gate.url
+                ? 'stale-document'
+                : !gate.editor?.isConnected
+                  ? 'detached-editor'
+                  : !(active === gate.editor || gate.editor.contains?.(active))
+                    ? 'focus-changed'
+                    : '';
+          const allowed = !reason;
+          finishEnterGate(gate.token, allowed ? 'allowed' : 'blocked', reason);
+          if (!allowed) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+        state.listenersInstalled = true;
+      }
+      invalidateEnterGate('identity-replaced');
+      state.nonce = payload.nonce;
+      state.url = String(globalThis.location?.href || '');
+      return { ok: true, nonce: state.nonce, url: state.url };
+    })();
+  `;
+}
+
+function composerMutationScript(options = {}) {
+  const nonce = assertComposerDocumentNonce(options.documentNonce);
+  const documentUrl = String(options.documentUrl || "");
+  const text = String(options.text || "");
+  if (!documentUrl || documentUrl.length > 10000) {
+    throw new Error("Composer document URL is invalid");
+  }
+  if (!text.trim()) throw new Error("没有可填入的译文");
+  if (text.length > MAX_COMPOSER_CHARS) throw new Error("待发送内容过长");
+  const enterGateToken = options.enterGateToken
+    ? assertComposerDocumentNonce(options.enterGateToken)
+    : "";
+  const enterGateTtlMs = Math.min(
+    COMPOSER_ENTER_GATE_TTL_MS,
+    Math.max(50, Number(options.enterGateTtlMs) || COMPOSER_ENTER_GATE_TTL_MS),
+  );
+  const payload = serializeComposerScriptData({
+    nonce,
+    documentUrl,
+    text,
+    enterGateToken,
+    enterGateTtlMs,
+  });
+  return `
+    (() => {
+      'use strict';
+      const payload = Object.freeze(${payload});
+      const state = globalThis.__shareGptComposerDocument;
+      const documentIsCurrent = () => Boolean(
+        state &&
+        state.nonce === payload.nonce &&
+        state.url === payload.documentUrl &&
+        String(globalThis.location?.href || '') === payload.documentUrl
+      );
+      if (!documentIsCurrent()) {
+        return { ok: false, reason: 'stale-document' };
+      }
+
+      let active = document.activeElement;
+      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+      if (!(active instanceof Element)) return { ok: false, reason: 'no-editor' };
+      const selector = 'textarea, input:not([type]), input[type="text"], input[type="search"], [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
+      const editor = active.matches(selector) ? active : active.closest(selector);
+      if (!editor) return { ok: false, reason: 'no-editor' };
+      const editorOwnsFocus = () => {
+        let focused = document.activeElement;
+        while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
+        return Boolean(
+          documentIsCurrent() &&
+          editor.isConnected &&
+          focused instanceof Element &&
+          (focused === editor || editor.contains(focused))
+        );
+      };
+
+      const inputEvent = (type, options) => {
+        try {
+          return new InputEvent(type, options);
+        } catch {
+          return new Event(type, {
+            bubbles: Boolean(options?.bubbles),
+            cancelable: Boolean(options?.cancelable),
+            composed: Boolean(options?.composed),
+          });
+        }
+      };
+      const beforeInput = inputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        data: payload.text,
+        inputType: 'insertReplacementText',
+      });
+
+      editor.focus();
+      if (!editorOwnsFocus()) return { ok: false, reason: 'stale-editor' };
+      if (editor instanceof HTMLInputElement || editor instanceof HTMLTextAreaElement) {
+        editor.setSelectionRange(0, editor.value.length);
+        if (!editor.dispatchEvent(beforeInput)) {
+          return { ok: false, reason: 'beforeinput-cancelled' };
+        }
+        if (!editorOwnsFocus()) return { ok: false, reason: 'stale-editor' };
+        const prototype = editor instanceof HTMLTextAreaElement
+          ? HTMLTextAreaElement.prototype
+          : HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+        if (typeof setter !== 'function') return { ok: false, reason: 'mutation-failed' };
+        setter.call(editor, payload.text);
+        editor.setSelectionRange(payload.text.length, payload.text.length);
+        editor.dispatchEvent(inputEvent('input', {
+          bubbles: true,
+          composed: true,
+          data: payload.text,
+          inputType: 'insertReplacementText',
+        }));
+        if (!editorOwnsFocus()) return { ok: false, reason: 'stale-editor' };
+        if (
+          payload.enterGateToken &&
+          !state.armEnterGate?.({
+            token: payload.enterGateToken,
+            nonce: payload.nonce,
+            url: payload.documentUrl,
+            editor,
+            ttlMs: payload.enterGateTtlMs,
+          })
+        ) {
+          return { ok: false, reason: 'enter-gate-unavailable' };
+        }
+        return {
+          ok: true,
+          replacedTextLength: payload.text.length,
+          enterGateToken: payload.enterGateToken,
+        };
+      }
+
+      if (!editor.isContentEditable) return { ok: false, reason: 'no-editor' };
+      const selection = globalThis.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      selection?.removeAllRanges();
+      selection?.addRange(range);
+      if (!editor.dispatchEvent(beforeInput)) {
+        return { ok: false, reason: 'beforeinput-cancelled' };
+      }
+      if (!editorOwnsFocus()) return { ok: false, reason: 'stale-editor' };
+
+      let sawInput = false;
+      const markInput = () => {
+        sawInput = true;
+      };
+      editor.addEventListener('input', markInput);
+      let inserted = false;
+      try {
+        inserted = Boolean(document.execCommand?.('insertText', false, payload.text));
+      } catch {}
+      editor.removeEventListener('input', markInput);
+      if (!inserted) editor.replaceChildren(document.createTextNode(payload.text));
+      const finalRange = document.createRange();
+      finalRange.selectNodeContents(editor);
+      finalRange.collapse(false);
+      selection?.removeAllRanges();
+      selection?.addRange(finalRange);
+      if (!sawInput) {
+        editor.dispatchEvent(inputEvent('input', {
+          bubbles: true,
+          composed: true,
+          data: payload.text,
+          inputType: 'insertReplacementText',
+        }));
+      }
+      if (!editorOwnsFocus()) return { ok: false, reason: 'stale-editor' };
+      if (
+        payload.enterGateToken &&
+        !state.armEnterGate?.({
+          token: payload.enterGateToken,
+          nonce: payload.nonce,
+          url: payload.documentUrl,
+          editor,
+          ttlMs: payload.enterGateTtlMs,
+        })
+      ) {
+        return { ok: false, reason: 'enter-gate-unavailable' };
+      }
+      return {
+        ok: true,
+        replacedTextLength: payload.text.length,
+        enterGateToken: payload.enterGateToken,
+      };
+    })();
+  `;
+}
+
+function composerEnterGateArmScript(options = {}) {
+  const nonce = assertComposerDocumentNonce(options.documentNonce);
+  const token = assertComposerDocumentNonce(options.token);
+  const documentUrl = String(options.documentUrl || "");
+  const expectedText = String(options.expectedText || "")
+    .trim()
+    .slice(0, MAX_COMPOSER_CHARS);
+  const findAny = Boolean(options.findAny);
+  const ttlMs = Math.min(
+    COMPOSER_ENTER_GATE_TTL_MS,
+    Math.max(50, Number(options.ttlMs) || COMPOSER_ENTER_GATE_TTL_MS),
+  );
+  const payload = serializeComposerScriptData({
+    nonce,
+    token,
+    documentUrl,
+    expectedText,
+    findAny,
+    ttlMs,
+  });
+  return `
+    (() => {
+      'use strict';
+      const payload = Object.freeze(${payload});
+      const state = globalThis.__shareGptComposerDocument;
+      if (
+        !state ||
+        state.nonce !== payload.nonce ||
+        state.url !== payload.documentUrl ||
+        String(globalThis.location?.href || '') !== payload.documentUrl ||
+        typeof state.armEnterGate !== 'function'
+      ) {
+        return { ok: false, status: 'blocked', reason: 'stale-document' };
+      }
+      let active = document.activeElement;
+      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+      const selector = 'textarea, input:not([type]), input[type="text"], input[type="search"], [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
+      let editor = active instanceof Element
+        ? (active.matches(selector) ? active : active.closest(selector))
+        : null;
+      if (!editor && payload.findAny) {
+        editor = document.querySelector('#prompt-textarea, form textarea, form [contenteditable]:not([contenteditable="false"]), main textarea, main [contenteditable]:not([contenteditable="false"])');
+      }
+      if (!editor?.isConnected) {
+        return { ok: false, status: 'blocked', reason: 'no-editor' };
+      }
+      if (payload.findAny) editor.focus();
+      let focused = document.activeElement;
+      while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
+      if (!(focused === editor || editor.contains?.(focused))) {
+        return { ok: false, status: 'blocked', reason: 'focus-changed' };
+      }
+      const text = String('value' in editor ? editor.value : editor.innerText || editor.textContent || '').trim().slice(0, ${MAX_COMPOSER_CHARS});
+      if (payload.expectedText && text !== payload.expectedText) {
+        return { ok: false, status: 'blocked', reason: 'text-changed' };
+      }
+      if (!state.armEnterGate({
+        token: payload.token,
+        nonce: payload.nonce,
+        url: payload.documentUrl,
+        editor,
+        ttlMs: payload.ttlMs,
+      })) {
+        return { ok: false, status: 'blocked', reason: 'gate-unavailable' };
+      }
+      return { ok: true, token: payload.token, status: 'pending', reason: '' };
+    })();
+  `;
+}
+
+function composerEnterGateOutcomeScript(token) {
+  const payload = serializeComposerScriptData({ token: assertComposerDocumentNonce(token) });
+  return `
+    (() => {
+      'use strict';
+      const payload = Object.freeze(${payload});
+      const state = globalThis.__shareGptComposerDocument;
+      if (!state) return { token: payload.token, status: 'unknown', reason: 'no-document' };
+      const outcome = state.enterGateOutcome;
+      if (!outcome || outcome.token !== payload.token) {
+        return { token: payload.token, status: 'unknown', reason: 'token-mismatch' };
+      }
+      return {
+        token: payload.token,
+        status: String(outcome.status || 'unknown'),
+        reason: String(outcome.reason || ''),
+      };
+    })();
+  `;
+}
+
+function composerDocumentInvalidateScript(options = {}) {
+  const nonce = options.documentNonce ? assertComposerDocumentNonce(options.documentNonce) : "";
+  const reason = String(options.reason || "invalidated").slice(0, 100);
+  const payload = serializeComposerScriptData({ nonce, reason });
+  return `
+    (() => {
+      'use strict';
+      const payload = Object.freeze(${payload});
+      const state = globalThis.__shareGptComposerDocument;
+      if (!state || (payload.nonce && state.nonce !== payload.nonce)) return false;
+      state.invalidateEnterGate?.(payload.reason);
+      state.nonce = '';
+      state.url = '';
+      return true;
+    })();
+  `;
 }
 
 function composerGuardMarker(token) {
@@ -312,7 +735,7 @@ function composerClickGuardScript(options = {}) {
 
 async function installComposerClickGuard(webContents, options = {}) {
   if (!webContents || webContents.isDestroyed()) throw new Error("当前网页尚未打开");
-  const worldId = Number.isInteger(options.worldId) ? options.worldId : 1001;
+  const worldId = Number.isInteger(options.worldId) ? options.worldId : COMPOSER_ISOLATED_WORLD_ID;
   return webContents.executeJavaScriptInIsolatedWorld(
     worldId,
     [{ code: composerClickGuardScript(options) }],
@@ -338,6 +761,69 @@ async function disableComposerClickGuard(webContents, worldId = 1001) {
     false,
   );
   return true;
+}
+
+async function installComposerDocumentNonce(webContents, options = {}) {
+  if (!webContents || webContents.isDestroyed()) throw new Error("当前网页尚未打开");
+  const worldId = Number.isInteger(options.worldId) ? options.worldId : COMPOSER_ISOLATED_WORLD_ID;
+  const nonce = assertComposerDocumentNonce(options.nonce);
+  const result = await webContents.executeJavaScriptInIsolatedWorld(
+    worldId,
+    [{ code: composerDocumentNonceScript(nonce) }],
+    false,
+  );
+  if (!result?.ok || result.nonce !== nonce || !String(result.url || "")) {
+    throw new Error("无法绑定网页文档身份");
+  }
+  return { nonce, url: String(result.url) };
+}
+
+async function invalidateComposerDocumentIdentity(webContents, options = {}) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  const result = await webContents.executeJavaScriptInIsolatedWorld(
+    COMPOSER_ISOLATED_WORLD_ID,
+    [{ code: composerDocumentInvalidateScript(options) }],
+    false,
+  );
+  return result === true;
+}
+
+async function armComposerEnterGate(webContents, options = {}) {
+  if (!webContents || webContents.isDestroyed()) throw new Error("当前网页尚未打开");
+  const result = await webContents.executeJavaScriptInIsolatedWorld(
+    COMPOSER_ISOLATED_WORLD_ID,
+    [{ code: composerEnterGateArmScript(options) }],
+    false,
+  );
+  if (!result?.ok || result.status !== "pending" || result.token !== options.token) {
+    throw Object.assign(new Error("网页发送焦点已经变化，请重新操作"), {
+      code: "COMPOSER_ENTER_GATE_BLOCKED",
+      reason: String(result?.reason || "gate-unavailable"),
+    });
+  }
+  return result;
+}
+
+async function readComposerEnterGateOutcome(webContents, token) {
+  if (!webContents || webContents.isDestroyed()) {
+    return { token: String(token || ""), status: "unknown", reason: "destroyed" };
+  }
+  return webContents.executeJavaScriptInIsolatedWorld(
+    COMPOSER_ISOLATED_WORLD_ID,
+    [{ code: composerEnterGateOutcomeScript(token) }],
+    false,
+  );
+}
+
+async function waitForComposerEnterGateOutcome(webContents, token, options = {}) {
+  const attempts = Math.max(1, Math.min(50, Number(options.attempts) || 20));
+  const intervalMs = Math.max(1, Math.min(50, Number(options.intervalMs) || 10));
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const outcome = await readComposerEnterGateOutcome(webContents, token);
+    if (outcome?.status !== "pending") return outcome;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return { token, status: "pending", reason: "outcome-timeout" };
 }
 
 /**
@@ -373,18 +859,58 @@ async function replaceAiComposerText(webContents, text, options = {}) {
   const value = String(text || "").trim();
   if (!value) throw new Error("没有可填入的译文");
   if (value.length > MAX_COMPOSER_CHARS) throw new Error("待发送内容过长");
+  const documentNonce = assertComposerDocumentNonce(options.documentNonce);
+  const documentUrl = String(options.documentUrl || "");
   const assertCurrent =
     typeof options.assertCurrent === "function" ? options.assertCurrent : () => undefined;
   assertCurrent();
-  const composer = await inspectAiComposer(webContents, { selectAll: true });
-  assertCurrent();
-  if (!composer.editable) throw new Error("请先在网页中点一下提问输入框");
-  assertCurrent();
+  if (!webContents || webContents.isDestroyed()) throw new Error("当前网页尚未打开");
   webContents.focus();
   assertCurrent();
-  await webContents.insertText(value);
+  const result = await webContents.executeJavaScriptInIsolatedWorld(
+    COMPOSER_ISOLATED_WORLD_ID,
+    [
+      {
+        code: composerMutationScript({
+          documentNonce,
+          documentUrl,
+          text: value,
+          enterGateToken: options.enterGateToken,
+          enterGateTtlMs: options.enterGateTtlMs,
+        }),
+      },
+    ],
+    false,
+  );
   assertCurrent();
-  return { ok: true, replacedTextLength: value.length };
+  if (result?.ok) {
+    const response = {
+      ok: true,
+      replacedTextLength: Number(result.replacedTextLength),
+    };
+    const enterGateToken = String(result.enterGateToken || "");
+    return enterGateToken ? { ...response, enterGateToken } : response;
+  }
+  if (result?.reason === "stale-document") {
+    throw Object.assign(new Error("网页文档已经变化，请重新操作"), {
+      code: "COMPOSER_DOCUMENT_STALE",
+    });
+  }
+  if (result?.reason === "no-editor") throw new Error("请先在网页中点一下提问输入框");
+  if (result?.reason === "stale-editor") {
+    throw Object.assign(new Error("网页输入框已经变化，请重新操作"), {
+      code: "COMPOSER_EDITOR_STALE",
+    });
+  }
+  if (result?.reason === "beforeinput-cancelled") {
+    throw new Error("网页拒绝了输入操作，请重新点击输入框");
+  }
+  if (result?.reason === "enter-gate-unavailable") {
+    throw Object.assign(new Error("网页发送保护尚未准备好，请重新操作"), {
+      code: "COMPOSER_ENTER_GATE_BLOCKED",
+    });
+  }
+  throw new Error("无法写入网页输入框");
 }
 
 function sendComposerEnter(webContents) {
@@ -405,22 +931,36 @@ function assertExpectedComposerContextGeneration(workspace, expectedGeneration) 
 }
 
 module.exports = {
+  COMPOSER_ENTER_GATE_TTL_MS,
   COMPOSER_GUARD_CHANNEL_PREFIX,
+  COMPOSER_ISOLATED_WORLD_ID,
   MAX_COMPOSER_CHARS,
+  armComposerEnterGate,
   assertExpectedComposerContextGeneration,
   composerGuardMarker,
   composerClickGuardScript,
+  composerDocumentInvalidateScript,
+  composerDocumentNonceScript,
+  composerEnterGateArmScript,
+  composerEnterGateOutcomeScript,
   composerInspectionScript,
+  composerMutationScript,
   createComposerConfirmationRegistry,
+  createComposerDocumentNonce,
+  createComposerEnterGateToken,
   createComposerGuardToken,
   createOneShotComposerBypass,
   disableComposerClickGuard,
   hasClearlyNonTargetLanguage,
   installComposerClickGuard,
+  installComposerDocumentNonce,
+  invalidateComposerDocumentIdentity,
   inspectAiComposer,
   inspectComposerSubmit,
   isPlainComposerSubmit,
   parseComposerGuardConsoleMessage,
+  readComposerEnterGateOutcome,
   replaceAiComposerText,
   sendComposerEnter,
+  waitForComposerEnterGateOutcome,
 };

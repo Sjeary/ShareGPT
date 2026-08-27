@@ -29,20 +29,28 @@ const { collectPageFingerprint, snapshotDigest, newLocalProfile } = require("./b
 const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
 const { translateText } = require("./translation");
 const {
+  COMPOSER_ISOLATED_WORLD_ID,
+  armComposerEnterGate,
   assertExpectedComposerContextGeneration,
   composerGuardMarker,
   createComposerConfirmationRegistry,
+  createComposerDocumentNonce,
+  createComposerEnterGateToken,
   createComposerGuardToken,
   createOneShotComposerBypass,
   disableComposerClickGuard,
   hasClearlyNonTargetLanguage,
   installComposerClickGuard,
+  installComposerDocumentNonce,
+  invalidateComposerDocumentIdentity,
   inspectAiComposer,
   inspectComposerSubmit,
   isPlainComposerSubmit,
   parseComposerGuardConsoleMessage,
+  readComposerEnterGateOutcome,
   replaceAiComposerText,
   sendComposerEnter,
+  waitForComposerEnterGateOutcome,
 } = require("./aiComposer");
 const { createAiEnvironmentGenerationGuard } = require("./aiEnvironmentGeneration");
 const { runSettingsPrincipalTransition } = require("./settingsPrincipalTransition");
@@ -146,7 +154,7 @@ const AI_ALLOWED_PERMISSIONS = new Set([
   "top-level-storage-access",
 ]);
 const GPT_TAB_TITLE_LIMIT = 48;
-const COMPOSER_GUARD_WORLD_ID = 1001;
+const COMPOSER_GUARD_WORLD_ID = COMPOSER_ISOLATED_WORLD_ID;
 const COMPOSER_CONFIRM_TTL_MS = 2 * 60 * 1000;
 
 function getEventWindow(event, fallbackWindow) {
@@ -670,8 +678,15 @@ function createElectronApp(baseMode = "all") {
       workspaceKey(workspace.kind, workspace.id),
     );
     emitComposerSendInvalidated(pending, reason);
+    const documentNonce = workspace.composerDocumentNonce;
+    const wc = workspace.view?.webContents;
+    if (documentNonce && wc && !wc.isDestroyed()) {
+      void invalidateComposerDocumentIdentity(wc, { documentNonce, reason }).catch(() => {});
+    }
     workspace.composerContextGeneration = (workspace.composerContextGeneration || 0) + 1;
     workspace.composerGuardToken = "";
+    workspace.composerDocumentNonce = "";
+    workspace.composerDocumentUrl = "";
     workspace.composerGuardBypass?.clear?.();
   }
 
@@ -743,13 +758,57 @@ function createElectronApp(baseMode = "all") {
     return workspace;
   }
 
-  function replayComposerEnter(context) {
+  async function replayComposerEnter(context, options = {}) {
     const workspace = assertComposerContextCurrent(context);
     const wc = workspace.view.webContents;
+    const documentNonce = workspace.composerDocumentNonce;
+    const documentUrl = workspace.composerDocumentUrl;
+    const token = options.enterGateToken || createComposerEnterGateToken();
+    const assertGateCurrent = () => {
+      assertComposerContextCurrent(context);
+      if (
+        workspace.composerDocumentNonce !== documentNonce ||
+        workspace.composerDocumentUrl !== documentUrl
+      ) {
+        throw Object.assign(new Error("网页发送文档已经变化，请重新操作"), {
+          code: "COMPOSER_ENTER_GATE_BLOCKED",
+        });
+      }
+    };
+    if (!options.gateArmed) {
+      await armComposerEnterGate(wc, {
+        documentNonce,
+        documentUrl,
+        token,
+        expectedText: options.expectedText,
+        findAny: options.findAny,
+      });
+    }
+    assertGateCurrent();
+    const preflight = await readComposerEnterGateOutcome(wc, token);
+    assertGateCurrent();
+    if (preflight?.status !== "pending") {
+      throw Object.assign(new Error("网页发送保护已失效，请重新操作"), {
+        code: "COMPOSER_ENTER_GATE_BLOCKED",
+        reason: safeText(preflight?.reason || preflight?.status),
+      });
+    }
     workspace.composerGuardBypass.arm(context.composerContextGeneration);
-    sendComposerEnter(wc);
-    assertComposerContextCurrent(context);
-    return true;
+    try {
+      sendComposerEnter(wc);
+      assertGateCurrent();
+      const outcome = await waitForComposerEnterGateOutcome(wc, token);
+      assertGateCurrent();
+      if (outcome?.status !== "allowed") {
+        throw Object.assign(new Error("网页发送焦点已经变化，未执行发送"), {
+          code: "COMPOSER_ENTER_GATE_BLOCKED",
+          reason: safeText(outcome?.reason || outcome?.status),
+        });
+      }
+      return true;
+    } finally {
+      workspace.composerGuardBypass.clear();
+    }
   }
 
   function queueComposerConfirmation(context, text, targetLanguage, options = {}) {
@@ -796,9 +855,9 @@ function createElectronApp(baseMode = "all") {
     void inspectComposerSubmit(workspace.view.webContents, targetLanguage, {
       assertCurrent: () => assertComposerContextCurrent(context),
     })
-      .then((decision) => {
+      .then(async (decision) => {
         if (decision.action === "replay") {
-          replayComposerEnter(context);
+          await replayComposerEnter(context, { expectedText: decision.text });
           return;
         }
         queueComposerConfirmation(context, decision.text, targetLanguage);
@@ -828,6 +887,30 @@ function createElectronApp(baseMode = "all") {
     }
     const context = captureComposerContext(workspace, { requireActive: false });
     const translation = backend?.loadSettings()?.translation || {};
+    if (!workspace.composerDocumentNonce || !workspace.composerDocumentUrl) {
+      const nonce = createComposerDocumentNonce();
+      workspace.composerDocumentNonce = nonce;
+      workspace.composerDocumentUrl = "";
+      try {
+        const documentIdentity = await installComposerDocumentNonce(wc, {
+          worldId: COMPOSER_GUARD_WORLD_ID,
+          nonce,
+        });
+        assertComposerContextCurrent(context);
+        if (workspace.composerDocumentNonce !== nonce) {
+          throw new Error("网页文档身份已失效");
+        }
+        workspace.composerDocumentUrl = documentIdentity.url;
+      } catch (error) {
+        if (workspace.composerDocumentNonce === nonce) {
+          workspace.composerDocumentNonce = "";
+          workspace.composerDocumentUrl = "";
+        }
+        throw error;
+      }
+    }
+    const documentNonce = workspace.composerDocumentNonce;
+    const documentUrl = workspace.composerDocumentUrl;
     if (!workspace.composerGuardToken) workspace.composerGuardToken = createComposerGuardToken();
     const token = workspace.composerGuardToken;
     await installComposerClickGuard(wc, {
@@ -838,6 +921,12 @@ function createElectronApp(baseMode = "all") {
     });
     assertComposerContextCurrent(context);
     if (workspace.composerGuardToken !== token) throw new Error("网页发送守卫已失效");
+    if (
+      workspace.composerDocumentNonce !== documentNonce ||
+      workspace.composerDocumentUrl !== documentUrl
+    ) {
+      throw new Error("网页文档身份已失效");
+    }
     workspace.composerGuardInstalled = true;
     return true;
   }
@@ -1841,6 +1930,10 @@ function createElectronApp(baseMode = "all") {
       if (workspace.environmentBootstrapping || !isWorkspaceUrlAllowed(workspace, url)) {
         return;
       }
+      // Some same-document navigations do not emit did-start-navigation. The isolated-world
+      // listener has already invalidated its nonce, so clear the main-process mirror before
+      // installing the identity for the new SPA route.
+      invalidateComposerWorkspace(workspace, "navigation");
       if (isWorkspaceUrlAllowed(workspace, url)) {
         workspace.lastUrl = normalizeAiWorkspaceUrl(workspace, url);
       }
@@ -2112,6 +2205,8 @@ function createElectronApp(baseMode = "all") {
       suppressLoadErrorsUntil: 0,
       composerContextGeneration: 1,
       composerGuardToken: "",
+      composerDocumentNonce: "",
+      composerDocumentUrl: "",
       composerGuardInstalled: false,
       composerGuardBypass: createOneShotComposerBypass(),
     };
@@ -2455,18 +2550,44 @@ function createElectronApp(baseMode = "all") {
         throw new Error("目标会话不属于当前环境");
       }
       assertExpectedComposerContextGeneration(workspace, payload?.expectedNavigationGeneration);
+      await syncComposerClickGuard(workspace);
+      assertCurrentAiEnvironmentOperation(payload);
+      assertExpectedComposerContextGeneration(workspace, payload?.expectedNavigationGeneration);
+      if (!workspace.composerDocumentNonce || !workspace.composerDocumentUrl) {
+        throw new Error("网页输入环境尚未准备好，请稍后重试");
+      }
       const context = captureComposerContext(workspace);
+      const documentNonce = workspace.composerDocumentNonce;
+      const documentUrl = workspace.composerDocumentUrl;
       const assertCurrent = () => {
         assertCurrentAiEnvironmentOperation(payload);
         assertExpectedComposerContextGeneration(workspace, payload?.expectedNavigationGeneration);
         assertComposerContextCurrent(context);
+        if (
+          workspace.composerDocumentNonce !== documentNonce ||
+          workspace.composerDocumentUrl !== documentUrl
+        ) {
+          throw Object.assign(new Error("网页文档身份已失效"), {
+            code: "COMPOSER_DOCUMENT_STALE",
+          });
+        }
       };
+      const enterGateToken = payload?.send === true ? createComposerEnterGateToken() : "";
       const result = await replaceAiComposerText(workspace.view.webContents, payload?.text, {
         assertCurrent,
+        documentNonce,
+        documentUrl,
+        enterGateToken,
       });
       assertCurrent();
-      if (payload?.send === true) replayComposerEnter(context);
-      return { ...result, sent: payload?.send === true };
+      let sent = false;
+      if (payload?.send === true) {
+        if (result.enterGateToken !== enterGateToken) {
+          throw new Error("网页发送保护未能正确启用");
+        }
+        sent = await replayComposerEnter(context, { enterGateToken, gateArmed: true });
+      }
+      return { ...result, sent };
     });
     ipcMain.handle("translation:resolve-composer-send", async (_event, payload) => {
       const { kind, environmentId, generation } = assertCurrentAiEnvironmentOperation(payload);
@@ -2504,8 +2625,11 @@ function createElectronApp(baseMode = "all") {
       if (!pendingComposerSends.take(requestId)) {
         throw new Error("发送确认已失效，请重新发送");
       }
-      replayComposerEnter(pending.context);
-      return { ok: true, sent: true };
+      const sent = await replayComposerEnter(pending.context, {
+        expectedText: pending.text,
+        findAny: pending.findAny,
+      });
+      return { ok: true, sent };
     });
     ipcMain.handle("user-data:export", (_event, payload) =>
       backend.exportUserData(payload?.expectedPrincipalId),
