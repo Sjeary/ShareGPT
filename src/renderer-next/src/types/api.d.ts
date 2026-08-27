@@ -276,6 +276,7 @@ export interface ShareGptApi {
     tabId: string
     environmentId: string
     generation: number
+    expectedNavigationGeneration: number
     text: string
     send: boolean
   }) => Promise<{ ok: boolean; sent: boolean; replacedTextLength: number }>

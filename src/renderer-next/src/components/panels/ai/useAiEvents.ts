@@ -89,6 +89,7 @@ function normalizeTab(kind: AiKind, item: AiTabPayload): AiTab | null {
     webviewLoading: Boolean(item?.loading),
     canGoBack: Boolean(item?.canGoBack),
     canGoForward: Boolean(item?.canGoForward),
+    navigationGeneration: Number(item?.navigationGeneration || 0),
   }
 }
 
@@ -132,6 +133,9 @@ function applyState(kind: AiKind, payload: AiEventPayload) {
   if (typeof payload.loading === 'boolean') patch.webviewLoading = payload.loading
   if (typeof payload.canGoBack === 'boolean') patch.canGoBack = payload.canGoBack
   if (typeof payload.canGoForward === 'boolean') patch.canGoForward = payload.canGoForward
+  if (Number.isInteger(payload.navigationGeneration) && Number(payload.navigationGeneration) >= 0) {
+    patch.navigationGeneration = Number(payload.navigationGeneration)
+  }
 
   const nextTitle = safeText(payload.title)
   if (nextTitle) patch.title = nextTitle

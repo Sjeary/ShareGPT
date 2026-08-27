@@ -51,6 +51,7 @@ interface TranslationPanelProps {
   kind: AiKind
   tabId: string
   networkReady: boolean
+  navigationGeneration: number
 }
 
 function translationAbortError() {
@@ -59,7 +60,12 @@ function translationAbortError() {
   return error
 }
 
-export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanelProps) {
+export function TranslationPanel({
+  kind,
+  tabId,
+  networkReady,
+  navigationGeneration,
+}: TranslationPanelProps) {
   const state = useTranslationStore()
   const cancelRef = useRef<null | (() => void)>(null)
   const outgoingRequestRef = useRef(0)
@@ -100,7 +106,7 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
       cancelRef.current = null
       useTranslationStore.getState().invalidateRequests(kind, tabId)
     }
-  }, [kind, tabId])
+  }, [kind, navigationGeneration, tabId])
 
   const patchConfig = (patch: Partial<TranslationSettings>) => {
     const token = useTranslationStore.getState().snapshotRequest(kind, tabId)
@@ -277,6 +283,7 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
       environmentGeneration: environmentOperation.generation,
       principalId: principalSession.principalId,
       principalGeneration: principalSession.principalGeneration,
+      navigationGeneration,
     }
     const isCurrentRequest = () => {
       const operation = currentAiEnvironmentOperation(kind)
@@ -291,6 +298,9 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
           environmentGeneration: operation.generation,
           principalId: principal.principalId,
           principalGeneration: principal.principalGeneration,
+          navigationGeneration:
+            useAiStore.getState().tabsByKind[kind].find((tab) => tab.id === tabId)
+              ?.navigationGeneration ?? -1,
         })
       )
     }
@@ -384,6 +394,7 @@ export function TranslationPanel({ kind, tabId, networkReady }: TranslationPanel
           tabId,
           text: translated,
           send: action === 'send',
+          expectedNavigationGeneration: navigationGeneration,
         })
       }
       if (isCurrentRequest()) {

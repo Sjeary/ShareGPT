@@ -15,6 +15,7 @@ export interface AiTab {
   webviewLoading: boolean
   canGoBack: boolean
   canGoForward: boolean
+  navigationGeneration: number
 }
 // 兼容旧引用名。
 export type GptTab = AiTab

@@ -86,6 +86,7 @@ test('deferred outgoing AI and API results require the original principal and en
     environmentGeneration: 3,
     principalId: 'principal-a',
     principalGeneration: 4,
+    navigationGeneration: 2,
   }
   let current = { ...token }
   let resolveAi: (value: string) => void = () => undefined
@@ -119,6 +120,39 @@ test('deferred outgoing AI and API results require the original principal and en
     true,
     'a new request can start after the switched session resets loading',
   )
+})
+
+test('same-tab navigation aborts a deferred outgoing result before write or send', async () => {
+  const token = {
+    kind: 'claude' as const,
+    tabId: 'tab-a',
+    requestGeneration: 1,
+    environmentId: 'env-a',
+    environmentGeneration: 1,
+    principalId: 'principal-a',
+    principalGeneration: 1,
+    navigationGeneration: 7,
+  }
+  let current = { ...token }
+  let resolveSlow: (value: string) => void = () => undefined
+  const slow = new Promise<string>((resolve) => {
+    resolveSlow = resolve
+  })
+  const writes: string[] = []
+  const deferred = (async () => {
+    const translated = await slow
+    if (!isCurrentOutgoingTranslationSession(token, current)) {
+      const error = new Error('aborted')
+      error.name = 'AbortError'
+      throw error
+    }
+    writes.push(translated)
+  })()
+
+  current = { ...current, navigationGeneration: 8 }
+  resolveSlow('stale translation')
+  await assert.rejects(deferred, { name: 'AbortError' })
+  assert.deepEqual(writes, [])
 })
 
 test('composer guard failures always produce a visible fail-closed message', () => {

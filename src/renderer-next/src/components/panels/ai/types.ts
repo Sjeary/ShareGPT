@@ -12,6 +12,7 @@ export interface AiEventPayload {
   initialized?: boolean
   canGoBack?: boolean
   canGoForward?: boolean
+  navigationGeneration?: number
   allowExternalBrowsing?: boolean
   // tabs-changed
   tabs?: AiTabPayload[]
@@ -40,6 +41,7 @@ export interface AiTabPayload {
   initialized?: boolean
   canGoBack?: boolean
   canGoForward?: boolean
+  navigationGeneration?: number
   allowExternalBrowsing?: boolean
 }
 
@@ -53,6 +55,7 @@ export interface AiStatePayload {
   initialized?: boolean
   canGoBack?: boolean
   canGoForward?: boolean
+  navigationGeneration?: number
   allowExternalBrowsing?: boolean
 }
 

@@ -1060,10 +1060,11 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           </div>
           {translationOpen && (
             <TranslationPanel
-              key={`${kind}:${activeTabId}:${environmentRuntimeKey}:${networkReady ? 'ready' : 'offline'}:${notesAiPrincipalId}:${notesAiPrincipalGeneration}`}
+              key={`${kind}:${activeTabId}:${activeTab?.navigationGeneration ?? 0}:${environmentRuntimeKey}:${networkReady ? 'ready' : 'offline'}:${notesAiPrincipalId}:${notesAiPrincipalGeneration}`}
               kind={kind}
               tabId={activeTabId}
               networkReady={networkReady}
+              navigationGeneration={activeTab?.navigationGeneration ?? 0}
             />
           )}
         </div>

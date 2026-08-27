@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   COMPOSER_GUARD_CHANNEL_PREFIX,
   MAX_COMPOSER_CHARS,
+  assertExpectedComposerContextGeneration,
   composerGuardMarker,
   composerClickGuardScript,
   composerInspectionScript,
@@ -17,6 +18,18 @@ const {
   parseComposerGuardConsoleMessage,
   replaceAiComposerText,
 } = require("../aiComposer");
+
+test("main process rejects stale composer navigation generations", () => {
+  const workspace = { composerContextGeneration: 4 };
+  assert.equal(assertExpectedComposerContextGeneration(workspace, 4), 4);
+  assert.throws(() => assertExpectedComposerContextGeneration(workspace, 3), {
+    code: "COMPOSER_CONTEXT_STALE",
+    message: "网页导航上下文已失效",
+  });
+  assert.throws(() => assertExpectedComposerContextGeneration(workspace, undefined), {
+    code: "COMPOSER_CONTEXT_STALE",
+  });
+});
 
 test("English outgoing guard identifies clearly non-English scripts", () => {
   assert.equal(hasClearlyNonTargetLanguage("请帮我总结这段内容", "en"), true);

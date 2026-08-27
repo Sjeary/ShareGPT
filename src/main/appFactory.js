@@ -29,6 +29,7 @@ const { collectPageFingerprint, snapshotDigest, newLocalProfile } = require("./b
 const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
 const { translateText } = require("./translation");
 const {
+  assertExpectedComposerContextGeneration,
   composerGuardMarker,
   createComposerConfirmationRegistry,
   createComposerGuardToken,
@@ -1339,6 +1340,7 @@ function createElectronApp(baseMode = "all") {
       environmentId: safeText(workspace.environmentId),
       proxyMode: safeText(workspace.proxyMode),
       proxyLabel: safeText(workspace.proxyLabel),
+      navigationGeneration: Number(workspace.composerContextGeneration || 0),
     };
   }
 
@@ -1746,6 +1748,7 @@ function createElectronApp(baseMode = "all") {
     wc.on("did-start-navigation", (details) => {
       if (!details?.isMainFrame) return;
       invalidateComposerWorkspace(workspace, "navigation");
+      emitAiState(workspace, "did-start-navigation");
     });
 
     wc.on("did-start-loading", () => {
@@ -2451,9 +2454,11 @@ function createElectronApp(baseMode = "all") {
       ) {
         throw new Error("目标会话不属于当前环境");
       }
+      assertExpectedComposerContextGeneration(workspace, payload?.expectedNavigationGeneration);
       const context = captureComposerContext(workspace);
       const assertCurrent = () => {
         assertCurrentAiEnvironmentOperation(payload);
+        assertExpectedComposerContextGeneration(workspace, payload?.expectedNavigationGeneration);
         assertComposerContextCurrent(context);
       };
       const result = await replaceAiComposerText(workspace.view.webContents, payload?.text, {

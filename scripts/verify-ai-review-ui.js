@@ -757,6 +757,25 @@ async function main() {
       10_000,
     );
 
+    const outgoingSlowStarted = fixtureState.slowStarted;
+    const outgoingSlowAborted = fixtureState.slowAborted;
+    await window.getByLabel("打开翻译侧栏").click();
+    const claudeTranslationPanel = window.getByRole("complementary", { name: "翻译侧栏" });
+    await claudeTranslationPanel.getByRole("button", { name: "中文提问", exact: true }).click();
+    await claudeTranslationPanel.getByLabel("中文提问内容").fill("导航后不能发送");
+    await claudeTranslationPanel.getByRole("button", { name: "翻译并发送" }).click();
+    await waitUntil(() => fixtureState.slowStarted > outgoingSlowStarted);
+    await composerFixtureAction(electronApp, fixtureUrl, "navigate");
+    await waitUntil(() => fixtureState.slowAborted > outgoingSlowAborted);
+    await window.waitForTimeout(250);
+    assert.deepStrictEqual(await composerFixtureAction(electronApp, fixtureUrl, "state"), {
+      enters: 0,
+      clicks: 0,
+    });
+    assert.strictEqual(await window.getByText("已翻译并发送", { exact: true }).count(), 0);
+    await claudeTranslationPanel.getByLabel("关闭翻译侧栏").click();
+    results.push("main-frame navigation aborts deferred outgoing translation before write or send");
+
     await composerFixtureAction(electronApp, fixtureUrl, "forge");
     await window.waitForTimeout(250);
     assert.strictEqual(await window.getByRole("button", { name: "仍然发送" }).count(), 0);

@@ -67,6 +67,7 @@ export interface OutgoingTranslationSession {
   environmentGeneration: number
   principalId: string
   principalGeneration: number
+  navigationGeneration: number
 }
 
 export function isCurrentOutgoingTranslationSession(
@@ -80,7 +81,8 @@ export function isCurrentOutgoingTranslationSession(
     token.environmentId === current.environmentId &&
     token.environmentGeneration === current.environmentGeneration &&
     token.principalId === current.principalId &&
-    token.principalGeneration === current.principalGeneration
+    token.principalGeneration === current.principalGeneration &&
+    token.navigationGeneration === current.navigationGeneration
   )
 }
 

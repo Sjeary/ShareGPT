@@ -393,9 +393,21 @@ function sendComposerEnter(webContents) {
   webContents.sendInputEvent({ type: "keyUp", keyCode: "Enter" });
 }
 
+function assertExpectedComposerContextGeneration(workspace, expectedGeneration) {
+  const expected = Number(expectedGeneration);
+  const current = Number(workspace?.composerContextGeneration || 0);
+  if (!Number.isInteger(expected) || expected < 1 || current !== expected) {
+    throw Object.assign(new Error("网页导航上下文已失效"), {
+      code: "COMPOSER_CONTEXT_STALE",
+    });
+  }
+  return current;
+}
+
 module.exports = {
   COMPOSER_GUARD_CHANNEL_PREFIX,
   MAX_COMPOSER_CHARS,
+  assertExpectedComposerContextGeneration,
   composerGuardMarker,
   composerClickGuardScript,
   composerInspectionScript,
