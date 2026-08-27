@@ -13,6 +13,12 @@ export interface AiEventPayload {
   canGoBack?: boolean
   canGoForward?: boolean
   navigationGeneration?: number
+  environmentId?: string
+  environmentGeneration?: number
+  principalId?: string
+  principalGeneration?: number
+  documentNonce?: string
+  documentUrl?: string
   allowExternalBrowsing?: boolean
   // tabs-changed
   tabs?: AiTabPayload[]

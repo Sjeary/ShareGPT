@@ -38,17 +38,21 @@ const {
   createComposerEnterGateToken,
   createComposerGuardToken,
   createOneShotComposerBypass,
+  createSelectionTranslationRateLimiter,
   disableComposerClickGuard,
   hasClearlyNonTargetLanguage,
   installComposerClickGuard,
   installComposerDocumentNonce,
+  installSelectionTranslation,
   invalidateComposerDocumentIdentity,
   inspectAiComposer,
   inspectComposerSubmit,
   isPlainComposerSubmit,
   parseComposerGuardConsoleMessage,
+  parseSelectionTranslationConsoleMessage,
   readComposerEnterGateOutcome,
   replaceAiComposerText,
+  selectionTranslationMarker,
   sendComposerEnter,
   waitForComposerEnterGateOutcome,
 } = require("./aiComposer");
@@ -685,9 +689,11 @@ function createElectronApp(baseMode = "all") {
     }
     workspace.composerContextGeneration = (workspace.composerContextGeneration || 0) + 1;
     workspace.composerGuardToken = "";
+    workspace.selectionTranslationToken = "";
     workspace.composerDocumentNonce = "";
     workspace.composerDocumentUrl = "";
     workspace.composerGuardBypass?.clear?.();
+    workspace.selectionTranslationRateLimiter?.clear?.();
   }
 
   function invalidateAllComposerWorkspaces(reason = "invalidated") {
@@ -837,6 +843,30 @@ function createElectronApp(baseMode = "all") {
     return pending;
   }
 
+  function emitSelectionTranslation(context, text) {
+    const workspace = assertComposerContextCurrent(context);
+    const documentNonce = safeText(workspace.composerDocumentNonce);
+    const documentUrl = safeText(workspace.composerDocumentUrl);
+    if (!documentNonce || !documentUrl) {
+      throw Object.assign(new Error("网页选区上下文尚未准备好"), {
+        code: "COMPOSER_CONTEXT_STALE",
+      });
+    }
+    return emitAiEvent(workspace.kind, "translate-selection", {
+      tabId: workspace.id,
+      text: String(text || "")
+        .trim()
+        .slice(0, 30000),
+      principalId: context.principalId,
+      principalGeneration: Number(context.principalContext?.generation || 0),
+      environmentId: context.environmentId,
+      environmentGeneration: context.environmentGeneration,
+      navigationGeneration: context.composerContextGeneration,
+      documentNonce,
+      documentUrl,
+    });
+  }
+
   function guardComposerEnter(workspace, event, input) {
     if (!isPlainComposerSubmit(input)) return false;
     if (workspace.composerGuardBypass.consume(workspace.composerContextGeneration)) return false;
@@ -919,8 +949,27 @@ function createElectronApp(baseMode = "all") {
       targetLanguage: safeText(translation.siteLanguage) || "en",
       marker: composerGuardMarker(token),
     });
+    if (!workspace.selectionTranslationToken) {
+      workspace.selectionTranslationToken = createComposerGuardToken();
+    }
+    const selectionToken = workspace.selectionTranslationToken;
+    await installSelectionTranslation(wc, {
+      worldId: COMPOSER_GUARD_WORLD_ID,
+      enabled: translation.autoTranslateSelection === true,
+      marker: selectionTranslationMarker(selectionToken),
+      documentNonce,
+      documentUrl,
+      navigationGeneration: context.composerContextGeneration,
+      principalId: context.principalId,
+      principalGeneration: Number(context.principalContext?.generation || 0),
+      environmentId: context.environmentId,
+      environmentGeneration: context.environmentGeneration,
+    });
     assertComposerContextCurrent(context);
     if (workspace.composerGuardToken !== token) throw new Error("网页发送守卫已失效");
+    if (workspace.selectionTranslationToken !== selectionToken) {
+      throw new Error("网页选区翻译守卫已失效");
+    }
     if (
       workspace.composerDocumentNonce !== documentNonce ||
       workspace.composerDocumentUrl !== documentUrl
@@ -1950,6 +1999,43 @@ function createElectronApp(baseMode = "all") {
 
     wc.on("console-message", (details, _level, legacyMessage, _line, legacySourceId) => {
       const value = String(details?.message ?? legacyMessage ?? "");
+      const selection = parseSelectionTranslationConsoleMessage(
+        value,
+        workspace.selectionTranslationToken,
+      );
+      if (selection.kind !== "other") {
+        if (
+          selection.kind !== "valid" ||
+          !isComposerEligible() ||
+          !isTrustedComposerConsoleEvent(workspace, details, legacySourceId)
+        ) {
+          return;
+        }
+        try {
+          const context = captureComposerContext(workspace);
+          const translation = backend?.loadSettings()?.translation || {};
+          if (
+            translation.autoTranslateSelection !== true ||
+            selection.documentNonce !== workspace.composerDocumentNonce ||
+            selection.documentUrl !== workspace.composerDocumentUrl ||
+            selection.navigationGeneration !== context.composerContextGeneration ||
+            selection.principalId !== context.principalId ||
+            selection.principalGeneration !== Number(context.principalContext?.generation || 0) ||
+            selection.environmentId !== context.environmentId ||
+            selection.environmentGeneration !== context.environmentGeneration ||
+            !workspace.selectionTranslationRateLimiter.accept(
+              selection.text,
+              selection.documentNonce,
+            )
+          ) {
+            return;
+          }
+          emitSelectionTranslation(context, selection.text);
+        } catch {
+          return;
+        }
+        return;
+      }
       const parsed = parseComposerGuardConsoleMessage(value, workspace.composerGuardToken);
       if (parsed.kind !== "other") {
         if (
@@ -2088,14 +2174,24 @@ function createElectronApp(baseMode = "all") {
       sep();
     } else if (params.selectionText && params.selectionText.trim()) {
       const text = params.selectionText.trim();
+      let selectionContext = null;
+      try {
+        selectionContext = captureComposerContext(workspace);
+      } catch {
+        selectionContext = null;
+      }
       push({ label: "复制", click: () => wc.copy() });
       push({
         label: "翻译选中文字",
-        click: () =>
-          emitAiEvent(workspace.kind, "translate-selection", {
-            tabId: workspace.id,
-            text: text.slice(0, 30000),
-          }),
+        enabled: Boolean(selectionContext),
+        click: () => {
+          if (!selectionContext) return;
+          try {
+            emitSelectionTranslation(selectionContext, text);
+          } catch {
+            return;
+          }
+        },
       });
       push({
         label: "在浏览器中搜索选中文字",
@@ -2205,10 +2301,12 @@ function createElectronApp(baseMode = "all") {
       suppressLoadErrorsUntil: 0,
       composerContextGeneration: 1,
       composerGuardToken: "",
+      selectionTranslationToken: "",
       composerDocumentNonce: "",
       composerDocumentUrl: "",
       composerGuardInstalled: false,
       composerGuardBypass: createOneShotComposerBypass(),
+      selectionTranslationRateLimiter: createSelectionTranslationRateLimiter(),
     };
 
     Reflect.defineProperty(view.webContents, "__shareGptAiWorkspace", {

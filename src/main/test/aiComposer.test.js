@@ -6,6 +6,7 @@ const {
   COMPOSER_GUARD_CHANNEL_PREFIX,
   COMPOSER_ISOLATED_WORLD_ID,
   MAX_COMPOSER_CHARS,
+  SELECTION_TRANSLATION_CHANNEL_PREFIX,
   assertExpectedComposerContextGeneration,
   composerGuardMarker,
   composerClickGuardScript,
@@ -16,13 +17,17 @@ const {
   createComposerDocumentNonce,
   createComposerGuardToken,
   createOneShotComposerBypass,
+  createSelectionTranslationRateLimiter,
   hasClearlyNonTargetLanguage,
   installComposerDocumentNonce,
   installComposerClickGuard,
   inspectComposerSubmit,
   isPlainComposerSubmit,
   parseComposerGuardConsoleMessage,
+  parseSelectionTranslationConsoleMessage,
   replaceAiComposerText,
+  selectionTranslationMarker,
+  selectionTranslationScript,
 } = require("../aiComposer");
 
 test("main process rejects stale composer navigation generations", () => {
@@ -130,6 +135,284 @@ test("composer guard messages require the exact workspace token and strict paylo
   assert.throws(() =>
     composerClickGuardScript({ marker: `${COMPOSER_GUARD_CHANNEL_PREFIX}fixed` }),
   );
+});
+
+function selectionMessagePayload(overrides = {}) {
+  return {
+    text: "selected text",
+    documentNonce: createComposerDocumentNonce(),
+    documentUrl: "https://chatgpt.com/c/one",
+    navigationGeneration: 4,
+    principalId: "server-principal",
+    principalGeneration: 7,
+    environmentId: "environment-one",
+    environmentGeneration: 3,
+    ...overrides,
+  };
+}
+
+test("selection translation messages require the exact token and bound context", () => {
+  const token = createComposerGuardToken();
+  const otherToken = createComposerGuardToken();
+  const marker = selectionTranslationMarker(token);
+  const payload = selectionMessagePayload();
+  assert.equal(marker, `${SELECTION_TRANSLATION_CHANNEL_PREFIX}${token}:`);
+  assert.deepEqual(parseSelectionTranslationConsoleMessage("normal log", token), {
+    kind: "other",
+  });
+  assert.deepEqual(
+    parseSelectionTranslationConsoleMessage(
+      `${selectionTranslationMarker(otherToken)}${JSON.stringify(payload)}`,
+      token,
+    ),
+    { kind: "invalid" },
+  );
+  assert.deepEqual(
+    parseSelectionTranslationConsoleMessage(
+      `${marker}${JSON.stringify({ ...payload, extra: true })}`,
+      token,
+    ),
+    { kind: "invalid" },
+  );
+  assert.deepEqual(
+    parseSelectionTranslationConsoleMessage(
+      `${marker}${JSON.stringify({ ...payload, documentNonce: "forged" })}`,
+      token,
+    ),
+    { kind: "invalid" },
+  );
+  assert.deepEqual(
+    parseSelectionTranslationConsoleMessage(
+      `${marker}${JSON.stringify({ ...payload, text: { value: "not a string" } })}`,
+      token,
+    ),
+    { kind: "invalid" },
+  );
+  assert.deepEqual(
+    parseSelectionTranslationConsoleMessage(
+      `${marker}${JSON.stringify({ ...payload, text: "x".repeat(MAX_COMPOSER_CHARS + 1) })}`,
+      token,
+    ),
+    { kind: "invalid" },
+  );
+  assert.deepEqual(
+    parseSelectionTranslationConsoleMessage(`${marker}${JSON.stringify(payload)}`, token),
+    { kind: "valid", ...payload },
+  );
+});
+
+test("selection translation rate limit is per-instance, deduplicates, and clears", () => {
+  let now = 1000;
+  const first = createSelectionTranslationRateLimiter({ now: () => now });
+  const second = createSelectionTranslationRateLimiter({ now: () => now });
+  assert.equal(first.accept("one", "nonce"), true);
+  assert.equal(second.accept("one", "nonce"), true, "another workspace has an independent limit");
+  now += 100;
+  assert.equal(first.accept("two", "nonce"), false, "the workspace rate limit applies");
+  now += 300;
+  assert.equal(first.accept("one", "nonce"), false, "recent duplicate text is suppressed");
+  assert.equal(first.accept("two", "nonce"), true);
+  first.clear();
+  assert.equal(first.accept("two", "nonce"), true, "lifecycle invalidation clears limiter state");
+});
+
+function createSelectionTranslationHarness(options = {}) {
+  const documentListeners = {};
+  const globalListeners = {};
+  const timers = new Map();
+  const logs = [];
+  let nextTimerId = 1;
+  class TestElement {
+    constructor(document, parentNode = null, editable = false) {
+      this.ownerDocument = document;
+      this.parentNode = parentNode;
+      this.isConnected = true;
+      this.isContentEditable = editable;
+    }
+
+    matches(selector) {
+      return this.isContentEditable && selector.includes("textarea");
+    }
+
+    getAttribute() {
+      return this.isContentEditable ? "true" : null;
+    }
+  }
+  const document = {
+    addEventListener(type, listener) {
+      documentListeners[type] = listener;
+    },
+  };
+  const common = new TestElement(document, document, Boolean(options.editable));
+  const anchor = {
+    ownerDocument: document,
+    parentNode: common,
+    isConnected: true,
+  };
+  const focus = {
+    ownerDocument: document,
+    parentNode: common,
+    isConnected: true,
+  };
+  const selection = {
+    isCollapsed: false,
+    rangeCount: 1,
+    anchorNode: anchor,
+    focusNode: focus,
+    getRangeAt: () => ({ commonAncestorContainer: common }),
+    toString: () => options.text || "Selected passage",
+  };
+  const context = {
+    Element: TestElement,
+    document,
+    location: { href: "https://chatgpt.com/c/one" },
+    getSelection: () => selection,
+    console: { log: (message) => logs.push(message) },
+    addEventListener(type, listener) {
+      globalListeners[type] = listener;
+    },
+    setTimeout(listener) {
+      const id = nextTimerId++;
+      timers.set(id, listener);
+      return id;
+    },
+    clearTimeout(id) {
+      timers.delete(id);
+    },
+  };
+  context.window = context;
+  const nonce = createComposerDocumentNonce();
+  const token = createComposerGuardToken();
+  vm.runInNewContext(composerDocumentNonceScript(nonce), context);
+  vm.runInNewContext(
+    selectionTranslationScript({
+      enabled: true,
+      marker: selectionTranslationMarker(token),
+      documentNonce: nonce,
+      documentUrl: context.location.href,
+      navigationGeneration: 4,
+      principalId: "principal-one",
+      principalGeneration: 7,
+      environmentId: "environment-one",
+      environmentGeneration: 3,
+      debounceMs: 150,
+    }),
+    context,
+  );
+  return {
+    context,
+    documentListeners,
+    globalListeners,
+    logs,
+    nonce,
+    selection,
+    timers,
+    token,
+  };
+}
+
+test("selectionchange only updates a candidate; trusted pointerup authorizes publication", () => {
+  const { documentListeners, logs, nonce, timers, token } = createSelectionTranslationHarness();
+  documentListeners.selectionchange({ isTrusted: true });
+  assert.equal(timers.size, 0, "selectionchange cannot authorize a message");
+  documentListeners.pointerup({ isTrusted: false, button: 0, isPrimary: true });
+  assert.equal(timers.size, 0, "a synthetic pointer event cannot authorize a message");
+  documentListeners.pointerup({ isTrusted: true, button: 0, isPrimary: true });
+  assert.equal(timers.size, 1);
+  [...timers.values()][0]();
+  assert.equal(logs.length, 1);
+  assert.deepEqual(parseSelectionTranslationConsoleMessage(logs[0], token), {
+    kind: "valid",
+    ...selectionMessagePayload({
+      text: "Selected passage",
+      documentNonce: nonce,
+      navigationGeneration: 4,
+      principalId: "principal-one",
+      environmentId: "environment-one",
+    }),
+  });
+});
+
+test("selection translation drops an authorized candidate if the page changes the selection", () => {
+  const { documentListeners, logs, selection, timers } = createSelectionTranslationHarness();
+  documentListeners.pointerup({ isTrusted: true, button: 0, isPrimary: true });
+  const queuedPublish = [...timers.values()][0];
+  selection.toString = () => "Page-replaced selection";
+  documentListeners.selectionchange({ isTrusted: false });
+  queuedPublish();
+  assert.deepEqual(logs, []);
+});
+
+test("selection translation ignores editable ancestors and untrusted keyboard events", () => {
+  const { documentListeners, logs, timers } = createSelectionTranslationHarness({ editable: true });
+  documentListeners.keyup({
+    isTrusted: false,
+    key: "ArrowRight",
+    shiftKey: true,
+    altKey: false,
+  });
+  documentListeners.pointerup({ isTrusted: true, button: 0, isPrimary: true });
+  assert.equal(timers.size, 0);
+  assert.deepEqual(logs, []);
+});
+
+test("only keyboard gestures that can create a selection authorize publication", () => {
+  const { documentListeners, logs, timers } = createSelectionTranslationHarness();
+  documentListeners.keyup({
+    isTrusted: true,
+    key: "ArrowRight",
+    shiftKey: false,
+    altKey: false,
+  });
+  assert.equal(timers.size, 0);
+  documentListeners.keyup({
+    isTrusted: true,
+    key: "ArrowRight",
+    shiftKey: true,
+    altKey: false,
+  });
+  assert.equal(timers.size, 1);
+  [...timers.values()][0]();
+  assert.equal(logs.length, 1);
+});
+
+test("document navigation immediately invalidates an authorized selection", () => {
+  const { context, documentListeners, globalListeners, logs, timers } =
+    createSelectionTranslationHarness();
+  documentListeners.pointerup({ isTrusted: true, button: 0, isPrimary: true });
+  assert.equal(timers.size, 1);
+  const queuedPublish = [...timers.values()][0];
+  globalListeners.pagehide();
+  assert.equal(timers.size, 0);
+  assert.equal(context.__shareGptSelectionTranslation.enabled, false);
+  queuedPublish();
+  assert.deepEqual(logs, []);
+});
+
+test("disabling selection translation cancels an already authorized publication", () => {
+  const { context, documentListeners, logs, nonce, timers, token } =
+    createSelectionTranslationHarness();
+  documentListeners.pointerup({ isTrusted: true, button: 0, isPrimary: true });
+  assert.equal(timers.size, 1);
+  const queuedPublish = [...timers.values()][0];
+  vm.runInNewContext(
+    selectionTranslationScript({
+      enabled: false,
+      marker: selectionTranslationMarker(token),
+      documentNonce: nonce,
+      documentUrl: context.location.href,
+      navigationGeneration: 4,
+      principalId: "principal-one",
+      principalGeneration: 7,
+      environmentId: "environment-one",
+      environmentGeneration: 3,
+    }),
+    context,
+  );
+  assert.equal(timers.size, 0);
+  assert.equal(context.__shareGptSelectionTranslation.enabled, false);
+  queuedPublish();
+  assert.deepEqual(logs, []);
 });
 
 test("composer confirmation registry keeps one pending request per workspace", () => {
@@ -393,7 +676,7 @@ test("composer Enter gate blocks a queued send after focus moves", () => {
   const { context, document, editor, listeners, nonce, url } = createEnterGateHarness();
   const token = createComposerGuardToken();
   context.__shareGptComposerDocument.armEnterGate({ token, nonce, url, editor, ttlMs: 1000 });
-  document.activeElement = { isConnected: true };
+  document.activeElement = { isConnected: true, contains: () => false };
 
   const event = createPlainEnterEvent();
   listeners.keydown(event);

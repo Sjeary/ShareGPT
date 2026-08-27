@@ -139,6 +139,7 @@ function startFixtureServer(state) {
         `<!doctype html>
           <title>Local verification page</title>
           <h1>Local verification page</h1>
+          <p id="selection-source" style="display:inline-block;font-size:18px">Automatic selection translation sample</p>
           <form id="composer-form">
             <textarea id="prompt-textarea" aria-label="Prompt"></textarea>
             <button type="button" data-testid="send-button" aria-label="Send">Send</button>
@@ -349,6 +350,7 @@ async function composerFixtureAction(electronApp, fixtureUrl, action, value = ""
               code: `(() => {
                 const documentState = globalThis.__shareGptComposerDocument;
                 const guard = globalThis.__shareGptComposerGuard;
+                const selection = globalThis.__shareGptSelectionTranslation;
                 return {
                   ready: Boolean(
                     documentState?.nonce &&
@@ -363,6 +365,7 @@ async function composerFixtureAction(electronApp, fixtureUrl, action, value = ""
                   guardInstalled: Boolean(guard?.installed),
                   guardEnabled: Boolean(guard?.enabled),
                   markerPresent: Boolean(guard?.marker),
+                  selectionEnabled: Boolean(selection?.enabled),
                 };
               })()`,
             },
@@ -393,6 +396,57 @@ async function composerFixtureAction(electronApp, fixtureUrl, action, value = ""
           state?.invalidateEnterGate?.('test-cleanup');
           return { ok, outcome };
         })()`);
+      }
+      if (args.action === "select-text-synthetic") {
+        return target.executeJavaScript(`(() => {
+          const source = document.querySelector('#selection-source');
+          const range = document.createRange();
+          range.selectNodeContents(source);
+          const selection = getSelection();
+          selection.removeAllRanges();
+          selection.addRange(range);
+          document.dispatchEvent(new Event('selectionchange'));
+          source.dispatchEvent(new PointerEvent('pointerup', {
+            bubbles: true,
+            button: 0,
+            isPrimary: true,
+          }));
+          return selection.toString();
+        })()`);
+      }
+      if (args.action === "select-text-trusted") {
+        const bounds = await target.executeJavaScript(`(() => {
+          getSelection()?.removeAllRanges();
+          const rect = document.querySelector('#selection-source').getBoundingClientRect();
+          return {
+            startX: Math.floor(rect.left + 2),
+            endX: Math.floor(rect.right - 2),
+            y: Math.floor(rect.top + rect.height / 2),
+          };
+        })()`);
+        target.focus();
+        target.sendInputEvent({
+          type: "mouseDown",
+          x: bounds.startX,
+          y: bounds.y,
+          button: "left",
+          clickCount: 1,
+        });
+        target.sendInputEvent({
+          type: "mouseMove",
+          x: bounds.endX,
+          y: bounds.y,
+          button: "left",
+        });
+        target.sendInputEvent({
+          type: "mouseUp",
+          x: bounds.endX,
+          y: bounds.y,
+          button: "left",
+          clickCount: 1,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return target.executeJavaScript(`getSelection()?.toString() || ''`, true);
       }
       return target.executeJavaScript(`window.composerEvents`, true);
     },
@@ -844,6 +898,39 @@ async function main() {
       );
     }
 
+    assert.strictEqual(guardState?.selectionEnabled, false);
+    await composerFixtureAction(electronApp, fixtureUrl, "select-text-synthetic");
+    await window.waitForTimeout(650);
+    assert.strictEqual(await window.getByRole("complementary", { name: "翻译侧栏" }).count(), 0);
+
+    await window.getByLabel("打开翻译侧栏").click();
+    await claudeTranslationPanel.getByLabel("翻译设置").click();
+    await claudeTranslationPanel.getByLabel("本地翻译服务地址").fill(fixtureUrl);
+    await claudeTranslationPanel.getByLabel("选中网页文字后自动翻译").click();
+    await claudeTranslationPanel.getByRole("button", { name: "保存设置", exact: true }).click();
+    await claudeTranslationPanel.getByLabel("本地翻译服务地址").waitFor({ state: "hidden" });
+    await claudeTranslationPanel.getByLabel("关闭翻译侧栏").click();
+    await waitUntil(async () => {
+      guardState = await composerFixtureAction(electronApp, fixtureUrl, "guard-state");
+      return guardState?.ready === true && guardState?.selectionEnabled === true;
+    });
+
+    await composerFixtureAction(electronApp, fixtureUrl, "select-text-synthetic");
+    await window.waitForTimeout(650);
+    assert.strictEqual(await window.getByRole("complementary", { name: "翻译侧栏" }).count(), 0);
+    const trustedSelection = String(
+      await composerFixtureAction(electronApp, fixtureUrl, "select-text-trusted"),
+    ).trim();
+    assert.match(trustedSelection, /selection translation/);
+    await claudeTranslationPanel.waitFor();
+    assert.strictEqual(
+      await claudeTranslationPanel.getByLabel("待翻译内容").inputValue(),
+      trustedSelection,
+    );
+    await window.getByText(`[ZH] ${trustedSelection}`, { exact: true }).waitFor();
+    await claudeTranslationPanel.getByLabel("关闭翻译侧栏").click();
+    results.push("opt-in trusted selection translation rejects synthetic page events");
+
     const enterGateSecurity = await composerFixtureAction(
       electronApp,
       fixtureUrl,
@@ -927,6 +1014,7 @@ async function main() {
     assert.deepStrictEqual(bobInitial.advancedAi.environments, []);
     assert.strictEqual(bobInitial.translation.api.baseUrl, "");
     assert.strictEqual(bobInitial.translation.ai.apiKey, "");
+    assert.strictEqual(bobInitial.translation.autoTranslateSelection, false);
     await window.locator('[data-tour="nav-notes"]').click();
     await window.getByTitle("今日笔记").click();
     await window.getByRole("button", { name: "AI", exact: true }).click();
@@ -960,6 +1048,7 @@ async function main() {
     assert.ok(!aliceAgain.advancedAi.environments.some((item) => item.id === "env-bob"));
     assert.notStrictEqual(aliceAgain.translation.api.baseUrl, `${fixtureUrl}/bob`);
     assert.strictEqual(aliceAgain.translation.ai.apiKey, "alice-notes-key");
+    assert.strictEqual(aliceAgain.translation.autoTranslateSelection, true);
     const restoredAliceMarker = await partitionStorage(electronApp, alicePartition, fixtureUrl);
     assert.strictEqual(restoredAliceMarker.local, "alice-only");
     assert.match(restoredAliceMarker.cookie, /principal-marker=alice-only/);

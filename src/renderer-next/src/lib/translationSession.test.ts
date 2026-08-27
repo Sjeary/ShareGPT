@@ -5,6 +5,7 @@ import {
   composerGuardFailureMessage,
   hasPendingAutoTranslation,
   isComposerGuardEligible,
+  isCurrentSelectionTranslationSession,
   isCurrentOutgoingTranslationSession,
   isCurrentTranslationRequest,
   isTranslationTarget,
@@ -51,6 +52,35 @@ test('selection auto-translation is consumed once per store generation', () => {
     false,
   )
   assert.equal(hasPendingAutoTranslation(pending, 'gpt', 'tab-b'), false)
+})
+
+test('queued selection translation events require the current principal, environment and page', () => {
+  const current = {
+    kind: 'claude' as const,
+    tabId: 'tab-a',
+    principalId: 'principal-a',
+    environmentId: 'env-a',
+    environmentGeneration: 3,
+    navigationGeneration: 7,
+  }
+
+  assert.equal(isCurrentSelectionTranslationSession(current, current), true)
+  assert.equal(
+    isCurrentSelectionTranslationSession({ ...current, principalId: 'principal-b' }, current),
+    false,
+  )
+  assert.equal(
+    isCurrentSelectionTranslationSession(
+      { ...current, environmentId: 'env-b', environmentGeneration: 4 },
+      current,
+    ),
+    false,
+  )
+  assert.equal(isCurrentSelectionTranslationSession({ ...current, tabId: 'tab-b' }, current), false)
+  assert.equal(
+    isCurrentSelectionTranslationSession({ ...current, navigationGeneration: 8 }, current),
+    false,
+  )
 })
 
 test('composer confirmation eligibility is limited to advanced users and admins', () => {

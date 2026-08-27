@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 
 const MAX_COMPOSER_CHARS = 30000;
 const COMPOSER_GUARD_CHANNEL_PREFIX = "__SHAREGPT_COMPOSER_GUARD_V2__:";
+const SELECTION_TRANSLATION_CHANNEL_PREFIX = "__SHAREGPT_SELECTION_TRANSLATION_V2__:";
 const COMPOSER_GUARD_TOKEN_PATTERN = /^[a-zA-Z0-9_-]{32,128}$/;
 const COMPOSER_ISOLATED_WORLD_ID = 1001;
 const COMPOSER_ENTER_GATE_TTL_MS = 1000;
@@ -146,6 +147,7 @@ function composerDocumentNonceScript(nonce) {
       if (!state.listenersInstalled) {
         const invalidate = () => {
           invalidateEnterGate('navigation');
+          globalThis.__shareGptSelectionTranslation?.invalidate?.('navigation');
           state.nonce = '';
           state.url = '';
         };
@@ -191,6 +193,7 @@ function composerDocumentNonceScript(nonce) {
         state.listenersInstalled = true;
       }
       invalidateEnterGate('identity-replaced');
+      globalThis.__shareGptSelectionTranslation?.invalidate?.('identity-replaced');
       state.nonce = payload.nonce;
       state.url = String(globalThis.location?.href || '');
       return { ok: true, nonce: state.nonce, url: state.url };
@@ -472,6 +475,7 @@ function composerDocumentInvalidateScript(options = {}) {
       const state = globalThis.__shareGptComposerDocument;
       if (!state || (payload.nonce && state.nonce !== payload.nonce)) return false;
       state.invalidateEnterGate?.(payload.reason);
+      globalThis.__shareGptSelectionTranslation?.invalidate?.(payload.reason);
       state.nonce = '';
       state.url = '';
       return true;
@@ -516,6 +520,348 @@ function parseComposerGuardConsoleMessage(message, expectedToken) {
   } catch {
     return { kind: "invalid" };
   }
+}
+
+function selectionTranslationMarker(token) {
+  const value = String(token || "");
+  if (!COMPOSER_GUARD_TOKEN_PATTERN.test(value)) {
+    throw new Error("Selection translation token is invalid");
+  }
+  return `${SELECTION_TRANSLATION_CHANNEL_PREFIX}${value}:`;
+}
+
+function parseSelectionTranslationConsoleMessage(message, expectedToken) {
+  const value = String(message || "");
+  if (!value.startsWith(SELECTION_TRANSLATION_CHANNEL_PREFIX)) return { kind: "other" };
+
+  let marker;
+  try {
+    marker = selectionTranslationMarker(expectedToken);
+  } catch {
+    return { kind: "invalid" };
+  }
+  if (!value.startsWith(marker) || value.length > marker.length + MAX_COMPOSER_CHARS + 12000) {
+    return { kind: "invalid" };
+  }
+
+  try {
+    const payload = JSON.parse(value.slice(marker.length));
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return { kind: "invalid" };
+    }
+    const expectedKeys = [
+      "documentNonce",
+      "documentUrl",
+      "environmentGeneration",
+      "environmentId",
+      "navigationGeneration",
+      "principalGeneration",
+      "principalId",
+      "text",
+    ];
+    if (
+      Object.keys(payload).sort().join("\0") !== expectedKeys.join("\0") ||
+      typeof payload.text !== "string" ||
+      typeof payload.documentNonce !== "string" ||
+      typeof payload.documentUrl !== "string" ||
+      typeof payload.principalId !== "string" ||
+      typeof payload.environmentId !== "string"
+    ) {
+      return { kind: "invalid" };
+    }
+    const text = payload.text.trim();
+    const documentUrl = payload.documentUrl;
+    const principalId = payload.principalId;
+    const environmentId = payload.environmentId;
+    if (
+      !text ||
+      text.length > MAX_COMPOSER_CHARS ||
+      !COMPOSER_GUARD_TOKEN_PATTERN.test(payload.documentNonce) ||
+      !documentUrl ||
+      documentUrl.length > 10000 ||
+      !principalId ||
+      principalId.length > 1000 ||
+      environmentId.length > 1000 ||
+      !Number.isInteger(payload.navigationGeneration) ||
+      payload.navigationGeneration < 1 ||
+      !Number.isInteger(payload.principalGeneration) ||
+      payload.principalGeneration < 0 ||
+      !Number.isInteger(payload.environmentGeneration) ||
+      payload.environmentGeneration < 0
+    ) {
+      return { kind: "invalid" };
+    }
+    return {
+      kind: "valid",
+      text,
+      documentNonce: payload.documentNonce,
+      documentUrl,
+      navigationGeneration: payload.navigationGeneration,
+      principalId,
+      principalGeneration: payload.principalGeneration,
+      environmentId,
+      environmentGeneration: payload.environmentGeneration,
+    };
+  } catch {
+    return { kind: "invalid" };
+  }
+}
+
+function selectionTranslationScript(options = {}) {
+  const enabled = options.enabled === true;
+  const marker = String(options.marker || "");
+  const markerToken = marker.endsWith(":")
+    ? marker.slice(SELECTION_TRANSLATION_CHANNEL_PREFIX.length, -1)
+    : "";
+  if (
+    !marker.startsWith(SELECTION_TRANSLATION_CHANNEL_PREFIX) ||
+    !COMPOSER_GUARD_TOKEN_PATTERN.test(markerToken) ||
+    marker !== selectionTranslationMarker(markerToken)
+  ) {
+    throw new Error("Authenticated selection translation marker is required");
+  }
+  const documentNonce = assertComposerDocumentNonce(options.documentNonce);
+  const documentUrl = String(options.documentUrl || "");
+  const principalId = String(options.principalId || "");
+  const environmentId = String(options.environmentId || "");
+  const navigationGeneration = Number(options.navigationGeneration);
+  const principalGeneration = Number(options.principalGeneration);
+  const environmentGeneration = Number(options.environmentGeneration);
+  if (
+    !documentUrl ||
+    documentUrl.length > 10000 ||
+    !principalId ||
+    principalId.length > 1000 ||
+    environmentId.length > 1000 ||
+    !Number.isInteger(navigationGeneration) ||
+    navigationGeneration < 1 ||
+    !Number.isInteger(principalGeneration) ||
+    principalGeneration < 0 ||
+    !Number.isInteger(environmentGeneration) ||
+    environmentGeneration < 0
+  ) {
+    throw new Error("Selection translation context is invalid");
+  }
+  const debounceMs = Math.min(2000, Math.max(150, Number(options.debounceMs) || 450));
+  const payload = serializeComposerScriptData({
+    enabled,
+    marker,
+    documentNonce,
+    documentUrl,
+    navigationGeneration,
+    principalId,
+    principalGeneration,
+    environmentId,
+    environmentGeneration,
+    debounceMs,
+  });
+  return `
+    (() => {
+      'use strict';
+      const next = Object.freeze(${payload});
+      const state = globalThis.__shareGptSelectionTranslation || {
+        installed: false,
+        enabled: false,
+        timer: null,
+        candidate: null,
+        authorization: null,
+        lastPublishedText: '',
+      };
+      globalThis.__shareGptSelectionTranslation = state;
+      const clearTimer = () => {
+        if (state.timer) globalThis.clearTimeout?.(state.timer);
+        state.timer = null;
+      };
+      state.invalidate = () => {
+        clearTimer();
+        state.enabled = false;
+        state.marker = '';
+        state.candidate = null;
+        state.authorization = null;
+        state.lastPublishedText = '';
+      };
+      state.invalidate('reconfigured');
+      Object.assign(state, next);
+
+      const belongsToDocument = (node) => Boolean(
+        node && (node === document || node.ownerDocument === document)
+      );
+      const composedParent = (node) => {
+        if (!node) return null;
+        if (node.assignedSlot) return node.assignedSlot;
+        if (node.parentNode) return node.parentNode;
+        return node.getRootNode?.()?.host || null;
+      };
+      const isEditableNode = (node) => {
+        let current = node;
+        const seen = new Set();
+        for (let depth = 0; current && depth < 100 && !seen.has(current); depth += 1) {
+          seen.add(current);
+          if (current instanceof Element) {
+            const contentEditable = String(current.getAttribute?.('contenteditable') || '').toLowerCase();
+            if (
+              current.matches?.('input, textarea, [role="textbox"]') ||
+              current.isContentEditable ||
+              contentEditable === 'true' ||
+              contentEditable === 'plaintext-only'
+            ) {
+              return true;
+            }
+          }
+          current = composedParent(current);
+          if (current?.host && !current.parentNode) current = current.host;
+        }
+        return false;
+      };
+      const readCandidate = () => {
+        if (!state.enabled) return null;
+        const documentState = globalThis.__shareGptComposerDocument;
+        if (
+          !documentState ||
+          documentState.nonce !== state.documentNonce ||
+          documentState.url !== state.documentUrl ||
+          String(globalThis.location?.href || '') !== state.documentUrl
+        ) {
+          return null;
+        }
+        const selection = globalThis.getSelection?.() || globalThis.window?.getSelection?.();
+        if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return null;
+        let range;
+        try {
+          range = selection.getRangeAt(0);
+        } catch {
+          return null;
+        }
+        const anchor = selection.anchorNode;
+        const focus = selection.focusNode;
+        const common = range?.commonAncestorContainer;
+        if (
+          !belongsToDocument(anchor) ||
+          !belongsToDocument(focus) ||
+          !belongsToDocument(common) ||
+          anchor.isConnected === false ||
+          focus.isConnected === false ||
+          common.isConnected === false ||
+          isEditableNode(anchor) ||
+          isEditableNode(focus) ||
+          isEditableNode(common)
+        ) {
+          return null;
+        }
+        const text = String(selection.toString?.() || '').trim().slice(0, ${MAX_COMPOSER_CHARS});
+        return text ? { text, anchor, focus, common } : null;
+      };
+      const updateCandidate = () => {
+        state.candidate = readCandidate();
+        if (!state.candidate) state.lastPublishedText = '';
+        return state.candidate;
+      };
+      const sameCandidate = (left, right) => Boolean(
+        left &&
+        right &&
+        left.text === right.text &&
+        left.anchor === right.anchor &&
+        left.focus === right.focus &&
+        left.common === right.common
+      );
+      const publishAuthorized = () => {
+        state.timer = null;
+        const authorization = state.authorization;
+        state.authorization = null;
+        const current = updateCandidate();
+        if (!authorization || !sameCandidate(authorization, current)) return false;
+        if (current.text === state.lastPublishedText) return false;
+        state.lastPublishedText = current.text;
+        console.log(state.marker + JSON.stringify({
+          text: current.text,
+          documentNonce: state.documentNonce,
+          documentUrl: state.documentUrl,
+          navigationGeneration: state.navigationGeneration,
+          principalId: state.principalId,
+          principalGeneration: state.principalGeneration,
+          environmentId: state.environmentId,
+          environmentGeneration: state.environmentGeneration,
+        }));
+        return true;
+      };
+      const authorize = () => {
+        clearTimer();
+        const candidate = updateCandidate();
+        state.authorization = candidate;
+        if (!candidate) return false;
+        state.timer = globalThis.setTimeout?.(publishAuthorized, state.debounceMs) || null;
+        return true;
+      };
+      const trustedPointerSelection = (event) => Boolean(
+        event?.isTrusted && event.button === 0 && event.isPrimary !== false
+      );
+      const trustedKeyboardSelection = (event) => {
+        if (!event?.isTrusted || event.altKey) return false;
+        const key = String(event.key || '');
+        if (
+          event.shiftKey &&
+          ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(key)
+        ) {
+          return true;
+        }
+        return (
+          key.toLowerCase() === 'a' &&
+          !event.shiftKey &&
+          Boolean(event.metaKey) !== Boolean(event.ctrlKey)
+        );
+      };
+      if (!state.installed) {
+        state.installed = true;
+        document.addEventListener('selectionchange', updateCandidate, true);
+        document.addEventListener('pointerup', (event) => {
+          if (trustedPointerSelection(event)) authorize();
+        }, true);
+        document.addEventListener('keyup', (event) => {
+          if (trustedKeyboardSelection(event)) authorize();
+        }, true);
+      }
+      if (state.enabled) updateCandidate();
+      return { ok: true, enabled: state.enabled };
+    })();
+  `;
+}
+
+async function installSelectionTranslation(webContents, options = {}) {
+  if (!webContents || webContents.isDestroyed()) throw new Error("当前网页尚未打开");
+  const worldId = Number.isInteger(options.worldId) ? options.worldId : COMPOSER_ISOLATED_WORLD_ID;
+  return webContents.executeJavaScriptInIsolatedWorld(
+    worldId,
+    [{ code: selectionTranslationScript(options) }],
+    false,
+  );
+}
+
+function createSelectionTranslationRateLimiter(options = {}) {
+  const minIntervalMs = Math.max(1, Number(options.minIntervalMs) || 350);
+  const dedupeWindowMs = Math.max(minIntervalMs, Number(options.dedupeWindowMs) || 2000);
+  const now = typeof options.now === "function" ? options.now : Date.now;
+  let last = null;
+  return {
+    accept(text, documentNonce) {
+      const value = String(text || "");
+      const nonce = String(documentNonce || "");
+      const timestamp = now();
+      if (last && timestamp - last.acceptedAt < minIntervalMs) return false;
+      if (
+        last &&
+        last.text === value &&
+        last.documentNonce === nonce &&
+        timestamp - last.acceptedAt < dedupeWindowMs
+      ) {
+        return false;
+      }
+      last = { text: value, documentNonce: nonce, acceptedAt: timestamp };
+      return true;
+    },
+    clear() {
+      last = null;
+    },
+  };
 }
 
 function createComposerConfirmationRegistry(options = {}) {
@@ -935,6 +1281,7 @@ module.exports = {
   COMPOSER_GUARD_CHANNEL_PREFIX,
   COMPOSER_ISOLATED_WORLD_ID,
   MAX_COMPOSER_CHARS,
+  SELECTION_TRANSLATION_CHANNEL_PREFIX,
   armComposerEnterGate,
   assertExpectedComposerContextGeneration,
   composerGuardMarker,
@@ -950,17 +1297,22 @@ module.exports = {
   createComposerEnterGateToken,
   createComposerGuardToken,
   createOneShotComposerBypass,
+  createSelectionTranslationRateLimiter,
   disableComposerClickGuard,
   hasClearlyNonTargetLanguage,
   installComposerClickGuard,
   installComposerDocumentNonce,
+  installSelectionTranslation,
   invalidateComposerDocumentIdentity,
   inspectAiComposer,
   inspectComposerSubmit,
   isPlainComposerSubmit,
   parseComposerGuardConsoleMessage,
+  parseSelectionTranslationConsoleMessage,
   readComposerEnterGateOutcome,
   replaceAiComposerText,
+  selectionTranslationMarker,
+  selectionTranslationScript,
   sendComposerEnter,
   waitForComposerEnterGateOutcome,
 };

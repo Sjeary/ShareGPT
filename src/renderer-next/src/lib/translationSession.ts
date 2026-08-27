@@ -40,6 +40,29 @@ export function hasPendingAutoTranslation(
   )
 }
 
+export interface SelectionTranslationSession {
+  kind: AiKind
+  tabId: string
+  principalId: string
+  environmentId: string
+  environmentGeneration: number
+  navigationGeneration: number
+}
+
+export function isCurrentSelectionTranslationSession(
+  event: SelectionTranslationSession,
+  current: SelectionTranslationSession,
+) {
+  return (
+    event.kind === current.kind &&
+    event.tabId === current.tabId &&
+    event.principalId === current.principalId &&
+    event.environmentId === current.environmentId &&
+    event.environmentGeneration === current.environmentGeneration &&
+    event.navigationGeneration === current.navigationGeneration
+  )
+}
+
 export function isComposerGuardEligible(
   profile: {
     isAdmin?: boolean

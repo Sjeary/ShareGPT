@@ -10,6 +10,7 @@ import { registerAiQuery } from './reportGptUsage'
 import {
   composerGuardFailureMessage,
   isComposerGuardEligible,
+  isCurrentSelectionTranslationSession,
   shouldClearPendingComposerSend,
 } from '@/lib/translationSession'
 import {
@@ -201,10 +202,32 @@ export function useAiEvents() {
       if (payload?.type === 'translate-selection') {
         const profile = useAuthStore.getState().profile
         const tabId = safeText(payload.tabId)
-        const activeTabId = useAiStore.getState().activeTabIdByKind[kind]
+        const ai = useAiStore.getState()
+        const activeTabId = ai.activeTabIdByKind[kind]
+        const activeTab = ai.tabsByKind[kind].find((tab) => tab.id === activeTabId)
+        const environment = currentAiEnvironmentOperation(kind)
+        const principalId = useTranslationStore.getState().principalId
+        const eventIsCurrent = isCurrentSelectionTranslationSession(
+          {
+            kind,
+            tabId,
+            principalId: safeText(payload.principalId),
+            environmentId: safeText(payload.environmentId),
+            environmentGeneration: Number(payload.environmentGeneration),
+            navigationGeneration: Number(payload.navigationGeneration),
+          },
+          {
+            kind,
+            tabId: activeTabId,
+            principalId,
+            environmentId: environment.environmentId,
+            environmentGeneration: environment.generation,
+            navigationGeneration: Number(activeTab?.navigationGeneration ?? -1),
+          },
+        )
         if (
           !tabId ||
-          tabId !== activeTabId ||
+          !eventIsCurrent ||
           !profile?.routeAuthorizationVerified ||
           (!profile?.isAdmin && !profile?.advancedAiAllowed)
         )
