@@ -12,6 +12,15 @@ const HOLD_MS = 240
 const MOVE_TOLERANCE = 8
 const NATIVE_TOOLTIP_HEIGHT = 40
 
+function currentTooltipPalette() {
+  const styles = window.getComputedStyle(document.documentElement)
+  return {
+    // 与 TooltipContent 的 bg-foreground / text-background 使用同一组运行时 token。
+    background: styles.getPropertyValue('--foreground').trim() || '#1d1d1f',
+    foreground: styles.getPropertyValue('--background').trim() || '#f2f2f7',
+  }
+}
+
 function showNativeTooltip(target: HTMLButtonElement, label: string, side: 'left' | 'right') {
   const trigger = target.getBoundingClientRect()
   const width = Math.max(88, Math.min(208, label.length * 14 + 34))
@@ -22,6 +31,7 @@ function showNativeTooltip(target: HTMLButtonElement, label: string, side: 'left
       visible: true,
       label,
       side,
+      palette: currentTooltipPalette(),
       bounds: {
         x: Math.max(4, Math.min(window.innerWidth - width - 4, x)),
         y: Math.max(4, Math.min(window.innerHeight - NATIVE_TOOLTIP_HEIGHT - 4, y)),

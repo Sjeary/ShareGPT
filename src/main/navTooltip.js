@@ -1,6 +1,23 @@
 const EMPTY_BOUNDS = Object.freeze({ x: 0, y: 0, width: 1, height: 1 });
 const MAX_TOOLTIP_WIDTH = 320;
 const MAX_TOOLTIP_HEIGHT = 96;
+const DEFAULT_TOOLTIP_PALETTE = Object.freeze({
+  background: "#1d1d1f",
+  foreground: "#f2f2f7",
+});
+
+function normalizeNavTooltipPalette(rawPalette) {
+  const normalizeColor = (value, fallback) => {
+    const color = String(value || "")
+      .trim()
+      .toLowerCase();
+    return /^#[0-9a-f]{6}$/.test(color) ? color : fallback;
+  };
+  return {
+    background: normalizeColor(rawPalette?.background, DEFAULT_TOOLTIP_PALETTE.background),
+    foreground: normalizeColor(rawPalette?.foreground, DEFAULT_TOOLTIP_PALETTE.foreground),
+  };
+}
 
 function finiteNumber(value) {
   const number = Number(value);
@@ -157,4 +174,5 @@ function createNavTooltipController({ createView, getHost, loadView, renderView,
 module.exports = {
   createNavTooltipController,
   normalizeNavTooltipBounds,
+  normalizeNavTooltipPalette,
 };

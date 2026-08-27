@@ -63,7 +63,11 @@ const {
   resolveAiSessionCapability,
 } = require("./aiSessionAuthorization");
 const { runSettingsPrincipalTransition } = require("./settingsPrincipalTransition");
-const { createNavTooltipController, normalizeNavTooltipBounds } = require("./navTooltip");
+const {
+  createNavTooltipController,
+  normalizeNavTooltipBounds,
+  normalizeNavTooltipPalette,
+} = require("./navTooltip");
 const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
@@ -1714,25 +1718,33 @@ function createElectronApp(baseMode = "all") {
           html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
           body { position: relative; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
           #tip {
-            position: absolute; top: 3px; bottom: 3px; left: 10px; right: 2px;
+            --tip-background: #1d1d1f;
+            --tip-foreground: #f2f2f7;
+            position: absolute; top: 50%; height: 28px; left: 10px; right: 2px;
+            transform: translateY(-50%);
             display: flex; align-items: center; justify-content: center;
-            border-radius: 10px; background: #1d1d1f; color: #f5f5f7;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, .22);
-            font-size: 14px; font-weight: 600; line-height: 1; white-space: nowrap;
+            border-radius: 10px; background: var(--tip-background); color: var(--tip-foreground);
+            font-size: 12px; font-weight: 500; line-height: 16px;
+          }
+          #tip-label {
+            min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
           }
           #tip::before {
             content: ""; position: absolute; left: -4px; top: 50%;
-            width: 9px; height: 9px; background: #1d1d1f;
+            width: 10px; height: 10px; background: var(--tip-background);
             transform: translateY(-50%) rotate(45deg); border-radius: 2px;
           }
           body[data-side="left"] #tip { left: 2px; right: 10px; }
           body[data-side="left"] #tip::before { left: auto; right: -4px; }
         </style>
-        <div id="tip"></div>
+        <div id="tip"><span id="tip-label"></span></div>
         <script>
-          window.setTooltip = ({ label, side }) => {
+          window.setTooltip = ({ label, side, palette }) => {
             document.body.dataset.side = side === "left" ? "left" : "right";
-            document.getElementById("tip").textContent = label;
+            const tip = document.getElementById("tip");
+            document.getElementById("tip-label").textContent = label;
+            tip.style.setProperty("--tip-background", palette.background);
+            tip.style.setProperty("--tip-foreground", palette.foreground);
           };
         </script>`)}`;
     navTooltipController = createNavTooltipController({
@@ -1756,7 +1768,11 @@ function createElectronApp(baseMode = "all") {
       loadView: (view) => view.webContents.loadURL(documentUrl),
       renderView: (view, payload) =>
         view.webContents.executeJavaScript(
-          `window.setTooltip(${JSON.stringify({ label: payload.label, side: payload.side })})`,
+          `window.setTooltip(${JSON.stringify({
+            label: payload.label,
+            side: payload.side,
+            palette: payload.palette,
+          })})`,
         ),
       resolveBounds(bounds, host) {
         const shellZoomFactor = host.webContents.getZoomFactor?.() || 1;
@@ -1778,7 +1794,8 @@ function createElectronApp(baseMode = "all") {
     const label = safeText(payload.label).slice(0, 80);
     if (!label) return hideNavTooltip();
     const side = payload.side === "left" ? "left" : "right";
-    return ensureNavTooltipController().show({ label, side, bounds: payload.bounds });
+    const palette = normalizeNavTooltipPalette(payload.palette);
+    return ensureNavTooltipController().show({ label, side, palette, bounds: payload.bounds });
   }
 
   function detachWorkspaceView(workspace) {

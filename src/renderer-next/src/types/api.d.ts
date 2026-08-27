@@ -332,6 +332,7 @@ export interface ShareGptApi {
     visible: boolean
     label?: string
     side?: 'left' | 'right'
+    palette?: { background: string; foreground: string }
     bounds?: { x: number; y: number; width: number; height: number }
   }) => Promise<unknown>
   closeAllAiWorkspaces: () => Promise<unknown>

@@ -1,6 +1,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createNavTooltipController, normalizeNavTooltipBounds } = require("../navTooltip");
+const {
+  createNavTooltipController,
+  normalizeNavTooltipBounds,
+  normalizeNavTooltipPalette,
+} = require("../navTooltip");
 
 function deferred() {
   /** @type {(value?: unknown) => void} */
@@ -88,6 +92,17 @@ test("tooltip bounds reject non-finite input and stay inside the renderer viewpo
       { width: 800, height: 600 },
     ),
     { x: 480, y: 0, width: 320, height: 96 },
+  );
+});
+
+test("tooltip palette accepts renderer design tokens and rejects arbitrary CSS", () => {
+  assert.deepStrictEqual(
+    normalizeNavTooltipPalette({ background: "#F0F4F7", foreground: "#0E1621" }),
+    { background: "#f0f4f7", foreground: "#0e1621" },
+  );
+  assert.deepStrictEqual(
+    normalizeNavTooltipPalette({ background: "var(--foreground)", foreground: "red" }),
+    { background: "#1d1d1f", foreground: "#f2f2f7" },
   );
 });
 

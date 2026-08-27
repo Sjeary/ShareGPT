@@ -732,17 +732,101 @@ async function main() {
       { listenPort: senderPort, upstreamPort: socksPort },
     );
 
-    await window.locator('[data-tour="nav-gpt"]').click();
+    await window.locator('[data-tour="nav-chat"]').click();
+    const collapseSidebarButton = window.getByRole("button", { name: "收起侧栏" });
+    if (await collapseSidebarButton.isVisible()) await collapseSidebarButton.click();
+    await window.getByRole("button", { name: "展开侧栏" }).waitFor();
+
+    const gptNav = window.locator('[data-tour="nav-gpt"]');
+    await gptNav.hover();
+    const shellTooltip = window.locator('[data-slot="tooltip-content"]');
+    await shellTooltip.waitFor();
+    const shellTooltipAppearance = await shellTooltip.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        background: style.backgroundColor,
+        foreground: style.color,
+        borderRadius: style.borderRadius,
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        boxShadow: style.boxShadow,
+        height: style.height,
+      };
+    });
+
+    await gptNav.click();
     await window.getByRole("tab").first().waitFor({ state: "visible", timeout: 10_000 });
+    await window.locator('[data-tour="nav-chat"]').hover();
+    await waitUntil(() =>
+      electronApp.evaluate(async ({ BrowserWindow }) => {
+        const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+        const tooltip = main?.contentView.children.find((view) =>
+          view.webContents?.getURL().includes("window.setTooltip"),
+        );
+        if (!tooltip?.getVisible()) return false;
+        return (
+          (await tooltip.webContents.executeJavaScript(
+            'document.getElementById("tip-label")?.textContent',
+          )) === "协作聊天"
+        );
+      }),
+    );
+    const nativeTooltipAppearance = await electronApp.evaluate(async ({ BrowserWindow }) => {
+      const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+      const tooltip = main?.contentView.children.find((view) =>
+        view.webContents?.getURL().includes("window.setTooltip"),
+      );
+      return tooltip
+        ? await tooltip.webContents.executeJavaScript(`(() => {
+            const style = getComputedStyle(document.getElementById("tip"));
+            return {
+              background: style.backgroundColor,
+              foreground: style.color,
+              borderRadius: style.borderRadius,
+              fontSize: style.fontSize,
+              fontWeight: style.fontWeight,
+              boxShadow: style.boxShadow,
+              height: style.height,
+            };
+          })()`)
+        : null;
+    });
+    assert.deepStrictEqual(nativeTooltipAppearance, shellTooltipAppearance);
+    const nativeTooltipArrow = await electronApp.evaluate(async ({ BrowserWindow }) => {
+      const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+      const tooltip = main?.contentView.children.find((view) =>
+        view.webContents?.getURL().includes("window.setTooltip"),
+      );
+      return tooltip
+        ? await tooltip.webContents.executeJavaScript(`(() => {
+            const tip = document.getElementById("tip");
+            const arrow = getComputedStyle(tip, "::before");
+            return {
+              overflow: getComputedStyle(tip).overflow,
+              background: arrow.backgroundColor,
+              width: arrow.width,
+              height: arrow.height,
+            };
+          })()`)
+        : null;
+    });
+    assert.deepStrictEqual(nativeTooltipArrow, {
+      overflow: "visible",
+      background: nativeTooltipAppearance.background,
+      width: "10px",
+      height: "10px",
+    });
+
     await window.evaluate(() =>
       window.api.setNavTooltip({
         visible: true,
         label: "Tooltip bounds verification",
         side: "right",
+        palette: { background: "#f0f4f7", foreground: "#0e1621" },
         bounds: { x: -500, y: -500, width: 5000, height: 5000 },
       }),
     );
-    const tooltipSnapshot = await electronApp.evaluate(({ BrowserWindow }) => {
+    const tooltipBoundsSnapshot = await electronApp.evaluate(({ BrowserWindow }) => {
       const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
       const tooltip = main?.contentView.children.find((view) =>
         view.webContents?.getURL().includes("window.setTooltip"),
@@ -753,17 +837,19 @@ async function main() {
         visible: tooltip?.getVisible(),
       };
     });
-    assert.strictEqual(tooltipSnapshot.visible, true);
-    assert.ok(tooltipSnapshot.bounds && tooltipSnapshot.contentBounds);
-    assert.ok(tooltipSnapshot.bounds.x >= 0 && tooltipSnapshot.bounds.y >= 0);
-    assert.ok(tooltipSnapshot.bounds.width <= 320 && tooltipSnapshot.bounds.height <= 96);
+    assert.strictEqual(tooltipBoundsSnapshot.visible, true);
+    assert.ok(tooltipBoundsSnapshot.bounds && tooltipBoundsSnapshot.contentBounds);
+    assert.ok(tooltipBoundsSnapshot.bounds.x >= 0 && tooltipBoundsSnapshot.bounds.y >= 0);
     assert.ok(
-      tooltipSnapshot.bounds.x + tooltipSnapshot.bounds.width <=
-        tooltipSnapshot.contentBounds.width,
+      tooltipBoundsSnapshot.bounds.width <= 320 && tooltipBoundsSnapshot.bounds.height <= 96,
     );
     assert.ok(
-      tooltipSnapshot.bounds.y + tooltipSnapshot.bounds.height <=
-        tooltipSnapshot.contentBounds.height,
+      tooltipBoundsSnapshot.bounds.x + tooltipBoundsSnapshot.bounds.width <=
+        tooltipBoundsSnapshot.contentBounds.width,
+    );
+    assert.ok(
+      tooltipBoundsSnapshot.bounds.y + tooltipBoundsSnapshot.bounds.height <=
+        tooltipBoundsSnapshot.contentBounds.height,
     );
     const tooltipOriginalSize = await electronApp.evaluate(({ BrowserWindow }) => {
       const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
@@ -795,7 +881,7 @@ async function main() {
       const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
       main.setSize(size.width, size.height);
     }, tooltipOriginalSize);
-    results.push("native AI navigation tooltip bounds and geometry-change hiding are enforced");
+    results.push("real hover path keeps native AI navigation tooltip equal to the shell tooltip");
 
     const firstTab = window.getByRole("tab").first();
     assert.strictEqual(await firstTab.getAttribute("aria-selected"), "true");
