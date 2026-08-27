@@ -2258,6 +2258,9 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         token,
         username,
+        capabilities: {
+          websocketAuth: "subprotocol",
+        },
         profile: getPublicProfile(username),
         roomScope: subnetLabel,
         users: buildUserDirectory(),

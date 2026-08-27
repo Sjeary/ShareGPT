@@ -61,6 +61,7 @@ function findLastOwnEditableMessage(messages: ChatMessage[], self: string): Chat
 // 登录 (token) 归账户面板; 未登录时仅展示本地历史并禁用发送。
 export function ChatPanel() {
   const chat = useChat()
+  const authed = useAppStore((s) => s.authed)
   const settings = useAppStore((s) => s.settings)
   const selfUsername = useChatStore((s) => s.identity.username)
   const connection = useChatStore((s) => s.connection)
@@ -458,7 +459,11 @@ export function ChatPanel() {
               ? activeConversation?.kind === 'private'
                 ? `发消息给 ${activeConversation.title}…`
                 : '发送到房间…'
-              : '登录账户后即可发送消息'
+              : authed
+                ? connection === 'connecting'
+                  ? '消息服务连接中…'
+                  : '消息服务未连接，请重新登录'
+                : '登录账户后即可发送消息'
           }
           reply={replyDraft}
           edit={editDraft}

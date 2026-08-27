@@ -30,6 +30,7 @@ const EMPTY: SenderSettings = {
 }
 
 export function SenderForm() {
+  const authed = useAppStore((s) => s.authed)
   const settings = useAppStore((s) => s.settings)
   const status = useAppStore((s) => s.status)
   const mode = useAppStore((s) => s.mode)
@@ -102,7 +103,7 @@ export function SenderForm() {
     }
     // 对齐旧 btnStartSender: 字段校验通过后再确认账号在线(token+WS), 否则拒绝启动。
     if (!online) {
-      toast.error('请先登录账号并保持在线')
+      toast.error(authed ? '账户已登录，但实时服务尚未连接' : '请先登录账户')
       return
     }
     setBusy(true)
@@ -213,7 +214,13 @@ export function SenderForm() {
           className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-muted-foreground"
         >
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-          <span>请先登录账号并保持在线，再开启代理。</span>
+          <span>
+            {authed
+              ? connection === 'connecting'
+                ? '账户已登录，正在连接实时服务；连接成功后即可开启代理。'
+                : '账户已登录，但实时服务未连接；请检查网络或重新登录。'
+              : '请先登录账户，再开启代理。'}
+          </span>
         </div>
       ) : null}
 

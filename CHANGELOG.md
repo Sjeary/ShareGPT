@@ -24,6 +24,7 @@
 
 ### 隔离与稳定性
 
+- 修复协作服务兼容性：登录后可正确建立实时消息连接，不再因 WebSocket 鉴权方式不匹配而循环重登；界面会准确区分未登录与实时服务连接中/异常。
 - 协作账号身份保留服务器 base path 和服务端确认的精确用户名，避免同主机不同服务路径或大小写不同的账号共用本机数据。
 - Cookie、LocalStorage、IndexedDB、AI Environment、Translation 和 Notes AI 设置按协作账号隔离；A/B/A 切换后只恢复各自数据。
 - 切换或退出账号时会取消旧账号的 Notes AI 请求；旧请求后续的 delta、done 或 error 不会进入新账号界面。

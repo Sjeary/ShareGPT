@@ -493,6 +493,7 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   const loginBody = await login.json();
   const { token } = loginBody;
   assert.strictEqual(loginBody.profile.advancedAiAllowed, true);
+  assert.deepStrictEqual(loginBody.capabilities, { websocketAuth: "subprotocol" });
   let authHeaders = { Authorization: `Bearer ${token}` };
 
   for (const [username, allowed] of [

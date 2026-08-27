@@ -107,6 +107,7 @@ export type ConnectionState =
 export interface ChatIdentity {
   serverUrl: string
   token: string
+  websocketAuth: 'query' | 'subprotocol'
   username: string
   displayName: string
   avatar: string
@@ -223,6 +224,7 @@ function dedupeFingerprint(m: ChatMessage): string {
 const INITIAL_IDENTITY: ChatIdentity = {
   serverUrl: '',
   token: '',
+  websocketAuth: 'query',
   username: '',
   displayName: '',
   avatar: '',

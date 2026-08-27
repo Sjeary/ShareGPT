@@ -28,6 +28,11 @@ import { messagePreview } from '@/components/panels/chat/format'
 import { applyClientBootstrap, clearRemoteRouteState, fetchClientBootstrap } from '@/hooks/useAuth'
 import { isComposerGuardEligible } from '@/lib/translationSession'
 import { isCurrentRouteRefreshSession, type RouteRefreshSession } from '@/lib/authSession'
+import {
+  buildWebSocketConnection,
+  resolveWebSocketAuthMode,
+  type WebSocketAuthMode,
+} from '@/lib/collabWebSocket'
 
 // 协作聊天主控 hook。
 // 职责:
@@ -38,17 +43,6 @@ import { isCurrentRouteRefreshSession, type RouteRefreshSession } from '@/lib/au
 //
 // 注意: 登录(获取 token)归账户面板。本 hook 在拿到 token 前只渲染本地历史,
 //       WS 不会连接 (留 TODO: token 注入)。
-
-function toWsUrl(httpUrl: string): string {
-  const normalized = (httpUrl || '').replace(/\/+$/, '')
-  if (!/^https?:\/\//i.test(normalized)) {
-    throw new Error('服务地址需要以 http:// 或 https:// 开头')
-  }
-  const base = normalized.startsWith('https://')
-    ? `wss://${normalized.slice('https://'.length)}/ws`
-    : `ws://${normalized.slice('http://'.length)}/ws`
-  return base
-}
 
 export interface SendMessageInput {
   text: string
@@ -599,6 +593,9 @@ export function useChat() {
             allowedProxyRouteIds?: string[]
             chatDisabled?: boolean
           }
+          capabilities?: {
+            websocketAuth?: string
+          }
         } | null
         if (!isReloginCurrent()) return
         if (!payload?.token) throw new Error('登录未成功')
@@ -642,6 +639,7 @@ export function useChat() {
         if (!isReloginCurrent()) return
         useChatStore.getState().setIdentity({
           token: payload.token,
+          websocketAuth: resolveWebSocketAuthMode(payload),
           displayName,
           avatar,
         })
@@ -672,16 +670,22 @@ export function useChat() {
       if (cancelled || intentionalClose.current) return
       const { serverUrl, token } = useChatStore.getState().identity
       if (!token || !serverUrl) return
-      let url: string
+      let connection: { url: string; protocols?: string[] }
       try {
-        url = toWsUrl(serverUrl)
+        connection = buildWebSocketConnection(
+          serverUrl,
+          token,
+          useChatStore.getState().identity.websocketAuth as WebSocketAuthMode,
+        )
       } catch {
         setConnection('error')
         return
       }
 
       setConnection('connecting')
-      const ws = new WebSocket(url, ['sharegpt', `sharegpt-auth.${token}`])
+      const ws = connection.protocols
+        ? new WebSocket(connection.url, connection.protocols)
+        : new WebSocket(connection.url)
       wsRef.current = ws
       let opened = false
 
@@ -848,8 +852,7 @@ export function useChat() {
           }
           return
         }
-        if (opened) scheduleReconnect('socket')
-        else if (hasResume) scheduleReconnect('relogin')
+        if (opened || hasResume) scheduleReconnect('socket')
         else {
           manualReloginRef.current = '服务连接已失效，请重新登录。'
           setConnection('error')
@@ -887,6 +890,7 @@ export function useChat() {
     authed,
     identity.token,
     identity.serverUrl,
+    identity.websocketAuth,
     clearTyping,
     handleTyping,
     maybeNotifyIncoming,

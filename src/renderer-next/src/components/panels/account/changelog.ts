@@ -15,7 +15,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     highlights: [
       '新增多 AI Environment：可为 ChatGPT、Claude 和 Gemini 创建独立环境，并在管理员授权的线路中选择各自出口。',
       '所有已登录用户均可使用三家 AI 网页双语流程：翻译选区或网页正文（单次最多读取前 30,000 字符）供侧栏阅读，可按账号开启仅在三家官方 AI 页面生效的自动划词翻译（默认关闭；Claude 外部页面保留右键翻译），并支持预览、填入或直接发送译文。',
-      '加强 Principal 与请求隔离：大小写不同或不同服务路径的账号不会串号；A/B/A 切换后只恢复各自数据，旧 Notes AI、翻译、填入、发送及确认全部失效。',
+      '修复登录后的实时连接兼容性，不再因新旧 WebSocket 鉴权方式不一致而循环重登；同时加强 Principal 与请求隔离，避免不同账号、服务路径及旧 AI 请求串号。',
       'Translation 与 Notes AI 支持公网 HTTP/HTTPS；非回环 HTTP 会持续提示内容和密钥明文传输风险，不增加确认开关，并保留 SSRF 与危险地址防护。',
     ],
   },

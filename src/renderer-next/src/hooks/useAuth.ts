@@ -15,6 +15,7 @@ import {
 } from '@/components/panels/account/bootstrap'
 import type { AppSettings, SenderSettings } from '@/types/settings'
 import { isComposerGuardEligible } from '@/lib/translationSession'
+import { resolveWebSocketAuthMode } from '@/lib/collabWebSocket'
 
 // 协作服务器登录/退出逻辑 (移植自旧 renderer.js performCollabLogin / collabLogout)。
 // 端点 (渲染层直连协作服务器, 非 IPC):
@@ -51,6 +52,9 @@ interface LoginResponse {
   history?: unknown
   users?: unknown
   onlineUsers?: unknown
+  capabilities?: {
+    websocketAuth?: string
+  }
 }
 
 function trimTrailingSlash(url: string): string {
@@ -358,6 +362,7 @@ export function useAuth() {
       useChatStore.getState().setIdentity({
         serverUrl: cleanedServer,
         token: payload.token,
+        websocketAuth: resolveWebSocketAuthMode(payload),
         username: confirmedUsername,
         displayName: profile.displayName,
         avatar: profile.avatar,
