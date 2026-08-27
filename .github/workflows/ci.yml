@@ -49,6 +49,14 @@ jobs:
         run: npx tsc -b
         working-directory: admin_console/ui
 
+      - name: 构建渲染层
+        run: npm run build
+        working-directory: src/renderer-next
+
+      - name: 构建管理端
+        run: npm run build
+        working-directory: admin_console/ui
+
       - name: 单元测试 (collab_server2)
         run: npm test
 

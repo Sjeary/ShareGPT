@@ -1211,6 +1211,8 @@ class Backend {
     return {
       principalId: this.activePrincipalId,
       generation: this.activePrincipalGeneration,
+      serverUrl: this.activePrincipalServerUrl,
+      username: this.activePrincipalUsername,
       legacyPartitionOwnerId: normalizePrincipalId(state.legacyPartitionOwnerId),
     };
   }

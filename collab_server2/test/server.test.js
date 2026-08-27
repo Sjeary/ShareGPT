@@ -517,6 +517,12 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   const bootstrapBody = await bootstrap.json();
   assert.strictEqual(typeof bootstrapBody.fetchedAt, "string");
   assert.ok(bootstrapBody.update && typeof bootstrapBody.update === "object");
+  assert.deepStrictEqual(bootstrapBody.authorization, {
+    username: "verify-user",
+    isAdmin: false,
+    advancedAiAllowed: true,
+    allowedProxyRouteIds: ["internal-airport"],
+  });
   assert.deepStrictEqual(
     bootstrapBody.proxyRoutes.map((route) => route.id),
     ["internal-airport"],

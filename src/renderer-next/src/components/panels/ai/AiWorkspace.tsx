@@ -70,6 +70,7 @@ import {
   startAiEnvironmentOperation,
 } from '@/lib/aiEnvironmentRuntime'
 import { isComposerGuardEligible } from '@/lib/translationSession'
+import { canUseAdvancedAi, canUseTranslation } from '@/lib/aiAccess'
 
 function isEditableTarget(target: EventTarget | null): boolean {
   return (
@@ -119,12 +120,11 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const aiHeaderHidden = useAppStore((s) => s.aiHeaderHidden)
   const setAiHeaderHidden = useAppStore((s) => s.setAiHeaderHidden)
   const toggleAiHeaderHidden = useAppStore((s) => s.toggleAiHeaderHidden)
-  const advancedAiAllowed = useAuthStore((s) =>
-    Boolean(
-      s.profile?.routeAuthorizationVerified && (s.profile?.isAdmin || s.profile?.advancedAiAllowed),
-    ),
-  )
-  const composerGuardEligible = useAuthStore((s) => isComposerGuardEligible(s.profile))
+  const profile = useAuthStore((s) => s.profile)
+  const authToken = useAuthStore((s) => s.token)
+  const advancedAiAllowed = canUseAdvancedAi(profile, authToken)
+  const translationAllowed = canUseTranslation(profile, authToken)
+  const composerGuardEligible = isComposerGuardEligible(profile, authToken)
   const notesAiPrincipalId = useNotesAiStore((s) => s.principalId)
   const notesAiPrincipalGeneration = useNotesAiStore((s) => s.principalGeneration)
   const senderRunning = isSenderRunning(status)
@@ -180,7 +180,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   const tabs = useAiStore((s) => s.tabsByKind[kind])
   const activeTabId = useAiStore((s) => s.activeTabIdByKind[kind])
-  const translationOpen = useTranslationStore((s) => advancedAiAllowed && s.open && s.kind === kind)
+  const translationOpen = useTranslationStore(
+    (s) => translationAllowed && s.open && s.kind === kind,
+  )
   const pendingSend = useTranslationStore((s) =>
     composerGuardEligible && s.pendingSend?.kind === kind && s.pendingSend.tabId === activeTabId
       ? s.pendingSend
@@ -843,7 +845,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
                 </span>
               )}
             </Button>
-            {advancedAiAllowed && (
+            {translationAllowed && (
               <Button
                 variant="ghost"
                 size="icon"

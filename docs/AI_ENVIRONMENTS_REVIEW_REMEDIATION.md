@@ -82,14 +82,14 @@
 
 以下均使用临时 userData、临时账号和回环 mock；阻断非本地网络：
 
-- `npm test`：87 passed、1 skipped、0 failed；skip 为当前 worktree 未包含 bundled sing-box。
-- `npm --prefix src/renderer-next test`：通过（包含 generation 与路径级操作专项测试）。
+- `npm test`：154 passed、1 skipped、0 failed；skip 为当前平台测试进程未提供 bundled sing-box。
+- `npm --prefix src/renderer-next test`：37 passed、0 failed（包含登录权限、generation 与路径级操作专项测试）。
 - `npm --prefix src/renderer-next run build`：通过；仅保留 Vite 既有 chunk/dynamic-import warning。
 - `npm --prefix admin_console/ui run build`：通过。
 - `npm run typecheck:main`：通过。
-- `npm run lint`：0 error、49 个历史 warning。
+- `npm run lint`：0 error、51 个历史 warning。
 - `npm run format:check`、`git diff --check`：通过。
-- `npm run verify:ai-review-ui`：通过。使用只读既有 bundled sing-box 二进制和临时配置；验证高级 A/B/A 环境持久化、翻译敏感配置隔离、Cookie/LocalStorage partition 隔离、普通账号权限隔离，以及 A 等待后切 B 时旧 ensure 在创建 workspace 前被拒绝。
+- `npm run verify:ai-review-ui`：通过。使用只读既有 bundled sing-box 二进制和临时配置；验证高级 A/B/A 环境持久化、翻译敏感配置隔离、Cookie/LocalStorage partition 隔离、普通账号可使用完整翻译流程但无法管理高级环境或继承托管线路，以及 A 等待后切 B 时旧 ensure 在创建 workspace 前被拒绝。
 - `npm run verify:browser-privacy-ui`：通过。未访问真实 AI 网站，非本地请求为 0。
 
 Electron 截图矩阵覆盖 `860x620`、`1024x640`、`1440x900`；人工检查无文本遮挡、裁切和外层横向溢出。测试页面显示被阻断的外部 GPT 地址属于预期网络隔离结果。
@@ -113,4 +113,4 @@ Electron 截图矩阵覆盖 `860x620`、`1024x640`、`1440x900`；人工检查�
 - 需在真实 GPT/Claude 页面补充完整缩放与站点兼容视觉检查；自动化没有登录真实账号。
 - CORS 白名单、uncaughtException 生命周期、首管理员 setup token、JSON/SQLite 迁移及 Chromium 全局 flags 仍需独立设计和回归计划。
 - 根项目与 admin 构建工具链漏洞仍待单独升级验证，不能视为本轮已消除。
-- 分支 push 后 `gh run list --branch codex/fix-ai-review-followup` 返回空列表：当前 workflow 的 `push` 仅监听 `main`，功能分支需创建 pull request 才会触发。本轮未获权创建 PR，因此没有远端 CI 结果；本地门禁不能替代远端 CI。
+- CI 的 `push` 监听 `main` 与 `codex/release-*`，PR 也会触发；远端 CI 只有在当前本地候选提交 push 后才具有证明力。本地候选在用户完成效果验收前不 push，因此当前本地门禁结果不能冒充最终远端 CI。

@@ -347,7 +347,8 @@ export function useAuth() {
 
       await api.setAiComposerEligibility({
         principalId: principal.principalId,
-        eligible: isComposerGuardEligible(profile),
+        eligible: isComposerGuardEligible(profile, payload.token),
+        token: payload.token,
       })
       setSession({ token: payload.token, profile, password })
 

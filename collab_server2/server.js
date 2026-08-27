@@ -2773,8 +2773,20 @@ const server = http.createServer(async (req, res) => {
       const bootstrap = loadClientBootstrap(req);
       const proxyRoutes = proxyRoutesForUser(session.username, bootstrap);
       const legacyAirport = proxyRoutes.find((route) => route.id === "internal-airport");
+      const { user } = findUser(session.username);
+      if (!user || user.disabled) {
+        sessions.delete(token);
+        sendText(res, 401, "未授权");
+        return;
+      }
       sendJson(res, 200, {
         ...bootstrap,
+        authorization: {
+          username: session.username,
+          isAdmin: Boolean(user.isAdmin),
+          advancedAiAllowed: Boolean(user.isAdmin || user.advancedAiAllowed),
+          allowedProxyRouteIds: proxyRoutes.map((route) => route.id),
+        },
         update: sharedReleaseUpdateForClient(req),
         airport: legacyAirport
           ? { name: legacyAirport.name, outbound: legacyAirport.outbound }

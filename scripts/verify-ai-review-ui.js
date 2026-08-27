@@ -164,7 +164,12 @@ function startFixtureServer(state) {
         const send = () => {
           if (response.destroyed) return;
           response.writeHead(200, { "content-type": "application/json" });
-          response.end(JSON.stringify({ translatedText: `[ZH] ${payload.q || ""}` }));
+          response.end(
+            JSON.stringify({
+              translatedText:
+                payload.target === "en" ? "[EN] translated output" : `[ZH] ${payload.q || ""}`,
+            }),
+          );
         };
         if (request.url === "/slow/translate") {
           state.slowStarted += 1;
@@ -326,15 +331,53 @@ async function composerFixtureAction(electronApp, fixtureUrl, action, value = ""
           true,
         );
       }
-      if (args.action === "click") {
-        return target.executeJavaScript(
+      if (args.action === "reset-state") {
+        return target.executeJavaScript(`window.composerEvents = { enters: 0, clicks: 0 }`, true);
+      }
+      if (args.action === "click" || args.action === "click-synthetic") {
+        const bounds = await target.executeJavaScript(
           `(() => {
             const editor = document.querySelector('#prompt-textarea');
             editor.focus();
             editor.value = ${JSON.stringify(args.value)};
             editor.dispatchEvent(new Event('input', { bubbles: true }));
-            document.querySelector('[data-testid="send-button"]').click();
-            return window.composerEvents;
+            const button = document.querySelector('[data-testid="send-button"]');
+            const rect = button.getBoundingClientRect();
+            return { x: Math.floor(rect.left + rect.width / 2), y: Math.floor(rect.top + rect.height / 2) };
+          })()`,
+          true,
+        );
+        if (args.action === "click-synthetic") {
+          return target.executeJavaScript(
+            `document.querySelector('[data-testid="send-button"]').click(); window.composerEvents`,
+            true,
+          );
+        }
+        target.focus();
+        target.sendInputEvent({
+          type: "mouseDown",
+          x: bounds.x,
+          y: bounds.y,
+          button: "left",
+          clickCount: 1,
+        });
+        target.sendInputEvent({
+          type: "mouseUp",
+          x: bounds.x,
+          y: bounds.y,
+          button: "left",
+          clickCount: 1,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        return target.executeJavaScript(`window.composerEvents`, true);
+      }
+      if (args.action === "focus") {
+        target.focus();
+        return target.executeJavaScript(
+          `(() => {
+            const editor = document.querySelector('#prompt-textarea');
+            editor.focus();
+            return document.activeElement === editor;
           })()`,
           true,
         );
@@ -380,11 +423,14 @@ async function composerFixtureAction(electronApp, fixtureUrl, action, value = ""
           const state = globalThis.__shareGptComposerDocument;
           const editor = document.querySelector('#prompt-textarea');
           const token = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+          editor.value = 'enter gate probe';
+          editor.focus();
           const ok = state?.armEnterGate?.({
             token,
             nonce: state.nonce,
             url: state.url,
             editor,
+            expectedText: 'enter gate probe',
             ttlMs: 1000,
           });
           editor.dispatchEvent(new KeyboardEvent('keydown', {
@@ -503,7 +549,17 @@ async function main() {
       2,
     ),
   );
-  fs.writeFileSync(path.join(tempDir, "client_bootstrap.json"), JSON.stringify({ sender: {} }));
+  fs.writeFileSync(
+    path.join(tempDir, "client_bootstrap.json"),
+    JSON.stringify({
+      sender: {
+        proxy_server: "127.0.0.1",
+        proxy_port: String(socksPort),
+        proxy_uuid: "11111111-1111-4111-8111-111111111111",
+        fallback_mode: "direct",
+      },
+    }),
+  );
 
   const serverOutput = [];
   const collab = spawn(process.execPath, [path.join(ROOT, "collab_server2/server.js")], {
@@ -666,15 +722,11 @@ async function main() {
     await window.reload();
     await login(window, baseUrl, USERNAME);
     await window.evaluate(
-      ({ listenPort, upstreamPort }) =>
+      ({ listenPort }) =>
         window.api.startSender({
           socks_listen_port: String(listenPort),
           fallback_mode: "direct",
-          fallback_local_port: "",
-          proxy_mode: "airport",
-          airport_name: "Local UI verification chain",
-          airport_outbound: { type: "socks", server: "127.0.0.1", server_port: upstreamPort },
-          authorized_proxy_route_ids: ["internal-airport"],
+          proxy_mode: "unified",
           target_domains: "chatgpt.com\nopenai.com\nclaude.ai\nanthropic.com",
         }),
       { listenPort: senderPort, upstreamPort: socksPort },
@@ -912,7 +964,7 @@ async function main() {
     await claudeTranslationPanel.getByLabel("关闭翻译侧栏").click();
     await waitUntil(async () => {
       guardState = await composerFixtureAction(electronApp, fixtureUrl, "guard-state");
-      return guardState?.ready === true && guardState?.selectionEnabled === true;
+      return guardState?.ready === true && guardState?.selectionEnabled === false;
     });
 
     await composerFixtureAction(electronApp, fixtureUrl, "select-text-synthetic");
@@ -922,14 +974,9 @@ async function main() {
       await composerFixtureAction(electronApp, fixtureUrl, "select-text-trusted"),
     ).trim();
     assert.match(trustedSelection, /selection translation/);
-    await claudeTranslationPanel.waitFor();
-    assert.strictEqual(
-      await claudeTranslationPanel.getByLabel("待翻译内容").inputValue(),
-      trustedSelection,
-    );
-    await window.getByText(`[ZH] ${trustedSelection}`, { exact: true }).waitFor();
-    await claudeTranslationPanel.getByLabel("关闭翻译侧栏").click();
-    results.push("opt-in trusted selection translation rejects synthetic page events");
+    await window.waitForTimeout(650);
+    assert.strictEqual(await window.getByRole("complementary", { name: "翻译侧栏" }).count(), 0);
+    results.push("automatic selection translation stays disabled on external AI pages");
 
     const enterGateSecurity = await composerFixtureAction(
       electronApp,
@@ -942,10 +989,22 @@ async function main() {
     results.push("page-generated Enter cannot consume the native Enter gate");
 
     await composerFixtureAction(electronApp, fixtureUrl, "forge");
+    await composerFixtureAction(
+      electronApp,
+      fixtureUrl,
+      "click-synthetic",
+      "页面脚本不能借用发送确认",
+    );
     await window.waitForTimeout(250);
     assert.strictEqual(await window.getByRole("button", { name: "仍然发送" }).count(), 0);
-    assert.strictEqual((await composerFixtureAction(electronApp, fixtureUrl, "state")).enters, 0);
-    results.push("forged and legacy composer markers are ignored without replaying Enter");
+    await composerFixtureAction(electronApp, fixtureUrl, "reset-state");
+    assert.deepStrictEqual(await composerFixtureAction(electronApp, fixtureUrl, "state"), {
+      enters: 0,
+      clicks: 0,
+    });
+    results.push(
+      "forged markers and page-generated clicks cannot borrow authenticated confirmation",
+    );
 
     await composerFixtureAction(electronApp, fixtureUrl, "click", "第一条真实确认");
     await window.getByRole("button", { name: "仍然发送" }).waitFor();
@@ -1101,13 +1160,128 @@ async function main() {
     await window.getByRole("button", { name: "退出登录", exact: true }).click();
     await window.locator("#account-server").waitFor({ state: "visible" });
     await login(window, baseUrl, BASIC_USERNAME);
-    await window.locator('[data-tour="nav-gpt"]').click();
-    assert.strictEqual(await window.getByLabel("打开翻译侧栏").count(), 0);
+    await patchSection(window, "translation", {
+      provider: "offline",
+      sourceLanguage: "en",
+      targetLanguage: "zh",
+      siteLanguage: "en",
+      autoTranslateSelection: true,
+      offline: { baseUrl: fixtureUrl },
+    });
+    await window.reload();
+    await login(window, baseUrl, BASIC_USERNAME);
+    const basicSenderPort = await reservePort();
+    await window.evaluate(
+      ({ listenPort }) =>
+        window.api.startSender({
+          socks_listen_port: String(listenPort),
+          fallback_mode: "direct",
+          proxy_mode: "unified",
+          target_domains: "claude.ai\nanthropic.com",
+        }),
+      { listenPort: basicSenderPort, upstreamPort: socksPort },
+    );
+    await window.locator('[data-tour="nav-claude"]').click();
+    assert.strictEqual(await window.getByLabel("打开翻译侧栏").count(), 1);
     assert.strictEqual(await window.getByLabel(/管理环境与线路|新建 AI 环境/).count(), 0);
+    await window.getByLabel("打开网页").click();
+    await window.getByTestId("claude-address-input").fill(`${fixtureUrl}/page`);
+    await window.getByLabel("在新标签页打开").click();
+    await composerFixtureAction(electronApp, fixtureUrl, "prepare");
+    let basicGuardState = null;
+    await waitUntil(async () => {
+      basicGuardState = await composerFixtureAction(electronApp, fixtureUrl, "guard-state");
+      return basicGuardState?.ready === true && basicGuardState?.selectionEnabled === false;
+    });
+
+    await window.getByLabel("打开翻译侧栏").click();
+    const basicTranslationPanel = window.getByRole("complementary", { name: "翻译侧栏" });
+    await basicTranslationPanel.getByLabel("待翻译内容").fill("basic translation");
+    await basicTranslationPanel.getByRole("button", { name: "翻译", exact: true }).click();
+    await window.getByText("[ZH] basic translation", { exact: true }).waitFor();
+    assert.strictEqual(await composerFixtureAction(electronApp, fixtureUrl, "focus"), true);
+    await basicTranslationPanel.getByRole("button", { name: "中文提问", exact: true }).click();
+    await basicTranslationPanel.getByLabel("中文提问内容").fill("普通账号翻译发送");
+    await basicTranslationPanel.getByRole("button", { name: "翻译并发送" }).click();
+    try {
+      await waitUntil(async () => {
+        const state = await composerFixtureAction(electronApp, fixtureUrl, "state");
+        return state.enters === 1;
+      });
+    } catch (error) {
+      const state = await composerFixtureAction(electronApp, fixtureUrl, "state");
+      const panelText = await basicTranslationPanel.textContent();
+      const feedbackText = await window.locator("body").textContent();
+      throw new Error(
+        `basic translated send failed: state=${JSON.stringify(state)} panel=${JSON.stringify(panelText)} main=${JSON.stringify(feedbackText)}`,
+        { cause: error },
+      );
+    }
+    await basicTranslationPanel.getByLabel("关闭翻译侧栏").click();
+
+    await composerFixtureAction(electronApp, fixtureUrl, "click", "普通账号直接发送保护");
+    await window.getByRole("button", { name: "仍然发送" }).waitFor();
+    await window.getByRole("button", { name: "仍然发送" }).click();
+    await waitUntil(async () => {
+      const state = await composerFixtureAction(electronApp, fixtureUrl, "state");
+      return state.enters === 2;
+    });
+    assert.strictEqual((await composerFixtureAction(electronApp, fixtureUrl, "state")).clicks, 0);
     const basicSettings = await window.evaluate(async () => window.api.loadSettings());
     assert.deepStrictEqual(basicSettings.sender.managed_proxy_routes, []);
     assert.deepStrictEqual(basicSettings.sender.authorized_proxy_route_ids, []);
-    results.push("basic account cannot inherit advanced controls or previous route authorization");
+    const forgedAirportError = await window.evaluate(async () => {
+      try {
+        await window.api.startSender({
+          socks_listen_port: "18888",
+          fallback_mode: "direct",
+          proxy_mode: "airport",
+          airport_name: "forged",
+          airport_outbound: { type: "socks", server: "127.0.0.1", server_port: 9 },
+          authorized_proxy_route_ids: ["internal-airport"],
+          target_domains: "claude.ai",
+        });
+        return "";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+    assert.match(forgedAirportError, /未获授权使用机场节点/);
+    await patchSection(window, "advancedAi", {
+      version: 1,
+      enabled: true,
+      environments: [
+        { id: "forged-basic-env", kind: "claude", name: "forged", routeId: "route-a" },
+      ],
+      activeByKind: { gpt: "", gemini: "", claude: "forged-basic-env" },
+    });
+    const forgedEnvironmentError = await window.evaluate(async () => {
+      try {
+        await window.api.activateAiEnvironment({
+          kind: "claude",
+          environmentId: "forged-basic-env",
+          generation: 9001,
+        });
+        return "";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+    assert.match(forgedEnvironmentError, /未获授权使用高级 AI 环境/);
+    const basicStatus = await window.evaluate(async () => window.api.getStatus());
+    assert.strictEqual(basicStatus.senderRunning, true);
+    assert.deepStrictEqual(basicStatus.aiProxyRoutes, []);
+    results.push(
+      "basic account can translate, fill/send and use direct-send protection without advanced controls or route authorization",
+    );
+
+    await window.evaluate(async () => window.api.clearSettingsPrincipal());
+    const clearedPrincipalStatus = await window.evaluate(async () => window.api.getStatus());
+    assert.strictEqual(clearedPrincipalStatus.senderRunning, false);
+    assert.deepStrictEqual(clearedPrincipalStatus.aiProxyRoutes, []);
+    results.push(
+      "main-process principal clear stops sender without renderer lifecycle cooperation",
+    );
 
     assert.deepStrictEqual(pageErrors, [], `renderer page errors: ${pageErrors.join("\n")}`);
     assert.ok(

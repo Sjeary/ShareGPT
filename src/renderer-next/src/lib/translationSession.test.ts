@@ -83,20 +83,17 @@ test('queued selection translation events require the current principal, environ
   )
 })
 
-test('composer confirmation eligibility is limited to advanced users and admins', () => {
-  assert.equal(isComposerGuardEligible(null), false)
-  assert.equal(isComposerGuardEligible({}), false)
-  assert.equal(isComposerGuardEligible({ advancedAiAllowed: true }), false)
-  assert.equal(isComposerGuardEligible({ isAdmin: true }), false)
+test('composer confirmation eligibility follows the authenticated translation session', () => {
+  assert.equal(isComposerGuardEligible(null, 'token'), false)
+  assert.equal(isComposerGuardEligible({}, 'token'), false)
+  assert.equal(isComposerGuardEligible({ username: '' }, 'token'), false)
+  assert.equal(isComposerGuardEligible({ username: 'basic-user' }, ''), false)
+  assert.equal(isComposerGuardEligible({ username: 'basic-user' }, 'token'), true)
+  assert.equal(isComposerGuardEligible({ username: 'admin-user' }, 'token'), true)
   assert.equal(
-    isComposerGuardEligible({ advancedAiAllowed: true, routeAuthorizationVerified: true }),
+    isComposerGuardEligible({ username: 'advanced-user' }, 'token'),
     true,
-  )
-  assert.equal(isComposerGuardEligible({ isAdmin: true, routeAuthorizationVerified: true }), true)
-  assert.equal(
-    isComposerGuardEligible({ advancedAiAllowed: true, routeAuthorizationVerified: false }),
-    false,
-    'an authoritative route revocation disables the main-process guard',
+    'managed-route authorization is independent from translation access',
   )
 })
 

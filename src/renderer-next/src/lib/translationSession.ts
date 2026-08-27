@@ -64,15 +64,10 @@ export function isCurrentSelectionTranslationSession(
 }
 
 export function isComposerGuardEligible(
-  profile: {
-    isAdmin?: boolean
-    advancedAiAllowed?: boolean
-    routeAuthorizationVerified?: boolean
-  } | null,
+  profile: { username?: string } | null,
+  token: string | null | undefined,
 ) {
-  return Boolean(
-    profile?.routeAuthorizationVerified && (profile.isAdmin || profile.advancedAiAllowed),
-  )
+  return Boolean(String(profile?.username || '').trim() && String(token || '').trim())
 }
 
 export function shouldClearPendingComposerSend(

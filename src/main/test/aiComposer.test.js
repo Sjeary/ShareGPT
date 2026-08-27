@@ -105,6 +105,7 @@ test("click guard runs in a caller-selected isolated world configuration", () =>
     marker,
   });
   assert.match(script, /stopImmediatePropagation/);
+  assert.match(script, /!event\.isTrusted/);
   assert.ok(script.includes(marker));
   assert.match(script, /targetLanguage = "en"/);
 });
@@ -131,6 +132,9 @@ test("composer guard messages require the exact workspace token and strict paylo
   assert.deepEqual(parseComposerGuardConsoleMessage(`${marker}{"text":"  hello  "}`, token), {
     kind: "valid",
     text: "hello",
+  });
+  assert.deepEqual(parseComposerGuardConsoleMessage(`${marker}{"tooLong":true}`, token), {
+    kind: "too-long",
   });
   assert.throws(() =>
     composerClickGuardScript({ marker: `${COMPOSER_GUARD_CHANNEL_PREFIX}fixed` }),
@@ -254,12 +258,16 @@ function createSelectionTranslationHarness(options = {}) {
     parentNode: common,
     isConnected: true,
   };
+  const selectionRects = options.rects || [{ left: 10, right: 110, top: 10, bottom: 30 }];
   const selection = {
-    isCollapsed: false,
+    isCollapsed: true,
     rangeCount: 1,
     anchorNode: anchor,
     focusNode: focus,
-    getRangeAt: () => ({ commonAncestorContainer: common }),
+    getRangeAt: () => ({
+      commonAncestorContainer: common,
+      getClientRects: () => selectionRects,
+    }),
     toString: () => options.text || "Selected passage",
   };
   const context = {
@@ -311,13 +319,46 @@ function createSelectionTranslationHarness(options = {}) {
   };
 }
 
-test("selectionchange only updates a candidate; trusted pointerup authorizes publication", () => {
-  const { documentListeners, logs, nonce, timers, token } = createSelectionTranslationHarness();
+function authorizePointerSelection(harness) {
+  const { documentListeners, selection } = harness;
+  selection.isCollapsed = true;
+  documentListeners.pointerdown({
+    isTrusted: true,
+    button: 0,
+    isPrimary: true,
+    pointerId: 1,
+    clientX: 12,
+    clientY: 20,
+  });
+  selection.isCollapsed = false;
+  documentListeners.selectionchange({ isTrusted: true });
+  documentListeners.pointerup({
+    isTrusted: true,
+    button: 0,
+    isPrimary: true,
+    pointerId: 1,
+    clientX: 100,
+    clientY: 20,
+    detail: 1,
+  });
+}
+
+test("selectionchange only updates a candidate; a bound trusted drag authorizes publication", () => {
+  const harness = createSelectionTranslationHarness();
+  const { documentListeners, logs, nonce, selection, timers, token } = harness;
+  selection.isCollapsed = false;
   documentListeners.selectionchange({ isTrusted: true });
   assert.equal(timers.size, 0, "selectionchange cannot authorize a message");
-  documentListeners.pointerup({ isTrusted: false, button: 0, isPrimary: true });
+  documentListeners.pointerup({
+    isTrusted: false,
+    button: 0,
+    isPrimary: true,
+    pointerId: 1,
+    clientX: 100,
+    clientY: 20,
+  });
   assert.equal(timers.size, 0, "a synthetic pointer event cannot authorize a message");
-  documentListeners.pointerup({ isTrusted: true, button: 0, isPrimary: true });
+  authorizePointerSelection(harness);
   assert.equal(timers.size, 1);
   [...timers.values()][0]();
   assert.equal(logs.length, 1);
@@ -334,8 +375,9 @@ test("selectionchange only updates a candidate; trusted pointerup authorizes pub
 });
 
 test("selection translation drops an authorized candidate if the page changes the selection", () => {
-  const { documentListeners, logs, selection, timers } = createSelectionTranslationHarness();
-  documentListeners.pointerup({ isTrusted: true, button: 0, isPrimary: true });
+  const harness = createSelectionTranslationHarness();
+  const { documentListeners, logs, selection, timers } = harness;
+  authorizePointerSelection(harness);
   const queuedPublish = [...timers.values()][0];
   selection.toString = () => "Page-replaced selection";
   documentListeners.selectionchange({ isTrusted: false });
@@ -343,21 +385,57 @@ test("selection translation drops an authorized candidate if the page changes th
   assert.deepEqual(logs, []);
 });
 
+test("trusted pointer gestures cannot authorize a selection outside the dragged pixels", () => {
+  const harness = createSelectionTranslationHarness({
+    rects: [{ left: 500, right: 600, top: 500, bottom: 520 }],
+  });
+  authorizePointerSelection(harness);
+  assert.equal(harness.timers.size, 0);
+  assert.deepEqual(harness.logs, []);
+});
+
+test("pointer cancellation clears a pending trusted selection gesture", () => {
+  const { documentListeners, selection, timers } = createSelectionTranslationHarness();
+  documentListeners.pointerdown({
+    isTrusted: true,
+    button: 0,
+    isPrimary: true,
+    pointerId: 1,
+    clientX: 12,
+    clientY: 20,
+  });
+  documentListeners.pointercancel({ isTrusted: true, pointerId: 1 });
+  selection.isCollapsed = false;
+  documentListeners.selectionchange({ isTrusted: true });
+  documentListeners.pointerup({
+    isTrusted: true,
+    button: 0,
+    isPrimary: true,
+    pointerId: 1,
+    clientX: 100,
+    clientY: 20,
+    detail: 1,
+  });
+  assert.equal(timers.size, 0);
+});
+
 test("selection translation ignores editable ancestors and untrusted keyboard events", () => {
-  const { documentListeners, logs, timers } = createSelectionTranslationHarness({ editable: true });
+  const harness = createSelectionTranslationHarness({ editable: true });
+  const { documentListeners, logs, selection, timers } = harness;
   documentListeners.keyup({
     isTrusted: false,
     key: "ArrowRight",
     shiftKey: true,
     altKey: false,
   });
-  documentListeners.pointerup({ isTrusted: true, button: 0, isPrimary: true });
+  selection.isCollapsed = false;
+  authorizePointerSelection(harness);
   assert.equal(timers.size, 0);
   assert.deepEqual(logs, []);
 });
 
 test("only keyboard gestures that can create a selection authorize publication", () => {
-  const { documentListeners, logs, timers } = createSelectionTranslationHarness();
+  const { documentListeners, logs, selection, timers } = createSelectionTranslationHarness();
   documentListeners.keyup({
     isTrusted: true,
     key: "ArrowRight",
@@ -365,10 +443,22 @@ test("only keyboard gestures that can create a selection authorize publication",
     altKey: false,
   });
   assert.equal(timers.size, 0);
+  documentListeners.keydown({
+    isTrusted: true,
+    key: "ArrowRight",
+    shiftKey: true,
+    ctrlKey: false,
+    metaKey: false,
+    altKey: false,
+  });
+  selection.isCollapsed = false;
+  documentListeners.selectionchange({ isTrusted: true });
   documentListeners.keyup({
     isTrusted: true,
     key: "ArrowRight",
     shiftKey: true,
+    ctrlKey: false,
+    metaKey: false,
     altKey: false,
   });
   assert.equal(timers.size, 1);
@@ -377,9 +467,9 @@ test("only keyboard gestures that can create a selection authorize publication",
 });
 
 test("document navigation immediately invalidates an authorized selection", () => {
-  const { context, documentListeners, globalListeners, logs, timers } =
-    createSelectionTranslationHarness();
-  documentListeners.pointerup({ isTrusted: true, button: 0, isPrimary: true });
+  const harness = createSelectionTranslationHarness();
+  const { context, globalListeners, logs, timers } = harness;
+  authorizePointerSelection(harness);
   assert.equal(timers.size, 1);
   const queuedPublish = [...timers.values()][0];
   globalListeners.pagehide();
@@ -390,9 +480,9 @@ test("document navigation immediately invalidates an authorized selection", () =
 });
 
 test("disabling selection translation cancels an already authorized publication", () => {
-  const { context, documentListeners, logs, nonce, timers, token } =
-    createSelectionTranslationHarness();
-  documentListeners.pointerup({ isTrusted: true, button: 0, isPrimary: true });
+  const harness = createSelectionTranslationHarness();
+  const { context, logs, nonce, timers, token } = harness;
+  authorizePointerSelection(harness);
   assert.equal(timers.size, 1);
   const queuedPublish = [...timers.values()][0];
   vm.runInNewContext(
@@ -586,6 +676,7 @@ function createEnterGateHarness() {
   const nonce = createComposerDocumentNonce();
   const editor = {
     isConnected: true,
+    value: "translated",
     contains(node) {
       return node === this;
     },
@@ -644,6 +735,7 @@ test("composer Enter gate permits one native Enter for the bound editor", () => 
       nonce,
       url,
       editor,
+      expectedText: "translated",
       ttlMs: 1000,
     }),
     true,
@@ -675,8 +767,15 @@ test("composer Enter gate permits one native Enter for the bound editor", () => 
 test("composer Enter gate blocks a queued send after focus moves", () => {
   const { context, document, editor, listeners, nonce, url } = createEnterGateHarness();
   const token = createComposerGuardToken();
-  context.__shareGptComposerDocument.armEnterGate({ token, nonce, url, editor, ttlMs: 1000 });
-  document.activeElement = { isConnected: true, contains: () => false };
+  context.__shareGptComposerDocument.armEnterGate({
+    token,
+    nonce,
+    url,
+    editor,
+    expectedText: "translated",
+    ttlMs: 1000,
+  });
+  document.activeElement = { isConnected: true, value: "other", contains: () => false };
 
   const event = createPlainEnterEvent();
   listeners.keydown(event);
@@ -692,7 +791,14 @@ test("composer Enter gate blocks a queued send after focus moves", () => {
 test("composer Enter gate ignores untrusted page-generated Enter events", () => {
   const { context, editor, listeners, nonce, url } = createEnterGateHarness();
   const token = createComposerGuardToken();
-  context.__shareGptComposerDocument.armEnterGate({ token, nonce, url, editor, ttlMs: 1000 });
+  context.__shareGptComposerDocument.armEnterGate({
+    token,
+    nonce,
+    url,
+    editor,
+    expectedText: "translated",
+    ttlMs: 1000,
+  });
 
   const forged = createPlainEnterEvent();
   forged.isTrusted = false;
@@ -716,7 +822,14 @@ test("composer Enter gate ignores untrusted page-generated Enter events", () => 
 test("composer Enter gate expiry fail-closes a delayed native Enter", () => {
   const { context, editor, listeners, nonce, timers, url } = createEnterGateHarness();
   const token = createComposerGuardToken();
-  context.__shareGptComposerDocument.armEnterGate({ token, nonce, url, editor, ttlMs: 1000 });
+  context.__shareGptComposerDocument.armEnterGate({
+    token,
+    nonce,
+    url,
+    editor,
+    expectedText: "translated",
+    ttlMs: 1000,
+  });
   assert.equal(timers.size, 1);
   const expire = [...timers.values()][0];
   expire();
@@ -735,6 +848,49 @@ test("composer Enter gate expiry fail-closes a delayed native Enter", () => {
     { token, status: "blocked", reason: "expired" },
   );
   assert.equal(context.__shareGptComposerDocument.enterGate, null);
+});
+
+test("composer Enter gate blocks a queued send after the page changes the bound text", () => {
+  const { context, editor, listeners, nonce, url } = createEnterGateHarness();
+  const token = createComposerGuardToken();
+  assert.equal(
+    context.__shareGptComposerDocument.armEnterGate({
+      token,
+      nonce,
+      url,
+      editor,
+      expectedText: "translated",
+      ttlMs: 1000,
+    }),
+    true,
+  );
+  editor.value = "page replacement";
+
+  const event = createPlainEnterEvent();
+  listeners.keydown(event);
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(event.propagationStopped, true);
+  assert.deepEqual(
+    { ...context.__shareGptComposerDocument.enterGateOutcome },
+    { token, status: "blocked", reason: "text-changed" },
+  );
+});
+
+test("composer Enter gate rejects a hidden suffix beyond the maximum inspected length", () => {
+  const { context, editor, nonce, url } = createEnterGateHarness();
+  const expectedText = "x".repeat(MAX_COMPOSER_CHARS);
+  editor.value = `${expectedText}hidden suffix`;
+  assert.equal(
+    context.__shareGptComposerDocument.armEnterGate({
+      token: createComposerGuardToken(),
+      nonce,
+      url,
+      editor,
+      expectedText,
+      ttlMs: 1000,
+    }),
+    false,
+  );
 });
 
 test("composer mutation serializes hostile text as data and keeps mutation in one task", () => {
@@ -788,6 +944,9 @@ function runInputMutationWithReentry(reentryType) {
     }
     setSelectionRange() {}
     dispatchEvent(event) {
+      if (reentryType === "input-text" && event.type === "input") {
+        this._value += " page suffix";
+      }
       if (event.type === reentryType) {
         if (reentryType === "beforeinput") this.isConnected = false;
         this.ownerDocument.activeElement = this.replacement;
@@ -854,6 +1013,14 @@ test("composer mutation cannot report success after input moves focus to another
   assert.equal(replacement._value, "old");
 });
 
+test("composer mutation cannot arm Enter after an input handler changes the inserted text", () => {
+  const { original, replacement, result } = runInputMutationWithReentry("input-text");
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "text-changed");
+  assert.equal(original._value, "translated page suffix");
+  assert.equal(replacement._value, "old");
+});
+
 test("composer replacement runs the fixed isolated-world atomic mutation", async () => {
   const nonce = createComposerDocumentNonce();
   const calls = [];
@@ -910,4 +1077,16 @@ test("composer inspection rejection fails closed without replaying Enter", async
   };
   await assert.rejects(inspectComposerSubmit(webContents, "en"), /inspection unavailable/);
   assert.deepEqual(sent, []);
+});
+
+test("composer inspection rejects content longer than the authenticated limit", async () => {
+  const webContents = {
+    isDestroyed: () => false,
+    executeJavaScript: async () => ({
+      editable: true,
+      text: "x".repeat(MAX_COMPOSER_CHARS),
+      tooLong: true,
+    }),
+  };
+  await assert.rejects(inspectComposerSubmit(webContents, "en"), /内容过长/);
 });

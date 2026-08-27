@@ -57,6 +57,11 @@ const {
   waitForComposerEnterGateOutcome,
 } = require("./aiComposer");
 const { createAiEnvironmentGenerationGuard } = require("./aiEnvironmentGeneration");
+const {
+  createAuthorizationEpochGuard,
+  fetchAuthenticatedJson,
+  resolveAiSessionCapability,
+} = require("./aiSessionAuthorization");
 const { runSettingsPrincipalTransition } = require("./settingsPrincipalTransition");
 const { createNavTooltipController, normalizeNavTooltipBounds } = require("./navTooltip");
 const {
@@ -551,6 +556,18 @@ function createElectronApp(baseMode = "all") {
     onExpire: (pending) => emitComposerSendInvalidated(pending, "expired"),
   });
   let composerEligibility = { principalId: "", eligible: false };
+  const aiAuthorizationEpoch = createAuthorizationEpochGuard();
+  let runningSenderAuthorizationFingerprint = "";
+  let aiAuthorization = {
+    principalId: "",
+    principalGeneration: 0,
+    authenticated: false,
+    advancedAllowed: false,
+    isAdmin: false,
+    allowedRouteIds: new Set(),
+    routes: [],
+    sender: {},
+  };
   // GPT 与 Gemini 均支持多标签: 标签顺序 / 活动标签 / 宿主矩形 均按 kind 索引。
   const tabOrderByKind = { gpt: [], gemini: [], claude: [] };
   const activeTabIdByKind = { gpt: "", gemini: "", claude: "" };
@@ -665,6 +682,172 @@ function createElectronApp(baseMode = "all") {
       principalId &&
       composerEligibility.principalId === principalId,
     );
+  }
+
+  function clearAiAuthorization(reason = "authorization-cleared") {
+    const epoch = aiAuthorizationEpoch.advance();
+    aiAuthorization = {
+      principalId: "",
+      principalGeneration: 0,
+      authenticated: false,
+      advancedAllowed: false,
+      isAdmin: false,
+      allowedRouteIds: new Set(),
+      routes: [],
+      sender: {},
+    };
+    composerEligibility = { principalId: "", eligible: false };
+    invalidateAllComposerWorkspaces(reason);
+    return epoch;
+  }
+
+  function currentAiAuthorization(options = {}) {
+    const principal = backend?.getPrincipalContext?.() || {};
+    const current =
+      aiAuthorization.authenticated &&
+      aiAuthorization.principalId === principal.principalId &&
+      aiAuthorization.principalGeneration === Number(principal.generation)
+        ? aiAuthorization
+        : null;
+    if (!current) throw new Error("当前协作会话尚未完成主进程授权校验");
+    if (options.advanced && !current.advancedAllowed) {
+      throw new Error("当前账号未获授权使用高级 AI 环境");
+    }
+    return current;
+  }
+
+  function aiAuthorizationFingerprint(authorization = aiAuthorization) {
+    if (!authorization?.authenticated) return "";
+    return JSON.stringify({
+      principalId: authorization.principalId,
+      principalGeneration: authorization.principalGeneration,
+      advancedAllowed: authorization.advancedAllowed,
+      isAdmin: authorization.isAdmin,
+      allowedRouteIds: [...authorization.allowedRouteIds].sort(),
+      routes: authorization.routes,
+      sender: authorization.sender,
+    });
+  }
+
+  function stopAuthorizedSender() {
+    runningSenderAuthorizationFingerprint = "";
+    backend.stopSender();
+  }
+
+  async function verifyAiSessionAuthorization(rawToken, authorizationEpoch) {
+    const token = String(rawToken || "").trim();
+    const principal = backend.getPrincipalContext();
+    const serverUrl = String(principal.serverUrl || "").replace(/\/+$/, "");
+    const username = String(principal.username || "");
+    if (!token || token.length > 8192 || !serverUrl || !username) {
+      throw new Error("协作会话授权信息不完整");
+    }
+    const payload = await fetchAuthenticatedJson(
+      electronNet.fetch,
+      `${serverUrl}/api/client/bootstrap`,
+      token,
+    );
+    aiAuthorizationEpoch.assert(authorizationEpoch);
+    assertPrincipalUnchanged(principal);
+    const legacyProfile = payload?.authorization
+      ? null
+      : await fetchAuthenticatedJson(electronNet.fetch, `${serverUrl}/api/profile`, token);
+    const authorization = resolveAiSessionCapability(payload, legacyProfile, username);
+    aiAuthorizationEpoch.assert(authorizationEpoch);
+    assertPrincipalUnchanged(principal);
+    const allowedIds = new Set(
+      (Array.isArray(authorization.allowedProxyRouteIds) ? authorization.allowedProxyRouteIds : [])
+        .map((id) => normalizeAiRouteId(id))
+        .filter(Boolean),
+    );
+    const routes = (Array.isArray(payload.proxyRoutes) ? payload.proxyRoutes : [])
+      .map((route) => {
+        const id = normalizeAiRouteId(route?.id);
+        if (!id || !allowedIds.has(id) || route?.enabled === false) return null;
+        return {
+          id,
+          name: safeText(route?.name) || id,
+          enabled: true,
+          kind: safeText(route?.kind) === "unified" ? "unified" : "managed",
+          outbound:
+            route?.outbound && typeof route.outbound === "object"
+              ? structuredClone(route.outbound)
+              : null,
+          expected:
+            route?.expected && typeof route.expected === "object"
+              ? structuredClone(route.expected)
+              : {},
+        };
+      })
+      .filter(Boolean);
+    const routeIds = new Set(routes.map((route) => route.id));
+    aiAuthorization = {
+      principalId: principal.principalId,
+      principalGeneration: Number(principal.generation),
+      authenticated: true,
+      advancedAllowed: authorization.advancedAiAllowed,
+      isAdmin: authorization.isAdmin,
+      allowedRouteIds: routeIds,
+      routes,
+      sender:
+        payload?.sender && typeof payload.sender === "object"
+          ? structuredClone(payload.sender)
+          : {},
+    };
+    composerEligibility = { principalId: principal.principalId, eligible: true };
+    await syncAllComposerClickGuards();
+    aiAuthorizationEpoch.assert(authorizationEpoch);
+    assertPrincipalUnchanged(principal);
+    return {
+      ok: true,
+      principalId: principal.principalId,
+      eligible: true,
+      advancedAllowed: aiAuthorization.advancedAllowed,
+      allowedProxyRouteIds: [...routeIds],
+    };
+  }
+
+  function authorizedSenderSettings(rawSettings) {
+    const supplied = rawSettings && typeof rawSettings === "object" ? rawSettings : {};
+    const principal = backend.getPrincipalContext();
+    if (!principal.serverUrl) return supplied;
+    const authorization = currentAiAuthorization();
+    const serverSender = authorization.sender || {};
+    const next = { ...supplied };
+    for (const key of [
+      "proxy_server",
+      "proxy_port",
+      "proxy_uuid",
+      "proxy_expected_ip",
+      "proxy_expected_country",
+      "proxy_expected_asn",
+    ]) {
+      next[key] = serverSender[key] || "";
+    }
+    next.managed_proxy_routes = authorization.routes
+      .filter((route) => route.kind === "managed" && route.outbound)
+      .map((route) => ({
+        id: route.id,
+        name: route.name,
+        enabled: true,
+        kind: "managed",
+        outbound: structuredClone(route.outbound),
+        expected: structuredClone(route.expected || {}),
+      }));
+    next.authorized_proxy_route_ids = [...authorization.allowedRouteIds];
+    next.route_all = authorization.isAdmin && supplied.route_all === true;
+    if (next.proxy_mode === "airport") {
+      const route = authorization.routes.find(
+        (item) => item.id === "internal-airport" && item.outbound,
+      );
+      if (!route) throw new Error("当前账号未获授权使用机场节点");
+      next.airport_name = route.name;
+      next.airport_outbound = structuredClone(route.outbound);
+    } else {
+      next.airport_name = "";
+      next.airport_outbound = null;
+    }
+    return next;
   }
 
   function emitComposerSendInvalidated(pending, reason) {
@@ -955,7 +1138,9 @@ function createElectronApp(baseMode = "all") {
     const selectionToken = workspace.selectionTranslationToken;
     await installSelectionTranslation(wc, {
       worldId: COMPOSER_GUARD_WORLD_ID,
-      enabled: translation.autoTranslateSelection === true,
+      enabled:
+        translation.autoTranslateSelection === true &&
+        isAutomaticSelectionTranslationAllowed(workspace),
       marker: selectionTranslationMarker(selectionToken),
       documentNonce,
       documentUrl,
@@ -1037,6 +1222,11 @@ function createElectronApp(baseMode = "all") {
         safeText(item?.kind) === targetKind,
     );
     if (!environment) throw new Error("AI 环境不存在或不属于当前服务");
+    const authorization = currentAiAuthorization({ advanced: true });
+    const routeId = normalizeAiRouteId(environment.routeId);
+    if (!routeId || !authorization.allowedRouteIds.has(routeId)) {
+      throw new Error("当前账号未获授权使用该 AI 环境线路");
+    }
     return { ...environment, id: targetEnvironmentId };
   }
 
@@ -1447,6 +1637,13 @@ function createElectronApp(baseMode = "all") {
   function isWorkspaceDocumentAllowed(workspace) {
     const currentUrl = safeText(workspace?.view?.webContents?.getURL?.());
     return Boolean(currentUrl && isWorkspaceUrlAllowed(workspace, currentUrl));
+  }
+
+  function isAutomaticSelectionTranslationAllowed(workspace) {
+    const currentUrl = safeText(workspace?.view?.webContents?.getURL?.());
+    return Boolean(
+      currentUrl && isAllowedUrlForHosts(currentUrl, [safeText(workspace?.policy?.primaryHost)]),
+    );
   }
 
   function getAiStatePayload(workspace) {
@@ -2039,12 +2236,19 @@ function createElectronApp(baseMode = "all") {
       const parsed = parseComposerGuardConsoleMessage(value, workspace.composerGuardToken);
       if (parsed.kind !== "other") {
         if (
-          parsed.kind !== "valid" ||
           !isComposerEligible() ||
           !isTrustedComposerConsoleEvent(workspace, details, legacySourceId)
         ) {
           return;
         }
+        if (parsed.kind === "too-long") {
+          emitAiEvent(workspace.kind, "composer-send-guard-failed", {
+            tabId: workspace.id,
+            message: "待发送内容过长，未执行发送",
+          });
+          return;
+        }
+        if (parsed.kind !== "valid") return;
         try {
           const context = captureComposerContext(workspace);
           const translation = backend?.loadSettings()?.translation || {};
@@ -2518,7 +2722,8 @@ function createElectronApp(baseMode = "all") {
       return backend.loadSettings();
     });
     ipcMain.handle("settings:principal-activate", (_event, payload) => {
-      composerEligibility = { principalId: "", eligible: false };
+      stopAuthorizedSender();
+      clearAiAuthorization("principal-activating");
       disposeAiWorkspaces();
       aiEnvironmentGuard.invalidateAll();
       for (const controller of translationRequests.values()) controller.abort();
@@ -2528,7 +2733,8 @@ function createElectronApp(baseMode = "all") {
       );
     });
     ipcMain.handle("settings:principal-clear", () => {
-      composerEligibility = { principalId: "", eligible: false };
+      stopAuthorizedSender();
+      clearAiAuthorization("principal-clearing");
       disposeAiWorkspaces();
       aiEnvironmentGuard.invalidateAll();
       for (const controller of translationRequests.values()) controller.abort();
@@ -2546,10 +2752,29 @@ function createElectronApp(baseMode = "all") {
       if (!principalId || principalId !== backend.getPrincipalContext().principalId) {
         throw new Error("网页翻译权限 principal 已变化");
       }
-      composerEligibility = { principalId, eligible: payload?.eligible === true };
-      if (!composerEligibility.eligible) invalidateAllComposerWorkspaces("ineligible");
-      await syncAllComposerClickGuards();
-      return { ok: true, principalId, eligible: composerEligibility.eligible };
+      if (payload?.eligible !== true) {
+        stopAuthorizedSender();
+        clearAiAuthorization("ineligible");
+        return { ok: true, principalId, eligible: false };
+      }
+      const authorizationEpoch = clearAiAuthorization("authorization-refreshing");
+      try {
+        const result = await verifyAiSessionAuthorization(payload?.token, authorizationEpoch);
+        const currentAuthorization = aiAuthorizationFingerprint();
+        if (
+          runningSenderAuthorizationFingerprint &&
+          runningSenderAuthorizationFingerprint !== currentAuthorization
+        ) {
+          stopAuthorizedSender();
+        }
+        return result;
+      } catch (error) {
+        if (aiAuthorizationEpoch.isCurrent(authorizationEpoch)) {
+          stopAuthorizedSender();
+          clearAiAuthorization("authorization-failed");
+        }
+        throw error;
+      }
     });
     ipcMain.handle("settings:save", (_event, payload) =>
       backend.saveSettingsForPrincipal(payload?.settings, payload?.expectedPrincipalId),
@@ -2858,8 +3083,11 @@ function createElectronApp(baseMode = "all") {
 
     // 原生 WebContentsView 位于渲染层之上，必须由当前导航页做全局门控；
     // 仅靠组件卸载时的异步隐藏通知会产生竞态，导致旧 Claude/GPT 盖住其它页面。
-    ipcMain.handle("ai:set-active-kind", (_event, payload) => {
-      return { activeKind: setActiveAiKind(payload?.kind) };
+    ipcMain.handle("ai:set-active-kind", async (_event, payload) => {
+      const activeKind = setActiveAiKind(payload?.kind);
+      const workspace = getWorkspace(activeKind, activeTabIdByKind[activeKind]);
+      if (workspace) await syncComposerClickGuard(workspace);
+      return { activeKind };
     });
     ipcMain.handle("nav:tooltip", (_event, payload) => setNavTooltip(payload));
     ipcMain.handle("ai:close-all", () => {
@@ -2898,7 +3126,7 @@ function createElectronApp(baseMode = "all") {
       };
     });
 
-    ipcMain.handle("ai-tabs:switch", (_event, payload) => {
+    ipcMain.handle("ai-tabs:switch", async (_event, payload) => {
       const { kind, environmentId } = assertCurrentAiEnvironmentOperation(payload);
       const tabId = safeText(payload?.tabId);
       const workspace = getWorkspace(kind, tabId);
@@ -2914,6 +3142,7 @@ function createElectronApp(baseMode = "all") {
       }
       activeTabIdByKind[kind] = workspace.id;
       syncActiveWorkspace(kind);
+      await syncComposerClickGuard(workspace);
       emitTabsChanged(kind);
       return {
         ...listTabsPayload(kind),
@@ -3551,13 +3780,32 @@ function createElectronApp(baseMode = "all") {
       return next;
     });
 
-    ipcMain.handle("sender:start", (_event, senderSettings) => {
+    ipcMain.handle("sender:start", async (_event, senderSettings) => {
       assertMode("sender");
-      return backend.startSender(senderSettings);
+      const principal = backend.getPrincipalContext();
+      const authorizationFingerprint = principal.serverUrl
+        ? aiAuthorizationFingerprint(currentAiAuthorization())
+        : `local:${principal.principalId}:${principal.generation}`;
+      const settings = authorizedSenderSettings(senderSettings);
+      const result = await backend.startSender(settings);
+      try {
+        assertPrincipalUnchanged(principal);
+        if (
+          principal.serverUrl &&
+          authorizationFingerprint !== aiAuthorizationFingerprint(currentAiAuthorization())
+        ) {
+          throw new Error("发送服务授权已经变化");
+        }
+      } catch (error) {
+        stopAuthorizedSender();
+        throw error;
+      }
+      runningSenderAuthorizationFingerprint = authorizationFingerprint;
+      return result;
     });
     ipcMain.handle("sender:stop", () => {
       assertMode("sender");
-      backend.stopSender();
+      stopAuthorizedSender();
       return backend.getStatus();
     });
 

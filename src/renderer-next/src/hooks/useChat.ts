@@ -501,7 +501,8 @@ export function useChat() {
             if (!isCurrent()) return false
             await api.setAiComposerEligibility({
               principalId: captured.principalId,
-              eligible: isComposerGuardEligible(nextProfile),
+              eligible: isComposerGuardEligible(nextProfile, token),
+              token,
             })
             if (!isCurrent()) return false
           }
@@ -628,7 +629,8 @@ export function useChat() {
         if (!isReloginCurrent()) return
         await api.setAiComposerEligibility({
           principalId: reloginPrincipalId,
-          eligible: isComposerGuardEligible(nextProfile),
+          eligible: isComposerGuardEligible(nextProfile, payload.token),
+          token: payload.token,
         })
         if (!isReloginCurrent()) return
         // 写回运行期会话 (不动 setAuthed/持久化设置, 仅刷新 token)。

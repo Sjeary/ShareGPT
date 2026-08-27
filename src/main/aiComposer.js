@@ -117,6 +117,9 @@ function composerDocumentNonceScript(nonce) {
         while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
         return active;
       };
+      const readEditorText = (editor) => String(
+        editor && 'value' in editor ? editor.value : editor?.innerText || editor?.textContent || ''
+      ).trim();
       state.armEnterGate = (gate) => {
         invalidateEnterGate('replaced');
         if (
@@ -124,7 +127,9 @@ function composerDocumentNonceScript(nonce) {
           state.nonce !== gate.nonce ||
           state.url !== gate.url ||
           String(globalThis.location?.href || '') !== gate.url ||
-          !gate.editor?.isConnected
+          !gate.editor?.isConnected ||
+          !gate.expectedText ||
+          readEditorText(gate.editor) !== gate.expectedText
         ) {
           return false;
         }
@@ -133,6 +138,7 @@ function composerDocumentNonceScript(nonce) {
           nonce: gate.nonce,
           url: gate.url,
           editor: gate.editor,
+          expectedText: gate.expectedText,
           expiresAt: Date.now() + gate.ttlMs,
           timer: null,
         };
@@ -182,7 +188,9 @@ function composerDocumentNonceScript(nonce) {
                   ? 'detached-editor'
                   : !(active === gate.editor || gate.editor.contains?.(active))
                     ? 'focus-changed'
-                    : '';
+                    : readEditorText(gate.editor) !== gate.expectedText
+                      ? 'text-changed'
+                      : '';
           const allowed = !reason;
           finishEnterGate(gate.token, allowed ? 'allowed' : 'blocked', reason);
           if (!allowed) {
@@ -255,6 +263,9 @@ function composerMutationScript(options = {}) {
           (focused === editor || editor.contains(focused))
         );
       };
+      const readEditorText = () => String(
+        'value' in editor ? editor.value : editor.innerText || editor.textContent || ''
+      ).trim();
 
       const inputEvent = (type, options) => {
         try {
@@ -297,6 +308,9 @@ function composerMutationScript(options = {}) {
           inputType: 'insertReplacementText',
         }));
         if (!editorOwnsFocus()) return { ok: false, reason: 'stale-editor' };
+        if (readEditorText() !== payload.text.trim()) {
+          return { ok: false, reason: 'text-changed' };
+        }
         if (
           payload.enterGateToken &&
           !state.armEnterGate?.({
@@ -304,6 +318,7 @@ function composerMutationScript(options = {}) {
             nonce: payload.nonce,
             url: payload.documentUrl,
             editor,
+            expectedText: payload.text.trim(),
             ttlMs: payload.enterGateTtlMs,
           })
         ) {
@@ -352,6 +367,9 @@ function composerMutationScript(options = {}) {
         }));
       }
       if (!editorOwnsFocus()) return { ok: false, reason: 'stale-editor' };
+      if (readEditorText() !== payload.text.trim()) {
+        return { ok: false, reason: 'text-changed' };
+      }
       if (
         payload.enterGateToken &&
         !state.armEnterGate?.({
@@ -359,6 +377,7 @@ function composerMutationScript(options = {}) {
           nonce: payload.nonce,
           url: payload.documentUrl,
           editor,
+          expectedText: payload.text.trim(),
           ttlMs: payload.enterGateTtlMs,
         })
       ) {
@@ -377,9 +396,8 @@ function composerEnterGateArmScript(options = {}) {
   const nonce = assertComposerDocumentNonce(options.documentNonce);
   const token = assertComposerDocumentNonce(options.token);
   const documentUrl = String(options.documentUrl || "");
-  const expectedText = String(options.expectedText || "")
-    .trim()
-    .slice(0, MAX_COMPOSER_CHARS);
+  const expectedText = String(options.expectedText || "").trim();
+  if (expectedText.length > MAX_COMPOSER_CHARS) throw new Error("待发送内容过长");
   const findAny = Boolean(options.findAny);
   const ttlMs = Math.min(
     COMPOSER_ENTER_GATE_TTL_MS,
@@ -425,7 +443,10 @@ function composerEnterGateArmScript(options = {}) {
       if (!(focused === editor || editor.contains?.(focused))) {
         return { ok: false, status: 'blocked', reason: 'focus-changed' };
       }
-      const text = String('value' in editor ? editor.value : editor.innerText || editor.textContent || '').trim().slice(0, ${MAX_COMPOSER_CHARS});
+      const text = String('value' in editor ? editor.value : editor.innerText || editor.textContent || '').trim();
+      if (text.length > ${MAX_COMPOSER_CHARS}) {
+        return { ok: false, status: 'blocked', reason: 'too-long' };
+      }
       if (payload.expectedText && text !== payload.expectedText) {
         return { ok: false, status: 'blocked', reason: 'text-changed' };
       }
@@ -434,6 +455,7 @@ function composerEnterGateArmScript(options = {}) {
         nonce: payload.nonce,
         url: payload.documentUrl,
         editor,
+        expectedText: payload.expectedText,
         ttlMs: payload.ttlMs,
       })) {
         return { ok: false, status: 'blocked', reason: 'gate-unavailable' };
@@ -511,6 +533,9 @@ function parseComposerGuardConsoleMessage(message, expectedToken) {
       return { kind: "invalid" };
     }
     const keys = Object.keys(payload);
+    if (keys.length === 1 && keys[0] === "tooLong" && payload.tooLong === true) {
+      return { kind: "too-long" };
+    }
     if (keys.length !== 1 || keys[0] !== "text" || typeof payload.text !== "string") {
       return { kind: "invalid" };
     }
@@ -665,6 +690,8 @@ function selectionTranslationScript(options = {}) {
         timer: null,
         candidate: null,
         authorization: null,
+        pointerGesture: null,
+        keyboardGesture: null,
         lastPublishedText: '',
       };
       globalThis.__shareGptSelectionTranslation = state;
@@ -678,6 +705,8 @@ function selectionTranslationScript(options = {}) {
         state.marker = '';
         state.candidate = null;
         state.authorization = null;
+        state.pointerGesture = null;
+        state.keyboardGesture = null;
         state.lastPublishedText = '';
       };
       state.invalidate('reconfigured');
@@ -749,7 +778,17 @@ function selectionTranslationScript(options = {}) {
           return null;
         }
         const text = String(selection.toString?.() || '').trim().slice(0, ${MAX_COMPOSER_CHARS});
-        return text ? { text, anchor, focus, common } : null;
+        const rects = Array.from(range?.getClientRects?.() || [], (rect) => ({
+          left: Number(rect.left),
+          right: Number(rect.right),
+          top: Number(rect.top),
+          bottom: Number(rect.bottom),
+        })).filter((rect) =>
+          [rect.left, rect.right, rect.top, rect.bottom].every(Number.isFinite) &&
+          rect.right > rect.left &&
+          rect.bottom > rect.top
+        );
+        return text ? { text, anchor, focus, common, rects } : null;
       };
       const updateCandidate = () => {
         state.candidate = readCandidate();
@@ -784,11 +823,10 @@ function selectionTranslationScript(options = {}) {
         }));
         return true;
       };
-      const authorize = () => {
+      const authorizeCandidate = (current) => {
         clearTimer();
-        const candidate = updateCandidate();
-        state.authorization = candidate;
-        if (!candidate) return false;
+        state.authorization = current;
+        if (!current) return false;
         state.timer = globalThis.setTimeout?.(publishAuthorized, state.debounceMs) || null;
         return true;
       };
@@ -810,14 +848,86 @@ function selectionTranslationScript(options = {}) {
           Boolean(event.metaKey) !== Boolean(event.ctrlKey)
         );
       };
+      const pointInCandidate = (candidate, x, y) => {
+        if (!candidate || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+        const tolerance = 8;
+        return candidate.rects.some((rect) =>
+          x >= rect.left - tolerance &&
+          x <= rect.right + tolerance &&
+          y >= rect.top - tolerance &&
+          y <= rect.bottom + tolerance
+        );
+      };
+      const keyboardSignature = (event) => [
+        String(event?.key || ''),
+        Boolean(event?.shiftKey),
+        Boolean(event?.ctrlKey),
+        Boolean(event?.metaKey),
+      ].join(':');
       if (!state.installed) {
         state.installed = true;
         document.addEventListener('selectionchange', updateCandidate, true);
+        document.addEventListener('pointerdown', (event) => {
+          if (!trustedPointerSelection(event)) return;
+          clearTimer();
+          state.authorization = null;
+          state.pointerGesture = {
+            pointerId: Number(event.pointerId) || 0,
+            x: Number(event.clientX),
+            y: Number(event.clientY),
+            startedAt: Date.now(),
+            initialText: readCandidate()?.text || '',
+          };
+        }, true);
         document.addEventListener('pointerup', (event) => {
-          if (trustedPointerSelection(event)) authorize();
+          const gesture = state.pointerGesture;
+          state.pointerGesture = null;
+          if (!trustedPointerSelection(event) || !gesture) return;
+          if ((Number(event.pointerId) || 0) !== gesture.pointerId) return;
+          if (Date.now() - gesture.startedAt > 10000) return;
+          const endX = Number(event.clientX);
+          const endY = Number(event.clientY);
+          const moved = Math.hypot(endX - gesture.x, endY - gesture.y) >= 4;
+          if (!moved && Number(event.detail) < 2) return;
+          const current = readCandidate();
+          if (!current || current.text === gesture.initialText) return;
+          if (
+            !pointInCandidate(current, gesture.x, gesture.y) ||
+            !pointInCandidate(current, endX, endY)
+          ) return;
+          authorizeCandidate(current);
+        }, true);
+        document.addEventListener('pointercancel', (event) => {
+          if (
+            state.pointerGesture &&
+            (Number(event?.pointerId) || 0) === state.pointerGesture.pointerId
+          ) {
+            state.pointerGesture = null;
+          }
+        }, true);
+        document.addEventListener('keydown', (event) => {
+          if (!trustedKeyboardSelection(event)) return;
+          clearTimer();
+          state.authorization = null;
+          state.keyboardGesture = {
+            signature: keyboardSignature(event),
+            startedAt: Date.now(),
+            initialText: readCandidate()?.text || '',
+          };
         }, true);
         document.addEventListener('keyup', (event) => {
-          if (trustedKeyboardSelection(event)) authorize();
+          const gesture = state.keyboardGesture;
+          state.keyboardGesture = null;
+          if (!trustedKeyboardSelection(event) || !gesture) return;
+          if (Date.now() - gesture.startedAt > 10000) return;
+          if (keyboardSignature(event) !== gesture.signature) return;
+          const current = readCandidate();
+          if (!current || current.text === gesture.initialText) return;
+          authorizeCandidate(current);
+        }, true);
+        globalThis.addEventListener?.('blur', () => {
+          state.pointerGesture = null;
+          state.keyboardGesture = null;
         }, true);
       }
       if (state.enabled) updateCandidate();
@@ -1005,7 +1115,9 @@ function composerInspectionScript(options = false) {
       const editor = (active.matches(selector) ? active : active.closest(selector)) ||
         (${findAny ? "true" : "false"} ? document.querySelector('#prompt-textarea, form textarea, form [contenteditable]:not([contenteditable="false"]), main textarea, main [contenteditable]:not([contenteditable="false"])') : null);
       if (!editor) return { editable: false, text: '' };
-      const text = String('value' in editor ? editor.value : editor.innerText || editor.textContent || '').slice(0, ${MAX_COMPOSER_CHARS});
+      const rawText = String('value' in editor ? editor.value : editor.innerText || editor.textContent || '');
+      const tooLong = rawText.length > ${MAX_COMPOSER_CHARS};
+      const text = tooLong ? rawText.slice(0, ${MAX_COMPOSER_CHARS}) : rawText;
       if (${focus ? "true" : "false"}) editor.focus();
       if (${selectAll ? "true" : "false"}) {
         editor.focus();
@@ -1019,7 +1131,7 @@ function composerInspectionScript(options = false) {
           selection?.addRange(range);
         }
       }
-      return { editable: true, text };
+      return { editable: true, text, tooLong };
     })();
   `;
 }
@@ -1059,7 +1171,7 @@ function composerClickGuardScript(options = {}) {
       };
       document.addEventListener('click', (event) => {
         const config = globalThis.__shareGptComposerGuard;
-        if (!config?.enabled || event.button !== 0) return;
+        if (!config?.enabled || !event.isTrusted || event.button !== 0) return;
         const button = event.target instanceof Element ? event.target.closest(sendSelector) : null;
         if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') return;
         const form = button.closest('form');
@@ -1068,7 +1180,13 @@ function composerClickGuardScript(options = {}) {
           (active instanceof Element && active.matches(editorSelector) ? active : null) ||
           document.querySelector(editorSelector);
         if (!editor) return;
-        const text = String('value' in editor ? editor.value : editor.innerText || editor.textContent || '').trim().slice(0, ${MAX_COMPOSER_CHARS});
+        const text = String('value' in editor ? editor.value : editor.innerText || editor.textContent || '').trim();
+        if (text.length > ${MAX_COMPOSER_CHARS}) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          console.log(config.marker + JSON.stringify({ tooLong: true }));
+          return;
+        }
         if (!text || !clearlyNonTarget(text, config.targetLanguage)) return;
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -1182,6 +1300,7 @@ async function inspectAiComposer(webContents, options = {}) {
   return {
     editable: Boolean(result?.editable),
     text: String(result?.text || "").slice(0, MAX_COMPOSER_CHARS),
+    tooLong: result?.tooLong === true,
   };
 }
 
@@ -1191,6 +1310,7 @@ async function inspectComposerSubmit(webContents, targetLanguage, options = {}) 
   assertCurrent();
   const composer = await inspectAiComposer(webContents);
   assertCurrent();
+  if (composer.tooLong) throw new Error("待发送内容过长，未执行发送");
   const text = String(composer.text || "").trim();
   return {
     action:
@@ -1246,6 +1366,11 @@ async function replaceAiComposerText(webContents, text, options = {}) {
   if (result?.reason === "stale-editor") {
     throw Object.assign(new Error("网页输入框已经变化，请重新操作"), {
       code: "COMPOSER_EDITOR_STALE",
+    });
+  }
+  if (result?.reason === "text-changed") {
+    throw Object.assign(new Error("网页输入内容已被修改，未执行发送"), {
+      code: "COMPOSER_TEXT_CHANGED",
     });
   }
   if (result?.reason === "beforeinput-cancelled") {

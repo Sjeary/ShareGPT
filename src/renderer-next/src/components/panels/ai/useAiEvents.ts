@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { api } from '@/lib/api'
+import { canUseTranslation } from '@/lib/aiAccess'
 import { currentAiEnvironmentOperation } from '@/lib/aiEnvironmentRuntime'
 import { useAiStore } from '@/store/useAiStore'
 import type { AiKind, AiTab } from '@/store/useAiStore'
@@ -200,7 +201,7 @@ export function useAiEvents() {
       if (kind !== 'gpt' && kind !== 'gemini' && kind !== 'claude') return
 
       if (payload?.type === 'translate-selection') {
-        const profile = useAuthStore.getState().profile
+        const auth = useAuthStore.getState()
         const tabId = safeText(payload.tabId)
         const ai = useAiStore.getState()
         const activeTabId = ai.activeTabIdByKind[kind]
@@ -225,19 +226,14 @@ export function useAiEvents() {
             navigationGeneration: Number(activeTab?.navigationGeneration ?? -1),
           },
         )
-        if (
-          !tabId ||
-          !eventIsCurrent ||
-          !profile?.routeAuthorizationVerified ||
-          (!profile?.isAdmin && !profile?.advancedAiAllowed)
-        )
-          return
+        if (!tabId || !eventIsCurrent || !canUseTranslation(auth.profile, auth.token)) return
         useTranslationStore.getState().openSelection(kind, tabId, safeText(payload.text))
         return
       }
 
       if (payload?.type === 'confirm-non-target-send') {
-        if (!isComposerGuardEligible(useAuthStore.getState().profile)) return
+        const auth = useAuthStore.getState()
+        if (!isComposerGuardEligible(auth.profile, auth.token)) return
         const tabId = safeText(payload.tabId)
         const requestId = safeText(payload.requestId)
         const text = safeText(payload.text)
