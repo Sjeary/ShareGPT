@@ -34,6 +34,7 @@
     "verify:browser-privacy": "electron scripts/verify-browser-privacy.js",
     "verify:browser-privacy-ui": "npm run build:next && node scripts/verify-browser-privacy-ui.js",
     "verify:ai-review-ui": "npm run build:next && node scripts/verify-ai-review-ui.js",
+    "verify:nav-tooltip-ui": "npm run build:next && node scripts/verify-nav-tooltip-ui.js",
     "verify:release-win": "node scripts/verify-win-release.js",
     "prepare:assets": "node scripts/prepare-assets.mjs all",
     "build:next": "npm --prefix src/renderer-next install && npm --prefix src/renderer-next run build",

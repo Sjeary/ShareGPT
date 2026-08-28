@@ -1,21 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  contentRectToScreenDip,
   createNavTooltipController,
-  normalizeNavTooltipBounds,
+  cssRectToContentDip,
+  normalizeNavTooltipIntent,
+  pointInsideRect,
+  resolveTooltipBoundsContentDip,
 } = require("../navTooltip");
-
-function deferred() {
-  /** @type {(value?: unknown) => void} */
-  let resolve = () => {};
-  /** @type {(reason?: unknown) => void} */
-  let reject = () => {};
-  const promise = new Promise((done, fail) => {
-    resolve = done;
-    reject = fail;
-  });
-  return { promise, reject, resolve };
-}
 
 function fakeView() {
   let visible = false;
@@ -33,26 +25,40 @@ function fakeView() {
     webContents: {
       close() {
         destroyed = true;
-        this.owner.closeCount += 1;
       },
       isDestroyed: () => destroyed,
-      owner: null,
       setZoomLevel() {},
     },
   };
 }
 
-function controllerHarness(
-  loads = [],
-  renderView = async () => {},
-  resolveBounds = (bounds) => bounds,
-  watchPointerExit = null,
-) {
+function pointerIntent(id = "gpt:1", triggerId = "gpt") {
+  return {
+    action: "show",
+    source: "pointer",
+    interactionId: id,
+    triggerId,
+    label: "ChatGPT",
+    side: "right",
+    theme: "dark",
+    anchorRectCss: { x: 10, y: 20, width: 48, height: 52 },
+  };
+}
+
+/** @param {{ bootstrapTimeoutMs?: number, ackTimeoutMs?: number }} [options] */
+function controllerHarness({ bootstrapTimeoutMs, ackTimeoutMs } = {}) {
   const views = [];
+  const renders = [];
+  const commits = [];
+  const placed = [];
+  /** @type {(payload: unknown) => void} */
+  let overlayMessage = () => {};
+  let valid = true;
+  let pointerExit = () => {};
+  let activeWatches = 0;
   const host = {
     added: [],
     removed: [],
-    viewportWidth: 0,
     contentView: {
       addChildView(view) {
         host.added.push(view);
@@ -64,183 +70,320 @@ function controllerHarness(
     isDestroyed: () => false,
   };
   const controller = createNavTooltipController({
-    createView() {
+    createView(onMessage) {
       const view = fakeView();
-      view.webContents.owner = view;
       views.push(view);
+      overlayMessage = onMessage;
       return view;
     },
     getHost: () => host,
-    loadView: () => loads.shift()?.promise,
-    renderView,
-    resolveBounds,
-    watchPointerExit,
-  });
-  return { controller, host, views };
-}
-
-test("tooltip bounds reject non-finite input and stay inside the renderer viewport", () => {
-  assert.equal(
-    normalizeNavTooltipBounds(
-      { x: Number.NaN, y: 0, width: 120, height: 40 },
-      { width: 800, height: 600 },
-    ),
-    null,
-  );
-  assert.deepEqual(
-    normalizeNavTooltipBounds(
-      { x: 790, y: -10, width: 900, height: 200 },
-      { width: 800, height: 600 },
-    ),
-    { x: 480, y: 0, width: 320, height: 96 },
-  );
-});
-
-test("a failed tooltip load is disposed and the next show creates a fresh view", async () => {
-  const first = deferred();
-  const second = deferred();
-  const { controller, host, views } = controllerHarness([first, second]);
-
-  const failed = controller.show({ bounds: { x: 1, y: 2, width: 80, height: 40 } });
-  first.reject(new Error("load failed"));
-  await assert.rejects(failed, /load failed/);
-  assert.equal(views[0].closeCount, 1);
-
-  const recovered = controller.show({ bounds: { x: 3, y: 4, width: 90, height: 40 } });
-  second.resolve();
-  assert.equal(await recovered, true);
-  assert.equal(views.length, 2);
-  assert.equal(host.added.at(-1), views[1]);
-  assert.equal(views[1].getVisible(), true);
-});
-
-test("hide and close cancel a pending show before it can attach", async () => {
-  const hiddenLoad = deferred();
-  const hidden = controllerHarness([hiddenLoad]);
-  const hiddenShow = hidden.controller.show({
-    bounds: { x: 1, y: 2, width: 80, height: 40 },
-  });
-  assert.equal(hidden.controller.hide(), true);
-  hiddenLoad.resolve();
-  assert.equal(await hiddenShow, false);
-  assert.equal(hidden.host.added.length, 0);
-  assert.equal(hidden.views[0].getVisible(), false);
-
-  const closedLoad = deferred();
-  const closed = controllerHarness([closedLoad]);
-  const closedShow = closed.controller.show({
-    bounds: { x: 1, y: 2, width: 80, height: 40 },
-  });
-  assert.equal(closed.controller.close(), true);
-  closedLoad.resolve();
-  assert.equal(await closedShow, false);
-  assert.equal(closed.host.added.length, 0);
-  assert.equal(closed.views[0].closeCount, 1);
-});
-
-test("a pending show recalculates bounds against the resized host before attaching", async () => {
-  const load = deferred();
-  const { controller, host, views } = controllerHarness(
-    [load],
-    async () => {},
-    (bounds, currentHost) => ({ ...bounds, width: currentHost.viewportWidth }),
-  );
-  host.viewportWidth = 120;
-  const shown = controller.show({ bounds: { x: 1, y: 2, width: 80, height: 40 } });
-  host.viewportWidth = 240;
-  load.resolve();
-
-  assert.equal(await shown, true);
-  assert.deepEqual(views[0].bounds, { x: 1, y: 2, width: 240, height: 40 });
-});
-
-test("a failed render is disposed and the next show rebuilds the view", async () => {
-  let renderAttempts = 0;
-  const { controller, views } = controllerHarness([], async () => {
-    renderAttempts += 1;
-    if (renderAttempts === 1) throw new Error("render failed");
-  });
-
-  await assert.rejects(
-    controller.show({ bounds: { x: 1, y: 2, width: 80, height: 40 } }),
-    /render failed/,
-  );
-  assert.equal(views[0].closeCount, 1);
-  assert.equal(await controller.show({ bounds: { x: 3, y: 4, width: 90, height: 40 } }), true);
-  assert.equal(views.length, 2);
-  assert.equal(views[1].getVisible(), true);
-});
-
-test("close is idempotent and destroys the owned WebContentsView", async () => {
-  const load = deferred();
-  const { controller, host, views } = controllerHarness([load]);
-  const shown = controller.show({ bounds: { x: 1, y: 2, width: 80, height: 40 } });
-  load.resolve();
-  assert.equal(await shown, true);
-
-  assert.equal(controller.close(), true);
-  assert.equal(controller.close(), false);
-  assert.equal(views[0].closeCount, 1);
-  assert.equal(host.removed.at(-1), views[0]);
-});
-
-test("pointer-driven tooltips hide when the cross-view pointer watcher reports exit", async () => {
-  let reportExit = () => assert.fail("pointer watcher was not installed");
-  let stopCount = 0;
-  const { controller, views } = controllerHarness(
-    [],
-    async () => {},
-    (bounds) => bounds,
-    (anchorBounds, _host, onExit) => {
-      assert.deepEqual(anchorBounds, { x: 10, y: 20, width: 40, height: 50 });
-      reportExit = onExit;
-      return () => {
-        stopCount += 1;
-      };
+    loadView: async () => {},
+    prepareView(view) {
+      view.setBounds({ x: 0, y: 0, width: 320, height: 96 });
+      view.setVisible(false);
+      host.contentView.addChildView(view);
     },
-  );
-
-  assert.equal(
-    await controller.show({
-      bounds: { x: 60, y: 20, width: 90, height: 40 },
-      anchorBounds: { x: 10, y: 20, width: 40, height: 50 },
-      dismissOnPointerExit: true,
-    }),
-    true,
-  );
-  assert.equal(views[0].getVisible(), true);
-  reportExit();
-  assert.equal(views[0].getVisible(), false);
-  assert.equal(stopCount, 1);
-});
-
-test("re-show, explicit hide and close never leave a pointer watcher running", async () => {
-  let activeWatches = 0;
-  const { controller } = controllerHarness(
-    [],
-    async () => {},
-    (bounds) => bounds,
-    () => {
+    sendRenderModel(_view, payload) {
+      renders.push(payload);
+    },
+    sendCommit(_view, payload) {
+      commits.push(payload);
+    },
+    placeView(_view, intent, sizeCss) {
+      placed.push({ intent, sizeCss });
+      return { x: 60, y: 20, width: 90, height: 40 };
+    },
+    reconcileViewOrder(view) {
+      host.contentView.addChildView(view);
+    },
+    validateIntent: () => valid,
+    watchPointerExit(_intent, _host, onExit) {
       activeWatches += 1;
+      pointerExit = onExit;
       return () => {
         activeWatches -= 1;
       };
     },
-  );
-  const payload = {
-    bounds: { x: 60, y: 20, width: 90, height: 40 },
-    anchorBounds: { x: 10, y: 20, width: 40, height: 50 },
-    dismissOnPointerExit: true,
+    bootstrapTimeoutMs,
+    ackTimeoutMs,
+  });
+  return {
+    commits,
+    controller,
+    emit: (payload) => overlayMessage(payload),
+    getActiveWatches: () => activeWatches,
+    host,
+    placed,
+    pointerExit: () => pointerExit(),
+    renders,
+    setValid: (value) => {
+      valid = value;
+    },
+    views,
   };
+}
 
-  await controller.show(payload);
-  assert.equal(activeWatches, 1);
-  await controller.show(payload);
-  assert.equal(activeWatches, 1);
-  controller.hide();
-  assert.equal(activeWatches, 0);
-  await controller.show(payload);
-  assert.equal(activeWatches, 1);
-  controller.close();
-  assert.equal(activeWatches, 0);
+async function prewarm(harness) {
+  const warming = harness.controller.prewarm();
+  await Promise.resolve();
+  await Promise.resolve();
+  harness.emit({ type: "bootstrap-ready" });
+  assert.equal(await warming, true);
+}
+
+async function beginShow(harness, intent = pointerIntent()) {
+  await prewarm(harness);
+  assert.equal(await harness.controller.show(intent), true);
+  const revision = harness.controller.getDebugState().renderRevision;
+  assert.equal(harness.renders.at(-1).revision, revision);
+  return revision;
+}
+
+test("tooltip intent validation uses a discriminated, bounded payload", () => {
+  assert.deepEqual(normalizeNavTooltipIntent(pointerIntent()), pointerIntent());
+  assert.equal(normalizeNavTooltipIntent({ action: "show", source: "pointer" }), null);
+  assert.equal(
+    normalizeNavTooltipIntent({
+      ...pointerIntent(),
+      interactionId: "<script>",
+    }),
+    null,
+  );
+  assert.deepEqual(
+    normalizeNavTooltipIntent({
+      action: "hide",
+      scope: "interaction",
+      interactionId: "gpt:1",
+      triggerId: "gpt",
+      reason: "pointer-leave",
+    }),
+    {
+      action: "hide",
+      scope: "interaction",
+      interactionId: "gpt:1",
+      triggerId: "gpt",
+      reason: "pointer-leave",
+    },
+  );
+});
+
+test("CSS coordinates convert once to content and screen DIP", () => {
+  assert.deepEqual(cssRectToContentDip({ x: 10.2, y: 20.2, width: 30.2, height: 40.2 }, 1.2), {
+    x: 12,
+    y: 24,
+    width: 37,
+    height: 49,
+  });
+  assert.deepEqual(
+    contentRectToScreenDip({ x: 12, y: 24, width: 37, height: 49 }, { x: 100, y: 200 }),
+    { x: 112, y: 224, width: 37, height: 49 },
+  );
+  assert.equal(
+    pointInsideRect({ x: 111, y: 223 }, { x: 112, y: 224, width: 37, height: 49 }),
+    true,
+  );
+  assert.equal(
+    pointInsideRect({ x: 109, y: 223 }, { x: 112, y: 224, width: 37, height: 49 }),
+    false,
+  );
+});
+
+test("tooltip bounds use overlay size, side, zoom and viewport clamping", () => {
+  assert.deepEqual(
+    resolveTooltipBoundsContentDip({
+      anchorRectCss: { x: 60, y: 40, width: 48, height: 52 },
+      tooltipSizeCss: { width: 70, height: 28 },
+      side: "right",
+      zoomFactor: 1,
+      viewportDip: { width: 800, height: 600 },
+    }),
+    { x: 112, y: 46, width: 82, height: 40 },
+  );
+  assert.deepEqual(
+    resolveTooltipBoundsContentDip({
+      anchorRectCss: { x: 760, y: 2, width: 48, height: 52 },
+      tooltipSizeCss: { width: 70, height: 28 },
+      side: "right",
+      zoomFactor: 1,
+      viewportDip: { width: 800, height: 600 },
+    }),
+    { x: 718, y: 8, width: 82, height: 40 },
+  );
+});
+
+test("bootstrap and layout gate presentation while frame acknowledgement finalizes it", async () => {
+  const harness = controllerHarness();
+  const revision = await beginShow(harness);
+  assert.equal(harness.views[0].getVisible(), false);
+  assert.equal(harness.controller.getDebugState().phase, "rendering");
+
+  harness.emit({
+    type: "layout-ready",
+    revision,
+    sizeCss: { width: 70, height: 28 },
+  });
+  assert.deepEqual(harness.views[0].bounds, { x: 60, y: 20, width: 90, height: 40 });
+  assert.equal(harness.commits.at(-1).revision, revision);
+  assert.equal(harness.views[0].getVisible(), true);
+  assert.equal(harness.controller.getDebugState().visible, false);
+
+  harness.emit({ type: "frame-ready", revision });
+  assert.deepEqual(harness.views[0].bounds, { x: 60, y: 20, width: 90, height: 40 });
+  assert.equal(harness.views[0].getVisible(), true);
+  assert.equal(harness.controller.getDebugState().phase, "visible");
+  assert.equal(harness.controller.getDebugState().visible, true);
+  assert.equal(harness.host.added.at(-1), harness.views[0]);
+});
+
+test("a completed frame stays visible after the acknowledgement deadline", async () => {
+  const harness = controllerHarness({ ackTimeoutMs: 5 });
+  const revision = await beginShow(harness);
+  harness.emit({
+    type: "layout-ready",
+    revision,
+    sizeCss: { width: 70, height: 28 },
+  });
+  harness.emit({ type: "frame-ready", revision });
+  await new Promise((resolve) => setTimeout(resolve, 12));
+  assert.equal(harness.views[0].webContents.isDestroyed(), false);
+  assert.equal(harness.views[0].getVisible(), true);
+  assert.deepEqual(harness.views[0].bounds, { x: 60, y: 20, width: 90, height: 40 });
+  assert.equal(harness.controller.getDebugState().phase, "visible");
+});
+
+test("stale layout and frame acknowledgements cannot complete a newer interaction", async () => {
+  const harness = controllerHarness();
+  const firstRevision = await beginShow(harness, pointerIntent("gpt:1"));
+  assert.equal(await harness.controller.show(pointerIntent("claude:2", "claude")), true);
+  const secondRevision = harness.controller.getDebugState().renderRevision;
+  assert.ok(secondRevision > firstRevision);
+
+  harness.emit({
+    type: "layout-ready",
+    revision: firstRevision,
+    sizeCss: { width: 70, height: 28 },
+  });
+  harness.emit({ type: "frame-ready", revision: firstRevision });
+  assert.equal(harness.views[0].getVisible(), false);
+  assert.equal(harness.commits.length, 0);
+
+  harness.emit({
+    type: "layout-ready",
+    revision: secondRevision,
+    sizeCss: { width: 76, height: 28 },
+  });
+  harness.emit({ type: "frame-ready", revision: secondRevision });
+  assert.equal(harness.views[0].getVisible(), true);
+});
+
+test("an old trigger hide cannot cancel a newer trigger", async () => {
+  const harness = controllerHarness();
+  await beginShow(harness, pointerIntent("gpt:1"));
+  await harness.controller.show(pointerIntent("claude:2", "claude"));
+  assert.equal(
+    harness.controller.hide({
+      scope: "interaction",
+      interactionId: "gpt:1",
+      triggerId: "gpt",
+      reason: "pointer-leave",
+    }),
+    false,
+  );
+  assert.equal(harness.controller.getDebugState().triggerId, "claude");
+});
+
+test("host invalidation cancels an in-flight frame and rejects its late ack", async () => {
+  const harness = controllerHarness();
+  const revision = await beginShow(harness);
+  harness.emit({
+    type: "layout-ready",
+    revision,
+    sizeCss: { width: 70, height: 28 },
+  });
+  harness.controller.invalidate("window-blurred");
+  harness.emit({ type: "frame-ready", revision });
+  assert.equal(harness.views[0].getVisible(), false);
+  assert.equal(harness.controller.getDebugState().phase, "ready-hidden");
+  assert.equal(harness.getActiveWatches(), 0);
+});
+
+test("pointer watcher belongs to one pointer interaction; focus starts none", async () => {
+  const harness = controllerHarness();
+  await beginShow(harness);
+  assert.equal(harness.getActiveWatches(), 1);
+  harness.pointerExit();
+  assert.equal(harness.getActiveWatches(), 0);
+  assert.equal(harness.controller.getDebugState().phase, "ready-hidden");
+
+  assert.equal(
+    await harness.controller.show({ ...pointerIntent("gpt:2"), source: "keyboard-focus" }),
+    true,
+  );
+  assert.equal(harness.getActiveWatches(), 0);
+});
+
+test("overlay failure cancels state and the next prewarm creates a fresh view", async () => {
+  const harness = controllerHarness();
+  await beginShow(harness);
+  assert.equal(harness.controller.handleOverlayUnavailable(harness.views[0]), true);
+  assert.equal(harness.views[0].webContents.isDestroyed(), true);
+  assert.equal(harness.controller.getDebugState().phase, "cold");
+
+  const warming = harness.controller.prewarm();
+  await Promise.resolve();
+  await Promise.resolve();
+  harness.emit({ type: "bootstrap-ready" });
+  assert.equal(await warming, true);
+  assert.equal(harness.views.length, 2);
+});
+
+test("overlay bootstrap timeout discards the broken view and allows a retry", async () => {
+  const harness = controllerHarness({ bootstrapTimeoutMs: 5 });
+  assert.equal(await harness.controller.prewarm(), false);
+  assert.equal(harness.views[0].webContents.isDestroyed(), true);
+  assert.equal(harness.controller.getDebugState().phase, "cold");
+
+  const retry = harness.controller.prewarm();
+  await Promise.resolve();
+  await Promise.resolve();
+  harness.emit({ type: "bootstrap-ready" });
+  assert.equal(await retry, true);
+  assert.equal(harness.views.length, 2);
+});
+
+test("missing layout or frame acknowledgement discards the stuck overlay", async () => {
+  const layoutHarness = controllerHarness({ ackTimeoutMs: 5 });
+  await beginShow(layoutHarness);
+  await new Promise((resolve) => setTimeout(resolve, 12));
+  assert.equal(layoutHarness.views[0].webContents.isDestroyed(), true);
+  assert.equal(layoutHarness.controller.getDebugState().phase, "cold");
+
+  const frameHarness = controllerHarness({ ackTimeoutMs: 5 });
+  const revision = await beginShow(frameHarness);
+  frameHarness.emit({
+    type: "layout-ready",
+    revision,
+    sizeCss: { width: 70, height: 28 },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 12));
+  assert.equal(frameHarness.views[0].webContents.isDestroyed(), true);
+  assert.equal(frameHarness.views[0].getVisible(), false);
+  assert.deepEqual(frameHarness.views[0].bounds, { x: 0, y: 0, width: 1, height: 1 });
+  assert.equal(frameHarness.getActiveWatches(), 0);
+  assert.equal(frameHarness.host.removed.at(-1), frameHarness.views[0]);
+  assert.equal(frameHarness.controller.getDebugState().phase, "cold");
+});
+
+test("final intent validation is repeated after renderer frame preparation", async () => {
+  const harness = controllerHarness();
+  const revision = await beginShow(harness);
+  harness.emit({
+    type: "layout-ready",
+    revision,
+    sizeCss: { width: 70, height: 28 },
+  });
+  harness.setValid(false);
+  harness.emit({ type: "frame-ready", revision });
+  assert.equal(harness.views[0].getVisible(), false);
+  assert.equal(harness.controller.getDebugState().phase, "ready-hidden");
 });

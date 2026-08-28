@@ -3,6 +3,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { NavItem, NavKey } from '@/lib/nav'
+import { createNavTooltipInputState } from '@/lib/navTooltipIntent'
 
 // 行间距 = 外层 gap-1 (0.25rem = 4px); 用于把"为拖动让位"的位移量算成整行高度。
 const ROW_GAP = 4
@@ -10,63 +11,75 @@ const ROW_GAP = 4
 const HOLD_MS = 240
 // 进入拖动前的位移容差: 超过则判定为"滚动/误触", 取消长按。
 const MOVE_TOLERANCE = 8
-const NATIVE_TOOLTIP_GUTTER = 12
-let nativeTooltipRequest = 0
+const navTooltipInput = createNavTooltipInputState()
+let navTooltipRequest = 0
+let activeNavTooltip: { interactionId: string; triggerId: string } | null = null
 
-async function showNativeTooltip(
+async function showNavTooltip(
   target: HTMLButtonElement,
   key: NavKey,
   label: string,
   side: 'left' | 'right',
-  source: 'pointer' | 'focus',
+  source: 'pointer' | 'keyboard-focus',
 ) {
-  const request = ++nativeTooltipRequest
+  const request = ++navTooltipRequest
+  const interactionId = navTooltipInput.nextInteractionId(key)
+  activeNavTooltip = { interactionId, triggerId: key }
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-  const content = document.querySelector<HTMLElement>(`[data-native-nav-tooltip="${key}"]`)
+  const focusIsValid = navTooltipInput.canShowKeyboardFocus({
+    documentHasFocus: document.hasFocus(),
+    isActiveElement: document.activeElement === target,
+    isFocusVisible: target.matches(':focus-visible'),
+  })
   if (
-    request !== nativeTooltipRequest ||
-    !content ||
-    (source === 'pointer' ? !target.matches(':hover') : document.activeElement !== target)
+    request !== navTooltipRequest ||
+    activeNavTooltip?.interactionId !== interactionId ||
+    !target.isConnected ||
+    document.visibilityState !== 'visible' ||
+    (source === 'pointer' ? !target.matches(':hover') : !focusIsValid)
   ) {
+    if (activeNavTooltip?.interactionId === interactionId) activeNavTooltip = null
     return
   }
 
-  // 直接读取 Radix/shadcn 最终布局盒，包含真实字体与 padding；offset 尺寸不受进场缩放动画影响。
-  const contentWidth = content.offsetWidth
-  const contentHeight = content.offsetHeight
-  if (!contentWidth || !contentHeight) return
   const trigger = target.getBoundingClientRect()
-  // 原生视图给箭头/透明边缘各留空间，#tip 本体尺寸仍与 shadcn 的布局盒完全一致。
-  const width = Math.min(320, contentWidth + NATIVE_TOOLTIP_GUTTER)
-  const height = Math.min(96, contentHeight + NATIVE_TOOLTIP_GUTTER)
-  const x = side === 'right' ? trigger.right + 4 : trigger.left - width - 4
-  const y = trigger.top + (trigger.height - height) / 2
   void api
-    .setNavTooltip({
-      visible: true,
+    .requestNavTooltip({
+      action: 'show',
+      source,
+      interactionId,
+      triggerId: key,
       label,
       side,
       theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
-      bounds: {
-        x: Math.max(4, Math.min(window.innerWidth - width - 4, x)),
-        y: Math.max(4, Math.min(window.innerHeight - height - 4, y)),
-        width,
-        height,
-      },
-      anchorBounds: {
+      anchorRectCss: {
         x: trigger.left,
         y: trigger.top,
         width: trigger.width,
         height: trigger.height,
       },
-      dismissOnPointerExit: source === 'pointer',
     })
     .catch(() => undefined)
 }
 
-function hideNativeTooltip() {
-  nativeTooltipRequest += 1
-  void api.setNavTooltip({ visible: false }).catch(() => undefined)
+function hideNavTooltip(reason: string, triggerId?: NavKey) {
+  const current = activeNavTooltip
+  if (triggerId && current?.triggerId !== triggerId) return
+  navTooltipRequest += 1
+  activeNavTooltip = null
+  void api
+    .requestNavTooltip(
+      current && triggerId
+        ? {
+            action: 'hide',
+            scope: 'interaction',
+            interactionId: current.interactionId,
+            triggerId: current.triggerId,
+            reason,
+          }
+        : { action: 'hide', scope: 'all', reason },
+    )
+    .catch(() => undefined)
 }
 
 interface DragState {
@@ -109,8 +122,8 @@ export function NavList({
   onReorder,
 }: Props) {
   const [drag, setDrag] = useState<DragState | null>(null)
-  // AI 网页是原生 WebContentsView，普通 DOM tooltip 无法盖在它上面。
-  // 折叠导航在这些页面改由主进程绘制同层级的原生提示视图。
+  // Native AI pages are child WebContentsViews and cover the shell renderer.
+  // Normal pages keep the established shadcn Tooltip; only AI surfaces use the bridge.
   const useNativeTooltip = activeKey === 'gpt' || activeKey === 'gemini' || activeKey === 'claude'
   const rowEls = useRef<(HTMLDivElement | null)[]>([])
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -130,23 +143,49 @@ export function NavList({
 
   const dragging = Boolean(drag)
   useEffect(() => {
-    if (!collapsed || !useNativeTooltip || dragging) hideNativeTooltip()
+    if (!collapsed || !useNativeTooltip || dragging) hideNavTooltip('surface-changed')
   }, [collapsed, dragging, useNativeTooltip])
 
   useEffect(() => {
-    hideNativeTooltip()
+    hideNavTooltip('navigation-changed')
   }, [activeKey, tooltipSide])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      navTooltipInput.noteKeyboardKey(event.key)
+    }
+    const onPointerDown = () => navTooltipInput.notePointer()
+    const invalidate = () => {
+      navTooltipInput.invalidate()
+      hideNavTooltip('shell-focus-invalidated')
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') invalidate()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    window.addEventListener('pointerdown', onPointerDown, true)
+    window.addEventListener('blur', invalidate)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('pointerdown', onPointerDown, true)
+      window.removeEventListener('blur', invalidate)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [])
 
   useEffect(
     () => () => {
       if (holdTimer.current) clearTimeout(holdTimer.current)
-      hideNativeTooltip()
+      navTooltipInput.invalidate()
+      hideNavTooltip('unmounted')
     },
     [],
   )
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>, index: number, key: NavKey) => {
     if (e.button !== 0) return // 仅主键/触摸
+    navTooltipInput.notePointer()
     pending.current = { index, startY: e.clientY, startX: e.clientX }
     pointerId.current = e.pointerId
     const el = rowEls.current[index]
@@ -251,24 +290,34 @@ export function NavList({
         const btn = (
           <button
             data-tour={`nav-${key}`}
+            aria-label={collapsed ? label : undefined}
             onPointerEnter={(event) => {
               if (collapsed && useNativeTooltip) {
-                void showNativeTooltip(event.currentTarget, key, label, tooltipSide, 'pointer')
+                navTooltipInput.notePointer()
+                void showNavTooltip(event.currentTarget, key, label, tooltipSide, 'pointer')
               }
             }}
             onPointerLeave={() => {
-              if (useNativeTooltip) hideNativeTooltip()
+              if (useNativeTooltip) hideNavTooltip('pointer-leave', key)
             }}
             onFocus={(event) => {
-              if (collapsed && useNativeTooltip) {
-                void showNativeTooltip(event.currentTarget, key, label, tooltipSide, 'focus')
+              if (
+                collapsed &&
+                useNativeTooltip &&
+                navTooltipInput.canShowKeyboardFocus({
+                  documentHasFocus: document.hasFocus(),
+                  isActiveElement: document.activeElement === event.currentTarget,
+                  isFocusVisible: event.currentTarget.matches(':focus-visible'),
+                })
+              ) {
+                void showNavTooltip(event.currentTarget, key, label, tooltipSide, 'keyboard-focus')
               }
             }}
             onBlur={() => {
-              if (useNativeTooltip) hideNativeTooltip()
+              if (useNativeTooltip) hideNavTooltip('focus-blur', key)
             }}
             onClick={() => {
-              if (useNativeTooltip) hideNativeTooltip()
+              if (useNativeTooltip) hideNavTooltip('trigger-click')
               onClickRow(key)
             }}
             className={cn(
@@ -332,15 +381,10 @@ export function NavList({
             onPointerCancel={finishDrag}
             className={cn(lifted && 'select-none', 'touch-pan-y')}
           >
-            {collapsed && !drag ? (
+            {collapsed && !drag && !useNativeTooltip ? (
               <Tooltip>
                 <TooltipTrigger asChild>{btn}</TooltipTrigger>
-                <TooltipContent
-                  side={tooltipSide}
-                  forceMount={useNativeTooltip || undefined}
-                  data-native-nav-tooltip={key}
-                  className={cn('font-medium', useNativeTooltip && 'invisible pointer-events-none')}
-                >
+                <TooltipContent side={tooltipSide} className="font-medium">
                   {label}
                 </TooltipContent>
               </Tooltip>

@@ -73,6 +73,21 @@ async function stopChild(child) {
   if (child.exitCode === null) child.kill("SIGKILL");
 }
 
+async function waitForMainWindow(electronApp, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const candidate = electronApp
+      .windows()
+      .find(
+        (window) =>
+          window.url().includes("index.html") && !window.url().includes("nav-tooltip.html"),
+      );
+    if (candidate) return candidate;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("main application window did not become available");
+}
+
 async function waitForSyncedPrivacy(file, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -149,7 +164,7 @@ async function main() {
       await route.abort("blockedbyclient");
     });
 
-    const window = await electronApp.firstWindow();
+    const window = await waitForMainWindow(electronApp);
     const pageErrors = [];
     window.on("pageerror", (error) => pageErrors.push(error.message));
     await window.locator("#account-server").waitFor({ state: "visible" });
