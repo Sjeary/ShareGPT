@@ -254,90 +254,24 @@ async function sendZoomShortcut(electronApp, keyCode) {
   }, keyCode);
 }
 
-async function verifyNavTooltipMatchesShadcn(window, electronApp, expectedSide = "right") {
+async function verifyRendererNavTooltip(window, electronApp, expectedSide = "right") {
   await window.locator('[data-tour="nav-chat"]').click();
   const gptNav = window.locator('[data-tour="nav-gpt"]');
   await gptNav.hover();
-  const shellTooltip = window.locator('[data-native-nav-tooltip="gpt"]');
+  const shellTooltip = window.locator('[data-slot="tooltip-content"]', { hasText: "ChatGPT" });
   await shellTooltip.waitFor({ state: "visible" });
-  const shellAppearance = await shellTooltip.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      background: style.backgroundColor,
-      foreground: style.color,
-      borderRadius: style.borderRadius,
-      fontFamily: style.fontFamily,
-      fontSize: style.fontSize,
-      fontWeight: style.fontWeight,
-      lineHeight: style.lineHeight,
-      paddingTop: style.paddingTop,
-      paddingRight: style.paddingRight,
-      paddingBottom: style.paddingBottom,
-      paddingLeft: style.paddingLeft,
-      boxShadow: style.boxShadow,
-      width: style.width,
-      height: style.height,
-    };
-  });
+  assert.strictEqual(await shellTooltip.getAttribute("data-side"), expectedSide);
 
-  await gptNav.click();
-  await window.getByRole("tab").first().waitFor({ state: "visible", timeout: 10_000 });
-  await window.getByRole("tab").first().hover();
-  await gptNav.hover();
-  await waitUntil(() =>
-    electronApp.evaluate(async ({ BrowserWindow }) => {
-      const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-      const tooltip = main?.contentView.children.find((view) =>
-        view.webContents?.getURL().includes("nav-tooltip.html"),
-      );
-      if (!tooltip?.getVisible()) return false;
-      return (
-        (await tooltip.webContents.executeJavaScript(
-          `Array.from(document.querySelector("[data-slot=tooltip-content]")?.childNodes || [])
-            .find((node) => node.nodeType === Node.TEXT_NODE)?.textContent`,
-        )) === "ChatGPT"
-      );
-    }),
-  );
-  const nativeAppearance = await electronApp.evaluate(async ({ BrowserWindow }) => {
+  const nativeTooltipViews = await electronApp.evaluate(({ BrowserWindow }) => {
     const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-    const tooltip = main?.contentView.children.find((view) =>
-      view.webContents?.getURL().includes("nav-tooltip.html"),
+    return (
+      main?.contentView.children.filter((view) =>
+        view.webContents?.getURL().includes("nav-tooltip"),
+      ).length || 0
     );
-    return tooltip
-      ? await tooltip.webContents.executeJavaScript(`(() => {
-          const tip = document.querySelector("[data-slot=tooltip-content]");
-          const style = getComputedStyle(tip);
-          return {
-            side: tip.dataset.side,
-            background: style.backgroundColor,
-            foreground: style.color,
-            borderRadius: style.borderRadius,
-            fontFamily: style.fontFamily,
-            fontSize: style.fontSize,
-            fontWeight: style.fontWeight,
-            lineHeight: style.lineHeight,
-            paddingTop: style.paddingTop,
-            paddingRight: style.paddingRight,
-            paddingBottom: style.paddingBottom,
-            paddingLeft: style.paddingLeft,
-            boxShadow: style.boxShadow,
-            width: style.width,
-            height: style.height,
-          };
-        })()`)
-      : null;
   });
-  assert.ok(nativeAppearance, "native navigation tooltip was not created");
-  const { width: nativeWidth, side: nativeSide, ...nativeStyle } = nativeAppearance;
-  const { width: shellWidth, ...shellStyle } = shellAppearance;
-  assert.strictEqual(nativeSide, expectedSide);
-  assert.deepStrictEqual(nativeStyle, shellStyle);
-  assert.ok(
-    Math.abs(Number.parseFloat(nativeWidth) - Number.parseFloat(shellWidth)) <= 1,
-    `native tooltip width ${nativeWidth} does not match shadcn ${shellWidth}`,
-  );
-  return { gptNav, nativeAppearance };
+  assert.strictEqual(nativeTooltipViews, 0);
+  assert.strictEqual(await window.evaluate(() => typeof window.api.setNavTooltip), "undefined");
 }
 
 async function partitionStorage(electronApp, partition, fixtureUrl, writeValue) {
@@ -855,124 +789,11 @@ async function main() {
     if (await collapseSidebarButton.isVisible()) await collapseSidebarButton.click();
     await window.getByRole("button", { name: "展开侧栏" }).waitFor();
 
-    const { nativeAppearance: nativeTooltipAppearance } = await verifyNavTooltipMatchesShadcn(
-      window,
-      electronApp,
-    );
-    const nativeTooltipArrow = await electronApp.evaluate(async ({ BrowserWindow }) => {
-      const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-      const tooltip = main?.contentView.children.find((view) =>
-        view.webContents?.getURL().includes("nav-tooltip.html"),
-      );
-      return tooltip
-        ? await tooltip.webContents.executeJavaScript(`(() => {
-            const tip = document.querySelector("[data-slot=tooltip-content]");
-            const arrow = getComputedStyle(document.querySelector("[data-slot=tooltip-arrow]"));
-            return {
-              overflow: getComputedStyle(tip).overflow,
-              background: arrow.backgroundColor,
-              width: arrow.width,
-              height: arrow.height,
-            };
-          })()`)
-        : null;
-    });
-    assert.deepStrictEqual(nativeTooltipArrow, {
-      overflow: "visible",
-      background: nativeTooltipAppearance.background,
-      width: "10px",
-      height: "10px",
-    });
+    await verifyRendererNavTooltip(window, electronApp);
+    results.push("navigation uses only the renderer-owned shadcn tooltip on every page");
 
-    await window.getByRole("tab").first().hover();
-    await waitUntil(() =>
-      electronApp.evaluate(({ BrowserWindow }) => {
-        const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-        return (
-          main?.contentView.children
-            .find((view) => view.webContents?.getURL().includes("nav-tooltip.html"))
-            ?.getVisible() === false
-        );
-      }),
-    );
-    await window.waitForTimeout(250);
-    assert.strictEqual(
-      await electronApp.evaluate(({ BrowserWindow }) => {
-        const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-        return main?.contentView.children
-          .find((view) => view.webContents?.getURL().includes("nav-tooltip.html"))
-          ?.getVisible();
-      }),
-      false,
-      "navigation tooltip must stay hidden after the pointer leaves its trigger",
-    );
-
-    await window.evaluate(() =>
-      window.api.setNavTooltip({
-        visible: true,
-        label: "Tooltip bounds verification",
-        side: "right",
-        theme: "dark",
-        bounds: { x: -500, y: -500, width: 5000, height: 5000 },
-      }),
-    );
-    const tooltipBoundsSnapshot = await electronApp.evaluate(({ BrowserWindow }) => {
-      const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-      const tooltip = main?.contentView.children.find((view) =>
-        view.webContents?.getURL().includes("nav-tooltip.html"),
-      );
-      return {
-        bounds: tooltip?.getBounds(),
-        contentBounds: main?.getContentBounds(),
-        visible: tooltip?.getVisible(),
-      };
-    });
-    assert.strictEqual(tooltipBoundsSnapshot.visible, true);
-    assert.ok(tooltipBoundsSnapshot.bounds && tooltipBoundsSnapshot.contentBounds);
-    assert.ok(tooltipBoundsSnapshot.bounds.x >= 0 && tooltipBoundsSnapshot.bounds.y >= 0);
-    assert.ok(
-      tooltipBoundsSnapshot.bounds.width <= 320 && tooltipBoundsSnapshot.bounds.height <= 96,
-    );
-    assert.ok(
-      tooltipBoundsSnapshot.bounds.x + tooltipBoundsSnapshot.bounds.width <=
-        tooltipBoundsSnapshot.contentBounds.width,
-    );
-    assert.ok(
-      tooltipBoundsSnapshot.bounds.y + tooltipBoundsSnapshot.bounds.height <=
-        tooltipBoundsSnapshot.contentBounds.height,
-    );
-    const tooltipOriginalSize = await electronApp.evaluate(({ BrowserWindow }) => {
-      const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-      const [width, height] = main.getSize();
-      main.setSize(width > 900 ? width - 24 : width + 24, height);
-      return { width, height };
-    });
-    await waitUntil(() =>
-      electronApp.evaluate(({ BrowserWindow }) => {
-        const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-        const tooltip = main?.contentView.children.find((view) =>
-          view.webContents?.getURL().includes("nav-tooltip.html"),
-        );
-        return tooltip?.getVisible() === false;
-      }),
-    );
-    const tooltipHidden = await electronApp.evaluate(({ BrowserWindow }) => {
-      const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-      const tooltip = main?.contentView.children.find((view) =>
-        view.webContents?.getURL().includes("nav-tooltip.html"),
-      );
-      return tooltip ? { bounds: tooltip.getBounds(), visible: tooltip.getVisible() } : null;
-    });
-    assert.deepStrictEqual(tooltipHidden, {
-      bounds: { x: 0, y: 0, width: 1, height: 1 },
-      visible: false,
-    });
-    await electronApp.evaluate(({ BrowserWindow }, size) => {
-      const main = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-      main.setSize(size.width, size.height);
-    }, tooltipOriginalSize);
-    results.push("real hover path keeps native AI navigation tooltip dimensions equal to shadcn");
-
+    await window.locator('[data-tour="nav-gpt"]').click();
+    await window.getByRole("tab").first().waitFor({ state: "visible", timeout: 10_000 });
     const firstTab = window.getByRole("tab").first();
     assert.strictEqual(await firstTab.getAttribute("aria-selected"), "true");
     await window.getByLabel("新建标签页").click();
@@ -1008,7 +829,7 @@ async function main() {
     await aiServiceTab.click();
     const originalAiUrl = await translationPanel.getByLabel("AI 接口地址").inputValue();
     await translationPanel.getByLabel("AI 接口地址").fill(`${fixtureUrl}/draft-not-saved`);
-    await aiServiceTab.press("ArrowRight");
+    await serviceTabs.getByRole("tab", { name: "翻译 API", exact: true }).click();
     assert.strictEqual(
       await serviceTabs
         .getByRole("tab", { name: "翻译 API", exact: true })
@@ -1054,21 +875,22 @@ async function main() {
         (item) => item.type !== "browserView" || item.zoom === zoomedOut.shell,
       ),
     );
-    await verifyNavTooltipMatchesShadcn(window, electronApp);
+    await verifyRendererNavTooltip(window, electronApp);
     await sendZoomShortcut(electronApp, "=");
     await sendZoomShortcut(electronApp, "0");
     await window.waitForTimeout(350);
     const resetZoom = await zoomSnapshot(electronApp);
     assert.strictEqual(resetZoom.shell, 0);
     results.push(
-      "Cmd +/-/0 keeps shell, embedded views and shadcn-sized navigation tooltips on one zoom level",
+      "Cmd +/-/0 keeps shell and embedded views on one zoom level",
     );
 
     await patchSection(window, "ui", { sidebarSide: "right" });
     await window.reload();
     await window.locator('[data-tour="nav-account"]').waitFor({ state: "visible" });
-    await verifyNavTooltipMatchesShadcn(window, electronApp, "left");
-    results.push("right sidebar mirrors the shadcn-sized native navigation tooltip");
+    await verifyRendererNavTooltip(window, electronApp, "left");
+    results.push("right sidebar uses the same renderer-owned shadcn navigation tooltip");
+    await window.locator('[data-tour="nav-gpt"]').click();
 
     for (const [width, height] of [
       [860, 620],

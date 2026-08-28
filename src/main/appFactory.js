@@ -11,7 +11,6 @@ const {
   ipcMain,
   nativeTheme,
   net: electronNet,
-  screen,
   session,
   shell,
 } = require("electron");
@@ -66,10 +65,6 @@ const {
 } = require("./aiSessionAuthorization");
 const { runSettingsPrincipalTransition } = require("./settingsPrincipalTransition");
 const { createStorageFlushCoordinator } = require("./storageFlush");
-const {
-  createNavTooltipController,
-  normalizeNavTooltipBounds,
-} = require("./navTooltip");
 const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
@@ -579,7 +574,6 @@ function createElectronApp(baseMode = "all") {
   const tabOrderByKind = { gpt: [], gemini: [], claude: [] };
   const activeTabIdByKind = { gpt: "", gemini: "", claude: "" };
   let activeAiKind = "";
-  let navTooltipController = null;
   const aiEnvironmentGuard = createAiEnvironmentGenerationGuard();
   let aiTabCounter = 0;
   const hostStateByKind = {
@@ -618,7 +612,6 @@ function createElectronApp(baseMode = "all") {
       const wc = workspace?.view?.webContents;
       if (wc && !wc.isDestroyed()) wc.setZoomLevel(next);
     }
-    navTooltipController?.setZoomLevel(next);
     for (const kind of Object.keys(hostStateByKind)) {
       hostStateByKind[kind] = {
         visible: hostStateByKind[kind].visible,
@@ -635,7 +628,6 @@ function createElectronApp(baseMode = "all") {
     if (nextKind === activeAiKind) return activeAiKind;
     const previousWorkspace = getWorkspace(activeAiKind, activeTabIdByKind[activeAiKind]);
     if (previousWorkspace) invalidateComposerWorkspace(previousWorkspace, "workspace-switched");
-    hideNavTooltip();
     activeAiKind = nextKind;
     for (const workspace of aiWorkspaces.values()) {
       detachWorkspaceView(workspace);
@@ -1707,110 +1699,6 @@ function createElectronApp(baseMode = "all") {
     }
     mainWindow.contentView.addChildView(workspace.view);
     workspace.attached = true;
-    navTooltipController?.bringToFrontIfVisible();
-  }
-
-  function hideNavTooltip() {
-    return navTooltipController?.hide() || false;
-  }
-
-  function closeNavTooltip() {
-    const controller = navTooltipController;
-    navTooltipController = null;
-    return controller?.close() || false;
-  }
-
-  function ensureNavTooltipController() {
-    if (navTooltipController) return navTooltipController;
-    navTooltipController = createNavTooltipController({
-      createView() {
-        const view = new WebContentsView({
-          webPreferences: {
-            contextIsolation: true,
-            nodeIntegration: false,
-            sandbox: true,
-            backgroundThrottling: false,
-          },
-        });
-        view.setBackgroundColor("#00000000");
-        view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
-        view.setVisible(false);
-        const shell = mainWindow?.webContents;
-        if (shell && !shell.isDestroyed()) view.webContents.setZoomLevel(shell.getZoomLevel());
-        return view;
-      },
-      getHost: () => mainWindow,
-      loadView(view) {
-        const devUrl = process.env.SHAREGPT_UI_DEV_URL;
-        if (process.env.SHAREGPT_UI_NEXT === "1" && devUrl && !app.isPackaged) {
-          return view.webContents.loadURL(`${devUrl.replace(/\/$/, "")}/nav-tooltip.html`);
-        }
-        const builtTooltip = path.join(__dirname, "../renderer-next/dist/nav-tooltip.html");
-        if (!fs.existsSync(builtTooltip)) {
-          throw new Error("导航提示渲染资源不存在，请重新构建 renderer-next");
-        }
-        return view.webContents.loadFile(builtTooltip);
-      },
-      renderView: (view, payload) =>
-        view.webContents.executeJavaScript(
-          `window.setNavTooltip(${JSON.stringify({
-            label: payload.label,
-            side: payload.side,
-            theme: payload.theme,
-          })})`,
-        ),
-      resolveBounds(bounds, host) {
-        const shellZoomFactor = host.webContents.getZoomFactor?.() || 1;
-        const contentBounds = host.getContentBounds();
-        const normalized = normalizeNavTooltipBounds(bounds, {
-          width: contentBounds.width / shellZoomFactor,
-          height: contentBounds.height / shellZoomFactor,
-        });
-        return normalized ? scaleAiHostBounds(normalized, shellZoomFactor) : null;
-      },
-      watchPointerExit(anchorBounds, host, onExit) {
-        const shellZoomFactor = host.webContents.getZoomFactor?.() || 1;
-        const normalized = normalizeNavTooltipBounds(anchorBounds, {
-          width: host.getContentBounds().width / shellZoomFactor,
-          height: host.getContentBounds().height / shellZoomFactor,
-        });
-        if (!normalized) return null;
-        const anchor = scaleAiHostBounds(normalized, shellZoomFactor);
-        const timer = setInterval(() => {
-          if (!mainWindow || mainWindow.isDestroyed()) {
-            onExit();
-            return;
-          }
-          const content = mainWindow.getContentBounds();
-          const point = screen.getCursorScreenPoint();
-          const inside =
-            point.x >= content.x + anchor.x &&
-            point.x < content.x + anchor.x + anchor.width &&
-            point.y >= content.y + anchor.y &&
-            point.y < content.y + anchor.y + anchor.height;
-          if (!inside) onExit();
-        }, 32);
-        return () => clearInterval(timer);
-      },
-    });
-    return navTooltipController;
-  }
-
-  async function setNavTooltip(payload = {}) {
-    if (!payload.visible) return hideNavTooltip();
-    if (!mainWindow || mainWindow.isDestroyed()) return false;
-
-    const label = safeText(payload.label).slice(0, 80);
-    if (!label) return hideNavTooltip();
-    const side = payload.side === "left" ? "left" : "right";
-    return ensureNavTooltipController().show({
-      label,
-      side,
-      theme: payload.theme === "light" ? "light" : "dark",
-      bounds: payload.bounds,
-      anchorBounds: payload.anchorBounds,
-      dismissOnPointerExit: Boolean(payload.dismissOnPointerExit),
-    });
   }
 
   function detachWorkspaceView(workspace) {
@@ -2572,7 +2460,6 @@ function createElectronApp(baseMode = "all") {
   }
 
   function disposeAiWorkspaces() {
-    hideNavTooltip();
     for (const workspace of aiWorkspaces.values()) {
       invalidateComposerWorkspace(workspace, "workspace-disposed");
       detachWorkspaceView(workspace);
@@ -2705,19 +2592,11 @@ function createElectronApp(baseMode = "all") {
       mainWindow.setWindowButtonVisibility(true);
     }
     mainWindow.removeMenu();
-    mainWindow.on("blur", hideNavTooltip);
-    mainWindow.on("resize", hideNavTooltip);
-    mainWindow.on("maximize", hideNavTooltip);
-    mainWindow.on("unmaximize", hideNavTooltip);
-    mainWindow.on("enter-full-screen", hideNavTooltip);
-    mainWindow.on("leave-full-screen", hideNavTooltip);
-    mainWindow.on("close", closeNavTooltip);
     loadMainRenderer(mainWindow);
     mainWindow.on("closed", () => {
       for (const controller of translationRequests.values()) controller.abort();
       translationRequests.clear();
       disposeAiWorkspaces();
-      closeNavTooltip();
       mainWindow = null;
     });
   }
@@ -3134,7 +3013,6 @@ function createElectronApp(baseMode = "all") {
       if (workspace) await syncComposerClickGuard(workspace);
       return { activeKind };
     });
-    ipcMain.handle("nav:tooltip", (_event, payload) => setNavTooltip(payload));
     ipcMain.handle("ai:close-all", async () => {
       await flushAndDisposeAiWorkspaces();
       return { ok: true };
@@ -3923,7 +3801,6 @@ function createElectronApp(baseMode = "all") {
   let storageFlushedBeforeQuit = false;
   let storageFlushBeforeQuit = null;
   app.on("before-quit", (event) => {
-    closeNavTooltip();
     if (!backend || storageFlushedBeforeQuit) {
       disposeAiWorkspaces();
       if (backend) backend.stopAll();

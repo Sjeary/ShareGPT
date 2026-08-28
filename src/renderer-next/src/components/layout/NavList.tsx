@@ -1,6 +1,5 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { NavItem, NavKey } from '@/lib/nav'
 
@@ -10,64 +9,6 @@ const ROW_GAP = 4
 const HOLD_MS = 240
 // 进入拖动前的位移容差: 超过则判定为"滚动/误触", 取消长按。
 const MOVE_TOLERANCE = 8
-const NATIVE_TOOLTIP_GUTTER = 12
-let nativeTooltipRequest = 0
-
-async function showNativeTooltip(
-  target: HTMLButtonElement,
-  key: NavKey,
-  label: string,
-  side: 'left' | 'right',
-  source: 'pointer' | 'focus',
-) {
-  const request = ++nativeTooltipRequest
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-  const content = document.querySelector<HTMLElement>(`[data-native-nav-tooltip="${key}"]`)
-  if (
-    request !== nativeTooltipRequest ||
-    !content ||
-    (source === 'pointer' ? !target.matches(':hover') : document.activeElement !== target)
-  ) {
-    return
-  }
-
-  // 直接读取 Radix/shadcn 最终布局盒，包含真实字体与 padding；offset 尺寸不受进场缩放动画影响。
-  const contentWidth = content.offsetWidth
-  const contentHeight = content.offsetHeight
-  if (!contentWidth || !contentHeight) return
-  const trigger = target.getBoundingClientRect()
-  // 原生视图给箭头/透明边缘各留空间，#tip 本体尺寸仍与 shadcn 的布局盒完全一致。
-  const width = Math.min(320, contentWidth + NATIVE_TOOLTIP_GUTTER)
-  const height = Math.min(96, contentHeight + NATIVE_TOOLTIP_GUTTER)
-  const x = side === 'right' ? trigger.right + 4 : trigger.left - width - 4
-  const y = trigger.top + (trigger.height - height) / 2
-  void api
-    .setNavTooltip({
-      visible: true,
-      label,
-      side,
-      theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
-      bounds: {
-        x: Math.max(4, Math.min(window.innerWidth - width - 4, x)),
-        y: Math.max(4, Math.min(window.innerHeight - height - 4, y)),
-        width,
-        height,
-      },
-      anchorBounds: {
-        x: trigger.left,
-        y: trigger.top,
-        width: trigger.width,
-        height: trigger.height,
-      },
-      dismissOnPointerExit: source === 'pointer',
-    })
-    .catch(() => undefined)
-}
-
-function hideNativeTooltip() {
-  nativeTooltipRequest += 1
-  void api.setNavTooltip({ visible: false }).catch(() => undefined)
-}
 
 interface DragState {
   key: NavKey
@@ -109,9 +50,6 @@ export function NavList({
   onReorder,
 }: Props) {
   const [drag, setDrag] = useState<DragState | null>(null)
-  // AI 网页是原生 WebContentsView，普通 DOM tooltip 无法盖在它上面。
-  // 折叠导航在这些页面改由主进程绘制同层级的原生提示视图。
-  const useNativeTooltip = activeKey === 'gpt' || activeKey === 'gemini' || activeKey === 'claude'
   const rowEls = useRef<(HTMLDivElement | null)[]>([])
   const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pointerId = useRef<number | null>(null)
@@ -127,23 +65,6 @@ export function NavList({
       holdTimer.current = null
     }
   }
-
-  const dragging = Boolean(drag)
-  useEffect(() => {
-    if (!collapsed || !useNativeTooltip || dragging) hideNativeTooltip()
-  }, [collapsed, dragging, useNativeTooltip])
-
-  useEffect(() => {
-    hideNativeTooltip()
-  }, [activeKey, tooltipSide])
-
-  useEffect(
-    () => () => {
-      if (holdTimer.current) clearTimeout(holdTimer.current)
-      hideNativeTooltip()
-    },
-    [],
-  )
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>, index: number, key: NavKey) => {
     if (e.button !== 0) return // 仅主键/触摸
@@ -251,26 +172,7 @@ export function NavList({
         const btn = (
           <button
             data-tour={`nav-${key}`}
-            onPointerEnter={(event) => {
-              if (collapsed && useNativeTooltip) {
-                void showNativeTooltip(event.currentTarget, key, label, tooltipSide, 'pointer')
-              }
-            }}
-            onPointerLeave={() => {
-              if (useNativeTooltip) hideNativeTooltip()
-            }}
-            onFocus={(event) => {
-              if (collapsed && useNativeTooltip) {
-                void showNativeTooltip(event.currentTarget, key, label, tooltipSide, 'focus')
-              }
-            }}
-            onBlur={() => {
-              if (useNativeTooltip) hideNativeTooltip()
-            }}
-            onClick={() => {
-              if (useNativeTooltip) hideNativeTooltip()
-              onClickRow(key)
-            }}
+            onClick={() => onClickRow(key)}
             className={cn(
               'group flex w-full items-center rounded-lg py-2.5 text-left transition-colors',
               'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
@@ -335,12 +237,7 @@ export function NavList({
             {collapsed && !drag ? (
               <Tooltip>
                 <TooltipTrigger asChild>{btn}</TooltipTrigger>
-                <TooltipContent
-                  side={tooltipSide}
-                  forceMount={useNativeTooltip || undefined}
-                  data-native-nav-tooltip={key}
-                  className={cn('font-medium', useNativeTooltip && 'invisible pointer-events-none')}
-                >
+                <TooltipContent side={tooltipSide} className="font-medium">
                   {label}
                 </TooltipContent>
               </Tooltip>
