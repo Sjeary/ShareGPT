@@ -3,7 +3,6 @@ const assert = require("node:assert/strict");
 const {
   createNavTooltipController,
   normalizeNavTooltipBounds,
-  normalizeNavTooltipPalette,
 } = require("../navTooltip");
 
 function deferred() {
@@ -47,6 +46,7 @@ function controllerHarness(
   loads = [],
   renderView = async () => {},
   resolveBounds = (bounds) => bounds,
+  watchPointerExit = null,
 ) {
   const views = [];
   const host = {
@@ -74,6 +74,7 @@ function controllerHarness(
     loadView: () => loads.shift()?.promise,
     renderView,
     resolveBounds,
+    watchPointerExit,
   });
   return { controller, host, views };
 }
@@ -92,17 +93,6 @@ test("tooltip bounds reject non-finite input and stay inside the renderer viewpo
       { width: 800, height: 600 },
     ),
     { x: 480, y: 0, width: 320, height: 96 },
-  );
-});
-
-test("tooltip palette accepts renderer design tokens and rejects arbitrary CSS", () => {
-  assert.deepStrictEqual(
-    normalizeNavTooltipPalette({ background: "#F0F4F7", foreground: "#0E1621" }),
-    { background: "#f0f4f7", foreground: "#0e1621" },
-  );
-  assert.deepStrictEqual(
-    normalizeNavTooltipPalette({ background: "var(--foreground)", foreground: "red" }),
-    { background: "#1d1d1f", foreground: "#f2f2f7" },
   );
 });
 
@@ -192,4 +182,65 @@ test("close is idempotent and destroys the owned WebContentsView", async () => {
   assert.equal(controller.close(), false);
   assert.equal(views[0].closeCount, 1);
   assert.equal(host.removed.at(-1), views[0]);
+});
+
+test("pointer-driven tooltips hide when the cross-view pointer watcher reports exit", async () => {
+  let reportExit = () => assert.fail("pointer watcher was not installed");
+  let stopCount = 0;
+  const { controller, views } = controllerHarness(
+    [],
+    async () => {},
+    (bounds) => bounds,
+    (anchorBounds, _host, onExit) => {
+      assert.deepEqual(anchorBounds, { x: 10, y: 20, width: 40, height: 50 });
+      reportExit = onExit;
+      return () => {
+        stopCount += 1;
+      };
+    },
+  );
+
+  assert.equal(
+    await controller.show({
+      bounds: { x: 60, y: 20, width: 90, height: 40 },
+      anchorBounds: { x: 10, y: 20, width: 40, height: 50 },
+      dismissOnPointerExit: true,
+    }),
+    true,
+  );
+  assert.equal(views[0].getVisible(), true);
+  reportExit();
+  assert.equal(views[0].getVisible(), false);
+  assert.equal(stopCount, 1);
+});
+
+test("re-show, explicit hide and close never leave a pointer watcher running", async () => {
+  let activeWatches = 0;
+  const { controller } = controllerHarness(
+    [],
+    async () => {},
+    (bounds) => bounds,
+    () => {
+      activeWatches += 1;
+      return () => {
+        activeWatches -= 1;
+      };
+    },
+  );
+  const payload = {
+    bounds: { x: 60, y: 20, width: 90, height: 40 },
+    anchorBounds: { x: 10, y: 20, width: 40, height: 50 },
+    dismissOnPointerExit: true,
+  };
+
+  await controller.show(payload);
+  assert.equal(activeWatches, 1);
+  await controller.show(payload);
+  assert.equal(activeWatches, 1);
+  controller.hide();
+  assert.equal(activeWatches, 0);
+  await controller.show(payload);
+  assert.equal(activeWatches, 1);
+  controller.close();
+  assert.equal(activeWatches, 0);
 });

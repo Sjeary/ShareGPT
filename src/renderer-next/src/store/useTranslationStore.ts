@@ -145,7 +145,13 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
       throw new Error('当前翻译配置账号已失效，请重新登录')
     }
     const previous = get().config
-    const config = normalizeSettings({ ...get().config, ...patch })
+    const config = normalizeSettings({
+      ...previous,
+      ...patch,
+      ai: { ...previous.ai, ...patch.ai },
+      api: { ...previous.api, ...patch.api },
+      offline: { ...previous.offline, ...patch.offline },
+    })
     settingsPrincipalRuntime.assertCurrent(principalSnapshot)
     set({ config })
     try {

@@ -1,4 +1,5 @@
-import { ArrowDownToLine, GitMerge, AlertTriangle, Trash2, X } from 'lucide-react'
+import { ArrowDownToLine, GitMerge, AlertTriangle, Trash2 } from 'lucide-react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useNotesSyncStore } from '@/hooks/useNotesSync'
 import { useVaultStore } from '@/store/useVaultStore'
 
@@ -57,24 +58,11 @@ export function SyncCompareDialog() {
     report.deleted.length === 0
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-in fade-in duration-150"
-      onClick={close}
-    >
-      <div
-        className="w-[min(520px,92vw)] overflow-hidden rounded-xl border border-border bg-popover shadow-2xl animate-in zoom-in-95 duration-150"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h3 className="text-sm font-semibold">云端同步对比</h3>
-          <button
-            type="button"
-            onClick={close}
-            className="rounded p-1 text-muted-foreground hover:bg-accent"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
+    <Dialog open={open} onOpenChange={(next) => !next && close()}>
+      <DialogContent className="w-[min(520px,92vw)] gap-0 overflow-hidden p-0">
+        <DialogHeader className="border-b border-border px-4 py-3">
+          <DialogTitle className="text-sm">云端同步对比</DialogTitle>
+        </DialogHeader>
         <div className="max-h-[60vh] space-y-3 overflow-auto p-4">
           {nothing && <p className="text-sm text-muted-foreground">已是最新，无差异。</p>}
           <Section
@@ -106,7 +94,7 @@ export function SyncCompareDialog() {
             onOpen={onOpen}
           />
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

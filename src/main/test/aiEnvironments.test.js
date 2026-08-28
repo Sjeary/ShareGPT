@@ -11,6 +11,8 @@ const {
   scaleAiHostBounds,
   shouldCloseAiWorkspacesForEnvironment,
   evaluateAiRouteHealth,
+  aiRouteFingerprint,
+  shouldPreflightAiRoute,
 } = require("../aiEnvironments");
 
 test("高级 AI 环境为每个服务和环境生成独立 partition", () => {
@@ -28,7 +30,7 @@ test("高级 AI 环境为每个服务和环境生成独立 partition", () => {
   );
 });
 
-test("线路健康检查把 DNS、IPv4 和托管线路预期 IP 作为阻断项", () => {
+test("线路健康检查把 DNS、IPv4 和已配置的预期身份作为阻断项", () => {
   const route = {
     id: "route-us",
     outboundTag: "proxy-route-us",
@@ -46,11 +48,36 @@ test("线路健康检查把 DNS、IPv4 和托管线路预期 IP 作为阻断项"
   assert.equal(passed.checks.ipv4EgressObserved, "passed");
 
   assert.equal(evaluateAiRouteHealth({ ...route, dnsTag: "" }, detected).ok, false);
-  assert.equal(evaluateAiRouteHealth({ ...route, expected: {} }, detected).ok, false);
+  assert.equal(
+    evaluateAiRouteHealth({ ...route, expected: { ip: "203.0.113.8" } }, detected).ok,
+    false,
+  );
   assert.equal(evaluateAiRouteHealth(route, { ...detected, ip: "2001:db8::1" }).ok, false);
 
-  const unified = { ...route, id: "internal-unified", expected: {} };
-  assert.equal(evaluateAiRouteHealth(unified, detected).ok, false);
+  const withoutExpectedIdentity = { ...route, id: "internal-unified", expected: {} };
+  const compatible = evaluateAiRouteHealth(withoutExpectedIdentity, detected);
+  assert.equal(compatible.ok, true);
+  assert.equal(compatible.checks.expectedIp, "not-checked");
+  assert.equal(compatible.checks.expectedCountry, "not-checked");
+});
+
+test("同一 workspace 只在首次绑定或线路配置变化时做阻断预检", () => {
+  const route = {
+    id: "route-us",
+    host: "127.0.0.1",
+    port: 1081,
+    outboundTag: "proxy-route-us",
+    dnsTag: "dns-route-us",
+    expected: { ip: "203.0.113.7" },
+  };
+  assert.equal(shouldPreflightAiRoute(null, route), true);
+  const workspace = { routeHealthFingerprint: aiRouteFingerprint(route) };
+  assert.equal(shouldPreflightAiRoute(workspace, route), false);
+  assert.equal(shouldPreflightAiRoute(workspace, { ...route, port: 1082 }), true);
+  assert.equal(
+    shouldPreflightAiRoute(workspace, { ...route, expected: { ip: "203.0.113.8" } }),
+    true,
+  );
 });
 
 test("高级 AI 环境拒绝可造成 partition 混淆的标识", () => {

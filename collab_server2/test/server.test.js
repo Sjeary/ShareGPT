@@ -8,6 +8,7 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { WebSocket } = require("ws");
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "collab-test-"));
 process.env.USERS_FILE = path.join(tmpDir, "users.json");
@@ -29,6 +30,72 @@ process.env.LOGIN_MAX_FAILS = "3"; // 测试用小阈值
 process.env.LOGIN_LOCK_MS = "10000";
 
 const srv = require("../server.js");
+
+function createWebSocketProbe(url, protocols) {
+  const socket = protocols ? new WebSocket(url, protocols) : new WebSocket(url);
+  const buffered = [];
+  const waiters = new Set();
+
+  const settleWaiters = () => {
+    for (const waiter of waiters) {
+      const index = buffered.findIndex(waiter.predicate);
+      if (index < 0) continue;
+      const [message] = buffered.splice(index, 1);
+      clearTimeout(waiter.timer);
+      waiters.delete(waiter);
+      waiter.resolve(message);
+    }
+  };
+
+  socket.on("message", (raw) => {
+    try {
+      buffered.push(JSON.parse(String(raw)));
+      settleWaiters();
+    } catch {
+      // Protocol tests only consume JSON application messages.
+    }
+  });
+
+  const opened = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`WebSocket 连接超时: ${url}`)), 3000);
+    socket.once("open", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    socket.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+
+  const next = (predicate, label) =>
+    new Promise((resolve, reject) => {
+      const index = buffered.findIndex(predicate);
+      if (index >= 0) {
+        const [message] = buffered.splice(index, 1);
+        resolve(message);
+        return;
+      }
+      const waiter = {
+        predicate,
+        resolve,
+        timer: setTimeout(() => {
+          waiters.delete(waiter);
+          reject(new Error(`等待 WebSocket 消息超时: ${label}`));
+        }, 3000),
+      };
+      waiters.add(waiter);
+    });
+
+  return { socket, opened, next };
+}
+
+async function closeWebSocket(socket) {
+  if (socket.readyState === WebSocket.CLOSED) return;
+  const closed = new Promise((resolve) => socket.once("close", resolve));
+  socket.close();
+  await closed;
+}
 
 test("hashPassword: 确定性 + 不同 salt 产生不同 hash", () => {
   const a = srv.hashPassword("pw", "salt-1", 1000, "sha256");
@@ -96,12 +163,30 @@ test("safeParseJson: 合法返回对象, 非法返回 null", () => {
   assert.deepStrictEqual(srv.safeParseJson(""), {}); // 空串按 "{}" 处理 -> {}
 });
 
-test("高级 AI 权限在用户记录中显式归一化", () => {
+test("用户权限归一化只为缺失两个现代字段的历史记录保留 legacy 代理资格", () => {
   assert.strictEqual(
     srv.normalizeUserRecord({ username: "allowed", advancedAiAllowed: true }).advancedAiAllowed,
     true,
   );
-  assert.strictEqual(srv.normalizeUserRecord({ username: "normal" }).advancedAiAllowed, false);
+  const legacy = srv.normalizeUserRecord({ username: "legacy" });
+  assert.strictEqual(legacy.advancedAiAllowed, false);
+  assert.deepStrictEqual(legacy.allowedProxyRouteIds, []);
+  assert.strictEqual(legacy.legacyProxyEntitled, true);
+  assert.strictEqual(
+    srv.normalizeUserRecord(legacy).legacyProxyEntitled,
+    true,
+    "持久化后的现代默认字段不得覆盖明确 legacy 标记",
+  );
+  assert.strictEqual(
+    srv.normalizeUserRecord({ username: "modern", advancedAiAllowed: false }).legacyProxyEntitled,
+    false,
+    "任一现代权限字段存在时不得推断为历史账号",
+  );
+  assert.strictEqual(
+    srv.normalizeUserRecord({ username: "modern", allowedProxyRouteIds: [] })
+      .legacyProxyEntitled,
+    false,
+  );
   assert.deepStrictEqual(
     srv.normalizeUserRecord({
       username: "allowed",
@@ -468,11 +553,49 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
     "utf8",
   );
 
+  const openedSockets = new Set();
   await new Promise((resolve) => srv.server.listen(0, "127.0.0.1", resolve));
-  t.after(() => new Promise((resolve) => srv.server.close(resolve)));
+  t.after(
+    () =>
+      new Promise((resolve) => {
+        for (const socket of openedSockets) {
+          if (socket.readyState !== WebSocket.CLOSED) socket.terminate();
+        }
+        srv.server.close(resolve);
+      }),
+  );
   const address = srv.server.address();
   assert.ok(address && typeof address === "object");
   const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  fs.writeFileSync(
+    process.env.CLIENT_BOOTSTRAP_FILE,
+    JSON.stringify({
+      sender: {
+        proxy_server: "proxy.example.com",
+        proxy_port: "443",
+        proxy_uuid: "11111111-1111-4111-8111-111111111111",
+        socks_listen_port: "1080",
+        fallback_mode: "system_proxy",
+        fallback_local_port: "",
+        target_domains: "example.com",
+      },
+      update: {},
+      extra: {},
+    }),
+    "utf8",
+  );
+  const legacyCatalog = srv.loadProxyRouteCatalog();
+  srv.saveProxyRouteCatalog([
+    ...legacyCatalog.routes,
+    {
+      id: "managed-new",
+      name: "New managed route",
+      enabled: true,
+      outbound: { type: "socks", server: "new.example.com", server_port: 1080 },
+      expected: { ip: "192.0.2.10" },
+    },
+  ]);
 
   const health = await fetch(`${baseUrl}/api/health`);
   assert.strictEqual(health.status, 200);
@@ -492,10 +615,70 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   assert.strictEqual(login.status, 200);
   const loginBody = await login.json();
   const { token } = loginBody;
+  assert.strictEqual(typeof token, "string");
+  assert.ok(token.length > 0);
+  assert.strictEqual(typeof loginBody.username, "string");
+  assert.strictEqual(typeof loginBody.profile, "object");
+  assert.strictEqual(typeof loginBody.profile.displayName, "string");
+  assert.strictEqual(typeof loginBody.profile.avatar, "string");
+  assert.strictEqual(typeof loginBody.roomScope, "string");
+  assert.ok(Array.isArray(loginBody.users));
+  assert.ok(Array.isArray(loginBody.history));
   assert.strictEqual(loginBody.profile.advancedAiAllowed, true);
   assert.deepStrictEqual(loginBody.capabilities, { websocketAuth: "subprotocol" });
   let authHeaders = { Authorization: `Bearer ${token}` };
 
+  const wsBaseUrl = `ws://127.0.0.1:${address.port}/ws`;
+  const legacySocket = createWebSocketProbe(`${wsBaseUrl}?token=${encodeURIComponent(token)}`);
+  openedSockets.add(legacySocket.socket);
+  await legacySocket.opened;
+  assert.strictEqual(legacySocket.socket.protocol, "");
+  const legacySession = await legacySocket.next((message) => message.type === "session", "session");
+  assert.strictEqual(typeof legacySession.username, "string");
+  assert.strictEqual(typeof legacySession.displayName, "string");
+  assert.strictEqual(typeof legacySession.roomScope, "string");
+  assert.strictEqual(typeof legacySession.timestamp, "string");
+  const legacyHistory = await legacySocket.next((message) => message.type === "history", "history");
+  assert.ok(Array.isArray(legacyHistory.messages));
+  assert.strictEqual(typeof legacyHistory.roomScope, "string");
+
+  legacySocket.socket.send(JSON.stringify({ type: "chat", text: "legacy subnet message" }));
+  const legacyChat = await legacySocket.next(
+    (message) => message.type === "chat" && message.text === "legacy subnet message",
+    "legacy chat",
+  );
+  assert.strictEqual(typeof legacyChat.id, "string");
+  assert.strictEqual(legacyChat.scope, "subnet");
+  assert.strictEqual(legacyChat.from, "verify-user");
+  assert.strictEqual(legacyChat.username, "verify-user");
+  assert.strictEqual(typeof legacyChat.timestamp, "string");
+
+  legacySocket.socket.send(JSON.stringify({ type: "history_sync", since: "" }));
+  const legacySync = await legacySocket.next(
+    (message) => message.type === "history_sync",
+    "legacy history_sync",
+  );
+  assert.ok(Array.isArray(legacySync.messages));
+  assert.ok(legacySync.messages.some((message) => message.text === "legacy subnet message"));
+  assert.strictEqual(typeof legacySync.roomScope, "string");
+  await closeWebSocket(legacySocket.socket);
+
+  const modernSocket = createWebSocketProbe(wsBaseUrl, ["sharegpt", `sharegpt-auth.${token}`]);
+  openedSockets.add(modernSocket.socket);
+  await modernSocket.opened;
+  assert.strictEqual(modernSocket.socket.protocol, "sharegpt");
+  assert.strictEqual(
+    (await modernSocket.next((message) => message.type === "session", "modern session")).username,
+    "verify-user",
+  );
+  assert.ok(
+    Array.isArray(
+      (await modernSocket.next((message) => message.type === "history", "modern history")).messages,
+    ),
+  );
+  await closeWebSocket(modernSocket.socket);
+
+  let normalUserToken = "";
   for (const [username, allowed] of [
     ["normal-user", false],
     ["admin-user", true],
@@ -506,8 +689,38 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
       body: JSON.stringify({ username, password }),
     });
     assert.strictEqual(permissionLogin.status, 200);
-    assert.strictEqual((await permissionLogin.json()).profile.advancedAiAllowed, allowed);
+    const permissionBody = await permissionLogin.json();
+    assert.strictEqual(permissionBody.profile.advancedAiAllowed, allowed);
+    if (username === "normal-user") normalUserToken = permissionBody.token;
   }
+
+  const migratedUsers = JSON.parse(fs.readFileSync(process.env.USERS_FILE, "utf8")).users;
+  assert.strictEqual(
+    migratedUsers.find((user) => user.username === "normal-user").legacyProxyEntitled,
+    true,
+    "旧 users.json 应持久化明确 legacy 代理资格",
+  );
+  assert.strictEqual(
+    migratedUsers.find((user) => user.username === "verify-user").legacyProxyEntitled,
+    false,
+    "已有现代权限字段的账号不得被当成 legacy",
+  );
+  const legacyBootstrap = await fetch(`${baseUrl}/api/client/bootstrap`, {
+    headers: { Authorization: `Bearer ${normalUserToken}` },
+  });
+  assert.strictEqual(legacyBootstrap.status, 200);
+  const legacyBootstrapBody = await legacyBootstrap.json();
+  assert.strictEqual(legacyBootstrapBody.authorization.advancedAiAllowed, false);
+  assert.deepStrictEqual(legacyBootstrapBody.authorization.allowedProxyRouteIds, [
+    "internal-unified",
+    "internal-airport",
+  ]);
+  assert.deepStrictEqual(
+    legacyBootstrapBody.proxyRoutes.map((route) => route.id),
+    ["internal-unified", "internal-airport"],
+    "legacy 资格只能保留两个历史内置出口，不能获得新 managed route",
+  );
+  assert.strictEqual(legacyBootstrapBody.airport?.name, "Legacy airport");
 
   const profile = await fetch(`${baseUrl}/api/profile`, { headers: authHeaders });
   assert.strictEqual(profile.status, 200);
@@ -540,6 +753,138 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   assert.strictEqual(adminLoginBody.profile.advancedAiAllowed, false);
   assert.strictEqual(adminLoginBody.profile.effectiveAdvancedAiAllowed, true);
   const adminHeaders = { Authorization: `Bearer ${adminToken}` };
+  const legacyOldClientProfileSave = await fetch(
+    `${baseUrl}/api/admin/users/normal-user`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...adminHeaders },
+      body: JSON.stringify({
+        displayName: "Normal User Legacy Save",
+        password: "",
+        avatar: "",
+        bio: "v1.0.7 profile-only update",
+        isAdmin: false,
+        disabled: false,
+        chatDisabled: false,
+      }),
+    },
+  );
+  assert.strictEqual(legacyOldClientProfileSave.status, 200);
+  assert.strictEqual((await legacyOldClientProfileSave.json()).user.legacyProxyEntitled, true);
+  assert.strictEqual(
+    (
+      await fetch(`${baseUrl}/api/client/bootstrap`, {
+        headers: { Authorization: `Bearer ${normalUserToken}` },
+      })
+    ).status,
+    200,
+    "v1.0.7 管理端原始 payload 只改资料时不得清除 legacy 资格或注销会话",
+  );
+  const repeatedLegacyDefaults = await fetch(`${baseUrl}/api/admin/users/normal-user`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({
+      displayName: "Normal User Renamed",
+      isAdmin: false,
+      advancedAiAllowed: false,
+      allowedProxyRouteIds: [],
+      disabled: false,
+      chatDisabled: false,
+    }),
+  });
+  assert.strictEqual(repeatedLegacyDefaults.status, 200);
+  assert.strictEqual((await repeatedLegacyDefaults.json()).user.legacyProxyEntitled, true);
+  const legacyBootstrapAfterOldSave = await fetch(`${baseUrl}/api/client/bootstrap`, {
+    headers: { Authorization: `Bearer ${normalUserToken}` },
+  });
+  assert.strictEqual(
+    legacyBootstrapAfterOldSave.status,
+    200,
+    "重复提交等值现代默认字段不得清除 legacy 资格或注销会话",
+  );
+  assert.deepStrictEqual(
+    (await legacyBootstrapAfterOldSave.json()).proxyRoutes.map((route) => route.id),
+    ["internal-unified", "internal-airport"],
+  );
+  const applyModernProxyPolicy = await fetch(`${baseUrl}/api/admin/users/normal-user`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({
+      advancedAiAllowed: true,
+      allowedProxyRouteIds: ["managed-new"],
+    }),
+  });
+  assert.strictEqual(applyModernProxyPolicy.status, 200);
+  assert.strictEqual((await applyModernProxyPolicy.json()).user.legacyProxyEntitled, false);
+  assert.strictEqual(
+    (
+      await fetch(`${baseUrl}/api/client/bootstrap`, {
+        headers: { Authorization: `Bearer ${normalUserToken}` },
+      })
+    ).status,
+    401,
+    "真实现代权限变更仍必须注销旧会话",
+  );
+  const modernNormalLogin = await fetch(`${baseUrl}/api/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "normal-user", password }),
+  });
+  assert.strictEqual(modernNormalLogin.status, 200);
+  const modernNormalToken = (await modernNormalLogin.json()).token;
+  const modernNormalBootstrap = await fetch(`${baseUrl}/api/client/bootstrap`, {
+    headers: { Authorization: `Bearer ${modernNormalToken}` },
+  });
+  assert.strictEqual(modernNormalBootstrap.status, 200);
+  const modernNormalBootstrapBody = await modernNormalBootstrap.json();
+  assert.strictEqual(modernNormalBootstrapBody.authorization.advancedAiAllowed, true);
+  assert.deepStrictEqual(
+    modernNormalBootstrapBody.proxyRoutes.map((route) => route.id),
+    ["managed-new"],
+    "现代显式权限必须替代 legacy 内置出口资格",
+  );
+  const oldClientProfileSave = await fetch(`${baseUrl}/api/admin/users/verify-user`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({
+      displayName: "Verify User Renamed",
+      password: "",
+      avatar: "",
+      bio: "profile-only update",
+      isAdmin: false,
+      disabled: false,
+      chatDisabled: false,
+    }),
+  });
+  assert.strictEqual(oldClientProfileSave.status, 200);
+  const profileOnlyUser = (await oldClientProfileSave.json()).user;
+  assert.strictEqual(profileOnlyUser.advancedAiAllowed, true);
+  assert.deepStrictEqual(profileOnlyUser.allowedProxyRouteIds, ["internal-airport"]);
+  assert.strictEqual(
+    (await fetch(`${baseUrl}/api/users`, { headers: authHeaders })).status,
+    200,
+    "旧管理端的等值布尔字段不得注销被编辑用户",
+  );
+
+  const oldClientSelfSave = await fetch(`${baseUrl}/api/admin/users/admin-user`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({
+      displayName: "Admin User Renamed",
+      password,
+      avatar: "",
+      bio: "profile-only update",
+      isAdmin: true,
+      disabled: false,
+      chatDisabled: false,
+    }),
+  });
+  assert.strictEqual(oldClientSelfSave.status, 200);
+  assert.strictEqual(
+    (await fetch(`${baseUrl}/api/admin/users`, { headers: adminHeaders })).status,
+    200,
+    "管理员保存自身资料后管理 token 必须继续有效",
+  );
   const selfDemotion = await fetch(`${baseUrl}/api/admin/users/admin-user`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", ...adminHeaders },
@@ -635,10 +980,72 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
     headers: authHeaders,
   });
   assert.strictEqual(authorizedBootstrap.status, 200);
+  const authorizedBootstrapBody = await authorizedBootstrap.json();
   assert.deepStrictEqual(
-    (await authorizedBootstrap.json()).proxyRoutes.map((route) => route.id),
+    authorizedBootstrapBody.proxyRoutes.map((route) => route.id),
     ["route-us"],
   );
+  assert.deepStrictEqual(authorizedBootstrapBody.capabilities.proxyRoutes, {
+    available: true,
+    authoritative: true,
+  });
+
+  const catalogBeforeFailure = srv.loadProxyRouteCatalog();
+  const catalogFile = process.env.PROXY_ROUTES_FILE;
+  try {
+    for (const name of fs.readdirSync(tmpDir)) {
+      if (
+        name.startsWith(`${path.basename(catalogFile)}.backup-`) ||
+        name.startsWith(`${path.basename(catalogFile)}.corrupt-`)
+      ) {
+        fs.unlinkSync(path.join(tmpDir, name));
+      }
+    }
+    fs.writeFileSync(catalogFile, '{"version":1,"routes":[', "utf-8");
+
+    const degradedBootstrap = await fetch(`${baseUrl}/api/client/bootstrap`, {
+      headers: authHeaders,
+    });
+    assert.strictEqual(degradedBootstrap.status, 200);
+    const degradedBootstrapBody = await degradedBootstrap.json();
+
+    assert.deepStrictEqual(degradedBootstrapBody.sender, {
+      proxy_server: "proxy.example.com",
+      proxy_port: "443",
+      proxy_uuid: "11111111-1111-4111-8111-111111111111",
+      proxy_expected_ip: "",
+      proxy_expected_country: "",
+      proxy_expected_asn: "",
+      socks_listen_port: "1080",
+      fallback_mode: "system_proxy",
+      fallback_local_port: "",
+      target_domains: "example.com",
+    });
+    assert.deepStrictEqual(degradedBootstrapBody.update, {
+      version: "",
+      notes: "",
+      publishedAt: "",
+      windows: { url: "", fileName: "" },
+      macos: { url: "", fileName: "" },
+    });
+    assert.deepStrictEqual(degradedBootstrapBody.proxyRoutes, []);
+    assert.strictEqual(degradedBootstrapBody.airport, null);
+    assert.deepStrictEqual(degradedBootstrapBody.authorization, {
+      username: "verify-user",
+      isAdmin: false,
+      advancedAiAllowed: false,
+      allowedProxyRouteIds: [],
+    });
+    assert.deepStrictEqual(degradedBootstrapBody.capabilities.proxyRoutes, {
+      available: false,
+      authoritative: false,
+    });
+    assert.strictEqual(Object.hasOwn(degradedBootstrapBody, "error"), false);
+    assert.strictEqual(JSON.stringify(degradedBootstrapBody).includes(tmpDir), false);
+  } finally {
+    srv.saveProxyRouteCatalog(catalogBeforeFailure.routes);
+  }
+
   const healthReport = await fetch(`${baseUrl}/api/client/proxy-route-health`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders },

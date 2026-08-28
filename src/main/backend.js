@@ -25,6 +25,7 @@ const {
   normalizeServerBaseUrl,
   principalIdFor,
 } = require("./principal");
+const { buildUpdateReleaseInfo } = require("./updateRelease");
 
 // 自动更新源 = GitHub Releases (参考 cc-switch 的做法)。仓库地址从 package.json 推导,
 // fork 的人只要改 package.json 的 homepage/repository 就指向自己的仓库, 不写死任何自建服务器。
@@ -1912,38 +1913,76 @@ class Backend {
     });
   }
 
-  // 查询最新版 (自动更新源)。读 release 的 latest.yml (electron-updater feed) 而非 api.github.com:
-  // 后者未登录限流 60 次/小时, 极易被打爆; latest.yml 是 release 资源、不限流。完全不经过自建服务器。
+  // GitHub 的 /releases/latest 重定向目标才是发布版本真源。这里只读取最终 URL，
+  // 不把 latest.yml 内可能错误或滞后的 package version 当成产品 Release 版本。
+  resolveRedirectUrl(url, redirectsLeft = 5, agent) {
+    if (agent === undefined) {
+      agent = (this.updateProxyAgent && this.updateProxyAgent()) || null;
+    }
+    return new Promise((resolve) => {
+      try {
+        const protocol = new URL(url).protocol === "http:" ? http : https;
+        const req = protocol.get(
+          url,
+          {
+            headers: { "User-Agent": "ShareGPT-Updater" },
+            timeout: 8000,
+            agent: agent || undefined,
+          },
+          (res) => {
+            const status = Number(res.statusCode || 0);
+            if (
+              [301, 302, 303, 307, 308].includes(status) &&
+              res.headers.location &&
+              redirectsLeft > 0
+            ) {
+              res.resume();
+              this.resolveRedirectUrl(
+                new URL(res.headers.location, url).toString(),
+                redirectsLeft - 1,
+                agent,
+              ).then(resolve);
+              return;
+            }
+            res.resume();
+            resolve(status >= 200 && status < 300 ? url : null);
+          },
+        );
+        req.on("error", () => resolve(null));
+        req.on("timeout", () => {
+          req.destroy();
+          resolve(null);
+        });
+      } catch (_err) {
+        resolve(null);
+      }
+    });
+  }
+
+  // 查询最新版 (自动更新源)。版本取 GitHub /releases/latest 的最终 tag；latest.yml
+  // 只在内容与 tag 一致时辅助解析 Windows 文件名。完全不经过自建服务器。
   async checkLatestRelease() {
     if (!UPDATE_REPO) return null;
-    const ymlText = await this.fetchText(
-      `https://github.com/${UPDATE_REPO}/releases/latest/download/latest.yml`,
+    const agent = (this.updateProxyAgent && this.updateProxyAgent()) || null;
+    const latestUrl = await this.resolveRedirectUrl(
+      `https://github.com/${UPDATE_REPO}/releases/latest`,
+      5,
+      agent,
     );
-    if (!ymlText) return null;
-    const vm = ymlText.match(/^version:\s*(.+)$/m);
-    if (!vm) return null;
-    const version = vm[1]
-      .trim()
-      .replace(/^['"]|['"]$/g, "")
-      .replace(/^v/i, "");
-    if (!version) return null;
-    const tag = `v${version}`;
-    let fileName;
-    if (process.platform === "darwin") {
-      fileName = `sharegpt-sender-${version}-arm64.dmg`;
-    } else {
-      const pm = ymlText.match(/^path:\s*(.+)$/m);
-      fileName = pm ? pm[1].trim().replace(/^['"]|['"]$/g, "") : `sharegpt-sender-${version}.exe`;
-    }
-    return {
-      version,
-      notes: "",
-      publishedAt: "",
-      url: `https://github.com/${UPDATE_REPO}/releases/download/${tag}/${fileName}`,
-      fileName,
-      htmlUrl: `https://github.com/${UPDATE_REPO}/releases/tag/${tag}`,
+    if (!latestUrl) return null;
+    const ymlText =
+      (await this.fetchText(
+        `https://github.com/${UPDATE_REPO}/releases/latest/download/latest.yml`,
+        5,
+        agent,
+      )) || "";
+    return buildUpdateReleaseInfo({
       repo: UPDATE_REPO,
-    };
+      latestUrl,
+      ymlText,
+      platform: process.platform,
+      arch: process.arch,
+    });
   }
 
   async downloadUpdatePackage(payload = {}, onProgress = null) {

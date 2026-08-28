@@ -140,7 +140,7 @@ interface UpdateProgress {
   fileName?: string
 }
 
-// 应用内更新区。读 useAuthStore.updateInfo (bootstrap.update) 判定有无更新,
+// 应用内更新区。读 useAuthStore.updateInfo (GitHub Latest Release) 判定有无更新,
 // 接 api.onAppUpdateProgress 显示进度, 安装走 downloadAppUpdate -> openAppUpdate。
 // 移植自旧 renderer.js syncUpdateControls(~2811) / installAppUpdate(~2911)。
 function UpdateSection() {
@@ -174,7 +174,7 @@ function UpdateSection() {
     let alive = true
     void (async () => {
       const update = await checkGithubUpdate()
-      if (alive && update) useAuthStore.getState().setUpdateInfo(update)
+      if (alive && update) useAuthStore.getState().setGithubUpdateInfo(update)
     })()
     return () => {
       alive = false
@@ -216,7 +216,7 @@ function UpdateSection() {
       if (!update) {
         throw new Error('无法连接 GitHub 获取更新信息（请先开启代理，或检查网络）后重试')
       }
-      useAuthStore.getState().setUpdateInfo(update)
+      useAuthStore.getState().setGithubUpdateInfo(update)
       toast.success('已从 GitHub 刷新更新信息')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '检查更新失败')

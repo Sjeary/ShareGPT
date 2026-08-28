@@ -33,14 +33,14 @@ interface AuthState {
   profile: AuthProfile | null
   // 运行期密码 (用于断线静默重登, 不写盘除非用户勾选记住密码)
   runtimePassword: string
-  // 登录后 /api/client/bootstrap 下发的最新版本信息 (供更新 UI 读取)。
-  // null = 尚未拉取过; 旧 state.app.updateInfo (~2817)。
+  // GitHub Latest Release 的应用版本信息；协作服务器 bootstrap 不得写入。
+  // null = 尚未检查或检查失败。
   updateInfo: BootstrapUpdate | null
   // 当前 Principal 的服务端 sender 配置。只存在内存中，绝不写入 settings.json。
   runtimeSender: RuntimeSenderConfig | null
 
   setSession: (session: { token: string; profile: AuthProfile; password: string }) => void
-  setUpdateInfo: (update: BootstrapUpdate | null) => void
+  setGithubUpdateInfo: (update: BootstrapUpdate | null) => void
   setRuntimeSender: (config: RuntimeSenderConfig | null) => void
   // 资料回流: 仅更新身份资料 (个人资料编辑器回调) (旧 handleProfileUpdated ~5266)。
   setProfile: (profile: AuthProfile) => void
@@ -58,7 +58,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   setSession: ({ token, profile, password }) => set({ token, profile, runtimePassword: password }),
 
-  setUpdateInfo: (update) => set({ updateInfo: update }),
+  setGithubUpdateInfo: (update) => set({ updateInfo: update }),
 
   setRuntimeSender: (runtimeSender) => set({ runtimeSender }),
 

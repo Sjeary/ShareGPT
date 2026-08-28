@@ -9,8 +9,13 @@ import {
   Trash2,
 } from 'lucide-react'
 import { Theme, EmojiStyle, type EmojiClickData } from 'emoji-picker-react'
-import { DropdownMenu } from 'radix-ui'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { emojiClusters, JUMBO_MAX } from '@/lib/chat/emoji'
 import { useAppStore } from '@/store/useAppStore'
@@ -354,14 +359,14 @@ export function MessageBubble({
                   </Suspense>
                 </div>
               )}
-              <DropdownMenu.Root
+              <DropdownMenu
                 open={menuOpen}
                 onOpenChange={(open) => {
                   setMenuOpen(open)
                   if (!open) setConfirmRecall(false)
                 }}
               >
-                <DropdownMenu.Trigger asChild>
+                <DropdownMenuTrigger asChild>
                   <button
                     type="button"
                     aria-label="消息操作"
@@ -378,50 +383,46 @@ export function MessageBubble({
                   >
                     <MoreHorizontal className="size-4" />
                   </button>
-                </DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content
-                    side="bottom"
-                    align={mine ? 'start' : 'end'}
-                    sideOffset={4}
-                    collisionBoundary={menuBoundary}
-                    collisionPadding={8}
-                    className={cn(
-                      'z-50 min-w-32 max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-md',
-                      'origin-[var(--radix-dropdown-menu-content-transform-origin)] animate-in fade-in zoom-in-95',
-                    )}
-                  >
-                    {menuItems.map((item) => {
-                      const needsConfirm = item.danger && !confirmRecall
-                      return (
-                        <DropdownMenu.Item
-                          key={item.label}
-                          onSelect={(event) => {
-                            if (needsConfirm) {
-                              event.preventDefault()
-                              setConfirmRecall(true)
-                              return
-                            }
-                            item.run()
-                          }}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  side="bottom"
+                  align={mine ? 'start' : 'end'}
+                  sideOffset={4}
+                  collisionBoundary={menuBoundary}
+                  collisionPadding={8}
+                  className={cn(
+                    'z-50 min-w-32 max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-md',
+                    'origin-[var(--radix-dropdown-menu-content-transform-origin)] animate-in fade-in zoom-in-95',
+                  )}
+                >
+                  {menuItems.map((item) => {
+                    const needsConfirm = item.danger && !confirmRecall
+                    return (
+                      <DropdownMenuItem
+                        key={item.label}
+                        onSelect={(event) => {
+                          if (needsConfirm) {
+                            event.preventDefault()
+                            setConfirmRecall(true)
+                            return
+                          }
+                          item.run()
+                        }}
+                        variant={item.danger ? 'destructive' : 'default'}
+                        className="px-3"
+                      >
+                        <item.icon
                           className={cn(
-                            'flex cursor-default items-center gap-2 px-3 py-1.5 text-left text-sm outline-none select-none data-[highlighted]:bg-accent',
-                            item.danger && 'text-destructive',
+                            'size-4',
+                            item.danger ? 'text-destructive' : 'text-muted-foreground',
                           )}
-                        >
-                          <item.icon
-                            className={cn(
-                              'size-4',
-                              item.danger ? 'text-destructive' : 'text-muted-foreground',
-                            )}
-                          />
-                          {item.danger && confirmRecall ? '确认撤回？' : item.label}
-                        </DropdownMenu.Item>
-                      )
-                    })}
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
+                        />
+                        {item.danger && confirmRecall ? '确认撤回？' : item.label}
+                      </DropdownMenuItem>
+                    )
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           )}
         </div>

@@ -22,7 +22,7 @@ flowchart LR
   AC["管理控制台 admin_console/ (Electron)"]
   AC -->|"HTTP /api/admin/*"| CS
 
-  GH["GitHub Releases\nlatest.yml + 安装包"]
+  GH["GitHub Releases\nLatest tag + latest.yml + 安装包"]
   M -->|"electron-updater 检查/下载/原地安装"| GH
 ```
 
@@ -41,7 +41,13 @@ flowchart LR
 | 渲染层 ↔ 主进程     | Electron IPC          | 见 `src/main/preload.js` 暴露的 `api.*`                                   |
 | 客户端 ↔ 协作服务端 | HTTP REST + WebSocket | 鉴权用 `Authorization: Bearer <token>`（非 cookie）；WS 推送在线状态/消息 |
 | 内嵌 AI 网页 ↔ 外网 | sing-box SOCKS        | 仅 AI 站点按域名清单走代理；统一梯子或机场节点出网                        |
-| 自动更新            | GitHub Releases       | 客户端读 `latest.yml`（Windows）/ 对比最新 tag；不经任何自建服务器        |
+| 自动更新            | GitHub Releases       | Latest tag 是版本真源；`latest.yml` 仅作包元数据且不得覆盖 tag；不经自建服务器 |
+
+## 客户端运行态不变量
+
+- GPT、Claude、Gemini 的 `WebContentsView` 与 persistent partition 由主进程长期持有。切换应用面板只做 detach/reattach；同一 Principal、Environment、route fingerprint 下不得重建、刷新或清空标签镜像。
+- 出口阻断预检属于首次线路绑定或换线，不属于面板显示。复用旧视图时仍校验 Electron session 精确绑定到指定 SOCKS；Principal、授权代际、Environment 或线路配置变化后重新预检。
+- 更新提示只有 GitHub Latest Release 一个权威来源。协作 bootstrap 的 `update` 字段为旧客户端协议兼容字段，新版渲染层不得用它覆盖桌面更新状态。
 
 ## 数据与持久化（服务端）
 

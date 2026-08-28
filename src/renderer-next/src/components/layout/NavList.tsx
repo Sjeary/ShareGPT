@@ -10,39 +10,62 @@ const ROW_GAP = 4
 const HOLD_MS = 240
 // 进入拖动前的位移容差: 超过则判定为"滚动/误触", 取消长按。
 const MOVE_TOLERANCE = 8
-const NATIVE_TOOLTIP_HEIGHT = 40
+const NATIVE_TOOLTIP_GUTTER = 12
+let nativeTooltipRequest = 0
 
-function currentTooltipPalette() {
-  const styles = window.getComputedStyle(document.documentElement)
-  return {
-    // 与 TooltipContent 的 bg-foreground / text-background 使用同一组运行时 token。
-    background: styles.getPropertyValue('--foreground').trim() || '#1d1d1f',
-    foreground: styles.getPropertyValue('--background').trim() || '#f2f2f7',
+async function showNativeTooltip(
+  target: HTMLButtonElement,
+  key: NavKey,
+  label: string,
+  side: 'left' | 'right',
+  source: 'pointer' | 'focus',
+) {
+  const request = ++nativeTooltipRequest
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  const content = document.querySelector<HTMLElement>(`[data-native-nav-tooltip="${key}"]`)
+  if (
+    request !== nativeTooltipRequest ||
+    !content ||
+    (source === 'pointer' ? !target.matches(':hover') : document.activeElement !== target)
+  ) {
+    return
   }
-}
 
-function showNativeTooltip(target: HTMLButtonElement, label: string, side: 'left' | 'right') {
+  // 直接读取 Radix/shadcn 最终布局盒，包含真实字体与 padding；offset 尺寸不受进场缩放动画影响。
+  const contentWidth = content.offsetWidth
+  const contentHeight = content.offsetHeight
+  if (!contentWidth || !contentHeight) return
   const trigger = target.getBoundingClientRect()
-  const width = Math.max(88, Math.min(208, label.length * 14 + 34))
+  // 原生视图给箭头/透明边缘各留空间，#tip 本体尺寸仍与 shadcn 的布局盒完全一致。
+  const width = Math.min(320, contentWidth + NATIVE_TOOLTIP_GUTTER)
+  const height = Math.min(96, contentHeight + NATIVE_TOOLTIP_GUTTER)
   const x = side === 'right' ? trigger.right + 4 : trigger.left - width - 4
-  const y = trigger.top + (trigger.height - NATIVE_TOOLTIP_HEIGHT) / 2
+  const y = trigger.top + (trigger.height - height) / 2
   void api
     .setNavTooltip({
       visible: true,
       label,
       side,
-      palette: currentTooltipPalette(),
+      theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
       bounds: {
         x: Math.max(4, Math.min(window.innerWidth - width - 4, x)),
-        y: Math.max(4, Math.min(window.innerHeight - NATIVE_TOOLTIP_HEIGHT - 4, y)),
+        y: Math.max(4, Math.min(window.innerHeight - height - 4, y)),
         width,
-        height: NATIVE_TOOLTIP_HEIGHT,
+        height,
       },
+      anchorBounds: {
+        x: trigger.left,
+        y: trigger.top,
+        width: trigger.width,
+        height: trigger.height,
+      },
+      dismissOnPointerExit: source === 'pointer',
     })
     .catch(() => undefined)
 }
 
 function hideNativeTooltip() {
+  nativeTooltipRequest += 1
   void api.setNavTooltip({ visible: false }).catch(() => undefined)
 }
 
@@ -230,7 +253,7 @@ export function NavList({
             data-tour={`nav-${key}`}
             onPointerEnter={(event) => {
               if (collapsed && useNativeTooltip) {
-                showNativeTooltip(event.currentTarget, label, tooltipSide)
+                void showNativeTooltip(event.currentTarget, key, label, tooltipSide, 'pointer')
               }
             }}
             onPointerLeave={() => {
@@ -238,7 +261,7 @@ export function NavList({
             }}
             onFocus={(event) => {
               if (collapsed && useNativeTooltip) {
-                showNativeTooltip(event.currentTarget, label, tooltipSide)
+                void showNativeTooltip(event.currentTarget, key, label, tooltipSide, 'focus')
               }
             }}
             onBlur={() => {
@@ -309,10 +332,15 @@ export function NavList({
             onPointerCancel={finishDrag}
             className={cn(lifted && 'select-none', 'touch-pan-y')}
           >
-            {collapsed && !drag && !useNativeTooltip ? (
+            {collapsed && !drag ? (
               <Tooltip>
                 <TooltipTrigger asChild>{btn}</TooltipTrigger>
-                <TooltipContent side={tooltipSide} className="font-medium">
+                <TooltipContent
+                  side={tooltipSide}
+                  forceMount={useNativeTooltip || undefined}
+                  data-native-nav-tooltip={key}
+                  className={cn('font-medium', useNativeTooltip && 'invisible pointer-events-none')}
+                >
                   {label}
                 </TooltipContent>
               </Tooltip>

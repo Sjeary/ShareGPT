@@ -19,11 +19,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    // 多页: 主界面 index.html + 独立个人资料窗口 profile.html。
+    // 多页: 主界面、独立个人资料窗口，以及覆盖原生 AI view 的导航 Tooltip。
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'index.html'),
         profile: path.resolve(__dirname, 'profile.html'),
+        navTooltip: path.resolve(__dirname, 'nav-tooltip.html'),
       },
     },
   },

@@ -67,6 +67,7 @@ import {
 } from '@/lib/aiEnvironmentRuntime'
 import { isComposerGuardEligible } from '@/lib/translationSession'
 import { canUseAdvancedAi, canUseTranslation } from '@/lib/aiAccess'
+import { userFacingErrorMessage } from '@/lib/errors'
 
 function isEditableTarget(target: EventTarget | null): boolean {
   return (
@@ -218,7 +219,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         useTranslationStore.getState().setPendingSend(null)
         setFeedback(kind, confirmed ? '已按原文发送' : '已取消发送')
       } catch (error) {
-        setFeedback(kind, error instanceof Error ? error.message : String(error), 'error')
+        setFeedback(kind, userFacingErrorMessage(error), 'error')
       } finally {
         setResolvingPendingSend(false)
       }
@@ -309,7 +310,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       if (generation === proxyCheckGeneration.current) {
         setProxyResult({
           targetKey: checkedTargetKey,
-          report: { ok: false, reason: err instanceof Error ? err.message : String(err) },
+          report: { ok: false, reason: userFacingErrorMessage(err) },
         })
       }
     } finally {
@@ -382,7 +383,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       toast.success('已加入并重启代理，正在重新检测…')
       window.setTimeout(() => void runProxyCheck(), 1500)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '重启代理失败')
+      toast.error(userFacingErrorMessage(err, '重启代理失败'))
     } finally {
       setRestartingProxy(false)
     }
@@ -463,8 +464,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
             typeof payload.loading === 'boolean' ? payload.loading : tab.webviewLoading,
         })
       }
+      setFeedback(kind, '')
     },
-    [kind, networkReady, proxyHost, proxyPort, advancedMode, environmentId],
+    [kind, networkReady, proxyHost, proxyPort, advancedMode, environmentId, setFeedback],
   )
 
   // 面板激活 / 代理就绪时: 拉取标签列表并 ensure 工作区。
@@ -480,13 +482,12 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       try {
         await api.activateAiEnvironment({ kind, environmentId, generation })
         if (cancelled || !isCurrentAiEnvironmentOperation(operation)) return
-        useAiStore.getState().setTabs(kind, [], '')
         const payload = (await api.listAiViews(operation)) as AiEventPayload
         if (cancelled || !isCurrentAiEnvironmentOperation(operation)) return
         applyAiTabsPayload(kind, payload)
       } catch (error) {
         if (!cancelled && isCurrentAiEnvironmentOperation(operation)) {
-          setFeedback(kind, error instanceof Error ? error.message : String(error), 'error')
+          setFeedback(kind, userFacingErrorMessage(error), 'error')
         }
         return
       }
@@ -501,15 +502,13 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
             })) as AiEventPayload
             if (cancelled || !isCurrentAiEnvironmentOperation(operation)) return
             applyAiTabsPayload(kind, created)
-            // activeTabId 更新会触发下面的 effect，再统一执行 ensure，避免并发初始化同一视图。
-            return
           }
           if (!cancelled && isCurrentAiEnvironmentOperation(operation)) {
             await ensureWorkspace()
           }
         } catch (err) {
           if (!cancelled) {
-            setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+            setFeedback(kind, userFacingErrorMessage(err), 'error')
           }
         }
       }
@@ -519,16 +518,6 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, networkReady, environmentRuntimeKey])
-
-  // 激活标签变化时重新 ensure, 让主进程切换/定位正确的 view。
-  useEffect(() => {
-    if (networkReady && activeTabId) {
-      void ensureWorkspace().catch((error) => {
-        setFeedback(kind, error instanceof Error ? error.message : String(error), 'error')
-      })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId])
 
   // ---- 控制条动作 (旧 navigateAiWorkspace) ----
   const navigate = useCallback(
@@ -540,7 +529,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           action,
         })
       } catch (err) {
-        setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+        setFeedback(kind, userFacingErrorMessage(err), 'error')
       }
     },
     [kind, activeTabId, setFeedback],
@@ -556,7 +545,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         url: homeUrlFor(kind),
       })
     } catch (err) {
-      setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+      setFeedback(kind, userFacingErrorMessage(err), 'error')
     }
   }, [kind, activeTabId, setFeedback])
 
@@ -571,7 +560,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       applyAiTabsPayload(kind, payload)
       if (networkReady) await ensureWorkspace()
     } catch (err) {
-      setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+      setFeedback(kind, userFacingErrorMessage(err), 'error')
     }
   }, [kind, environmentId, networkReady, ensureWorkspace, setFeedback])
 
@@ -596,7 +585,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       setWebAddressOpen(false)
       setFeedback(kind, '')
     } catch (err) {
-      setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+      setFeedback(kind, userFacingErrorMessage(err), 'error')
     }
   }, [kind, addressValue, environmentId, setFeedback])
 
@@ -611,7 +600,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         applyAiTabsPayload(kind, payload)
         if (networkReady) await ensureWorkspace()
       } catch (err) {
-        setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+        setFeedback(kind, userFacingErrorMessage(err), 'error')
       }
     },
     [kind, networkReady, ensureWorkspace, setFeedback],
@@ -628,7 +617,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         applyAiTabsPayload(kind, payload)
         if (networkReady) await ensureWorkspace()
       } catch (err) {
-        setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+        setFeedback(kind, userFacingErrorMessage(err), 'error')
       }
     },
     [kind, networkReady, ensureWorkspace, setFeedback],

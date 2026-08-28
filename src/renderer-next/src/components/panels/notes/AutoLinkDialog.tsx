@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Loader2, Link2, Sparkles, X } from 'lucide-react'
+import { Loader2, Link2, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useVaultStore } from '@/store/useVaultStore'
 import { useNotesUi } from '@/store/useNotesUi'
 import { useNotesAiStore } from '@/store/useNotesAiStore'
@@ -131,24 +133,16 @@ export function AutoLinkDialog() {
   if (!open) return null
 
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 animate-in fade-in duration-150"
-      onClick={close}
-    >
-      <div
-        className="flex max-h-[80vh] w-[min(560px,92vw)] flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-2xl animate-in zoom-in-95 duration-150"
-        onClick={(e) => e.stopPropagation()}
+    <Dialog open={open} onOpenChange={(next) => !next && close()}>
+      <DialogContent
+        className="z-[61] flex max-h-[80vh] w-[min(560px,92vw)] flex-col gap-0 overflow-hidden p-0"
+        overlayClassName="z-[60]"
       >
-        <div className="flex items-center gap-1.5 border-b border-border px-4 py-3 text-sm font-semibold">
-          <Sparkles className="size-4 text-primary" /> AI 自动连线
-          <button
-            type="button"
-            onClick={close}
-            className="ml-auto rounded p-1 text-muted-foreground hover:bg-accent"
-          >
-            <X className="size-4" />
-          </button>
-        </div>
+        <DialogHeader className="border-b border-border px-4 py-3">
+          <DialogTitle className="flex items-center gap-1.5 text-sm">
+            <Sparkles className="size-4 text-primary" /> AI 自动连线
+          </DialogTitle>
+        </DialogHeader>
 
         <div className="no-scrollbar min-h-0 flex-1 overflow-auto p-3">
           {err ? (
@@ -198,23 +192,15 @@ export function AutoLinkDialog() {
 
         {pairs && pairs.length > 0 && !running && (
           <div className="flex justify-end gap-2 border-t border-border px-4 py-2.5">
-            <button
-              type="button"
-              onClick={close}
-              className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent"
-            >
+            <Button type="button" variant="ghost" size="sm" onClick={close}>
               取消
-            </button>
-            <button
-              type="button"
-              onClick={() => void apply()}
-              className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-            >
+            </Button>
+            <Button type="button" size="sm" onClick={() => void apply()}>
               建立选中的双链
-            </button>
+            </Button>
           </div>
         )}
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

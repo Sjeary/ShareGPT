@@ -1,24 +1,6 @@
 const EMPTY_BOUNDS = Object.freeze({ x: 0, y: 0, width: 1, height: 1 });
 const MAX_TOOLTIP_WIDTH = 320;
 const MAX_TOOLTIP_HEIGHT = 96;
-const DEFAULT_TOOLTIP_PALETTE = Object.freeze({
-  background: "#1d1d1f",
-  foreground: "#f2f2f7",
-});
-
-function normalizeNavTooltipPalette(rawPalette) {
-  const normalizeColor = (value, fallback) => {
-    const color = String(value || "")
-      .trim()
-      .toLowerCase();
-    return /^#[0-9a-f]{6}$/.test(color) ? color : fallback;
-  };
-  return {
-    background: normalizeColor(rawPalette?.background, DEFAULT_TOOLTIP_PALETTE.background),
-    foreground: normalizeColor(rawPalette?.foreground, DEFAULT_TOOLTIP_PALETTE.foreground),
-  };
-}
-
 function finiteNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
@@ -57,10 +39,24 @@ function normalizeNavTooltipBounds(rawBounds, rawViewport) {
   };
 }
 
-function createNavTooltipController({ createView, getHost, loadView, renderView, resolveBounds }) {
+function createNavTooltipController({
+  createView,
+  getHost,
+  loadView,
+  renderView,
+  resolveBounds,
+  watchPointerExit = null,
+}) {
   let view = null;
   let ready = null;
   let requestToken = 0;
+  let stopPointerExitWatch = null;
+
+  function stopWatchingPointerExit() {
+    const stop = stopPointerExitWatch;
+    stopPointerExitWatch = null;
+    if (typeof stop === "function") stop();
+  }
 
   function isUsable(candidate) {
     return Boolean(candidate && !candidate.webContents?.isDestroyed?.());
@@ -113,6 +109,7 @@ function createNavTooltipController({ createView, getHost, loadView, renderView,
 
   function hide() {
     requestToken += 1;
+    stopWatchingPointerExit();
     if (!isUsable(view)) return false;
     view.setVisible(false);
     view.setBounds(EMPTY_BOUNDS);
@@ -121,6 +118,7 @@ function createNavTooltipController({ createView, getHost, loadView, renderView,
 
   function close() {
     requestToken += 1;
+    stopWatchingPointerExit();
     const candidate = view;
     view = null;
     ready = null;
@@ -146,6 +144,7 @@ function createNavTooltipController({ createView, getHost, loadView, renderView,
     if (!resolveBounds(payload.bounds, host)) return hide();
 
     const token = ++requestToken;
+    stopWatchingPointerExit();
     const current = ensureView();
     await current.ready;
     if (token !== requestToken || !isUsable(current.view)) return false;
@@ -165,6 +164,11 @@ function createNavTooltipController({ createView, getHost, loadView, renderView,
     current.view.setBounds(currentBounds);
     currentHost.contentView.addChildView(current.view);
     current.view.setVisible(true);
+    if (payload.dismissOnPointerExit && typeof watchPointerExit === "function") {
+      stopPointerExitWatch = watchPointerExit(payload.anchorBounds, currentHost, () => {
+        if (token === requestToken) hide();
+      });
+    }
     return true;
   }
 
@@ -174,5 +178,4 @@ function createNavTooltipController({ createView, getHost, loadView, renderView,
 module.exports = {
   createNavTooltipController,
   normalizeNavTooltipBounds,
-  normalizeNavTooltipPalette,
 };

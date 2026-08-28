@@ -433,7 +433,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const savedShowGemini = mergedSettings.ui?.showGemini
     if (typeof savedShowGemini === 'boolean') {
       set({ showGemini: savedShowGemini })
-      if (!savedShowGemini && get().active === 'gemini') set({ active: 'service' })
+      if (!savedShowGemini && get().active === 'gemini') get().setActive('service')
     }
     const savedHidden = mergedSettings.ui?.hiddenNav
     if (Array.isArray(savedHidden)) set({ hiddenNav: savedHidden as NavKey[] })
@@ -444,7 +444,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const savedShowClaude = mergedSettings.ui?.showClaude
     if (typeof savedShowClaude === 'boolean') {
       set({ showClaude: savedShowClaude })
-      if (!savedShowClaude && get().active === 'claude') set({ active: 'service' })
+      if (!savedShowClaude && get().active === 'claude') get().setActive('service')
     }
     api.onStatus((payload) => set({ status: payload as StatusPayload }))
   },

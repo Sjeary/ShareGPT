@@ -11,6 +11,7 @@ const {
   ipcMain,
   nativeTheme,
   net: electronNet,
+  screen,
   session,
   shell,
 } = require("electron");
@@ -68,11 +69,11 @@ const { createStorageFlushCoordinator } = require("./storageFlush");
 const {
   createNavTooltipController,
   normalizeNavTooltipBounds,
-  normalizeNavTooltipPalette,
 } = require("./navTooltip");
 const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
+  aiRouteFingerprint,
   evaluateAiRouteHealth,
   partitionForAiEnvironment,
   partitionForAiKind,
@@ -80,6 +81,7 @@ const {
   resolvedProxyMatchesRoute,
   scaleAiHostBounds,
   shouldCloseAiWorkspacesForEnvironment,
+  shouldPreflightAiRoute,
 } = require("./aiEnvironments");
 
 // 记录每个 AI 会话(按 partition)实际访问过的主机名, 供「代理检测」展示页面流量去向。
@@ -1310,21 +1312,7 @@ function createElectronApp(baseMode = "all") {
   async function checkAiRouteHealth(route, options = {}) {
     const routeId = normalizeAiRouteId(route?.id);
     if (!routeId || route?.mode !== "singbox") throw new Error("只能检测内置 sing-box 线路");
-    const routeFingerprint = crypto
-      .createHash("sha256")
-      .update(
-        JSON.stringify({
-          routeId,
-          host: route.host,
-          port: route.port,
-          outboundTag: route.outboundTag,
-          dnsTag: route.dnsTag,
-          expected: route.expected || {},
-          outbound: route.outbound || {},
-        }),
-      )
-      .digest("hex")
-      .slice(0, 16);
+    const routeFingerprint = aiRouteFingerprint(route);
     const cacheKey = `${routeId}:${routeFingerprint}`;
     const cached = aiRouteHealthCache.get(cacheKey);
     if (!options.force && cached && Date.now() - cached.cachedAt < AI_ROUTE_HEALTH_TTL_MS) {
@@ -1734,42 +1722,6 @@ function createElectronApp(baseMode = "all") {
 
   function ensureNavTooltipController() {
     if (navTooltipController) return navTooltipController;
-    const documentUrl = `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
-        <meta charset="utf-8">
-        <style>
-          * { box-sizing: border-box; }
-          html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
-          body { position: relative; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-          #tip {
-            --tip-background: #1d1d1f;
-            --tip-foreground: #f2f2f7;
-            position: absolute; top: 50%; height: 28px; left: 10px; right: 2px;
-            transform: translateY(-50%);
-            display: flex; align-items: center; justify-content: center;
-            border-radius: 10px; background: var(--tip-background); color: var(--tip-foreground);
-            font-size: 12px; font-weight: 500; line-height: 16px;
-          }
-          #tip-label {
-            min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-          }
-          #tip::before {
-            content: ""; position: absolute; left: -4px; top: 50%;
-            width: 10px; height: 10px; background: var(--tip-background);
-            transform: translateY(-50%) rotate(45deg); border-radius: 2px;
-          }
-          body[data-side="left"] #tip { left: 2px; right: 10px; }
-          body[data-side="left"] #tip::before { left: auto; right: -4px; }
-        </style>
-        <div id="tip"><span id="tip-label"></span></div>
-        <script>
-          window.setTooltip = ({ label, side, palette }) => {
-            document.body.dataset.side = side === "left" ? "left" : "right";
-            const tip = document.getElementById("tip");
-            document.getElementById("tip-label").textContent = label;
-            tip.style.setProperty("--tip-background", palette.background);
-            tip.style.setProperty("--tip-foreground", palette.foreground);
-          };
-        </script>`)}`;
     navTooltipController = createNavTooltipController({
       createView() {
         const view = new WebContentsView({
@@ -1788,13 +1740,23 @@ function createElectronApp(baseMode = "all") {
         return view;
       },
       getHost: () => mainWindow,
-      loadView: (view) => view.webContents.loadURL(documentUrl),
+      loadView(view) {
+        const devUrl = process.env.SHAREGPT_UI_DEV_URL;
+        if (process.env.SHAREGPT_UI_NEXT === "1" && devUrl && !app.isPackaged) {
+          return view.webContents.loadURL(`${devUrl.replace(/\/$/, "")}/nav-tooltip.html`);
+        }
+        const builtTooltip = path.join(__dirname, "../renderer-next/dist/nav-tooltip.html");
+        if (!fs.existsSync(builtTooltip)) {
+          throw new Error("导航提示渲染资源不存在，请重新构建 renderer-next");
+        }
+        return view.webContents.loadFile(builtTooltip);
+      },
       renderView: (view, payload) =>
         view.webContents.executeJavaScript(
-          `window.setTooltip(${JSON.stringify({
+          `window.setNavTooltip(${JSON.stringify({
             label: payload.label,
             side: payload.side,
-            palette: payload.palette,
+            theme: payload.theme,
           })})`,
         ),
       resolveBounds(bounds, host) {
@@ -1805,6 +1767,30 @@ function createElectronApp(baseMode = "all") {
           height: contentBounds.height / shellZoomFactor,
         });
         return normalized ? scaleAiHostBounds(normalized, shellZoomFactor) : null;
+      },
+      watchPointerExit(anchorBounds, host, onExit) {
+        const shellZoomFactor = host.webContents.getZoomFactor?.() || 1;
+        const normalized = normalizeNavTooltipBounds(anchorBounds, {
+          width: host.getContentBounds().width / shellZoomFactor,
+          height: host.getContentBounds().height / shellZoomFactor,
+        });
+        if (!normalized) return null;
+        const anchor = scaleAiHostBounds(normalized, shellZoomFactor);
+        const timer = setInterval(() => {
+          if (!mainWindow || mainWindow.isDestroyed()) {
+            onExit();
+            return;
+          }
+          const content = mainWindow.getContentBounds();
+          const point = screen.getCursorScreenPoint();
+          const inside =
+            point.x >= content.x + anchor.x &&
+            point.x < content.x + anchor.x + anchor.width &&
+            point.y >= content.y + anchor.y &&
+            point.y < content.y + anchor.y + anchor.height;
+          if (!inside) onExit();
+        }, 32);
+        return () => clearInterval(timer);
       },
     });
     return navTooltipController;
@@ -1817,8 +1803,14 @@ function createElectronApp(baseMode = "all") {
     const label = safeText(payload.label).slice(0, 80);
     if (!label) return hideNavTooltip();
     const side = payload.side === "left" ? "left" : "right";
-    const palette = normalizeNavTooltipPalette(payload.palette);
-    return ensureNavTooltipController().show({ label, side, palette, bounds: payload.bounds });
+    return ensureNavTooltipController().show({
+      label,
+      side,
+      theme: payload.theme === "light" ? "light" : "dark",
+      bounds: payload.bounds,
+      anchorBounds: payload.anchorBounds,
+      dismissOnPointerExit: Boolean(payload.dismissOnPointerExit),
+    });
   }
 
   function detachWorkspaceView(workspace) {
@@ -2534,6 +2526,9 @@ function createElectronApp(baseMode = "all") {
       defaultTitle: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
       title: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
       proxySignature: "",
+      // 阻断预检属于“线路绑定”生命周期，不属于“面板显示”生命周期。
+      // 同一 view + 同一线路重新显示时复用该证明，换线路会因 fingerprint 改变而重新预检。
+      routeHealthFingerprint: "",
       proxyMode: "sender",
       proxyLabel: "当前统一代理",
       proxyPort: null,
@@ -3329,15 +3324,19 @@ function createElectronApp(baseMode = "all") {
         port: Number.parseInt(String(payload?.port || "1080"), 10),
       };
       const route = getWorkspaceProxyRoute(kind, environmentId, sender);
-      if (environmentId) {
+      const targetTabId = requestedTabId || activeTabIdByKind[kind];
+      const existingWorkspace = getWorkspace(kind, targetTabId);
+      let verifiedRouteFingerprint = "";
+      if (environmentId && shouldPreflightAiRoute(existingWorkspace, route)) {
         const health = await checkAiRouteHealth(route);
         assertCurrentAiEnvironmentOperation(payload);
         if (!health.ok) {
           throw new Error(`线路 ${route.label} 未通过出口身份预检，已阻止页面访问`);
         }
+        verifiedRouteFingerprint = aiRouteFingerprint(route);
       }
       assertCurrentAiEnvironmentOperation(payload);
-      const workspace = getOrCreateAiWorkspace(kind, requestedTabId || activeTabIdByKind[kind], {
+      const workspace = getOrCreateAiWorkspace(kind, targetTabId, {
         lastUrl: safeText(payload?.lastUrl),
         allowExternalBrowsing: Boolean(payload?.allowExternalBrowsing),
         environmentId,
@@ -3384,6 +3383,9 @@ function createElectronApp(baseMode = "all") {
       workspace.proxyMode = route.mode;
       workspace.proxyLabel = route.label;
       workspace.proxyPort = route.port || null;
+      if (verifiedRouteFingerprint) {
+        workspace.routeHealthFingerprint = verifiedRouteFingerprint;
+      }
 
       if (userAgent) {
         workspace.userAgent = userAgent;

@@ -11,41 +11,30 @@ import {
   X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api'
 import {
   currentAiEnvironmentOperation,
   isCurrentAiEnvironmentOperation,
 } from '@/lib/aiEnvironmentRuntime'
 import { runAi } from '@/lib/notes/aiClient'
-import { REMOTE_HTTP_WARNING, usesRemoteHttp } from '@/lib/remoteHttp'
 import { describeTranslationTarget } from '@/lib/translationTarget'
+import { mergeTranslationSettingsDraft } from '@/lib/translationSettingsDraft'
 import { cn } from '@/lib/utils'
 import { useAiStore, type AiKind } from '@/store/useAiStore'
 import { useNotesAiStore } from '@/store/useNotesAiStore'
 import { useTranslationStore } from '@/store/useTranslationStore'
-import type { TranslationProvider, TranslationSettings } from '@/types/settings'
+import type { TranslationSettings } from '@/types/settings'
 import { isCurrentOutgoingTranslationSession } from '@/lib/translationSession'
-
-const LANGUAGES = [
-  ['auto', '自动检测'],
-  ['zh', '中文'],
-  ['en', 'English'],
-  ['ja', '日本語'],
-  ['ko', '한국어'],
-  ['fr', 'Français'],
-  ['de', 'Deutsch'],
-  ['es', 'Español'],
-  ['ru', 'Русский'],
-] as const
+import {
+  LANGUAGES,
+  LanguageSelect,
+  PROVIDERS,
+  TranslationSettingsForm,
+} from './TranslationSettingsForm'
 
 const TARGET_LABELS = Object.fromEntries(LANGUAGES) as Record<string, string>
-const PROVIDERS: Array<{ id: TranslationProvider; label: string }> = [
-  { id: 'ai', label: 'AI' },
-  { id: 'api', label: '翻译 API' },
-  { id: 'offline', label: '本地离线' },
-]
 
 interface TranslationPanelProps {
   kind: AiKind
@@ -427,7 +416,9 @@ export function TranslationPanel({
           <Languages className="size-4 text-primary" />
           <h2 className="text-sm font-semibold">翻译</h2>
           <span className="text-xs text-muted-foreground">
-            {PROVIDERS.find((item) => item.id === state.config.provider)?.label}
+            {state.settingsOpen
+              ? '设置'
+              : PROVIDERS.find((item) => item.id === state.config.provider)?.label}
           </span>
           <Button
             variant="ghost"
@@ -451,67 +442,14 @@ export function TranslationPanel({
           </Button>
         </div>
 
-        <div className="flex shrink-0 gap-1 border-b border-border p-2">
-          {PROVIDERS.map((provider) => (
-            <button
-              key={provider.id}
-              type="button"
-              className={cn(
-                'h-8 flex-1 rounded-md px-2 text-xs font-medium transition-colors',
-                state.config.provider === provider.id
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-              onClick={() => patchConfig({ provider: provider.id })}
-            >
-              {provider.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="grid shrink-0 grid-cols-2 gap-1 border-b border-border p-2">
-          <button
-            type="button"
-            className={cn(
-              'h-8 rounded-md text-xs font-medium transition-colors',
-              mode === 'read'
-                ? 'bg-muted text-foreground'
-                : 'text-muted-foreground hover:bg-muted/60',
-            )}
-            onClick={() => setMode('read')}
-          >
-            阅读翻译
-          </button>
-          <button
-            type="button"
-            className={cn(
-              'h-8 rounded-md text-xs font-medium transition-colors',
-              mode === 'compose'
-                ? 'bg-muted text-foreground'
-                : 'text-muted-foreground hover:bg-muted/60',
-            )}
-            onClick={() => setMode('compose')}
-          >
-            中文提问
-          </button>
-        </div>
-
-        <div className="flex h-7 min-w-0 shrink-0 items-center gap-1.5 border-b border-border px-3 text-[11px] text-muted-foreground">
-          <span className="shrink-0">发送到</span>
-          <span
-            className="min-w-0 truncate font-medium text-foreground"
-            title={targetDisplay.title}
-          >
-            {targetDisplay.label}
-          </span>
-        </div>
-
-        {state.settingsOpen && (
+        {state.settingsOpen ? (
           <TranslationSettingsForm
-            key={state.config.provider}
             config={state.config}
-            onSave={(config) => {
+            onCancel={() => state.setSettingsOpen(kind, tabId, false)}
+            onSave={(draft, baseline) => {
               const token = useTranslationStore.getState().snapshotRequest(kind, tabId)
+              const latest = useTranslationStore.getState().config
+              const config = mergeTranslationSettingsDraft(latest, baseline, draft)
               void useTranslationStore
                 .getState()
                 .saveConfig(config)
@@ -530,368 +468,215 @@ export function TranslationPanel({
                 })
             }}
           />
-        )}
-
-        {mode === 'read' ? (
-          <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
-            <div className="flex items-center gap-2">
-              <LanguageSelect
-                value={state.config.sourceLanguage}
-                includeAuto
-                label="源语言"
-                onChange={(sourceLanguage) => patchConfig({ sourceLanguage })}
-              />
-              <span className="text-xs text-muted-foreground">→</span>
-              <LanguageSelect
-                value={state.config.targetLanguage}
-                label="目标语言"
-                onChange={(targetLanguage) => patchConfig({ targetLanguage })}
-              />
-            </div>
-
-            <textarea
-              value={sourceText}
-              onChange={(event) => state.setSourceText(kind, tabId, event.target.value)}
-              disabled={!canUseTranslation}
-              placeholder="输入文字，或在网页中选中文字后右键翻译"
-              aria-label="待翻译内容"
-              spellCheck={false}
-              className="min-h-28 w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-            />
-
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5"
-                disabled={!canUseTranslation || loading}
-                onClick={() => void capturePage(true)}
-              >
-                <FileText className="size-3.5" />
-                整页翻译
-              </Button>
-              <Button
-                size="sm"
-                className="ml-auto gap-1.5"
-                disabled={!canUseTranslation || loading}
-                onClick={() => void translate()}
-              >
-                {loading ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <Languages className="size-3.5" />
-                )}
-                翻译
-              </Button>
-            </div>
-
-            <div className="flex min-h-0 flex-1 flex-col border-t border-border pt-2">
-              <div className="mb-1 flex h-8 items-center">
-                <span className="text-xs font-medium text-muted-foreground">译文</span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="ml-auto size-7"
-                  title="复制译文"
-                  aria-label="复制译文"
-                  disabled={!result}
-                  onClick={() => {
-                    const token = useTranslationStore.getState().snapshotRequest(kind, tabId)
-                    void navigator.clipboard
-                      .writeText(result)
-                      .then(() => setCopied())
-                      .catch(() => {
-                        if (token) {
-                          useTranslationStore
-                            .getState()
-                            .applyRequest(token, { status: '复制失败，请检查剪贴板权限' })
-                        }
-                      })
-                  }}
-                >
-                  {copied ? (
-                    <Check className="size-3.5 text-emerald-500" />
-                  ) : (
-                    <Clipboard className="size-3.5" />
-                  )}
-                </Button>
-              </div>
-              <div className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/35 p-3 text-sm leading-6">
-                {result || <span className="text-muted-foreground">译文将在这里显示</span>}
-              </div>
-              <div className="min-h-6 pt-1.5 text-xs text-muted-foreground" role="status">
-                {status}
-              </div>
-            </div>
-          </div>
         ) : (
-          <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span className="shrink-0">我的语言</span>
-              <span>→</span>
-              <LanguageSelect
-                value={state.config.siteLanguage}
-                label="网页接收语言"
-                onChange={(siteLanguage) => patchConfig({ siteLanguage })}
-              />
-            </div>
-            <textarea
-              value={outgoingText}
-              onChange={(event) => setOutgoingText(event.target.value)}
-              disabled={!canUseTranslation || outgoingLoading}
-              placeholder="在这里用中文提问，网页只会收到翻译后的内容"
-              aria-label="中文提问内容"
-              className="min-h-32 w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-            />
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!canUseTranslation || outgoingLoading || !outgoingText.trim()}
-                onClick={() => void translateOutgoing('preview')}
+          <>
+            <Tabs
+              value={state.config.provider}
+              onValueChange={(provider) =>
+                patchConfig({ provider: provider as TranslationSettings['provider'] })
+              }
+              className="shrink-0 border-b border-border p-2"
+            >
+              <TabsList className="grid h-9 w-full grid-cols-3" aria-label="翻译服务">
+                {PROVIDERS.map((provider) => (
+                  <TabsTrigger key={provider.id} value={provider.id} className="text-xs">
+                    {provider.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+
+            <Tabs
+              value={mode}
+              onValueChange={(value) => setMode(value as 'read' | 'compose')}
+              className="shrink-0 border-b border-border p-2"
+            >
+              <TabsList className="grid h-9 w-full grid-cols-2" aria-label="翻译模式">
+                <TabsTrigger value="read" className="text-xs">
+                  阅读翻译
+                </TabsTrigger>
+                <TabsTrigger value="compose" className="text-xs">
+                  中文提问
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+
+            <div className="flex h-7 min-w-0 shrink-0 items-center gap-1.5 border-b border-border px-3 text-[11px] text-muted-foreground">
+              <span className="shrink-0">发送到</span>
+              <span
+                className="min-w-0 truncate font-medium text-foreground"
+                title={targetDisplay.title}
               >
-                <Languages className="mr-1.5 size-3.5" />
-                预览译文
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!canUseTranslation || outgoingLoading || !outgoingText.trim()}
-                onClick={() => void translateOutgoing('fill')}
-              >
-                <MessageSquareText className="mr-1.5 size-3.5" />
-                翻译并填入
-              </Button>
-              <Button
-                size="sm"
-                className="ml-auto"
-                disabled={!canUseTranslation || outgoingLoading || !outgoingText.trim()}
-                onClick={() => void translateOutgoing('send')}
-              >
-                {outgoingLoading ? (
-                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                ) : (
-                  <Send className="mr-1.5 size-3.5" />
-                )}
-                翻译并发送
-              </Button>
+                {targetDisplay.label}
+              </span>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col border-t border-border pt-2">
-              <div className="mb-1 flex h-8 items-center text-xs font-medium text-muted-foreground">
-                网页将收到
-                <span className="ml-1">
-                  {TARGET_LABELS[state.config.siteLanguage] || state.config.siteLanguage}
-                </span>
+
+            {mode === 'read' ? (
+              <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
+                <div className="flex items-center gap-2">
+                  <LanguageSelect
+                    value={state.config.sourceLanguage}
+                    includeAuto
+                    label="源语言"
+                    onChange={(sourceLanguage) => patchConfig({ sourceLanguage })}
+                  />
+                  <span className="text-xs text-muted-foreground">→</span>
+                  <LanguageSelect
+                    value={state.config.targetLanguage}
+                    label="目标语言"
+                    onChange={(targetLanguage) => patchConfig({ targetLanguage })}
+                  />
+                </div>
+
+                <Textarea
+                  value={sourceText}
+                  onChange={(event) => state.setSourceText(kind, tabId, event.target.value)}
+                  disabled={!canUseTranslation}
+                  placeholder="输入文字，或在网页中选中文字后右键翻译"
+                  aria-label="待翻译内容"
+                  spellCheck={false}
+                  className="min-h-28 resize-y"
+                />
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={!canUseTranslation || loading}
+                    onClick={() => void capturePage(true)}
+                  >
+                    <FileText className="size-3.5" />
+                    整页翻译
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="ml-auto gap-1.5"
+                    disabled={!canUseTranslation || loading}
+                    onClick={() => void translate()}
+                  >
+                    {loading ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Languages className="size-3.5" />
+                    )}
+                    翻译
+                  </Button>
+                </div>
+
+                <div className="flex min-h-0 flex-1 flex-col border-t border-border pt-2">
+                  <div className="mb-1 flex h-8 items-center">
+                    <span className="text-xs font-medium text-muted-foreground">译文</span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="ml-auto size-7"
+                      title="复制译文"
+                      aria-label="复制译文"
+                      disabled={!result}
+                      onClick={() => {
+                        const token = useTranslationStore.getState().snapshotRequest(kind, tabId)
+                        void navigator.clipboard
+                          .writeText(result)
+                          .then(() => setCopied())
+                          .catch(() => {
+                            if (token) {
+                              useTranslationStore
+                                .getState()
+                                .applyRequest(token, { status: '复制失败，请检查剪贴板权限' })
+                            }
+                          })
+                      }}
+                    >
+                      {copied ? (
+                        <Check className="size-3.5 text-emerald-500" />
+                      ) : (
+                        <Clipboard className="size-3.5" />
+                      )}
+                    </Button>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/35 p-3 text-sm leading-6">
+                    {result || <span className="text-muted-foreground">译文将在这里显示</span>}
+                  </div>
+                  <div className="min-h-6 pt-1.5 text-xs text-muted-foreground" role="status">
+                    {status}
+                  </div>
+                </div>
               </div>
-              <div className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/35 p-3 text-sm leading-6">
-                {outgoingResult || (
-                  <span className="text-muted-foreground">翻译后的提问会显示在这里</span>
-                )}
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col gap-2 p-3">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span className="shrink-0">我的语言</span>
+                  <span>→</span>
+                  <LanguageSelect
+                    value={state.config.siteLanguage}
+                    label="网页接收语言"
+                    onChange={(siteLanguage) => patchConfig({ siteLanguage })}
+                  />
+                </div>
+                <Textarea
+                  value={outgoingText}
+                  onChange={(event) => setOutgoingText(event.target.value)}
+                  disabled={!canUseTranslation || outgoingLoading}
+                  placeholder="在这里用中文提问，网页只会收到翻译后的内容"
+                  aria-label="中文提问内容"
+                  className="min-h-32 resize-y"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!canUseTranslation || outgoingLoading || !outgoingText.trim()}
+                    onClick={() => void translateOutgoing('preview')}
+                  >
+                    <Languages className="mr-1.5 size-3.5" />
+                    预览译文
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!canUseTranslation || outgoingLoading || !outgoingText.trim()}
+                    onClick={() => void translateOutgoing('fill')}
+                  >
+                    <MessageSquareText className="mr-1.5 size-3.5" />
+                    翻译并填入
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="ml-auto"
+                    disabled={!canUseTranslation || outgoingLoading || !outgoingText.trim()}
+                    onClick={() => void translateOutgoing('send')}
+                  >
+                    {outgoingLoading ? (
+                      <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                    ) : (
+                      <Send className="mr-1.5 size-3.5" />
+                    )}
+                    翻译并发送
+                  </Button>
+                </div>
+                <div className="flex min-h-0 flex-1 flex-col border-t border-border pt-2">
+                  <div className="mb-1 flex h-8 items-center text-xs font-medium text-muted-foreground">
+                    网页将收到
+                    <span className="ml-1">
+                      {TARGET_LABELS[state.config.siteLanguage] || state.config.siteLanguage}
+                    </span>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/35 p-3 text-sm leading-6">
+                    {outgoingResult || (
+                      <span className="text-muted-foreground">翻译后的提问会显示在这里</span>
+                    )}
+                  </div>
+                  <div className="min-h-6 pt-1.5 text-xs text-muted-foreground" role="status">
+                    {outgoingStatus}
+                  </div>
+                </div>
               </div>
-              <div className="min-h-6 pt-1.5 text-xs text-muted-foreground" role="status">
-                {outgoingStatus}
-              </div>
-            </div>
-          </div>
+            )}
+          </>
         )}
       </aside>
     </>
-  )
-}
-
-function TranslationSettingsForm({
-  config,
-  onSave,
-}: {
-  config: TranslationSettings
-  onSave: (config: TranslationSettings) => void
-}) {
-  const inputClass = 'h-8 text-xs'
-  const [draft, setDraft] = useState(config)
-  const changed = JSON.stringify(draft) !== JSON.stringify(config)
-  const remoteUrl = draft.provider === 'ai' ? draft.ai.baseUrl : draft.api.baseUrl
-  const showRemoteHttpWarning = usesRemoteHttp(remoteUrl)
-  return (
-    <div className="max-h-[42vh] shrink-0 space-y-2 overflow-y-auto border-b border-border bg-muted/20 p-3">
-      <div className="flex items-center gap-2">
-        <span className="shrink-0 text-xs text-muted-foreground">网页接收语言</span>
-        <LanguageSelect
-          value={draft.siteLanguage}
-          label="网页接收语言"
-          onChange={(siteLanguage) => setDraft((current) => ({ ...current, siteLanguage }))}
-        />
-      </div>
-      <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-background/60 px-2.5 py-2">
-        <label htmlFor="auto-translate-selection" className="text-xs">
-          选中网页文字后自动翻译
-        </label>
-        <Switch
-          id="auto-translate-selection"
-          checked={draft.autoTranslateSelection}
-          onCheckedChange={(autoTranslateSelection) =>
-            setDraft((current) => ({ ...current, autoTranslateSelection }))
-          }
-        />
-      </div>
-      <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-background/60 px-2.5 py-2">
-        <label htmlFor="confirm-non-target-send" className="text-xs">
-          非目标语言发送前确认
-        </label>
-        <Switch
-          id="confirm-non-target-send"
-          checked={draft.confirmNonTargetSend}
-          onCheckedChange={(confirmNonTargetSend) =>
-            setDraft((current) => ({ ...current, confirmNonTargetSend }))
-          }
-        />
-      </div>
-      {draft.provider === 'ai' && (
-        <>
-          <Input
-            className={inputClass}
-            value={draft.ai.baseUrl}
-            aria-label="AI 接口地址"
-            placeholder="AI 接口地址"
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                ai: { ...current.ai, baseUrl: event.target.value },
-              }))
-            }
-          />
-          <Input
-            className={inputClass}
-            type="password"
-            value={draft.ai.apiKey}
-            aria-label="AI 接口密钥"
-            placeholder="AI 接口密钥"
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                ai: { ...current.ai, apiKey: event.target.value },
-              }))
-            }
-          />
-          <div className="flex gap-2">
-            <Input
-              className={inputClass}
-              value={draft.ai.model}
-              aria-label="AI 模型"
-              placeholder="模型"
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  ai: { ...current.ai, model: event.target.value },
-                }))
-              }
-            />
-            <select
-              className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-              aria-label="推理强度"
-              value={draft.ai.effort}
-              onChange={(event) =>
-                setDraft((current) => ({
-                  ...current,
-                  ai: { ...current.ai, effort: event.target.value },
-                }))
-              }
-            >
-              <option value="low">低</option>
-              <option value="medium">中</option>
-              <option value="high">高</option>
-            </select>
-          </div>
-        </>
-      )}
-      {draft.provider === 'api' && (
-        <>
-          <Input
-            className={inputClass}
-            value={draft.api.baseUrl}
-            aria-label="翻译 API 地址"
-            placeholder="LibreTranslate 兼容接口地址"
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                api: { ...current.api, baseUrl: event.target.value },
-              }))
-            }
-          />
-          <Input
-            className={inputClass}
-            type="password"
-            value={draft.api.apiKey}
-            aria-label="翻译 API 密钥"
-            placeholder="API 密钥（可选）"
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                api: { ...current.api, apiKey: event.target.value },
-              }))
-            }
-          />
-        </>
-      )}
-      {draft.provider === 'offline' && (
-        <>
-          <Input
-            className={inputClass}
-            value={draft.offline.baseUrl}
-            aria-label="本地翻译服务地址"
-            placeholder="http://127.0.0.1:5000"
-            onChange={(event) =>
-              setDraft((current) => ({
-                ...current,
-                offline: { baseUrl: event.target.value },
-              }))
-            }
-          />
-          <p className="text-[11px] text-muted-foreground">
-            仅允许本机回环地址，文本不会发送到远程服务。
-          </p>
-        </>
-      )}
-      {showRemoteHttpWarning && (
-        <p className="rounded-md border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">
-          {REMOTE_HTTP_WARNING}
-        </p>
-      )}
-      <div className="flex justify-end gap-2 pt-1">
-        <Button size="sm" variant="ghost" disabled={!changed} onClick={() => setDraft(config)}>
-          取消
-        </Button>
-        <Button size="sm" disabled={!changed} onClick={() => onSave(draft)}>
-          保存设置
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-function LanguageSelect({
-  value,
-  label,
-  includeAuto = false,
-  onChange,
-}: {
-  value: string
-  label: string
-  includeAuto?: boolean
-  onChange: (value: string) => void
-}) {
-  return (
-    <select
-      value={value}
-      aria-label={label}
-      className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs"
-      onChange={(event) => onChange(event.target.value)}
-    >
-      {LANGUAGES.filter(([id]) => includeAuto || id !== 'auto').map(([id, name]) => (
-        <option key={id} value={id}>
-          {name}
-        </option>
-      ))}
-    </select>
   )
 }
 

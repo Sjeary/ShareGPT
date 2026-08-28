@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { Command } from 'cmdk'
 import {
   CalendarDays,
@@ -13,6 +12,7 @@ import {
   Table,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useVaultStore } from '@/store/useVaultStore'
 import { useNotesUi } from '@/store/useNotesUi'
 import { STARTER_BASE } from '@/lib/notes/bases'
@@ -30,15 +30,6 @@ interface Cmd {
 export function CommandPalette() {
   const open = useNotesUi((s) => s.paletteOpen)
   const setOpen = useNotesUi((s) => s.setPaletteOpen)
-
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, setOpen])
 
   if (!open) return null
 
@@ -128,41 +119,40 @@ export function CommandPalette() {
   ]
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-[12vh] animate-in fade-in duration-150"
-      onClick={close}
-    >
-      <Command
-        className="w-[min(560px,90vw)] overflow-hidden rounded-xl border border-border bg-popover shadow-2xl animate-in zoom-in-95 slide-in-from-top-2 duration-150"
-        onClick={(e) => e.stopPropagation()}
-        loop
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent
+        className="top-[12vh] w-[min(560px,90vw)] translate-y-0 gap-0 overflow-hidden p-0"
+        showCloseButton={false}
       >
-        <Command.Input
-          autoFocus
-          placeholder="输入命令…"
-          className="h-12 w-full border-b border-border bg-transparent px-4 text-sm outline-none placeholder:text-muted-foreground"
-        />
-        <Command.List className="no-scrollbar max-h-[50vh] overflow-auto p-1.5">
-          <Command.Empty className="px-3 py-6 text-center text-sm text-muted-foreground">
-            无匹配命令
-          </Command.Empty>
-          {cmds.map((c) => (
-            <Command.Item
-              key={c.id}
-              value={c.label}
-              onSelect={() => {
-                c.run()
-                close()
-              }}
-              className="flex cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-sm aria-selected:bg-accent"
-            >
-              <c.icon className="size-4 shrink-0 text-primary" />
-              <span className="flex-1">{c.label}</span>
-              {c.hint && <span className="text-xs text-muted-foreground">{c.hint}</span>}
-            </Command.Item>
-          ))}
-        </Command.List>
-      </Command>
-    </div>
+        <DialogTitle className="sr-only">命令面板</DialogTitle>
+        <Command className="overflow-hidden bg-popover" loop>
+          <Command.Input
+            autoFocus
+            placeholder="输入命令…"
+            className="h-12 w-full border-b border-border bg-transparent px-4 text-sm outline-none placeholder:text-muted-foreground"
+          />
+          <Command.List className="no-scrollbar max-h-[50vh] overflow-auto p-1.5">
+            <Command.Empty className="px-3 py-6 text-center text-sm text-muted-foreground">
+              无匹配命令
+            </Command.Empty>
+            {cmds.map((c) => (
+              <Command.Item
+                key={c.id}
+                value={c.label}
+                onSelect={() => {
+                  c.run()
+                  close()
+                }}
+                className="flex cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-sm aria-selected:bg-accent"
+              >
+                <c.icon className="size-4 shrink-0 text-primary" />
+                <span className="flex-1">{c.label}</span>
+                {c.hint && <span className="text-xs text-muted-foreground">{c.hint}</span>}
+              </Command.Item>
+            ))}
+          </Command.List>
+        </Command>
+      </DialogContent>
+    </Dialog>
   )
 }

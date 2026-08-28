@@ -142,9 +142,9 @@ export async function applyClientBootstrap(
   if (isCurrent && !isCurrent()) return
   const currentPrincipalId = settingsPrincipalRuntime.current().principalId
   if (!principalId || principalId !== currentPrincipalId) return
-  const authState = useAuthStore.getState()
-  authState.setUpdateInfo(payload.update)
-  authState.setRuntimeSender({ principalId, sender: { ...payload.sender } })
+  // 协作服务器只负责当前 Principal 的运行期线路配置。应用版本只由
+  // app:update-check -> GitHub Latest Release 写入，避免两个异步来源互相覆盖。
+  useAuthStore.getState().setRuntimeSender({ principalId, sender: { ...payload.sender } })
 }
 
 export function useAuth() {

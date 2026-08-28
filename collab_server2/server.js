@@ -196,6 +196,18 @@ function normalizeUserRecord(record) {
     ? record.avatarKind
     : inferAvatarKind(avatar);
   const bio = safeText(record?.bio).slice(0, 200);
+  const hasAdvancedAiAllowed = Object.prototype.hasOwnProperty.call(
+    record || {},
+    "advancedAiAllowed",
+  );
+  const hasAllowedProxyRouteIds = Object.prototype.hasOwnProperty.call(
+    record || {},
+    "allowedProxyRouteIds",
+  );
+  const hasLegacyProxyEntitled = Object.prototype.hasOwnProperty.call(
+    record || {},
+    "legacyProxyEntitled",
+  );
 
   return {
     ...record,
@@ -207,6 +219,9 @@ function normalizeUserRecord(record) {
     isAdmin: Boolean(record?.isAdmin),
     advancedAiAllowed: Boolean(record?.advancedAiAllowed),
     allowedProxyRouteIds: normalizeProxyRouteIds(record?.allowedProxyRouteIds),
+    legacyProxyEntitled: hasLegacyProxyEntitled
+      ? Boolean(record?.legacyProxyEntitled)
+      : !hasAdvancedAiAllowed && !hasAllowedProxyRouteIds,
     disabled: Boolean(record?.disabled),
     chatDisabled: Boolean(record?.chatDisabled),
     lastClient: normalizeClientInfo(record?.lastClient),
@@ -224,7 +239,23 @@ function loadUserStore() {
   ensureUsersFile();
   try {
     const raw = JSON.parse(fs.readFileSync(USERS_FILE, "utf-8"));
-    const users = Array.isArray(raw.users) ? raw.users.map(normalizeUserRecord) : [];
+    const rawUsers = Array.isArray(raw.users) ? raw.users : [];
+    const users = rawUsers.map(normalizeUserRecord);
+    const needsLegacyEntitlementMigration = rawUsers.some(
+      (record) =>
+        record &&
+        typeof record === "object" &&
+        !Object.prototype.hasOwnProperty.call(record, "advancedAiAllowed") &&
+        !Object.prototype.hasOwnProperty.call(record, "allowedProxyRouteIds") &&
+        !Object.prototype.hasOwnProperty.call(record, "legacyProxyEntitled"),
+    );
+    if (needsLegacyEntitlementMigration) {
+      try {
+        saveUserStore({ users });
+      } catch (error) {
+        console.error("[collab] 旧账号代理权限标记持久化失败:", error.message || error);
+      }
+    }
     return { users };
   } catch {
     return { users: [] };
@@ -844,6 +875,12 @@ function normalizeProxyRouteIds(value) {
   ];
 }
 
+function sameProxyRouteIds(left, right) {
+  const leftIds = normalizeProxyRouteIds(left);
+  const rightIds = new Set(normalizeProxyRouteIds(right));
+  return leftIds.length === rightIds.size && leftIds.every((id) => rightIds.has(id));
+}
+
 function normalizeProxyRoute(record, options = {}) {
   const input = record && typeof record === "object" ? record : {};
   const id = normalizeProxyRouteId(input.id);
@@ -1109,9 +1146,16 @@ function saveProxyRouteCatalog(routes) {
 
 function proxyRoutesForUser(username, bootstrap = null) {
   const { user } = findUser(username);
-  if (!user || (!user.isAdmin && !user.advancedAiAllowed)) return [];
+  const usesLegacyEntitlement = Boolean(
+    user && !user.isAdmin && !user.advancedAiAllowed && user.legacyProxyEntitled,
+  );
+  if (!user || (!user.isAdmin && !user.advancedAiAllowed && !usesLegacyEntitlement)) return [];
   const allowed = new Set(normalizeProxyRouteIds(user.allowedProxyRouteIds));
-  const canUse = (id) => user.isAdmin || allowed.has(id);
+  const legacyRouteIds = new Set(["internal-unified", "internal-airport"]);
+  const canUse = (id) =>
+    user.isAdmin ||
+    (user.advancedAiAllowed && allowed.has(id)) ||
+    (usesLegacyEntitlement && legacyRouteIds.has(id));
   const clientBootstrap = bootstrap || loadClientBootstrap();
   const sender = clientBootstrap?.sender || {};
   const routes = [];
@@ -1586,6 +1630,7 @@ function createUserRecord(username, password, extra = {}) {
     isAdmin: Boolean(extra.isAdmin),
     advancedAiAllowed: Boolean(extra.advancedAiAllowed),
     allowedProxyRouteIds: normalizeProxyRouteIds(extra.allowedProxyRouteIds),
+    legacyProxyEntitled: false,
     disabled: Boolean(extra.disabled),
     chatDisabled: Boolean(extra.chatDisabled),
     createdAt: safeText(extra.createdAt) || now,
@@ -1627,6 +1672,7 @@ function adminUserSummary(user) {
     advancedAiAllowed: Boolean(user.advancedAiAllowed),
     effectiveAdvancedAiAllowed: Boolean(user.isAdmin || user.advancedAiAllowed),
     allowedProxyRouteIds: normalizeProxyRouteIds(user.allowedProxyRouteIds),
+    legacyProxyEntitled: Boolean(user.legacyProxyEntitled),
     disabled: Boolean(user.disabled),
     chatDisabled: Boolean(user.chatDisabled),
     online: Boolean(onlineClient),
@@ -2526,21 +2572,67 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const payload = safeParseJson(body) || {};
       const nextPassword = String(payload.password || "");
+      const before = {
+        disabled: Boolean(user.disabled),
+        isAdmin: Boolean(user.isAdmin),
+        advancedAiAllowed: Boolean(user.advancedAiAllowed),
+        allowedProxyRouteIds: normalizeProxyRouteIds(user.allowedProxyRouteIds),
+        legacyProxyEntitled: Boolean(user.legacyProxyEntitled),
+        chatDisabled: Boolean(user.chatDisabled),
+      };
       const nextDisabled =
         typeof payload.disabled === "undefined"
-          ? Boolean(user.disabled)
+          ? before.disabled
           : Boolean(payload.disabled);
       const nextIsAdmin =
-        typeof payload.isAdmin === "undefined" ? Boolean(user.isAdmin) : Boolean(payload.isAdmin);
+        typeof payload.isAdmin === "undefined" ? before.isAdmin : Boolean(payload.isAdmin);
+      let nextAdvancedAiAllowed =
+        typeof payload.advancedAiAllowed === "undefined"
+          ? before.advancedAiAllowed
+          : Boolean(payload.advancedAiAllowed);
+      if (
+        before.isAdmin &&
+        !nextIsAdmin &&
+        typeof payload.advancedAiAllowed === "undefined"
+      ) {
+        nextAdvancedAiAllowed = false;
+      }
+      const requestedProxyRouteIds =
+        typeof payload.allowedProxyRouteIds === "undefined"
+          ? before.allowedProxyRouteIds
+          : normalizeProxyRouteIds(payload.allowedProxyRouteIds);
+      const proxyRouteIdsChanged = !sameProxyRouteIds(
+        before.allowedProxyRouteIds,
+        requestedProxyRouteIds,
+      );
+      const nextAllowedProxyRouteIds = proxyRouteIdsChanged
+        ? requestedProxyRouteIds
+        : before.allowedProxyRouteIds;
+      const nextChatDisabled =
+        typeof payload.chatDisabled === "undefined"
+          ? before.chatDisabled
+          : Boolean(payload.chatDisabled);
+      const advancedAiChanged = nextAdvancedAiAllowed !== before.advancedAiAllowed;
+      const nextLegacyProxyEntitled =
+        before.legacyProxyEntitled && !advancedAiChanged && !proxyRouteIdsChanged;
+      const passwordChanged =
+        Boolean(nextPassword) && !(await verifyPasswordAsync(user, nextPassword));
+      const authorizationChanged =
+        nextDisabled !== before.disabled ||
+        nextIsAdmin !== before.isAdmin ||
+        advancedAiChanged ||
+        proxyRouteIdsChanged ||
+        nextLegacyProxyEntitled !== before.legacyProxyEntitled ||
+        nextChatDisabled !== before.chatDisabled;
 
       if (
         username === adminSession.username &&
-        ((!nextIsAdmin && user.isAdmin) || (nextDisabled && !user.disabled))
+        ((!nextIsAdmin && before.isAdmin) || (nextDisabled && !before.disabled))
       ) {
         sendText(res, 400, "不能禁用自己或取消自己的管理员权限");
         return;
       }
-      if (user.isAdmin && !user.disabled && (!nextIsAdmin || nextDisabled)) {
+      if (before.isAdmin && !before.disabled && (!nextIsAdmin || nextDisabled)) {
         const otherEnabledAdmins = store.users.filter(
           (item) => item.username !== username && item.isAdmin && !item.disabled,
         );
@@ -2557,18 +2649,13 @@ const server = http.createServer(async (req, res) => {
         user.avatar = safeText(payload.avatar).slice(0, MAX_AVATAR_LENGTH);
         user.avatarKind = inferAvatarKind(user.avatar);
       }
-      if (typeof payload.disabled !== "undefined") user.disabled = Boolean(payload.disabled);
-      if (typeof payload.isAdmin !== "undefined") user.isAdmin = Boolean(payload.isAdmin);
-      if (payload.isAdmin === false && typeof payload.advancedAiAllowed === "undefined") {
-        user.advancedAiAllowed = false;
-      }
-      if (typeof payload.advancedAiAllowed !== "undefined")
-        user.advancedAiAllowed = Boolean(payload.advancedAiAllowed);
-      if (typeof payload.allowedProxyRouteIds !== "undefined")
-        user.allowedProxyRouteIds = normalizeProxyRouteIds(payload.allowedProxyRouteIds);
-      if (typeof payload.chatDisabled !== "undefined")
-        user.chatDisabled = Boolean(payload.chatDisabled);
-      if (nextPassword) {
+      user.disabled = nextDisabled;
+      user.isAdmin = nextIsAdmin;
+      user.advancedAiAllowed = nextAdvancedAiAllowed;
+      user.allowedProxyRouteIds = nextAllowedProxyRouteIds;
+      user.legacyProxyEntitled = nextLegacyProxyEntitled;
+      user.chatDisabled = nextChatDisabled;
+      if (passwordChanged) {
         const salt = crypto.randomBytes(16).toString("hex");
         user.salt = salt;
         user.passwordHash = hashPassword(nextPassword, salt, 120000, "sha256");
@@ -2577,14 +2664,7 @@ const server = http.createServer(async (req, res) => {
       }
       user.updatedAt = nowIso();
       saveUserStore(store);
-      if (
-        typeof payload.disabled !== "undefined" ||
-        typeof payload.isAdmin !== "undefined" ||
-        typeof payload.advancedAiAllowed !== "undefined" ||
-        typeof payload.allowedProxyRouteIds !== "undefined" ||
-        typeof payload.chatDisabled !== "undefined" ||
-        nextPassword
-      ) {
+      if (authorizationChanged || passwordChanged) {
         revokeUserSessions(username);
       }
       sendJson(res, 200, {
@@ -2772,35 +2852,53 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    let bootstrap;
     try {
-      const bootstrap = loadClientBootstrap(req);
-      const proxyRoutes = proxyRoutesForUser(session.username, bootstrap);
-      const legacyAirport = proxyRoutes.find((route) => route.id === "internal-airport");
-      const { user } = findUser(session.username);
-      if (!user || user.disabled) {
-        sessions.delete(token);
-        sendText(res, 401, "未授权");
-        return;
-      }
-      sendJson(res, 200, {
-        ...bootstrap,
-        authorization: {
-          username: session.username,
-          isAdmin: Boolean(user.isAdmin),
-          advancedAiAllowed: Boolean(user.isAdmin || user.advancedAiAllowed),
-          allowedProxyRouteIds: proxyRoutes.map((route) => route.id),
-        },
-        update: sharedReleaseUpdateForClient(req),
-        airport: legacyAirport
-          ? { name: legacyAirport.name, outbound: legacyAirport.outbound }
-          : null,
-        proxyRoutes,
-        fetchedAt: nowIso(),
-      });
+      bootstrap = loadClientBootstrap(req);
     } catch (error) {
-      console.error("[collab] 客户端配置读取失败:", error.message || error);
-      sendText(res, 503, "线路目录暂不可用，请联系管理员检查服务端数据");
+      console.error("[collab] 客户端核心配置读取失败:", error.message || error);
+      sendText(res, 503, "客户端配置暂不可用，请联系管理员检查服务端数据");
+      return;
     }
+    const { user } = findUser(session.username);
+    if (!user || user.disabled) {
+      sessions.delete(token);
+      sendText(res, 401, "未授权");
+      return;
+    }
+
+    let proxyRoutes = [];
+    let proxyRoutesAvailable = true;
+    try {
+      proxyRoutes = proxyRoutesForUser(session.username, bootstrap);
+    } catch (error) {
+      proxyRoutesAvailable = false;
+      console.error("[collab] 客户端线路能力暂不可用:", error.message || error);
+    }
+
+    const legacyAirport = proxyRoutes.find((route) => route.id === "internal-airport");
+    sendJson(res, 200, {
+      ...bootstrap,
+      capabilities: {
+        proxyRoutes: {
+          available: proxyRoutesAvailable,
+          authoritative: proxyRoutesAvailable,
+        },
+      },
+      authorization: {
+        username: session.username,
+        isAdmin: Boolean(user.isAdmin),
+        advancedAiAllowed:
+          proxyRoutesAvailable && Boolean(user.isAdmin || user.advancedAiAllowed),
+        allowedProxyRouteIds: proxyRoutes.map((route) => route.id),
+      },
+      update: sharedReleaseUpdateForClient(req),
+      airport: legacyAirport
+        ? { name: legacyAirport.name, outbound: legacyAirport.outbound }
+        : null,
+      proxyRoutes,
+      fetchedAt: nowIso(),
+    });
     return;
   }
 

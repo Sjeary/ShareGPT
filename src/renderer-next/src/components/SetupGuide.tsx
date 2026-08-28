@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Sparkles, X } from 'lucide-react'
+import { Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { useAppStore } from '@/store/useAppStore'
 import type { CollabSettings, SenderSettings } from '@/types/settings'
 
@@ -45,22 +46,18 @@ export function SetupGuide() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-background/70 p-6 backdrop-blur-sm">
-      <div className="relative w-[min(92%,30rem)] rounded-2xl border border-border bg-card p-6 shadow-xl">
-        <button
-          onClick={dismiss}
-          aria-label="关闭引导"
-          className="absolute right-3 top-3 grid size-7 place-items-center rounded-md text-muted-foreground transition hover:bg-secondary hover:text-foreground"
-        >
-          <X className="size-4" />
-        </button>
+    <Dialog open={shouldShow} onOpenChange={(open) => !open && dismiss()}>
+      <DialogContent
+        className="w-[min(92%,30rem)] max-w-[30rem] p-6"
+        overlayClassName="bg-background/70 backdrop-blur-sm"
+      >
         <div className="mb-3 grid size-11 place-items-center rounded-xl bg-primary/15 text-primary">
           <Sparkles className="size-5" />
         </div>
-        <h2 className="text-lg font-semibold">
+        <DialogTitle className="text-lg">
           {needsLogin ? '首次启动先完成基础配置' : '还差一步就可以开始使用'}
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">按下面几步快速完成设置：</p>
+        </DialogTitle>
+        <DialogDescription className="mt-1">按下面几步快速完成设置：</DialogDescription>
         <ul className="mt-4 space-y-2.5">
           {items.map((it, i) => (
             <li key={i} className="flex gap-2.5 text-sm">
@@ -84,7 +81,7 @@ export function SetupGuide() {
             知道了
           </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

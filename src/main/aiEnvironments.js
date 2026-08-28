@@ -1,3 +1,5 @@
+const crypto = require("node:crypto");
+
 const AI_KINDS = new Set(["gpt", "gemini", "claude"]);
 const { LOCAL_PRINCIPAL_ID, normalizePrincipalId } = require("./principal");
 
@@ -249,14 +251,10 @@ function evaluateAiRouteHealth(route = {}, detected = {}) {
   const expectedAsn = safeText(expected.asn).toUpperCase().replace(/^AS/, "");
   const actualIp = safeText(detected.ip).toLowerCase();
   const actualAsn = safeText(detected.asn).toUpperCase().replace(/^AS/, "");
-  const requiresExpectedIp = Boolean(normalizeAiRouteId(route.id));
   const status = (checked, passed) => (checked ? (passed ? "passed" : "failed") : "not-checked");
   const checks = {
     httpCrossCheck: status(true, Boolean(actualIp)),
-    expectedIp: status(
-      Boolean(expectedIp) || requiresExpectedIp,
-      Boolean(expectedIp) && actualIp === expectedIp,
-    ),
+    expectedIp: status(Boolean(expectedIp), actualIp === expectedIp),
     expectedCountry: status(
       Boolean(expectedCountry),
       safeText(detected.countryCode).toUpperCase() === expectedCountry,
@@ -277,11 +275,35 @@ function evaluateAiRouteHealth(route = {}, detected = {}) {
   return { expected, checks, ok: blockingChecks.every((result) => result === "passed") };
 }
 
+function aiRouteFingerprint(route = {}) {
+  return crypto
+    .createHash("sha256")
+    .update(
+      JSON.stringify({
+        id: normalizeAiRouteId(route.id),
+        host: safeText(route.host, 255).toLowerCase(),
+        port: Number.parseInt(String(route.port || ""), 10) || 0,
+        outboundTag: safeText(route.outboundTag, 120),
+        dnsTag: safeText(route.dnsTag, 120),
+        expected: route.expected && typeof route.expected === "object" ? route.expected : {},
+        outbound: route.outbound && typeof route.outbound === "object" ? route.outbound : {},
+      }),
+    )
+    .digest("hex")
+    .slice(0, 32);
+}
+
+function shouldPreflightAiRoute(workspace, route) {
+  if (!workspace) return true;
+  return String(workspace.routeHealthFingerprint || "") !== aiRouteFingerprint(route);
+}
+
 module.exports = {
   hasCompleteUnifiedProxy,
   internalAiProxyRoutes,
   validateAiRouteIsolation,
   evaluateAiRouteHealth,
+  aiRouteFingerprint,
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   partitionForAiEnvironment,
@@ -289,5 +311,6 @@ module.exports = {
   partitionForAiProfile,
   resolvedProxyMatchesRoute,
   scaleAiHostBounds,
+  shouldPreflightAiRoute,
   shouldCloseAiWorkspacesForEnvironment,
 };

@@ -11,9 +11,10 @@ import {
   Tag,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { RemoteHttpWarning } from '@/components/common/RemoteHttpWarning'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
-import { REMOTE_HTTP_WARNING, usesRemoteHttp } from '@/lib/remoteHttp'
+import { usesRemoteHttp } from '@/lib/remoteHttp'
 import { useVaultStore } from '@/store/useVaultStore'
 import { useNotesAiStore } from '@/store/useNotesAiStore'
 import { runAi } from '@/lib/notes/aiClient'
@@ -58,14 +59,7 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
           className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-primary/60"
         />
       </label>
-      {usesRemoteHttp(baseUrl) && (
-        <p
-          className="rounded-md border border-amber-500/35 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-300"
-          role="status"
-        >
-          {REMOTE_HTTP_WARNING}
-        </p>
-      )}
+      {usesRemoteHttp(baseUrl) && <RemoteHttpWarning />}
       <label className="block space-y-1">
         <span className="text-xs text-muted-foreground">API Key</span>
         <input
