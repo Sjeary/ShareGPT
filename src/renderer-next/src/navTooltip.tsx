@@ -1,63 +1,33 @@
-import { StrictMode, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react'
+import { StrictMode, useSyncExternalStore } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { commitNavTooltipFrame } from '@/lib/navTooltipFrameProtocol'
 import './index.css'
 
-interface NavTooltipRenderModel {
-  revision: number
+interface NavTooltipPayload {
   label: string
   side: 'left' | 'right'
   theme: 'light' | 'dark'
 }
 
-interface NavTooltipCommit {
-  revision: number
-}
-
-interface NavTooltipOverlayApi {
-  onRenderModel: (handler: (payload: NavTooltipRenderModel) => void) => () => void
-  onCommit: (handler: (payload: NavTooltipCommit) => void) => () => void
-  reportBootstrapReady: () => void
-  reportLayoutReady: (payload: {
-    revision: number
-    sizeCss: { width: number; height: number }
-  }) => void
-  reportFrameReady: (payload: { revision: number }) => void
-}
-
 declare global {
   interface Window {
-    navTooltipOverlay: NavTooltipOverlayApi
+    setNavTooltip: (payload: NavTooltipPayload) => void
   }
 }
 
-let snapshot: NavTooltipRenderModel | null = null
-let commitSnapshot: NavTooltipCommit | null = null
+type NavTooltipSnapshot = NavTooltipPayload & { revision: number }
+
+let snapshot: NavTooltipSnapshot | null = null
+let revision = 0
 const subscribers = new Set<() => void>()
-const commitSubscribers = new Set<(payload: NavTooltipCommit) => void>()
 
-window.navTooltipOverlay.onRenderModel((payload) => {
-  if (!Number.isInteger(payload?.revision) || payload.revision < 1) return
+window.setNavTooltip = (payload) => {
   document.documentElement.classList.toggle('dark', payload.theme !== 'light')
-  document.body.style.opacity = '0'
-  document.body.dataset.navTooltipPhase = 'rendering'
-  snapshot = payload
+  snapshot = { ...payload, revision: ++revision }
   for (const subscriber of subscribers) subscriber()
-})
-
-window.navTooltipOverlay.onCommit((payload) => {
-  if (!Number.isInteger(payload?.revision) || payload.revision < 1) return
-  commitSnapshot = payload
-  for (const subscriber of commitSubscribers) subscriber(payload)
-})
-
-function nextFrame() {
-  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
 }
 
 export function NavTooltipOverlay() {
-  const contentRef = useRef<HTMLDivElement | null>(null)
   const state = useSyncExternalStore(
     (subscriber) => {
       subscribers.add(subscriber)
@@ -66,74 +36,12 @@ export function NavTooltipOverlay() {
     () => snapshot,
   )
 
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      await document.fonts.ready
-      // Hidden WebContentsViews may suspend rAF, so bootstrap waits only for
-      // resources. Pixel readiness is acknowledged by the on-screen commit.
-      if (!cancelled) window.navTooltipOverlay.reportBootstrapReady()
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  useLayoutEffect(() => {
-    if (!state) return
-    const revision = state.revision
-    let cancelled = false
-    void (async () => {
-      await document.fonts.ready
-      if (cancelled || snapshot?.revision !== revision) return
-      const content = contentRef.current
-      if (!content) return
-      window.navTooltipOverlay.reportLayoutReady({
-        revision,
-        sizeCss: { width: content.offsetWidth, height: content.offsetHeight },
-      })
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [state])
-
-  useEffect(() => {
-    if (!state) return
-    const revision = state.revision
-    let cancelled = false
-    const onCommit = (payload: NavTooltipCommit) => {
-      if (payload.revision !== revision) return
-      void (async () => {
-        document.body.dataset.navTooltipPhase = 'transparent'
-        const ready = await commitNavTooltipFrame({
-          nextFrame,
-          isCurrent: () => !cancelled && snapshot?.revision === revision,
-          reveal() {
-            document.body.style.opacity = '1'
-            document.body.dataset.navTooltipPhase = 'revealed'
-          },
-        })
-        if (ready) {
-          document.body.dataset.navTooltipPhase = 'visible'
-          window.navTooltipOverlay.reportFrameReady({ revision })
-        }
-      })()
-    }
-    commitSubscribers.add(onCommit)
-    if (commitSnapshot) onCommit(commitSnapshot)
-    return () => {
-      cancelled = true
-      commitSubscribers.delete(onCommit)
-    }
-  }, [state])
-
   if (!state) return null
 
   const onRight = state.side === 'right'
   return (
     <TooltipProvider delayDuration={0}>
-      <Tooltip open>
+      <Tooltip key={state.revision} open>
         <TooltipTrigger asChild>
           <span
             aria-hidden="true"
@@ -142,7 +50,6 @@ export function NavTooltipOverlay() {
           />
         </TooltipTrigger>
         <TooltipContent
-          ref={contentRef}
           side={state.side}
           sideOffset={4}
           avoidCollisions={false}
@@ -157,8 +64,6 @@ export function NavTooltipOverlay() {
 
 document.documentElement.style.background = 'transparent'
 document.body.style.background = 'transparent'
-document.body.style.opacity = '0'
-document.body.dataset.navTooltipPhase = 'hidden'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

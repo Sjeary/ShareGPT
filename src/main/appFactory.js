@@ -67,14 +67,8 @@ const {
 const { runSettingsPrincipalTransition } = require("./settingsPrincipalTransition");
 const { createStorageFlushCoordinator } = require("./storageFlush");
 const {
-  MAX_TOOLTIP_HEIGHT_CSS,
-  MAX_TOOLTIP_WIDTH_CSS,
-  contentRectToScreenDip,
   createNavTooltipController,
-  cssRectToContentDip,
-  normalizeNavTooltipIntent,
-  pointInsideRect,
-  resolveTooltipBoundsContentDip,
+  normalizeNavTooltipBounds,
 } = require("./navTooltip");
 const {
   normalizeAiEnvironmentId,
@@ -641,7 +635,7 @@ function createElectronApp(baseMode = "all") {
     if (nextKind === activeAiKind) return activeAiKind;
     const previousWorkspace = getWorkspace(activeAiKind, activeTabIdByKind[activeAiKind]);
     if (previousWorkspace) invalidateComposerWorkspace(previousWorkspace, "workspace-switched");
-    invalidateNavTooltip("active-ai-kind-changed");
+    hideNavTooltip();
     activeAiKind = nextKind;
     for (const workspace of aiWorkspaces.values()) {
       detachWorkspaceView(workspace);
@@ -1713,16 +1707,11 @@ function createElectronApp(baseMode = "all") {
     }
     mainWindow.contentView.addChildView(workspace.view);
     workspace.attached = true;
-    navTooltipController?.invalidate("ai-view-attached");
-    navTooltipController?.reconcileZOrder();
+    navTooltipController?.bringToFrontIfVisible();
   }
 
-  function hideNavTooltip(reason = "hidden") {
-    return navTooltipController?.hide({ scope: "all", reason }) || false;
-  }
-
-  function invalidateNavTooltip(reason) {
-    return navTooltipController?.invalidate(reason) || 0;
+  function hideNavTooltip() {
+    return navTooltipController?.hide() || false;
   }
 
   function closeNavTooltip() {
@@ -1734,30 +1723,15 @@ function createElectronApp(baseMode = "all") {
   function ensureNavTooltipController() {
     if (navTooltipController) return navTooltipController;
     navTooltipController = createNavTooltipController({
-      createView(onOverlayMessage) {
+      createView() {
         const view = new WebContentsView({
           webPreferences: {
-            preload: path.join(__dirname, "navTooltipPreload.js"),
             contextIsolation: true,
             nodeIntegration: false,
             sandbox: true,
             backgroundThrottling: false,
-            // paintWhenInitiallyHidden 是 Electron 运行时支持的选项，但当前类型未包含。
-            // @ts-ignore
-            paintWhenInitiallyHidden: true,
           },
         });
-        view.webContents.on("ipc-message", (_event, channel, payload) => {
-          if (channel === "nav-tooltip-overlay:event") onOverlayMessage(payload);
-        });
-        const unavailable = () => navTooltipController?.handleOverlayUnavailable(view);
-        view.webContents.on("render-process-gone", unavailable);
-        view.webContents.on(
-          "did-fail-load",
-          (_event, errorCode, _description, _url, isMainFrame) => {
-            if (isMainFrame && Number(errorCode) !== -3) unavailable();
-          },
-        );
         view.setBackgroundColor("#00000000");
         view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
         view.setVisible(false);
@@ -1766,18 +1740,6 @@ function createElectronApp(baseMode = "all") {
         return view;
       },
       getHost: () => mainWindow,
-      prepareView(view, host) {
-        const zoom = host.webContents.getZoomFactor?.() || 1;
-        view.webContents.setZoomLevel(host.webContents.getZoomLevel());
-        view.setBounds({
-          x: 0,
-          y: 0,
-          width: Math.ceil(MAX_TOOLTIP_WIDTH_CSS * zoom),
-          height: Math.ceil(MAX_TOOLTIP_HEIGHT_CSS * zoom),
-        });
-        view.setVisible(false);
-        host.contentView.addChildView(view);
-      },
       loadView(view) {
         const devUrl = process.env.SHAREGPT_UI_DEV_URL;
         if (process.env.SHAREGPT_UI_NEXT === "1" && devUrl && !app.isPackaged) {
@@ -1789,96 +1751,66 @@ function createElectronApp(baseMode = "all") {
         }
         return view.webContents.loadFile(builtTooltip);
       },
-      sendRenderModel(view, model) {
-        view.webContents.send("nav-tooltip-overlay:render", model);
-      },
-      sendCommit(view, payload) {
-        view.webContents.send("nav-tooltip-overlay:commit", payload);
-      },
-      placeView(_view, intent, sizeCss, host) {
+      renderView: (view, payload) =>
+        view.webContents.executeJavaScript(
+          `window.setNavTooltip(${JSON.stringify({
+            label: payload.label,
+            side: payload.side,
+            theme: payload.theme,
+          })})`,
+        ),
+      resolveBounds(bounds, host) {
         const shellZoomFactor = host.webContents.getZoomFactor?.() || 1;
         const contentBounds = host.getContentBounds();
-        return resolveTooltipBoundsContentDip({
-          anchorRectCss: intent.anchorRectCss,
-          tooltipSizeCss: sizeCss,
-          side: intent.side,
-          zoomFactor: shellZoomFactor,
-          viewportDip: contentBounds,
+        const normalized = normalizeNavTooltipBounds(bounds, {
+          width: contentBounds.width / shellZoomFactor,
+          height: contentBounds.height / shellZoomFactor,
         });
+        return normalized ? scaleAiHostBounds(normalized, shellZoomFactor) : null;
       },
-      reconcileViewOrder(view, host) {
-        host.contentView.addChildView(view);
-      },
-      validateIntent(intent, host) {
-        if (!host || host.isDestroyed?.() || !host.isVisible() || host.isMinimized()) return false;
-        if (!isAiKind(activeAiKind)) return false;
-        if (intent.source === "keyboard-focus") {
-          return host.isFocused() && host.webContents.isFocused();
-        }
-        const localDip = cssRectToContentDip(
-          intent.anchorRectCss,
-          host.webContents.getZoomFactor?.() || 1,
-        );
-        const screenDip = contentRectToScreenDip(localDip, host.getContentBounds());
-        const cursorDip = screen.getCursorScreenPoint();
-        const inside = pointInsideRect(cursorDip, screenDip, 1);
-        appLog.scoped("nav-tooltip").debug("pointer-validation", {
-          activeAiKind,
-          triggerId: intent.triggerId,
-          anchorRectCss: intent.anchorRectCss,
-          localDip,
-          screenDip,
-          cursorDip,
-          inside,
+      watchPointerExit(anchorBounds, host, onExit) {
+        const shellZoomFactor = host.webContents.getZoomFactor?.() || 1;
+        const normalized = normalizeNavTooltipBounds(anchorBounds, {
+          width: host.getContentBounds().width / shellZoomFactor,
+          height: host.getContentBounds().height / shellZoomFactor,
         });
-        return inside;
-      },
-      watchPointerExit(intent, host, onExit) {
+        if (!normalized) return null;
+        const anchor = scaleAiHostBounds(normalized, shellZoomFactor);
         const timer = setInterval(() => {
-          const controller = navTooltipController;
-          const currentHost = mainWindow;
-          if (
-            !controller ||
-            !currentHost ||
-            currentHost.isDestroyed() ||
-            !currentHost.isVisible() ||
-            currentHost.isMinimized()
-          ) {
+          if (!mainWindow || mainWindow.isDestroyed()) {
             onExit();
             return;
           }
-          const localDip = cssRectToContentDip(
-            intent.anchorRectCss,
-            currentHost.webContents.getZoomFactor?.() || 1,
-          );
-          const screenDip = contentRectToScreenDip(localDip, currentHost.getContentBounds());
-          if (!pointInsideRect(screen.getCursorScreenPoint(), screenDip, 1)) onExit();
+          const content = mainWindow.getContentBounds();
+          const point = screen.getCursorScreenPoint();
+          const inside =
+            point.x >= content.x + anchor.x &&
+            point.x < content.x + anchor.x + anchor.width &&
+            point.y >= content.y + anchor.y &&
+            point.y < content.y + anchor.y + anchor.height;
+          if (!inside) onExit();
         }, 32);
         return () => clearInterval(timer);
-      },
-      trace(event, details) {
-        appLog.scoped("nav-tooltip").debug(event, details);
       },
     });
     return navTooltipController;
   }
 
-  function setNavTooltip(payload = {}) {
-    const intent = normalizeNavTooltipIntent(payload);
-    appLog.scoped("nav-tooltip").debug("ipc-intent", {
-      action: intent?.action || "invalid",
-      source: intent?.source || "",
-      triggerId: intent?.triggerId || "",
-      activeAiKind,
+  async function setNavTooltip(payload = {}) {
+    if (!payload.visible) return hideNavTooltip();
+    if (!mainWindow || mainWindow.isDestroyed()) return false;
+
+    const label = safeText(payload.label).slice(0, 80);
+    if (!label) return hideNavTooltip();
+    const side = payload.side === "left" ? "left" : "right";
+    return ensureNavTooltipController().show({
+      label,
+      side,
+      theme: payload.theme === "light" ? "light" : "dark",
+      bounds: payload.bounds,
+      anchorBounds: payload.anchorBounds,
+      dismissOnPointerExit: Boolean(payload.dismissOnPointerExit),
     });
-    if (!intent || !mainWindow || mainWindow.isDestroyed()) return { accepted: false };
-    const controller = ensureNavTooltipController();
-    if (intent.action === "hide") {
-      return { accepted: controller.hide(intent) };
-    }
-    if (!isAiKind(activeAiKind)) return { accepted: false };
-    void controller.show(intent).catch(() => {});
-    return { accepted: true, ...controller.getDebugState() };
   }
 
   function detachWorkspaceView(workspace) {
@@ -1888,11 +1820,9 @@ function createElectronApp(baseMode = "all") {
         mainWindow?.contentView?.removeChildView(workspace.view);
       } catch {}
       workspace.attached = false;
-      navTooltipController?.invalidate("ai-view-detached");
     }
     workspace.view.setVisible(false);
     workspace.view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
-    navTooltipController?.reconcileZOrder();
   }
 
   function listTabsPayload(kind) {
@@ -2113,7 +2043,6 @@ function createElectronApp(baseMode = "all") {
 
   function bindAiWorkspaceEvents(workspace) {
     const wc = workspace.view.webContents;
-    wc.on("focus", () => invalidateNavTooltip("ai-webcontents-focused"));
 
     wc.setWindowOpenHandler(({ url }) => {
       if (isWorkspaceUrlAllowed(workspace, url)) {
@@ -2776,30 +2705,14 @@ function createElectronApp(baseMode = "all") {
       mainWindow.setWindowButtonVisibility(true);
     }
     mainWindow.removeMenu();
-    mainWindow.on("blur", () => invalidateNavTooltip("window-blurred"));
-    mainWindow.on("focus", () => invalidateNavTooltip("window-focused"));
-    mainWindow.on("hide", () => invalidateNavTooltip("window-hidden"));
-    mainWindow.on("show", () => invalidateNavTooltip("window-shown"));
-    mainWindow.on("minimize", () => invalidateNavTooltip("window-minimized"));
-    mainWindow.on("move", () => invalidateNavTooltip("window-moved"));
-    mainWindow.on("resize", () => invalidateNavTooltip("window-resized"));
-    mainWindow.on("maximize", () => invalidateNavTooltip("window-maximized"));
-    mainWindow.on("unmaximize", () => invalidateNavTooltip("window-unmaximized"));
-    mainWindow.on("enter-full-screen", () => invalidateNavTooltip("window-entered-fullscreen"));
-    mainWindow.on("leave-full-screen", () => invalidateNavTooltip("window-left-fullscreen"));
-    mainWindow.webContents.on("blur", () => invalidateNavTooltip("shell-webcontents-blurred"));
-    mainWindow.webContents.on("focus", () => invalidateNavTooltip("shell-webcontents-focused"));
-    mainWindow.webContents.on("did-start-navigation", (details) => {
-      if (details?.isMainFrame) invalidateNavTooltip("shell-navigation-started");
-    });
-    mainWindow.webContents.on("render-process-gone", () =>
-      invalidateNavTooltip("shell-renderer-gone"),
-    );
+    mainWindow.on("blur", hideNavTooltip);
+    mainWindow.on("resize", hideNavTooltip);
+    mainWindow.on("maximize", hideNavTooltip);
+    mainWindow.on("unmaximize", hideNavTooltip);
+    mainWindow.on("enter-full-screen", hideNavTooltip);
+    mainWindow.on("leave-full-screen", hideNavTooltip);
     mainWindow.on("close", closeNavTooltip);
     loadMainRenderer(mainWindow);
-    void ensureNavTooltipController()
-      .prewarm()
-      .catch((error) => appLog.scoped("nav-tooltip").warn("预热失败，将在首次使用时重试", error));
     mainWindow.on("closed", () => {
       for (const controller of translationRequests.values()) controller.abort();
       translationRequests.clear();

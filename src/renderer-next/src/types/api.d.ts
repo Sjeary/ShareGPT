@@ -335,26 +335,15 @@ export interface ShareGptApi {
   switchAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
   closeAiView: (kind: 'gpt' | 'gemini' | 'claude', payload?: unknown) => Promise<unknown>
   setActiveAiKind: (kind: 'gpt' | 'gemini' | 'claude' | '') => Promise<unknown>
-  requestNavTooltip: (
-    payload:
-      | {
-          action: 'show'
-          source: 'pointer' | 'keyboard-focus'
-          interactionId: string
-          triggerId: string
-          label: string
-          side: 'left' | 'right'
-          theme: 'light' | 'dark'
-          anchorRectCss: { x: number; y: number; width: number; height: number }
-        }
-      | {
-          action: 'hide'
-          scope: 'interaction' | 'all'
-          interactionId?: string
-          triggerId?: string
-          reason: string
-        },
-  ) => Promise<unknown>
+  setNavTooltip: (payload: {
+    visible: boolean
+    label?: string
+    side?: 'left' | 'right'
+    theme?: 'light' | 'dark'
+    bounds?: { x: number; y: number; width: number; height: number }
+    anchorBounds?: { x: number; y: number; width: number; height: number }
+    dismissOnPointerExit?: boolean
+  }) => Promise<unknown>
   closeAllAiWorkspaces: () => Promise<unknown>
   ensureAiWorkspace: (payload: unknown) => Promise<unknown>
   activateAiEnvironment: (payload: unknown) => Promise<unknown>
