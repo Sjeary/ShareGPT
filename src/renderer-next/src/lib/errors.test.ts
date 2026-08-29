@@ -12,4 +12,4 @@ test('IPC implementation details are removed from user-facing errors', () => {
     '线路 US-LA-mac 未通过出口身份预检',
   )
   assert.equal(userFacingErrorMessage('', '加载失败'), '加载失败')
-});
+})

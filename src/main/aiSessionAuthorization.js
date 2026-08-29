@@ -148,7 +148,6 @@ async function fetchAuthenticatedJson(fetchImpl, url, token, options = {}) {
   const timeoutMs = Math.max(1, Number(options.timeoutMs) || DEFAULT_TIMEOUT_MS);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  timer.unref?.();
   try {
     const response = await fetchImpl(url, {
       method: "GET",

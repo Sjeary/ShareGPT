@@ -2581,20 +2581,14 @@ const server = http.createServer(async (req, res) => {
         chatDisabled: Boolean(user.chatDisabled),
       };
       const nextDisabled =
-        typeof payload.disabled === "undefined"
-          ? before.disabled
-          : Boolean(payload.disabled);
+        typeof payload.disabled === "undefined" ? before.disabled : Boolean(payload.disabled);
       const nextIsAdmin =
         typeof payload.isAdmin === "undefined" ? before.isAdmin : Boolean(payload.isAdmin);
       let nextAdvancedAiAllowed =
         typeof payload.advancedAiAllowed === "undefined"
           ? before.advancedAiAllowed
           : Boolean(payload.advancedAiAllowed);
-      if (
-        before.isAdmin &&
-        !nextIsAdmin &&
-        typeof payload.advancedAiAllowed === "undefined"
-      ) {
+      if (before.isAdmin && !nextIsAdmin && typeof payload.advancedAiAllowed === "undefined") {
         nextAdvancedAiAllowed = false;
       }
       const requestedProxyRouteIds =
@@ -2888,8 +2882,7 @@ const server = http.createServer(async (req, res) => {
       authorization: {
         username: session.username,
         isAdmin: Boolean(user.isAdmin),
-        advancedAiAllowed:
-          proxyRoutesAvailable && Boolean(user.isAdmin || user.advancedAiAllowed),
+        advancedAiAllowed: proxyRoutesAvailable && Boolean(user.isAdmin || user.advancedAiAllowed),
         allowedProxyRouteIds: proxyRoutes.map((route) => route.id),
       },
       update: sharedReleaseUpdateForClient(req),

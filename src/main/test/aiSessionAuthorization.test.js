@@ -201,13 +201,19 @@ test("authenticated JSON fetch binds the bearer token and rejects malformed JSON
 });
 
 test("authenticated JSON fetch aborts a stalled authorization request", async () => {
+  let aborted = false;
   await assert.rejects(
     fetchAuthenticatedJson(
       (_url, options) =>
         new Promise((_resolve, reject) => {
-          options.signal.addEventListener("abort", () => reject(options.signal.reason), {
-            once: true,
-          });
+          options.signal.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              reject(options.signal.reason);
+            },
+            { once: true },
+          );
         }),
       "https://server.example/api/profile",
       "session-token",
@@ -215,4 +221,5 @@ test("authenticated JSON fetch aborts a stalled authorization request", async ()
     ),
     /请求超时/,
   );
+  assert.equal(aborted, true);
 });

@@ -32,10 +32,7 @@ function releaseAssetName(version, platform, arch, ymlText = "") {
   const ymlVersion = safeReleaseVersion(String(ymlText).match(/^version:\s*(.+)$/m)?.[1]);
   const ymlPath = String(ymlText).match(/^path:\s*(.+)$/m)?.[1] || "";
   const ymlFileName = path.basename(ymlPath.trim().replace(/^['"]|['"]$/g, ""));
-  if (
-    ymlVersion === safeVersion &&
-    /^sharegpt-sender-[0-9A-Za-z.-]+\.exe$/i.test(ymlFileName)
-  ) {
+  if (ymlVersion === safeVersion && /^sharegpt-sender-[0-9A-Za-z.-]+\.exe$/i.test(ymlFileName)) {
     return ymlFileName;
   }
   return `sharegpt-sender-${safeVersion}.exe`;

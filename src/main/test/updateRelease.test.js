@@ -21,12 +21,7 @@ test("latest GitHub tag is the authoritative update version", () => {
 
 test("matching updater metadata may provide the Windows asset filename", () => {
   assert.equal(
-    releaseAssetName(
-      "1.0.9",
-      "win32",
-      "x64",
-      "version: 1.0.9\npath: sharegpt-sender-1.0.9.exe\n",
-    ),
+    releaseAssetName("1.0.9", "win32", "x64", "version: 1.0.9\npath: sharegpt-sender-1.0.9.exe\n"),
     "sharegpt-sender-1.0.9.exe",
   );
   assert.equal(releaseAssetName("1.0.9", "darwin", "arm64"), "sharegpt-sender-1.0.9-arm64.dmg");

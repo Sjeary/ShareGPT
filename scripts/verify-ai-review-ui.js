@@ -646,8 +646,8 @@ async function main() {
     results.push("login action is visible without scrolling");
 
     await login(window, baseUrl, USERNAME, { remember: true });
-    const initialTranslation = await window.evaluate(async () =>
-      (await window.api.loadSettings()).translation,
+    const initialTranslation = await window.evaluate(
+      async () => (await window.api.loadSettings()).translation,
     );
     assert.strictEqual(initialTranslation.confirmNonTargetSend, false);
     results.push("composer language confirmation defaults off for a new principal");
@@ -887,9 +887,7 @@ async function main() {
     await window.waitForTimeout(350);
     const resetZoom = await zoomSnapshot(electronApp);
     assert.strictEqual(resetZoom.shell, 0);
-    results.push(
-      "Cmd +/-/0 keeps shell and embedded views on one zoom level",
-    );
+    results.push("Cmd +/-/0 keeps shell and embedded views on one zoom level");
 
     await patchSection(window, "ui", { sidebarSide: "right" });
     await window.reload();
@@ -1208,8 +1206,8 @@ async function main() {
     await window.getByRole("button", { name: "退出登录", exact: true }).click();
     await window.locator("#account-server").waitFor({ state: "visible" });
     await login(window, baseUrl, BASIC_USERNAME);
-    const basicInitialTranslation = await window.evaluate(async () =>
-      (await window.api.loadSettings()).translation,
+    const basicInitialTranslation = await window.evaluate(
+      async () => (await window.api.loadSettings()).translation,
     );
     assert.strictEqual(basicInitialTranslation.confirmNonTargetSend, false);
     await patchSection(window, "translation", {

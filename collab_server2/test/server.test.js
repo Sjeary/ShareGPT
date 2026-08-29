@@ -183,8 +183,7 @@ test("用户权限归一化只为缺失两个现代字段的历史记录保留 l
     "任一现代权限字段存在时不得推断为历史账号",
   );
   assert.strictEqual(
-    srv.normalizeUserRecord({ username: "modern", allowedProxyRouteIds: [] })
-      .legacyProxyEntitled,
+    srv.normalizeUserRecord({ username: "modern", allowedProxyRouteIds: [] }).legacyProxyEntitled,
     false,
   );
   assert.deepStrictEqual(
@@ -753,22 +752,19 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   assert.strictEqual(adminLoginBody.profile.advancedAiAllowed, false);
   assert.strictEqual(adminLoginBody.profile.effectiveAdvancedAiAllowed, true);
   const adminHeaders = { Authorization: `Bearer ${adminToken}` };
-  const legacyOldClientProfileSave = await fetch(
-    `${baseUrl}/api/admin/users/normal-user`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", ...adminHeaders },
-      body: JSON.stringify({
-        displayName: "Normal User Legacy Save",
-        password: "",
-        avatar: "",
-        bio: "v1.0.7 profile-only update",
-        isAdmin: false,
-        disabled: false,
-        chatDisabled: false,
-      }),
-    },
-  );
+  const legacyOldClientProfileSave = await fetch(`${baseUrl}/api/admin/users/normal-user`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({
+      displayName: "Normal User Legacy Save",
+      password: "",
+      avatar: "",
+      bio: "v1.0.7 profile-only update",
+      isAdmin: false,
+      disabled: false,
+      chatDisabled: false,
+    }),
+  });
   assert.strictEqual(legacyOldClientProfileSave.status, 200);
   assert.strictEqual((await legacyOldClientProfileSave.json()).user.legacyProxyEntitled, true);
   assert.strictEqual(

@@ -36,11 +36,11 @@ flowchart LR
 
 ## 关键协议 / 链路
 
-| 链路                | 方式                  | 说明                                                                      |
-| ------------------- | --------------------- | ------------------------------------------------------------------------- |
-| 渲染层 ↔ 主进程     | Electron IPC          | 见 `src/main/preload.js` 暴露的 `api.*`                                   |
-| 客户端 ↔ 协作服务端 | HTTP REST + WebSocket | 鉴权用 `Authorization: Bearer <token>`（非 cookie）；WS 推送在线状态/消息 |
-| 内嵌 AI 网页 ↔ 外网 | sing-box SOCKS        | 仅 AI 站点按域名清单走代理；统一梯子或机场节点出网                        |
+| 链路                | 方式                  | 说明                                                                           |
+| ------------------- | --------------------- | ------------------------------------------------------------------------------ |
+| 渲染层 ↔ 主进程     | Electron IPC          | 见 `src/main/preload.js` 暴露的 `api.*`                                        |
+| 客户端 ↔ 协作服务端 | HTTP REST + WebSocket | 鉴权用 `Authorization: Bearer <token>`（非 cookie）；WS 推送在线状态/消息      |
+| 内嵌 AI 网页 ↔ 外网 | sing-box SOCKS        | 仅 AI 站点按域名清单走代理；统一梯子或机场节点出网                             |
 | 自动更新            | GitHub Releases       | Latest tag 是版本真源；`latest.yml` 仅作包元数据且不得覆盖 tag；不经自建服务器 |
 
 ## 客户端运行态不变量
