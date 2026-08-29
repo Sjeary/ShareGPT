@@ -86,7 +86,11 @@ function installVerifiedAutoUpdate({ autoUpdater, expectedRelease, beforeInstall
     autoUpdater.on("update-not-available", onNotAvailable);
     autoUpdater.on("update-downloaded", onDownloaded);
     autoUpdater.on("error", onError);
-    Promise.resolve(autoUpdater.checkForUpdates()).catch(fail);
+    try {
+      Promise.resolve(autoUpdater.checkForUpdates()).catch(fail);
+    } catch (error) {
+      fail(error);
+    }
   });
 }
 

@@ -78,3 +78,38 @@ jobs:
 
       - name: 发布身份与版本契约检查
         run: npm run verify:release-contract
+
+      - name: 发布与更新核心逻辑覆盖率
+        run: npm run test:release
+
+  windows-package:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: 安装 Windows 构建与测试依赖
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix src/renderer-next ci --no-audit --no-fund
+          npm --prefix collab_server2 ci --no-audit --no-fund
+
+      - name: Windows 主进程与发布逻辑回归
+        run: |
+          npm test
+          npm run test:release
+          npm run typecheck:main
+          npm run verify:release-contract
+
+      - name: 下载并校验固定版本 Windows 二进制
+        shell: pwsh
+        run: ./scripts/prepare-windows-release-assets.ps1
+
+      - name: 构建并验收 Windows NSIS 安装包
+        run: |
+          npm run dist:win:installer
+          npm run verify:release-win

@@ -27,6 +27,7 @@
   ],
   "scripts": {
     "test": "node --test collab_server2/test/server.test.js src/main/test/*.test.js",
+    "test:release": "node --experimental-test-coverage --test --test-coverage-lines=100 --test-coverage-functions=100 --test-coverage-branches=100 src/main/test/autoUpdateInstall.test.js src/main/test/releaseContract.test.js src/main/test/updateRelease.test.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
