@@ -58,3 +58,7 @@ must fail the release workflow.
 The workflow does not publish from the macOS job. macOS and Windows first upload private Actions
 artifacts; one final job waits for both, checks the complete six-file release set, creates a draft,
 uploads all assets, and only then makes the GitHub Release public.
+
+The release job uses the current ARM64 `macos-15` GitHub-hosted runner. A retry may replace assets
+inside an unpublished draft left by an interrupted upload, then rechecks the exact remote asset
+set. It never replaces assets in a published release.

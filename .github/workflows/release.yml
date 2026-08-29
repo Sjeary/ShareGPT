@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       CSC_LINK: ${{ secrets.MACOS_DEVELOPER_ID_P12 }}
       CSC_KEY_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_PASSWORD }}
@@ -215,11 +215,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME already exists; refusing to overwrite it." >&2
-            exit 1
+            IS_DRAFT="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)"
+            if [ "$IS_DRAFT" != "true" ]; then
+              echo "Published release $GITHUB_REF_NAME already exists; refusing to overwrite it." >&2
+              exit 1
+            fi
+            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release-assets/* \
+              --verify-tag \
+              --generate-notes \
+              --draft
           fi
-          gh release create "$GITHUB_REF_NAME" release-assets/* \
-            --verify-tag \
-            --generate-notes \
-            --draft
+          EXPECTED_ASSETS="$(find release-assets -maxdepth 1 -type f -exec basename {} \; | sort)"
+          REMOTE_ASSETS="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | sort)"
+          test "$REMOTE_ASSETS" = "$EXPECTED_ASSETS"
           gh release edit "$GITHUB_REF_NAME" --draft=false --latest
