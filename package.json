@@ -27,7 +27,7 @@
   ],
   "scripts": {
     "test": "node --test collab_server2/test/server.test.js src/main/test/*.test.js",
-    "test:release": "node --experimental-test-coverage --test --test-coverage-lines=100 --test-coverage-functions=100 --test-coverage-branches=100 src/main/test/autoUpdateInstall.test.js src/main/test/releaseContract.test.js src/main/test/updateRelease.test.js",
+    "test:release": "node --experimental-test-coverage --test --test-coverage-include=scripts/releaseContract.cjs --test-coverage-include=scripts/verify-release-contract.mjs --test-coverage-include=src/main/autoUpdateInstall.js --test-coverage-include=src/main/updateRelease.js --test-coverage-lines=100 --test-coverage-functions=100 --test-coverage-branches=100 src/main/test/autoUpdateInstall.test.js src/main/test/releaseContract.test.js src/main/test/updateRelease.test.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
