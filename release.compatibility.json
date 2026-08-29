@@ -1,5 +1,4 @@
 {
-  "minimumUpgradeableVersion": "1.0.7",
   "windows": {
     "appId": "com.sjeary.sharegpt.desktop",
     "artifactName": "sharegpt-${version}.exe"

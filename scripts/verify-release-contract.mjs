@@ -28,7 +28,6 @@ requireEqual(
 requireEqual("Windows executable", packageJson.build?.win?.executableName, "sharegpt");
 requireEqual("macOS artifact", senderBuild.mac?.artifactName, "sharegpt-${version}-${arch}.${ext}");
 requireEqual("macOS package name", senderBuild.extraMetadata?.name, "sharegpt-desktop");
-requireEqual("upgrade floor", compatibility.minimumUpgradeableVersion, "1.0.7");
 requireEqual("legacy Windows appId", compatibility.windows?.appId, expectedAppId);
 requireEqual(
   "legacy Windows artifact",
