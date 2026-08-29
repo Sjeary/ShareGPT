@@ -4,7 +4,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$checksums = Get-Content (Join-Path $projectRoot "build\bin\checksums.json") -Raw | ConvertFrom-Json
+$checksums =
+  Get-Content (Join-Path $projectRoot "build\bin\checksums.json") -Raw -Encoding UTF8 |
+  ConvertFrom-Json
 $temporaryDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("sharegpt-assets-" + [guid]::NewGuid())
 
 function Get-VerifiedAsset {
