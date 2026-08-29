@@ -9,6 +9,22 @@ $checksums =
   ConvertFrom-Json
 $temporaryDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("sharegpt-assets-" + [guid]::NewGuid())
 
+function Get-Sha256 {
+  param([string]$Path)
+
+  $stream = [System.IO.File]::OpenRead($Path)
+  try {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      return (($sha256.ComputeHash($stream) | ForEach-Object { $_.ToString("x2") }) -join "")
+    } finally {
+      $sha256.Dispose()
+    }
+  } finally {
+    $stream.Dispose()
+  }
+}
+
 function Get-VerifiedAsset {
   param(
     [string]$Label,
@@ -40,7 +56,7 @@ function Get-VerifiedAsset {
     throw "$Label archive does not contain $RelativeExecutable"
   }
 
-  $actualSha256 = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
+  $actualSha256 = Get-Sha256 -Path $sourcePath
   if ($actualSha256 -ne $ExpectedSha256.ToLowerInvariant()) {
     throw "$Label SHA-256 mismatch: expected $ExpectedSha256, got $actualSha256"
   }
