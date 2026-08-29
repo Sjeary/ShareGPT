@@ -1,5 +1,5 @@
 param(
-  [string]$OutputDirectory = (Join-Path $PSScriptRoot "..\build\bin\windows")
+  [string]$OutputDirectory = (Join-Path $PSScriptRoot "..\build\bin")
 )
 
 $ErrorActionPreference = "Stop"

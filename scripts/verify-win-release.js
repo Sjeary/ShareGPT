@@ -33,6 +33,14 @@ const singBox = requiredFile(
   path.join(releaseDir, "win-unpacked", "resources", "bin", "sing-box.exe"),
 );
 const frpc = requiredFile(path.join(releaseDir, "win-unpacked", "resources", "bin", "frpc.exe"));
+for (const duplicate of [
+  path.join(releaseDir, "win-unpacked", "resources", "bin", "windows", "sing-box.exe"),
+  path.join(releaseDir, "win-unpacked", "resources", "bin", "windows", "frpc.exe"),
+]) {
+  if (fs.existsSync(path.join(root, duplicate))) {
+    throw new Error(`发布包包含重复 Windows 二进制：${duplicate}`);
+  }
+}
 
 const packagedEntries = asar.listPackage(appAsar.filePath);
 const localCacheEntries = packagedEntries.filter((entry) =>

@@ -52,7 +52,9 @@ chmod +x build/bin/macos/sing-box
 
 Windows 正式 GitHub Actions 会执行 `scripts/prepare-windows-release-assets.ps1`，只从上述
 两个上游项目的固定版本 Release 下载 ZIP，解压后按 `checksums.json` 校验最终 EXE，再交给
-`prepare-assets.mjs --required`。下载失败、目录结构变化或 EXE 哈希不一致都会停止发布。
+`prepare-assets.mjs --required`。脚本把校验后的 EXE 直接放到 `build/bin/`，避免同时打包
+`build/bin/windows/` 和根目录副本。下载失败、目录结构变化、EXE 哈希不一致或最终包出现
+重复副本都会停止发布。
 
 ## 说明
 
