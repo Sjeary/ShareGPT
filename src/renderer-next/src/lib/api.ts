@@ -70,7 +70,9 @@ const fallback = {
   getMode: async () => 'all',
   checkAppUpdate: async () => null,
   isUpdateSupported: async () => false,
-  installAppUpdate: async () => ({ updated: false }),
+  installAppUpdate: async (_payload: { expectedVersion: string; expectedFileName?: string }) => ({
+    updated: false,
+  }),
   downloadAppUpdate: async () => undefined,
   openAppUpdate: async () => undefined,
   showSystemNotification: async () => undefined,

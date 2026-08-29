@@ -232,7 +232,10 @@ function UpdateSection() {
       setDownloading(true)
       setProgress({ transferred: 0, total: 0, percent: 0, fileName: '更新包' })
       try {
-        const res = (await api.installAppUpdate()) as { updated?: boolean } | null
+        const res = (await api.installAppUpdate({
+          expectedVersion: latestVersion,
+          expectedFileName: updateInfo?.fileName,
+        })) as { updated?: boolean } | null
         if (res?.updated) {
           toast.success('新版本已下载，正在原地安装并自动重启…')
         } else {

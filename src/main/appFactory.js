@@ -65,6 +65,7 @@ const {
 } = require("./aiSessionAuthorization");
 const { runSettingsPrincipalTransition } = require("./settingsPrincipalTransition");
 const { createStorageFlushCoordinator } = require("./storageFlush");
+const { installVerifiedAutoUpdate } = require("./autoUpdateInstall");
 const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
@@ -1196,7 +1197,8 @@ function createElectronApp(baseMode = "all") {
       return;
     }
     autoUpdater.autoDownload = false;
-    autoUpdater.autoInstallOnAppQuit = true;
+    // 仅在版本契约校验和资料备份成功后显式 quitAndInstall，失败时不得安装缓存包。
+    autoUpdater.autoInstallOnAppQuit = false;
     autoUpdater.on("download-progress", (p) => {
       if (!mainWindow || mainWindow.isDestroyed()) return;
       mainWindow.webContents.send("app:update-progress", {
@@ -2895,7 +2897,7 @@ function createElectronApp(baseMode = "all") {
     // 是否支持「原地无感更新」(Windows 打包版 = true; mac / dev = false -> 前端回退到下载方式)。
     ipcMain.handle("app:update-supported", () => Boolean(autoUpdater));
     // Windows 无感更新: 检查 -> 下载(进度走 app:update-progress) -> 完成后原地安装并自动重启。
-    ipcMain.handle("app:update-install", async () => {
+    ipcMain.handle("app:update-install", async (_event, payload) => {
       if (!autoUpdater) {
         throw new Error("当前版本不支持原地自动安装，请用下载方式更新");
       }
@@ -2904,53 +2906,39 @@ function createElectronApp(baseMode = "all") {
       }
       autoUpdaterBusy = true;
       try {
-        return await new Promise((resolve, reject) => {
-          const cleanup = () => {
-            autoUpdater.removeListener("update-available", onAvailable);
-            autoUpdater.removeListener("update-not-available", onNotAvailable);
-            autoUpdater.removeListener("update-downloaded", onDownloaded);
-            autoUpdater.removeListener("error", onError);
-          };
-          const onAvailable = () => {
-            autoUpdater.downloadUpdate().catch(onError);
-          };
-          const onNotAvailable = () => {
-            cleanup();
-            resolve({ updated: false });
-          };
-          const onDownloaded = async () => {
-            cleanup();
+        const expectedRelease = await backend.checkLatestRelease();
+        if (
+          safeText(payload?.expectedVersion) !== expectedRelease?.version ||
+          safeText(payload?.expectedFileName).toLowerCase() !==
+            safeText(expectedRelease?.fileName).toLowerCase()
+        ) {
+          throw new Error("更新信息已经变化，请重新检查更新");
+        }
+        const result = await installVerifiedAutoUpdate({
+          autoUpdater,
+          expectedRelease,
+          beforeInstall: async () => {
             try {
               await flushAiSessionStorage(getAiStoragePartitions());
-              backend && backend.createUpdateBackup("before-autoupdate");
+              backend.createUpdateBackup("before-autoupdate");
             } catch (error) {
-              reject(
-                new Error("更新前资料写盘或备份失败，已停止自动安装", {
-                  cause: error,
-                }),
-              );
-              return;
+              throw new Error("更新前资料写盘或备份失败，已停止自动安装", {
+                cause: error,
+              });
             }
-            resolve({ updated: true, installing: true });
-            // 静默安装 NSIS 包并自动重启 (isSilent=true, isForceRunAfter=true)。
-            setTimeout(() => {
-              try {
-                autoUpdater.quitAndInstall(true, true);
-              } catch (_e) {
-                /* ignore */
-              }
-            }, 600);
-          };
-          const onError = (err) => {
-            cleanup();
-            reject(err instanceof Error ? err : new Error(String((err && err.message) || err)));
-          };
-          autoUpdater.on("update-available", onAvailable);
-          autoUpdater.on("update-not-available", onNotAvailable);
-          autoUpdater.on("update-downloaded", onDownloaded);
-          autoUpdater.on("error", onError);
-          autoUpdater.checkForUpdates().catch(onError);
+          },
         });
+        if (result.updated) {
+          // 静默安装 NSIS 包并自动重启 (isSilent=true, isForceRunAfter=true)。
+          setTimeout(() => {
+            try {
+              autoUpdater.quitAndInstall(true, true);
+            } catch (_e) {
+              /* ignore */
+            }
+          }, 600);
+        }
+        return result;
       } finally {
         autoUpdaterBusy = false;
       }
