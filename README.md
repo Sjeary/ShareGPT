@@ -86,10 +86,9 @@ API 密钥按当前登录身份长期保存在本机设置中，系统支持时�
 3. 首次登录会自动拉取代理配置。进入「网络 / 代理」，点击**开启代理**。
 4. 左侧导航打开 **ChatGPT / Gemini / Claude**，即可使用；用「协作聊天」与同组成员沟通。
 
-> **Windows 提示**：安装包未做代码签名，首次运行 Defender SmartScreen 会提示「发布者未知」——点**「更多信息（More info）」→「仍要运行（Run anyway）」**即可。从管理员处拿到的包可放心运行。
-
-> **macOS 提示**：安装包未做苹果签名，首次打开请**右键 →「打开」**，或在终端执行
-> `xattr -dr com.apple.quarantine "/Applications/ShareGPT.app"`。
+> **安装包校验**：正式 GitHub Release 应分别通过 Windows Authenticode 和 macOS
+> Developer ID + notarization 校验。源码本地构建默认不是互联网正式包；若 Release 明确标为
+> 未签名测试包，系统会显示未知发布者，只应在核对来源和校验值后用于测试。
 
 ## 🛠️ 部署指南（管理员 / 自建）
 
@@ -144,16 +143,17 @@ npm --prefix admin_console/ui install
 
 # 准备第三方二进制（sing-box；自建出口时另需转发组件），按 build/bin/README.md 放好
 # 然后打包：
-npm run dist:win:sender     # Windows 客户端
-npm run dist:mac:sender     # macOS 客户端（自动先编译渲染层）
+npm run dist:win:installer # Windows 正式 NSIS 结构（本地无证书时仍是未签名测试包）
+npm run dist:mac           # macOS 正式结构（发布时必须 Developer ID 签名并公证）
 npm run dist:admin:win      # 管理控制台
 ```
 
 **发布新版本 / 自建更新源**（维护者 / fork）：应用以 **GitHub Releases** 为自动更新源（参考 [cc-switch](https://github.com/farion1231/cc-switch)，不经过任何自建服务器；Windows 用 NSIS + [electron-updater](https://www.electron.build/auto-update) 原地无感更新）。
 
-1. 改 `package.json` 版本号 → 完整桌面版执行 `npm run dist:win:installer`（NSIS）和 `npm run dist:mac`；拆分发送端才使用 `dist:win:sender` / `dist:mac:sender`。
-2. Windows 构建后必须执行 `npm run verify:release-win`；在自己的 GitHub 仓库建 Release（tag `v<版本号>`），上传 NSIS `.exe`、`latest.yml`、对应的 `.exe.blockmap` 和 `.dmg`。portable 只用于本地自测，不作为更新包。
-3. 更新源由 `package.json` 的 `homepage` / `repository` 决定——fork 后改成你自己的仓库即可。macOS 未做 Apple 签名时为下载安装包方式。
+1. 改 `package.json` 与 `package-lock.json` 版本号，执行 `npm run verify:release-contract`；正式桌面身份固定为 `com.sjeary.sharegpt.desktop`。
+2. 完整桌面版执行 `npm run dist:win:installer`（NSIS）和 `npm run dist:mac`。Windows 构建后必须执行 `npm run verify:release-win`；portable 与拆分模式只用于本地自测。
+3. 在自己的 GitHub 仓库建与包版本一致的 tag `v<版本号>`。Windows 上传 NSIS `.exe`、`latest.yml`、对应 `.exe.blockmap`；macOS 上传 Developer ID 签名并公证的 `.dmg` / `.zip`。不要覆盖已经公开的 Release 资产。
+4. 更新界面的版本真源是 GitHub Latest 最终 tag；`latest.yml` 只作为同版本 Windows 安装元数据。fork 后需修改 `homepage` / `repository` 指向自己的仓库。
 
 **目录结构**
 

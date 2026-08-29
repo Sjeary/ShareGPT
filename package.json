@@ -35,6 +35,7 @@
     "verify:browser-privacy-ui": "npm run build:next && node scripts/verify-browser-privacy-ui.js",
     "verify:ai-review-ui": "npm run build:next && node scripts/verify-ai-review-ui.js",
     "verify:release-win": "node scripts/verify-win-release.js",
+    "verify:release-contract": "node scripts/verify-release-contract.mjs",
     "verify:signing-boundaries": "node scripts/verify-signing-boundaries.mjs",
     "setup:mac-signing:local": "bash scripts/setup-local-macos-signing.sh",
     "prepare:assets": "node scripts/prepare-assets.mjs all",
@@ -47,8 +48,9 @@
     "dist:win:receiver": "node scripts/prepare-assets.mjs receiver --required && npm exec -- electron-builder --win portable --config build.receiver.json",
     "dist:win:split": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --win portable --config build.sender.json && node scripts/prepare-assets.mjs receiver --required && npm exec -- electron-builder --win portable --config build.receiver.json",
     "dist:win:installer": "npm run build:next && node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --win nsis",
-    "dist:mac": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --mac dmg",
-    "dist:mac:sender": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --mac --config build.sender.json",
+    "dist:win:release": "npm run build:next && node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --win nsis -c.forceCodeSigning=true",
+    "dist:mac": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --mac --config build.sender.json",
+    "dist:mac:sender": "npm run dist:mac",
     "dist:mac:sender:local": "npm run build:next && node scripts/prepare-assets.mjs sender --required && CSC_IDENTITY_AUTO_DISCOVERY=false npm exec -- electron-builder --mac dir --config build.sender.json && bash scripts/sign-local-macos.sh release_sender/mac-arm64/ShareGPT.app",
     "dist:mac:sender:dmg": "node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --mac dmg --config build.sender.json",
     "dist:linux": "node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --linux AppImage",
@@ -105,7 +107,7 @@
       ],
       "artifactName": "sharegpt-${version}.${ext}",
       "executableName": "sharegpt",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": true
     },
     "nsis": {
       "oneClick": false,

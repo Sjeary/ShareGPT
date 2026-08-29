@@ -18,7 +18,9 @@ npm run dist:mac:sender:local
 ```
 
 The local build disables electron-builder identity auto-discovery, then signs the complete app
-with the stable local identity, no Apple timestamp, and no hardened runtime. A self-signed identity
+with the stable local identity, no Apple timestamp, and no hardened runtime. The app keeps the
+production bundle identifier `com.sjeary.sharegpt.desktop`, but the local certificate is not a
+production trust identity. A self-signed identity
 has no Apple Team ID, so hardened library validation would prevent Electron from loading its own
 framework. Developer ID signing, hardened runtime, timestamps, and notarization belong only to the
 GitHub release workflow.
@@ -37,9 +39,22 @@ and Apple notarization. Configure these GitHub Actions secrets:
 - `APPLE_API_KEY_ID`: App Store Connect API key ID
 - `APPLE_API_ISSUER`: App Store Connect issuer ID
 
-`.github/workflows/release-macos.yml` fails closed when a secret is absent. It verifies
-the Developer ID authority, Team Identifier, strict nested signature, and Gatekeeper
+The macOS job in `.github/workflows/release.yml` fails closed when a secret is absent. It verifies
+the canonical bundle identifier, Developer ID authority, Team Identifier, strict nested signature, and Gatekeeper
 acceptance before uploading artifacts. It never falls back to ad-hoc or local signing.
+
+The canonical artifact is `sharegpt-<version>-arm64.dmg`. During the 1.0.x line the workflow also
+uploads a byte-identical `sharegpt-sender-<version>-arm64.dmg` compatibility alias because the
+already-published 1.0.7/1.0.8 clients hard-code that download name. The app inside both files has
+the single canonical bundle identifier; the alias is not a second build or application identity.
 
 `npm run verify:signing-boundaries` rejects tracked certificates, private keys,
 Keychains, or local signing password files.
+
+Ad-hoc and the stable local self-signed identity are development tools only. They are not an
+acceptable fallback for a public GitHub Release; a missing Developer ID or notarization credential
+must fail the release workflow.
+
+The workflow does not publish from the macOS job. macOS and Windows first upload private Actions
+artifacts; one final job waits for both, checks the complete six-file release set, creates a draft,
+uploads all assets, and only then makes the GitHub Release public.

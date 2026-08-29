@@ -1,0 +1,11 @@
+{
+  "minimumUpgradeableVersion": "1.0.7",
+  "windows": {
+    "appId": "com.sjeary.sharegpt.desktop",
+    "artifactName": "sharegpt-${version}.exe"
+  },
+  "mac": {
+    "legacyAppId": "com.sjeary.sharegpt.desktop.sender",
+    "legacyArtifactName": "sharegpt-sender-${version}-arm64.dmg"
+  }
+}

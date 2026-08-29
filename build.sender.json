@@ -1,5 +1,5 @@
 {
-  "appId": "com.sjeary.sharegpt.desktop.sender",
+  "appId": "com.sjeary.sharegpt.desktop",
   "productName": "ShareGPT",
   "asar": true,
   "files": [
@@ -29,9 +29,9 @@
   },
   "win": {
     "target": ["nsis"],
-    "artifactName": "sharegpt-sender-${version}.${ext}",
-    "executableName": "sharegpt_sender",
-    "signAndEditExecutable": false
+    "artifactName": "sharegpt-${version}.${ext}",
+    "executableName": "sharegpt",
+    "signAndEditExecutable": true
   },
   "nsis": {
     "oneClick": false,
@@ -43,13 +43,13 @@
   },
   "mac": {
     "target": ["zip", "dmg"],
-    "artifactName": "sharegpt-sender-${version}-${arch}.${ext}",
+    "artifactName": "sharegpt-${version}-${arch}.${ext}",
     "hardenedRuntime": true,
     "notarize": true
   },
   "extraMetadata": {
     "main": "src/main/main_sender.js",
-    "name": "sharegpt-sender-desktop"
+    "name": "sharegpt-desktop"
   },
   "publish": [
     {

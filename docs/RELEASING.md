@@ -5,12 +5,15 @@
 
 ## 更新与自动更新是怎么工作的
 
-- **自动更新源 = GitHub Releases**（参考 cc-switch），不经过任何自建服务器。
-  客户端读取 `https://github.com/<owner>/<repo>/releases/latest/download/latest.yml`
-  比较版本（见 `src/main/backend.js` 的 `checkLatestRelease()` 与登录页 `checkGithubUpdate()`）。
+- **自动更新源 = GitHub Releases**，不经过任何自建服务器。界面显示的最新版只取
+  `https://github.com/<owner>/<repo>/releases/latest` 最终跳转到的 tag；`latest.yml`
+  只描述 Windows 安装包，且其中版本必须与该 tag 完全一致。这样旧的或错误的
+  `latest.yml`（例如曾出现的 `6.0.0`）不能再改变界面版本号。
 - **Windows**：用 NSIS 安装包 + `latest.yml` 做 electron-updater 原地无感更新
   （后台下载、自动安装并重启，账号 / 聊天记录 / 网页登录态保留）。
 - **macOS**：目前为「提示下载安装包」方式（dmg）。
+- 正式桌面身份在两个平台都固定为 `com.sjeary.sharegpt.desktop`。`sender` 只是运行入口，
+  不是第二个产品身份，也不得再写入 bundle identifier、可执行文件名或正式产物名。
 - 仓库地址从 `package.json` 的 `homepage` / `repository` 推导，fork 后改这两项即指向自己的仓库。
 
 ## 必需更新 vs 可选更新
@@ -44,6 +47,9 @@ npm --prefix admin_console/ui run build    # 管理端（如有改动）
   - `src/renderer-next/src/components/layout/Sidebar.tsx` 里侧栏底部的兜底版本串（仅在 `meta.version` 缺失时显示）。
   - 遵循 [语义化版本](https://semver.org/lang/zh-CN/)：修 bug → patch（1.0.0→1.0.1）；加功能且兼容 → minor；不兼容 → major。
 - 注意：`admin_console` 有自己的版本号，与主程序独立，不要一起改。
+- 执行 `npm run verify:release-contract`，确认 `package.json`、`package-lock.json`、tag、
+  bundle identifier 和产物名属于同一个版本。tag 构建时使用
+  `SHAREGPT_RELEASE_TAG=vX.Y.Z npm run verify:release-contract`。
 
 ### 3) 写更新日志（两处都写）
 
@@ -66,12 +72,27 @@ npm run dist:win              # → release/sharegpt-<version>.exe
 # Windows 安装版（NSIS，含 latest.yml，自动更新用这个）
 npm run dist:win:installer    # → release/ 下 nsis 安装包 + latest.yml
 
-# macOS（在 mac 构建机上，见 memory: mac-build-machine）
-npm run dist:mac              # → dmg
+# macOS 本机预览（稳定本机证书，只供当前开发 Mac）
+npm run dist:mac:sender:local # → release_sender/mac-arm64/ShareGPT.app
+
+# macOS 正式包（必须提供 Developer ID 与 notarization 凭据）
+npm run dist:mac              # → release_sender/sharegpt-<version>-arm64.dmg/zip
 ```
 
 - 二进制依赖 `build/bin/`（sing-box、frpc），由 `prepare-assets` 校验/准备。
-- 未签名：Windows 首次运行会触发 SmartScreen，需「更多信息 → 仍要运行」。
+  本地 Windows 构建可以不签名，用于编译和功能验收。互联网 GitHub Release 不应使用
+  未签名、自签名或 ad-hoc 产物：Windows 应使用受信任的 Authenticode 证书并带时间戳；
+  macOS 应使用 Apple Developer ID Application、Hardened Runtime 和 notarization。
+
+GitHub Actions 的正式签名凭据只放仓库 Secrets，不写入代码、构建产物或普通环境文件：
+
+- Windows：`WINDOWS_CODE_SIGNING_PFX`、`WINDOWS_CODE_SIGNING_PASSWORD`；正式流水线执行
+  `dist:win:release` 并强制签名，随后检查安装器和主程序 Authenticode 及时间戳。
+- macOS：具体 Secrets 与校验见 `docs/MACOS_SIGNING.md`。
+
+`.github/workflows/release.yml` 同时等待 Windows 与 macOS。两个构建 job 只上传内部
+Actions artifacts；最终 job 验证六个文件完整后先创建 draft，全部上传成功才公开，避免
+Latest 提前指向只有单个平台安装包的残缺版本。
 
 #### Windows 产物身份与体积验收
 
@@ -112,12 +133,15 @@ npm run verify:release-win
 
 ### 6) 发布 GitHub Release（实际让用户能更新的一步）
 
-1. 打 tag：`git tag vX.Y.Z && git push origin vX.Y.Z`。
+1. 先合并已通过 CI 和代码审查的固定提交，再打 tag：`git tag vX.Y.Z && git push origin vX.Y.Z`。
 2. 在 GitHub 新建 Release，选该 tag，**上传**：
    - Windows NSIS 安装包（`.exe`）+ `latest.yml` + 对应的 `.exe.blockmap`；
-   - （如有）macOS `.dmg`。
+   - macOS 正式 `.dmg` / `.zip`。正式名为 `sharegpt-<version>-arm64.*`；1.0.x 期间额外上传
+     内容完全相同的 `sharegpt-sender-<version>-arm64.dmg` 兼容别名，仅供已发布的
+     1.0.7/1.0.8 macOS 客户端下载升级。别名不代表另一个 bundle identity。
 3. Release notes 可直接引用 `CHANGELOG.md` 对应小节；可选/必需更新在此说明。
-4. 发布后，客户端下次检查即可读到 `latest.yml` 并按版本提示/更新。
+4. 发布后检查 Latest 指向的新 tag、`latest.yml` 版本与文件名、Windows Authenticode、
+   macOS Developer ID / notarization；Release 资产不得覆盖或事后替换。
 
 ## 易踩的坑
 
@@ -125,3 +149,4 @@ npm run verify:release-win
 - `latest.yml` 必须随安装包一起上传到同一个 Release，否则自动更新读不到。
 - `.exe.blockmap` 必须与安装包同版本、同名上传，否则差分更新会退化或失败。
 - 便携版（portable）不产生 `latest.yml`，不能用于自动更新，仅供本地自测。
+- 不要用 `--clobber` 覆盖已经公开的安装包。产物有误时停止发布并创建新的版本号。

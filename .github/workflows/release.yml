@@ -1,0 +1,225 @@
+name: Release Desktop
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    runs-on: macos-14
+    env:
+      CSC_LINK: ${{ secrets.MACOS_DEVELOPER_ID_P12 }}
+      CSC_KEY_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_PASSWORD }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Require official signing and notarization secrets
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          test -n "$CSC_LINK"
+          test -n "$CSC_KEY_PASSWORD"
+          test -n "$APPLE_API_KEY_ID"
+          test -n "$APPLE_API_ISSUER"
+          test -n "$APPLE_API_KEY_P8"
+
+      - name: Install dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix src/renderer-next ci --no-audit --no-fund
+          npm --prefix collab_server2 ci --no-audit --no-fund
+
+      - name: Verify and test release source
+        run: |
+          npm run verify:signing-boundaries
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            SHAREGPT_RELEASE_TAG="$GITHUB_REF_NAME" npm run verify:release-contract
+          else
+            npm run verify:release-contract
+          fi
+          npm test
+          npm --prefix src/renderer-next test
+          npm run typecheck:main
+          npm run lint
+
+      - name: Prepare App Store Connect API key
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          API_KEY_PATH="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          printf '%s' "$APPLE_API_KEY_P8" > "$API_KEY_PATH"
+          chmod 600 "$API_KEY_PATH"
+          echo "APPLE_API_KEY=$API_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Build, sign, and notarize macOS app
+        run: npm run dist:mac
+
+      - name: Notarize and verify final macOS artifacts
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          APP_PATH="release_sender/mac-arm64/ShareGPT.app"
+          DMG_PATH="release_sender/sharegpt-${VERSION}-arm64.dmg"
+          ZIP_PATH="release_sender/sharegpt-${VERSION}-arm64.zip"
+          LEGACY_DMG="$(node -p "require('./release.compatibility.json').mac.legacyArtifactName.replace(String.fromCharCode(36) + '{version}', require('./package.json').version)")"
+          test -d "$APP_PATH"
+          test -f "$DMG_PATH"
+          test -f "$ZIP_PATH"
+          test "$(plutil -extract CFBundleIdentifier raw "$APP_PATH/Contents/Info.plist")" = "com.sjeary.sharegpt.desktop"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign -dvv "$APP_PATH" 2>&1 | grep -F "Authority=Developer ID Application:"
+          codesign -dvv "$APP_PATH" 2>&1 | grep -E "TeamIdentifier=[A-Z0-9]+"
+          codesign -dvv "$APP_PATH" 2>&1 | grep -E "flags=.*runtime"
+          spctl --assess --type execute --verbose=4 "$APP_PATH"
+          xcrun notarytool submit "$DMG_PATH" \
+            --key "$APPLE_API_KEY" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG_PATH"
+          MOUNT_PATH="$RUNNER_TEMP/sharegpt-dmg"
+          mkdir -p "$MOUNT_PATH"
+          hdiutil attach "$DMG_PATH" -nobrowse -readonly -mountpoint "$MOUNT_PATH"
+          trap 'hdiutil detach "$MOUNT_PATH"' EXIT
+          test "$(plutil -extract CFBundleIdentifier raw "$MOUNT_PATH/ShareGPT.app/Contents/Info.plist")" = "com.sjeary.sharegpt.desktop"
+          codesign --verify --deep --strict --verbose=2 "$MOUNT_PATH/ShareGPT.app"
+          spctl --assess --type execute --verbose=4 "$MOUNT_PATH/ShareGPT.app"
+          hdiutil detach "$MOUNT_PATH"
+          trap - EXIT
+          cp "$DMG_PATH" "release_sender/$LEGACY_DMG"
+          cmp "$DMG_PATH" "release_sender/$LEGACY_DMG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sharegpt-macos-${{ github.ref_name }}
+          path: |
+            release_sender/*.dmg
+            release_sender/*.zip
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-2025
+    env:
+      WIN_CSC_LINK: ${{ secrets.WINDOWS_CODE_SIGNING_PFX }}
+      WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Require official Authenticode signing secrets
+        shell: pwsh
+        run: |
+          if (-not $env:WIN_CSC_LINK) { throw "WINDOWS_CODE_SIGNING_PFX is required" }
+          if (-not $env:WIN_CSC_KEY_PASSWORD) { throw "WINDOWS_CODE_SIGNING_PASSWORD is required" }
+
+      - name: Install dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix src/renderer-next ci --no-audit --no-fund
+          npm --prefix collab_server2 ci --no-audit --no-fund
+
+      - name: Verify and test release source
+        shell: pwsh
+        run: |
+          npm run verify:signing-boundaries
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $env:SHAREGPT_RELEASE_TAG = $env:GITHUB_REF_NAME
+          }
+          npm run verify:release-contract
+          npm test
+          npm --prefix src/renderer-next test
+          npm run typecheck:main
+          npm run lint
+
+      - name: Build signed NSIS installer
+        run: npm run dist:win:release
+
+      - name: Verify installer structure and Authenticode
+        shell: pwsh
+        run: |
+          npm run verify:release-win
+          $version = node -p "require('./package.json').version"
+          $targets = @(
+            "release/sharegpt-$version.exe",
+            "release/win-unpacked/sharegpt.exe"
+          )
+          foreach ($target in $targets) {
+            if (-not (Test-Path $target)) { throw "Missing signed executable: $target" }
+            $signature = Get-AuthenticodeSignature $target
+            if ($signature.Status -ne "Valid") {
+              throw "Invalid Authenticode signature for $target`: $($signature.Status)"
+            }
+            if (-not $signature.TimeStamperCertificate) {
+              throw "Missing Authenticode timestamp for $target"
+            }
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sharegpt-windows-${{ github.ref_name }}
+          path: |
+            release/sharegpt-*.exe
+            release/sharegpt-*.exe.blockmap
+            release/latest.yml
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sharegpt-*-${{ github.ref_name }}
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify complete immutable release set
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          LEGACY_DMG="$(node -p "require('./release.compatibility.json').mac.legacyArtifactName.replace(String.fromCharCode(36) + '{version}', require('./package.json').version)")"
+          SHAREGPT_RELEASE_TAG="$GITHUB_REF_NAME" npm run verify:release-contract
+          test -f "release-assets/sharegpt-${VERSION}.exe"
+          test -f "release-assets/sharegpt-${VERSION}.exe.blockmap"
+          test -f "release-assets/latest.yml"
+          test -f "release-assets/sharegpt-${VERSION}-arm64.dmg"
+          test -f "release-assets/sharegpt-${VERSION}-arm64.zip"
+          test -f "release-assets/$LEGACY_DMG"
+          cmp "release-assets/sharegpt-${VERSION}-arm64.dmg" "release-assets/$LEGACY_DMG"
+          test "$(find release-assets -maxdepth 1 -type f | wc -l | tr -d ' ')" = "6"
+
+      - name: Publish complete GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; refusing to overwrite it." >&2
+            exit 1
+          fi
+          gh release create "$GITHUB_REF_NAME" release-assets/* \
+            --verify-tag \
+            --generate-notes \
+            --draft
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest

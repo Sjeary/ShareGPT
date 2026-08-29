@@ -75,3 +75,6 @@ jobs:
 
       - name: 签名秘密边界检查
         run: npm run verify:signing-boundaries
+
+      - name: 发布身份与版本契约检查
+        run: npm run verify:release-contract

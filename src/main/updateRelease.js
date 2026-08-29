@@ -26,16 +26,20 @@ function releaseAssetName(version, platform, arch, ymlText = "") {
   if (!safeVersion) return "";
   if (platform === "darwin") {
     const safeArch = arch === "x64" ? "x64" : "arm64";
-    return `sharegpt-sender-${safeVersion}-${safeArch}.dmg`;
+    return `sharegpt-${safeVersion}-${safeArch}.dmg`;
   }
 
   const ymlVersion = safeReleaseVersion(String(ymlText).match(/^version:\s*(.+)$/m)?.[1]);
   const ymlPath = String(ymlText).match(/^path:\s*(.+)$/m)?.[1] || "";
   const ymlFileName = path.basename(ymlPath.trim().replace(/^['"]|['"]$/g, ""));
-  if (ymlVersion === safeVersion && /^sharegpt-sender-[0-9A-Za-z.-]+\.exe$/i.test(ymlFileName)) {
+  const expectedWindowsName = `sharegpt-${safeVersion}.exe`;
+  if (
+    ymlVersion === safeVersion &&
+    ymlFileName.toLowerCase() === expectedWindowsName.toLowerCase()
+  ) {
     return ymlFileName;
   }
-  return `sharegpt-sender-${safeVersion}.exe`;
+  return expectedWindowsName;
 }
 
 function buildUpdateReleaseInfo({ repo, latestUrl, ymlText, platform, arch }) {
