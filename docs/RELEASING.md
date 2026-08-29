@@ -98,21 +98,22 @@ Latest 提前指向只有单个平台安装包的残缺版本。
 
 #### Windows 产物身份与体积验收
 
-`1.0.6` 同一提交、同一 `win-unpacked` 内容的实测对照如下；数值只作为本次诊断基线，
-后续版本会随代码和二进制更新变化：
+`1.0.6` 的 portable/NSIS 对照与 `1.0.9` 的 Windows 真机构建记录如下。数值只用于判断
+同一版本是否意外漏包或重复打包，不作为跨版本固定门槛：
 
 | 目标        | 命令                         |        字节 | Windows 显示 | 自动更新文件                   |
 | ----------- | ---------------------------- | ----------: | -----------: | ------------------------------ |
 | portable    | `npm run dist:win`           |  92,114,714 |    87.85 MiB | 无                             |
 | NSIS 安装包 | `npm run dist:win:installer` | 102,559,502 |    97.81 MiB | `latest.yml` + `.exe.blockmap` |
+| 1.0.9 NSIS  | `npm run dist:win:installer` | 117,059,787 |   111.64 MiB | `latest.yml` + `.exe.blockmap` |
 
 因此“比上一版小约 10 MiB”首先要核对目标类型，不能直接判定为漏文件。portable 仍包含
 `app.asar`、`sing-box.exe` 和 `frpc.exe`；它缺少的是安装/卸载与 electron-updater 的 NSIS
 发布层。正式发布前在 Windows 构建机执行：
 
-本次检查还发现 `win-unpacked/resources/bin/sing-box`（无 `.exe`）是约 34 MB 的非 Windows
+`1.0.9` 检查仍发现 `win-unpacked/resources/bin/sing-box`（无 `.exe`）是约 34 MB 的非 Windows
 冗余文件，因为 `extraResources` 当前会复制整个 `build/bin`。它不影响功能，也进一步说明此次
-小包不是漏掉 Windows 核心资产。以后若清理跨平台冗余，必须单独提交、重新验证并更新这里的
+体积变化不是漏掉 Windows 核心资产。以后若清理跨平台冗余，必须单独提交、重新验证并更新这里的
 体积基线，不能把预期缩小误判为构建缺失。
 
 ```bash
