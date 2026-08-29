@@ -50,8 +50,11 @@ chmod +x build/bin/macos/sing-box
 - `SHAREGPT_SINGBOX_PATH`
 - `SHAREGPT_FRPC_PATH`
 
+Windows 正式 GitHub Actions 会执行 `scripts/prepare-windows-release-assets.ps1`，只从上述
+两个上游项目的固定版本 Release 下载 ZIP，解压后按 `checksums.json` 校验最终 EXE，再交给
+`prepare-assets.mjs --required`。下载失败、目录结构变化或 EXE 哈希不一致都会停止发布。
+
 ## 说明
 
 - 没有这些二进制时，应用仍然可以启动界面、登录、聊天、管理和打包
 - 只有真正点击启动 Sender / Receiver 代理服务时，才会提示缺少对应二进制
-

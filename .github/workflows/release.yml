@@ -151,6 +151,10 @@ jobs:
           npm run typecheck:main
           npm run lint
 
+      - name: Download and verify pinned Windows binaries
+        shell: pwsh
+        run: ./scripts/prepare-windows-release-assets.ps1
+
       - name: Build signed NSIS installer
         run: npm run dist:win:release
 

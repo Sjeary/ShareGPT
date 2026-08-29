@@ -88,6 +88,8 @@ GitHub Actions 的正式签名凭据只放仓库 Secrets，不写入代码、构
 
 - Windows：`WINDOWS_CODE_SIGNING_PFX`、`WINDOWS_CODE_SIGNING_PASSWORD`；正式流水线执行
   `dist:win:release` 并强制签名，随后检查安装器和主程序 Authenticode 及时间戳。
+- Windows 第三方二进制从 sing-box/frp 官方固定版本 Release 下载，解压后的 EXE 必须匹配
+  `build/bin/checksums.json`；不信任浮动 latest，也不把二进制提交进源码仓库。
 - macOS：具体 Secrets 与校验见 `docs/MACOS_SIGNING.md`。
 
 `.github/workflows/release.yml` 同时等待 Windows 与 macOS。两个构建 job 只上传内部
