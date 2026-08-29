@@ -105,7 +105,7 @@ Latest 提前指向只有单个平台安装包的残缺版本。
 | ----------- | ---------------------------- | ----------: | -----------: | ------------------------------ |
 | portable    | `npm run dist:win`           |  92,114,714 |    87.85 MiB | 无                             |
 | NSIS 安装包 | `npm run dist:win:installer` | 102,559,502 |    97.81 MiB | `latest.yml` + `.exe.blockmap` |
-| 1.0.9 NSIS  | `npm run dist:win:installer` | 117,059,787 |   111.64 MiB | `latest.yml` + `.exe.blockmap` |
+| 1.0.9 NSIS  | `npm run dist:win:installer` | 117,062,546 |   111.64 MiB | `latest.yml` + `.exe.blockmap` |
 
 因此“比上一版小约 10 MiB”首先要核对目标类型，不能直接判定为漏文件。portable 仍包含
 `app.asar`、`sing-box.exe` 和 `frpc.exe`；它缺少的是安装/卸载与 electron-updater 的 NSIS
