@@ -24,7 +24,7 @@ export const DEFAULT_TRANSLATION_SETTINGS: TranslationSettings = {
   sourceLanguage: 'auto',
   targetLanguage: 'zh',
   siteLanguage: 'en',
-  confirmNonTargetSend: true,
+  confirmNonTargetSend: false,
   autoTranslateSelection: false,
   ai: DEFAULT_AI,
   api: { baseUrl: '', apiKey: '' },
@@ -39,7 +39,7 @@ function normalizeSettings(
     ...DEFAULT_TRANSLATION_SETTINGS,
     ...raw,
     version: 1,
-    confirmNonTargetSend: raw?.confirmNonTargetSend !== false,
+    confirmNonTargetSend: raw?.confirmNonTargetSend === true,
     autoTranslateSelection: raw?.autoTranslateSelection === true,
     provider: ['ai', 'api', 'offline'].includes(String(raw?.provider))
       ? (raw?.provider as TranslationProvider)

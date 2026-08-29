@@ -507,10 +507,12 @@ test("disabling selection translation cancels an already authorized publication"
 
 test("composer confirmation registry keeps one pending request per workspace", () => {
   let nextId = 0;
+  const taken = [];
   const registry = createComposerConfirmationRegistry({
     createId: () => `request-${++nextId}`,
     setTimeout: () => ({ unref() {} }),
     clearTimeout: () => {},
+    onTake: (pending, reason) => taken.push([pending.requestId, reason]),
   });
   const first = registry.queue("gpt:tab-a", { text: "first" });
   const second = registry.queue("gpt:tab-a", { text: "second" });
@@ -524,7 +526,8 @@ test("composer confirmation registry keeps one pending request per workspace", (
   assert.equal(registry.size(), 2);
   assert.equal(registry.invalidateWorkspace("gpt:tab-a").requestId, "request-2");
   assert.equal(registry.size(), 1);
-  assert.equal(registry.take(other.pending.requestId).text, "other");
+  assert.equal(registry.take(other.pending.requestId, "confirmed").text, "other");
+  assert.deepEqual(taken, [["request-3", "confirmed"]]);
   assert.equal(registry.size(), 0);
 });
 

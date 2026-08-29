@@ -72,3 +72,6 @@ jobs:
 
       - name: 主进程类型检查 (checkJs)
         run: npm run typecheck:main
+
+      - name: 签名秘密边界检查
+        run: npm run verify:signing-boundaries

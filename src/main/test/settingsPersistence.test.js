@@ -42,7 +42,7 @@ test("settings use an empty remote translation endpoint and reject stale writes"
   const initial = backend.loadSettings();
   assert.equal(initial.translation.ai.baseUrl, "");
   assert.equal(initial.translation.siteLanguage, "en");
-  assert.equal(initial.translation.confirmNonTargetSend, true);
+  assert.equal(initial.translation.confirmNonTargetSend, false);
   assert.equal(initial.translation.autoTranslateSelection, false);
   assert.equal(initial.settingsRevision, 0);
 
@@ -587,7 +587,7 @@ test("translation behavior operations are normalized as booleans", (t) => {
   );
 
   assert.equal(saved.translation.siteLanguage, "ja");
-  assert.equal(saved.translation.confirmNonTargetSend, true);
+  assert.equal(saved.translation.confirmNonTargetSend, false);
   assert.equal(saved.translation.autoTranslateSelection, false);
 
   const enabled = backend.operateSettings(
@@ -601,4 +601,17 @@ test("translation behavior operations are normalized as booleans", (t) => {
   );
   assert.equal(enabled.translation.confirmNonTargetSend, false);
   assert.equal(enabled.translation.autoTranslateSelection, true);
+});
+
+test("composer confirmation defaults off while preserving an explicit opt-in", (t) => {
+  const backend = createBackend(t);
+  assert.equal(backend.loadSettings().translation.confirmNonTargetSend, false);
+
+  backend.operateSettings(
+    "translation",
+    [{ op: "set", path: ["confirmNonTargetSend"], value: true }],
+    0,
+    activePrincipalId(backend),
+  );
+  assert.equal(backend.loadSettings().translation.confirmNonTargetSend, true);
 });

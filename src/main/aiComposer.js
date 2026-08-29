@@ -981,6 +981,7 @@ function createComposerConfirmationRegistry(options = {}) {
   const schedule = typeof options.setTimeout === "function" ? options.setTimeout : setTimeout;
   const cancel = typeof options.clearTimeout === "function" ? options.clearTimeout : clearTimeout;
   const onExpire = typeof options.onExpire === "function" ? options.onExpire : () => {};
+  const onTake = typeof options.onTake === "function" ? options.onTake : () => {};
   const byId = new Map();
   const byWorkspace = new Map();
 
@@ -1031,9 +1032,11 @@ function createComposerConfirmationRegistry(options = {}) {
       return { pending, replaced };
     },
     get,
-    take(requestId) {
+    take(requestId, reason = "resolved") {
       const pending = get(requestId);
-      return pending ? remove(pending.requestId) : null;
+      const taken = pending ? remove(pending.requestId) : null;
+      if (taken) onTake(taken, String(reason || "resolved"));
+      return taken;
     },
     invalidateWorkspace,
     clear() {

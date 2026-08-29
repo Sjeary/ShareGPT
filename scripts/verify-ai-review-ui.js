@@ -646,6 +646,11 @@ async function main() {
     results.push("login action is visible without scrolling");
 
     await login(window, baseUrl, USERNAME, { remember: true });
+    const initialTranslation = await window.evaluate(async () =>
+      (await window.api.loadSettings()).translation,
+    );
+    assert.strictEqual(initialTranslation.confirmNonTargetSend, false);
+    results.push("composer language confirmation defaults off for a new principal");
     const now = new Date().toISOString();
     await patchSection(window, "advancedAi", {
       version: 1,
@@ -666,6 +671,7 @@ async function main() {
     });
     await patchSection(window, "translation", {
       provider: "ai",
+      confirmNonTargetSend: true,
       ai: {
         baseUrl: "http://notes-a.example/v1",
         apiKey: "alice-notes-key",
@@ -1043,12 +1049,20 @@ async function main() {
     await composerFixtureAction(electronApp, fixtureUrl, "click", "第一条真实确认");
     await window.getByRole("button", { name: "仍然发送" }).waitFor();
     await window.getByRole("button", { name: "仍然发送" }).click();
+    await window.getByRole("button", { name: "仍然发送" }).waitFor({ state: "hidden" });
     await waitUntil(async () => {
       const state = await composerFixtureAction(electronApp, fixtureUrl, "state");
       return state.enters === 1;
     });
     assert.strictEqual((await composerFixtureAction(electronApp, fixtureUrl, "state")).clicks, 0);
-    results.push("authenticated composer confirmation replays exactly one Enter");
+    results.push("confirmed composer send clears its banner and replays exactly one Enter");
+
+    await composerFixtureAction(electronApp, fixtureUrl, "click", "关闭并取消确认");
+    await window.getByRole("button", { name: "仍然发送" }).waitFor();
+    await window.getByRole("button", { name: "关闭并取消本次发送" }).click();
+    await window.getByRole("button", { name: "仍然发送" }).waitFor({ state: "hidden" });
+    assert.strictEqual((await composerFixtureAction(electronApp, fixtureUrl, "state")).enters, 1);
+    results.push("composer banner close button cancels without sending");
 
     await composerFixtureAction(electronApp, fixtureUrl, "click", "等待确认过期");
     await window.getByRole("button", { name: "仍然发送" }).waitFor();
@@ -1194,11 +1208,16 @@ async function main() {
     await window.getByRole("button", { name: "退出登录", exact: true }).click();
     await window.locator("#account-server").waitFor({ state: "visible" });
     await login(window, baseUrl, BASIC_USERNAME);
+    const basicInitialTranslation = await window.evaluate(async () =>
+      (await window.api.loadSettings()).translation,
+    );
+    assert.strictEqual(basicInitialTranslation.confirmNonTargetSend, false);
     await patchSection(window, "translation", {
       provider: "offline",
       sourceLanguage: "en",
       targetLanguage: "zh",
       siteLanguage: "en",
+      confirmNonTargetSend: true,
       autoTranslateSelection: true,
       offline: { baseUrl: fixtureUrl },
     });

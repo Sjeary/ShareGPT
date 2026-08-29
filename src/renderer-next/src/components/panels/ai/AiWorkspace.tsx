@@ -65,7 +65,7 @@ import {
   isCurrentAiEnvironmentOperation,
   startAiEnvironmentOperation,
 } from '@/lib/aiEnvironmentRuntime'
-import { isComposerGuardEligible } from '@/lib/translationSession'
+import { isComposerGuardEligible, shouldClearPendingComposerSend } from '@/lib/translationSession'
 import { canUseAdvancedAi, canUseTranslation } from '@/lib/aiAccess'
 import { userFacingErrorMessage } from '@/lib/errors'
 
@@ -198,7 +198,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const [resolvingPendingSend, setResolvingPendingSend] = useState(false)
 
   const resolvePendingSend = useCallback(
-    async (confirmed: boolean) => {
+    async (confirmed: boolean, showFeedback = true) => {
       const pending = useTranslationStore.getState().pendingSend
       if (
         !composerGuardEligible ||
@@ -216,8 +216,11 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           requestId: pending.requestId,
           confirmed,
         })
-        useTranslationStore.getState().setPendingSend(null)
-        setFeedback(kind, confirmed ? '已按原文发送' : '已取消发送')
+        const translation = useTranslationStore.getState()
+        if (shouldClearPendingComposerSend(translation.pendingSend, pending.requestId)) {
+          translation.setPendingSend(null)
+        }
+        if (showFeedback) setFeedback(kind, confirmed ? '已按原文发送' : '已取消发送')
       } catch (error) {
         setFeedback(kind, userFacingErrorMessage(error), 'error')
       } finally {
@@ -987,6 +990,18 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
                 <Send className="size-3.5" />
               )}
               仍然发送
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-7 shrink-0"
+              title="关闭并取消本次发送"
+              aria-label="关闭并取消本次发送"
+              disabled={resolvingPendingSend}
+              onClick={() => void resolvePendingSend(false, false)}
+            >
+              <X className="size-3.5" />
             </Button>
           </div>
         )}

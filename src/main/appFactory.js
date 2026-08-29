@@ -556,6 +556,7 @@ function createElectronApp(baseMode = "all") {
   const pendingComposerSends = createComposerConfirmationRegistry({
     ttlMs: composerConfirmationTtl,
     onExpire: (pending) => emitComposerSendInvalidated(pending, "expired"),
+    onTake: (pending, reason) => emitComposerSendInvalidated(pending, reason),
   });
   let composerEligibility = { principalId: "", eligible: false };
   const aiAuthorizationEpoch = createAuthorizationEpochGuard();
@@ -1068,7 +1069,7 @@ function createElectronApp(baseMode = "all") {
     if (workspace.composerGuardBypass.consume(workspace.composerContextGeneration)) return false;
     if (!isComposerEligible()) return false;
     const translation = backend?.loadSettings()?.translation || {};
-    if (translation.confirmNonTargetSend === false) return false;
+    if (translation.confirmNonTargetSend !== true) return false;
     const targetLanguage = safeText(translation.siteLanguage) || "en";
     let context;
     try {
@@ -1141,7 +1142,7 @@ function createElectronApp(baseMode = "all") {
     const token = workspace.composerGuardToken;
     await installComposerClickGuard(wc, {
       worldId: COMPOSER_GUARD_WORLD_ID,
-      enabled: translation.confirmNonTargetSend !== false,
+      enabled: translation.confirmNonTargetSend === true,
       targetLanguage: safeText(translation.siteLanguage) || "en",
       marker: composerGuardMarker(token),
     });
@@ -2174,7 +2175,7 @@ function createElectronApp(baseMode = "all") {
           const translation = backend?.loadSettings()?.translation || {};
           const targetLanguage = safeText(translation.siteLanguage) || "en";
           if (
-            translation.confirmNonTargetSend !== false &&
+            translation.confirmNonTargetSend === true &&
             hasClearlyNonTargetLanguage(parsed.text, targetLanguage)
           ) {
             queueComposerConfirmation(context, parsed.text, targetLanguage, { findAny: true });
@@ -2512,15 +2513,13 @@ function createElectronApp(baseMode = "all") {
     // - 回退: SHAREGPT_UI_LEGACY=1, 或找不到新版产物时, 加载既有(旧)渲染层。
     const devUrl = process.env.SHAREGPT_UI_DEV_URL;
     if (process.env.SHAREGPT_UI_NEXT === "1" && devUrl && !app.isPackaged) {
-      win.loadURL(devUrl);
-      return;
+      return win.loadURL(devUrl);
     }
     const builtNext = path.join(__dirname, "../renderer-next/dist/index.html");
     if (process.env.SHAREGPT_UI_LEGACY !== "1" && fs.existsSync(builtNext)) {
-      win.loadFile(builtNext);
-      return;
+      return win.loadFile(builtNext);
     }
-    win.loadFile(path.join(__dirname, "../renderer/index.html"));
+    return win.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
 
   // 个人资料独立窗口加载策略, 与 loadMainRenderer 一致: 默认新版(renderer-next/dist/profile.html),
@@ -2592,13 +2591,14 @@ function createElectronApp(baseMode = "all") {
       mainWindow.setWindowButtonVisibility(true);
     }
     mainWindow.removeMenu();
-    loadMainRenderer(mainWindow);
+    const rendererReady = loadMainRenderer(mainWindow);
     mainWindow.on("closed", () => {
       for (const controller of translationRequests.values()) controller.abort();
       translationRequests.clear();
       disposeAiWorkspaces();
       mainWindow = null;
     });
+    return rendererReady;
   }
 
   function assertMode(need) {
@@ -2849,7 +2849,7 @@ function createElectronApp(baseMode = "all") {
       }
       assertComposerContextCurrent(pending.context);
       if (payload?.confirmed !== true) {
-        if (!pendingComposerSends.take(requestId)) {
+        if (!pendingComposerSends.take(requestId, "cancelled")) {
           throw new Error("发送确认已失效，请重新发送");
         }
         return { ok: true, sent: false };
@@ -2864,7 +2864,7 @@ function createElectronApp(baseMode = "all") {
       if (!composer.editable || safeText(composer.text) !== pending.text) {
         throw new Error("网页输入内容已经变化，请重新确认");
       }
-      if (!pendingComposerSends.take(requestId)) {
+      if (!pendingComposerSends.take(requestId, "confirmed")) {
         throw new Error("发送确认已失效，请重新发送");
       }
       const sent = await replayComposerEnter(pending.context, {
@@ -3761,6 +3761,16 @@ function createElectronApp(baseMode = "all") {
     backend = new Backend(app, () => mainWindow, appMode);
     backend.init();
 
+    // macOS safeStorage may synchronously wait for Keychain approval after an update.
+    // Finish loading the renderer first so that wait can never leave a blank window.
+    registerIpc();
+    await createWindow();
+    setupAutoUpdater();
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) void createWindow();
+    });
+
     const startupSettings = backend.loadSettings();
     const pendingPartitions = Array.isArray(startupSettings.ui?.pendingAiPartitionCleanup)
       ? startupSettings.ui.pendingAiPartitionCleanup
@@ -3788,14 +3798,6 @@ function createElectronApp(baseMode = "all") {
         backend.getPrincipalContext().principalId,
       );
     }
-
-    registerIpc();
-    createWindow();
-    setupAutoUpdater();
-
-    app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    });
   });
 
   let storageFlushedBeforeQuit = false;

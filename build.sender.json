@@ -43,7 +43,9 @@
   },
   "mac": {
     "target": ["zip", "dmg"],
-    "artifactName": "sharegpt-sender-${version}-${arch}.${ext}"
+    "artifactName": "sharegpt-sender-${version}-${arch}.${ext}",
+    "hardenedRuntime": true,
+    "notarize": true
   },
   "extraMetadata": {
     "main": "src/main/main_sender.js",
