@@ -11,6 +11,9 @@ interface HarnessOptions {
   activate?: () => Promise<{ principalId: string }>
   persist?: () => Promise<void>
   current?: () => boolean
+  rollback?: () => Promise<void>
+  rollbackActivated?: (principal: { principalId: string }) => Promise<void>
+  discard?: () => Promise<void>
 }
 
 function loginHarness(options: HarnessOptions) {
@@ -56,9 +59,17 @@ function loginHarness(options: HarnessOptions) {
     },
     rollbackLocalPrincipal: async () => {
       events.push('rollback-local')
+      await options.rollback?.()
     },
+    rollbackActivatedPrincipalIfOwned: options.rollbackActivated
+      ? async (principal) => {
+          events.push('rollback-activated')
+          await options.rollbackActivated?.(principal)
+        }
+      : undefined,
     discardIssuedToken: async () => {
       events.push('discard-token')
+      await options.discard?.()
     },
     reportProxyAuthorizationFailure: () => {
       events.push('route-warning')
@@ -131,8 +142,8 @@ test('fatal Principal settings persistence failure discards token and rolls back
     },
   })
   await assert.rejects(harness.transaction, /settings disk unavailable/)
-  assert.ok(harness.events.includes('discard-token'))
-  assert.ok(harness.events.includes('rollback-local'))
+  assert.equal(harness.events.filter((event) => event === 'discard-token').length, 1)
+  assert.equal(harness.events.filter((event) => event === 'rollback-local').length, 1)
   assert.equal(harness.events.includes('publish-session'), false)
 })
 
@@ -147,8 +158,8 @@ test('fatal Principal activation failure rolls back local for the latest attempt
   })
   await assert.rejects(harness.transaction, /principal migration write failed/)
   assert.deepEqual(events, ['activate-failed'])
-  assert.ok(harness.events.includes('discard-token'))
-  assert.ok(harness.events.includes('rollback-local'))
+  assert.equal(harness.events.filter((event) => event === 'discard-token').length, 1)
+  assert.equal(harness.events.filter((event) => event === 'rollback-local').length, 1)
 })
 
 test('a fatal session publication failure discards token and rolls back local', async () => {
@@ -178,15 +189,68 @@ test('a fatal session publication failure discards token and rolls back local', 
   assert.deepEqual(events, ['publish-started', 'discard-token', 'rollback-local'])
 })
 
-test('a stale fatal attempt cannot roll back the newer Principal', async () => {
+test('a stale failure after activation rolls back the Principal only while it still owns main', async () => {
+  let mainPrincipalId = 'principal-alice'
   const harness = loginHarness({
     bootstrap: async () => ({ proxyRoutes: [] }),
     persist: async () => {
       throw new Error('stale persistence failure')
     },
     current: () => false,
+    rollbackActivated: async (principal) => {
+      if (mainPrincipalId === principal.principalId) mainPrincipalId = 'local-device'
+    },
   })
   await assert.rejects(harness.transaction, /stale persistence failure/)
-  assert.ok(harness.events.includes('discard-token'))
+  assert.equal(harness.events.filter((event) => event === 'discard-token').length, 1)
   assert.equal(harness.events.includes('rollback-local'), false)
+  assert.equal(harness.events.filter((event) => event === 'rollback-activated').length, 1)
+  assert.equal(mainPrincipalId, 'local-device')
+})
+
+test('a stale ownership-aware rollback is a no-op after main advances to a newer Principal', async () => {
+  let mainPrincipalId = 'principal-bob'
+  const harness = loginHarness({
+    bootstrap: async () => ({ proxyRoutes: [] }),
+    persist: async () => {
+      throw new Error('stale persistence failure')
+    },
+    current: () => false,
+    rollbackActivated: async (principal) => {
+      if (mainPrincipalId === principal.principalId) mainPrincipalId = 'local-device'
+    },
+  })
+
+  await assert.rejects(harness.transaction, /stale persistence failure/)
+  assert.equal(harness.events.filter((event) => event === 'discard-token').length, 1)
+  assert.equal(harness.events.includes('rollback-local'), false)
+  assert.equal(harness.events.filter((event) => event === 'rollback-activated').length, 1)
+  assert.equal(mainPrincipalId, 'principal-bob')
+})
+
+test('failed local Principal recovery preserves the fatal cause and discards the token once', async () => {
+  const fatalError = new Error('settings disk unavailable')
+  const recoveryError = new Error('local Principal clear failed')
+  const harness = loginHarness({
+    bootstrap: async () => ({ proxyRoutes: [] }),
+    persist: async () => {
+      throw fatalError
+    },
+    rollback: async () => {
+      throw recoveryError
+    },
+    discard: async () => {
+      throw new Error('logout endpoint unavailable')
+    },
+  })
+
+  await assert.rejects(harness.transaction, (error: unknown) => {
+    assert.ok(error instanceof Error)
+    assert.match(error.message, /本地账号状态未能恢复/)
+    assert.equal(error.cause, fatalError)
+    assert.equal((error as Error & { rollbackError?: unknown }).rollbackError, recoveryError)
+    return true
+  })
+  assert.equal(harness.events.filter((event) => event === 'discard-token').length, 1)
+  assert.equal(harness.events.filter((event) => event === 'rollback-local').length, 1)
 })

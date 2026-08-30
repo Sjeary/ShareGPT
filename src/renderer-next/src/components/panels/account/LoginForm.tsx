@@ -21,6 +21,7 @@ import { Separator } from '@/components/ui/separator'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
+import { autoLoginParams } from '@/lib/autoLogin'
 import { ImportActions } from './ImportActions'
 import { compareVersions, checkGithubUpdate, type BootstrapUpdate } from './bootstrap'
 
@@ -125,6 +126,23 @@ export function LoginForm() {
   const usernameRef = useRef<HTMLInputElement>(null)
   // 登录失败时聚焦并选中密码框 (移植自旧 renderer.js focusCollabField("c_password", true) ~4688)。
   const passwordRef = useRef<HTMLInputElement>(null)
+  const autoLoginAttempted = useRef(false)
+
+  useEffect(() => {
+    const params = autoLoginParams(collab)
+    if (!params || autoLoginAttempted.current) return
+    autoLoginAttempted.current = true
+    setSubmitting(true)
+    setError('')
+    setErrorField(null)
+    void login(params)
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : '自动登录失败，请重新登录'
+        setError(`自动登录失败：${message}`)
+        setErrorField('password')
+      })
+      .finally(() => setSubmitting(false))
+  }, [collab, login])
 
   function focusField(field: ErrorField, select = false) {
     const ref = field === 'server' ? serverRef : field === 'username' ? usernameRef : passwordRef

@@ -24,6 +24,17 @@ import {
   serializeConversations,
 } from '@/components/panels/chat/normalize'
 import { messagePreview } from '@/components/panels/chat/format'
+import {
+  discardCollabToken,
+  fetchAndApplyAuthoritativeClientBootstrap,
+  invalidateClientProxyAuthorization,
+} from '@/hooks/clientBootstrap'
+import { requireConfirmedLoginResponse } from '@/lib/collabLoginTransaction'
+import { createSingleFlight } from '@/lib/singleFlight'
+import {
+  settingsPrincipalRuntime,
+  type SettingsPrincipalSnapshot,
+} from '@/lib/settingsPrincipalRuntime'
 
 // 协作聊天主控 hook。
 // 职责:
@@ -420,12 +431,23 @@ export function useChat() {
 
     const typingTimersMap = typingTimers.current
     let cancelled = false
+    const authorizationInvalidation = createSingleFlight<void>()
 
-    // 账号被动断开、且已无法自动恢复(需手动重新登录)时, 停止本机发送服务(代理):
-    // 账号断开就不应继续以本机转发流量 (对齐旧版 stopSenderBecauseAccountOffline)。
-    // 仅在终态调用; socket/静默重登等瞬断会自动重连, 不在此停, 避免代理频繁起停。
+    const invalidateAuthorization = (
+      principalSnapshot: SettingsPrincipalSnapshot,
+    ): Promise<void> => {
+      return authorizationInvalidation.run(() =>
+        invalidateClientProxyAuthorization({ principalSnapshot }),
+      )
+    }
+
+    // 账号授权失效或必须重新登录时，停止 sender 并撤下当前进程的线路授权。
     const stopSenderForAccountOffline = () => {
-      void api.stopSender().catch(() => {})
+      try {
+        void invalidateAuthorization(settingsPrincipalRuntime.snapshot()).catch(() => {})
+      } catch {
+        void api.stopSender().catch(() => {})
+      }
     }
 
     // 指数退避重连: socket 策略直接重连; relogin 策略先静默刷新 token。
@@ -453,6 +475,7 @@ export function useChat() {
       if (cancelled || silentReloginInFlight.current) return
       const serverUrl = useChatStore.getState().identity.serverUrl
       const username = useChatStore.getState().identity.username
+      const previousToken = useChatStore.getState().identity.token
       const password = useAuthStore.getState().runtimePassword
       if (!serverUrl || !username || !password) {
         manualReloginRef.current = '服务已重启，请重新登录。'
@@ -461,11 +484,30 @@ export function useChat() {
         stopSenderForAccountOffline()
         return
       }
+      let principalSnapshot: SettingsPrincipalSnapshot
+      try {
+        principalSnapshot = settingsPrincipalRuntime.snapshot()
+      } catch {
+        // A Principal transition invalidates this reconnect attempt before it starts.
+        return
+      }
       silentReloginInFlight.current = true
       setConnection('connecting')
       const controller = new AbortController()
       const timer = window.setTimeout(() => controller.abort(), SILENT_LOGIN_TIMEOUT_MS)
+      let issuedToken = ''
       try {
+        try {
+          await invalidateAuthorization(principalSnapshot)
+        } catch (error) {
+          // Runtime authorization is cleared before persistence is attempted. A disk failure must
+          // leave routes fail closed, but it must not turn a valid chat login into a failed login.
+          console.warn(
+            'Silent collaboration login continued after proxy invalidation failed',
+            error,
+          )
+        }
+        settingsPrincipalRuntime.assertCurrent(principalSnapshot)
         const res = await fetch(`${serverUrl}/api/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -476,8 +518,9 @@ export function useChat() {
           const text = await res.text().catch(() => '')
           throw new Error(text || `登录失败（${res.status}）`)
         }
-        const payload = (await res.json().catch(() => null)) as {
-          token?: string
+        const payload = await requireConfirmedLoginResponse<{
+          token: string
+          username: string
           profile?: {
             avatar?: string
             displayName?: string
@@ -486,13 +529,31 @@ export function useChat() {
             allowedProxyRouteIds?: string[]
             chatDisabled?: boolean
           }
-        } | null
-        if (!payload?.token) throw new Error('登录未成功')
+        }>(res)
+        issuedToken = payload.token
+        if (payload.username.trim() !== username) {
+          throw new Error('服务器返回的账号身份与当前会话不一致')
+        }
+        try {
+          await fetchAndApplyAuthoritativeClientBootstrap(serverUrl, issuedToken, {
+            allowLegacyAdminConfig: Boolean(payload.profile?.isAdmin),
+            principalSnapshot,
+          })
+        } catch (error) {
+          // Collaboration authentication and route authorization are separate. Keep the refreshed
+          // chat token while the already-invalidated route authorization remains fail closed.
+          console.warn('Silent collaboration login continued without proxy authorization', error)
+        }
+        settingsPrincipalRuntime.assertCurrent(principalSnapshot)
+        if (cancelled) {
+          await discardCollabToken(serverUrl, issuedToken)
+          return
+        }
         const displayName = (payload.profile?.displayName ?? '').trim() || username
         const avatar = (payload.profile?.avatar ?? '').trim()
-        // 写回运行期会话 (不动 setAuthed/持久化设置, 仅刷新 token)。
+        // 权威线路已经应用后才写回运行期 token。
         setSession({
-          token: payload.token,
+          token: issuedToken,
           profile: {
             username,
             displayName,
@@ -509,14 +570,16 @@ export function useChat() {
           password,
         })
         useChatStore.getState().setIdentity({
-          token: payload.token,
+          token: issuedToken,
           displayName,
           avatar,
         })
         silentReloginInFlight.current = false
-        // identity.token 变化会触发本 effect 重建并重连; 这里主动重连以防 token 相同。
-        if (!cancelled) connect()
+        // A fresh token rebuilds this effect and opens exactly one socket. Only a server that
+        // reuses the same token needs an explicit reconnect because the dependency does not change.
+        if (!cancelled && issuedToken === previousToken) connect()
       } catch (err) {
+        if (issuedToken) await discardCollabToken(serverUrl, issuedToken)
         silentReloginInFlight.current = false
         const message = err instanceof Error ? err.message : String(err)
         if (MANUAL_RELOGIN_PATTERN.test(message)) {
@@ -529,6 +592,7 @@ export function useChat() {
         // 网络类错误: 继续退避重试。
         scheduleReconnect('relogin')
       } finally {
+        silentReloginInFlight.current = false
         window.clearTimeout(timer)
       }
     }
@@ -683,6 +747,7 @@ export function useChat() {
           return
         }
         if (event?.code === 4002) {
+          stopSenderForAccountOffline()
           if (hasResume) scheduleReconnect('relogin')
           else {
             manualReloginRef.current = '服务已重启，请重新登录。'

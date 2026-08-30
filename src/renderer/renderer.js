@@ -105,6 +105,12 @@ const state = {
   },
 };
 
+const principalSessionCoordinator =
+  window.ShareGptPrincipalSession?.createPrincipalSessionCoordinator?.();
+if (!principalSessionCoordinator) {
+  throw new Error("Principal session coordinator 未加载");
+}
+
 const GPT_ALLOWED_HOSTS = [
   "chatgpt.com",
   "openai.com",
@@ -2784,7 +2790,7 @@ function refreshFallbackVisibility() {
 
 async function saveSettings(options = {}) {
   const silent = Boolean(options.silent);
-  const principal = await window.api.getSettingsPrincipal();
+  const principal = options.principalSnapshot || (await window.api.getSettingsPrincipal());
   state.settings = {
     sender: getSenderForm(),
     receiver: getReceiverForm(),
@@ -2795,8 +2801,8 @@ async function saveSettings(options = {}) {
   };
   await window.api.saveSettings({
     settings: state.settings,
-    expectedPrincipalId: safeText(principal?.principalId),
-    expectedPrincipalGeneration: Number(principal?.generation),
+    expectedPrincipalId: principal.principalId,
+    expectedPrincipalGeneration: principal.generation,
   });
   if (!silent) {
     logLine("app", "设置已保存");
@@ -2928,7 +2934,7 @@ async function applySenderBootstrapConfig(serverSender, options = {}) {
 
   fillForm(nextSettings);
   refreshFallbackVisibility();
-  await saveSettings({ silent: true });
+  await saveSettings({ silent: true, principalSnapshot: options.principalSnapshot });
 
   if (!silent) {
     setCollabFeedback("已从服务器同步发送服务配置。", "success");
@@ -3002,16 +3008,20 @@ function syncUpdateControls() {
 
 async function fetchClientBootstrap(options = {}) {
   const silent = Boolean(options.silent);
-  if (!state.collab.serverUrl || !state.collab.token) {
+  const serverUrl = safeText(options.serverUrl || state.collab.serverUrl).replace(/\/+$/, "");
+  const token = safeText(options.token || state.collab.token);
+  if (!serverUrl || !token) {
     return null;
   }
 
+  await options.assertCurrent?.();
+
   const response = await fetchWithFriendlyError(
-    `${state.collab.serverUrl.replace(/\/+$/, "")}/api/client/bootstrap`,
+    `${serverUrl}/api/client/bootstrap`,
     {
       method: "GET",
       headers: {
-        Authorization: `Bearer ${state.collab.token}`,
+        Authorization: `Bearer ${token}`,
       },
     },
     10000,
@@ -3022,11 +3032,17 @@ async function fetchClientBootstrap(options = {}) {
     throw new Error(text || `读取客户端配置失败（${response.status}）`);
   }
 
+  await options.assertCurrent?.();
   const payload = normalizeBootstrapPayload(await response.json());
+  await options.assertCurrent?.();
   state.app.updateInfo = payload.update;
   syncUpdateControls();
 
-  await applySenderBootstrapConfig(payload.sender, { silent });
+  await applySenderBootstrapConfig(payload.sender, {
+    silent,
+    principalSnapshot: options.principalSnapshot,
+  });
+  await options.assertCurrent?.();
   return payload;
 }
 
@@ -4455,7 +4471,93 @@ async function refreshUserDirectory() {
   }
 }
 
+function requirePrincipalTransitionResult(result) {
+  const principalId = safeText(result?.principalId);
+  const generation = Number(result?.generation);
+  if (
+    !principalId ||
+    !Number.isInteger(generation) ||
+    generation < 0 ||
+    !result?.settings ||
+    typeof result.settings !== "object"
+  ) {
+    throw new Error("主进程未返回完整的 Principal 快照");
+  }
+  return { principalId, generation, settings: result.settings };
+}
+
+async function assertLegacyPrincipalCurrent(attempt, snapshot) {
+  principalSessionCoordinator.assertCurrent(attempt);
+  const current = await window.api.getSettingsPrincipal();
+  principalSessionCoordinator.assertCurrent(attempt);
+  if (
+    safeText(current?.principalId) !== snapshot.principalId ||
+    Number(current?.generation) !== snapshot.generation
+  ) {
+    throw new window.ShareGptPrincipalSession.StalePrincipalSessionError();
+  }
+}
+
+async function discardLegacyLoginToken(serverUrl, token) {
+  if (!serverUrl || !token) return;
+  try {
+    await fetchWithFriendlyError(
+      `${serverUrl}/api/logout`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      },
+      5000,
+    );
+  } catch {
+    // A stale or failed login must not block the newer local session.
+  }
+}
+
+async function rollbackLegacyPrincipalIfOwned(activated) {
+  if (!activated) return;
+  const current = await window.api.getSettingsPrincipal();
+  if (
+    safeText(current?.principalId) !== activated.principalId ||
+    Number(current?.generation) !== activated.generation
+  ) {
+    return;
+  }
+
+  let local;
+  try {
+    local = requirePrincipalTransitionResult(
+      await window.api.clearSettingsPrincipal({
+        expectedPrincipalId: activated.principalId,
+        expectedPrincipalGeneration: activated.generation,
+      }),
+    );
+  } catch (error) {
+    const latest = await window.api.getSettingsPrincipal();
+    if (
+      safeText(latest?.principalId) !== activated.principalId ||
+      Number(latest?.generation) !== activated.generation
+    ) {
+      return;
+    }
+    throw error;
+  }
+
+  state.settings = local.settings;
+  fillForm(local.settings);
+  state.collab.serverUrl = safeText(el("c_server_url")?.value).replace(/\/+$/, "");
+  state.collab.username = safeText(el("c_username")?.value);
+  state.collab.token = "";
+  state.collab.connected = false;
+  closeCollabSocket();
+  setCollabControls();
+}
+
 async function collabLogout(notifyServer) {
+  const attempt = principalSessionCoordinator.begin();
   const serverUrl = state.collab.serverUrl;
   const token = state.collab.token;
   const reason = notifyServer ? "账号已退出登录" : "账号已下线";
@@ -4480,6 +4582,25 @@ async function collabLogout(notifyServer) {
       // ignore
     }
   }
+
+  let localPrincipal;
+  try {
+    localPrincipal = requirePrincipalTransitionResult(
+      await principalSessionCoordinator.runTransition(attempt, async () => {
+        const current = await window.api.getSettingsPrincipal();
+        return window.api.clearSettingsPrincipal({
+          expectedPrincipalId: safeText(current?.principalId),
+          expectedPrincipalGeneration: Number(current?.generation),
+        });
+      }),
+    );
+  } catch (error) {
+    if (error?.code === "STALE_PRINCIPAL_SESSION") return;
+    throw error;
+  }
+
+  state.settings = localPrincipal.settings;
+  fillForm(localPrincipal.settings);
 
   state.collab.token = "";
   state.collab.username = "";
@@ -4738,6 +4859,9 @@ async function performCollabLogin({
   rememberPassword,
   silent = false,
 }) {
+  const attempt = principalSessionCoordinator.begin();
+  let issuedToken = "";
+  let activatedPrincipal = null;
   if (!serverUrl || !username || !password) {
     throw new Error("请先填写完整的服务地址、账号和密码");
   }
@@ -4750,73 +4874,116 @@ async function performCollabLogin({
     setCollabState("登录中");
   }
 
-  const response = await fetchWithFriendlyError(
-    `${serverUrl}/api/login`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username,
-        password,
-        client: getClientVersionPayload(),
-      }),
-    },
-    10000,
-  );
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `登录失败（${response.status}）`);
-  }
-
-  const payload = await response.json();
-  if (!payload?.token) {
-    throw new Error("登录未成功，请稍后重试");
-  }
-
-  state.collab.serverUrl = serverUrl;
-  state.collab.username = username;
-  state.collab.token = payload.token;
-  state.collab.avatar = safeText(payload?.profile?.avatar) || state.collab.avatar;
-  state.collab.displayName = safeText(payload?.profile?.displayName) || username;
-  state.collab.runtimePassword = password;
-  state.collab.rememberPassword = rememberPassword;
-  state.collab.savedPassword = rememberPassword ? password : "";
-  state.collab.reconnectStrategy = "socket";
-  state.collab.silentReloginInFlight = false;
-  setRoomScope(payload?.roomScope);
-
-  setCollabIdentity(state.collab.displayName || username);
-  refreshTopIdentity();
-
-  await saveSettings({ silent: true });
   try {
-    await fetchClientBootstrap({ silent: true });
-  } catch (err) {
-    logLine("collab", `读取客户端配置失败：${err.message || err}`);
+    const response = await fetchWithFriendlyError(
+      `${serverUrl}/api/login`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username,
+          password,
+          client: getClientVersionPayload(),
+        }),
+      },
+      10000,
+    );
+    principalSessionCoordinator.assertCurrent(attempt);
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || `登录失败（${response.status}）`);
+    }
+
+    const payload = await response.json();
+    principalSessionCoordinator.assertCurrent(attempt);
+    issuedToken = safeText(payload?.token);
+    const confirmedUsername = safeText(payload?.username);
+    if (!issuedToken) throw new Error("登录未成功，请稍后重试");
+    if (!confirmedUsername) throw new Error("服务器未返回已确认的账号身份");
+
+    const principal = requirePrincipalTransitionResult(
+      await principalSessionCoordinator.runTransition(attempt, () =>
+        window.api.activateSettingsPrincipal({ serverUrl, username: confirmedUsername }),
+      ),
+    );
+    activatedPrincipal = principal;
+    const principalSnapshot = {
+      principalId: principal.principalId,
+      generation: principal.generation,
+    };
+    await assertLegacyPrincipalCurrent(attempt, principalSnapshot);
+
+    state.settings = principal.settings;
+    fillForm(principal.settings);
+    if (el("c_server_url")) el("c_server_url").value = serverUrl;
+    if (el("c_username")) el("c_username").value = confirmedUsername;
+    if (el("c_password")) el("c_password").value = rememberPassword ? password : "";
+    if (el("c_remember_password")) el("c_remember_password").checked = rememberPassword;
+    state.collab.serverUrl = serverUrl;
+    state.collab.username = confirmedUsername;
+    state.collab.avatar = safeText(payload?.profile?.avatar) || state.collab.avatar;
+    state.collab.displayName = safeText(payload?.profile?.displayName) || confirmedUsername;
+    state.collab.runtimePassword = password;
+    state.collab.rememberPassword = rememberPassword;
+    state.collab.savedPassword = rememberPassword ? password : "";
+    state.collab.reconnectStrategy = "socket";
+    state.collab.silentReloginInFlight = false;
+    setRoomScope(payload?.roomScope);
+
+    await saveSettings({ silent: true, principalSnapshot });
+    await assertLegacyPrincipalCurrent(attempt, principalSnapshot);
+    try {
+      await fetchClientBootstrap({
+        silent: true,
+        serverUrl,
+        token: issuedToken,
+        principalSnapshot,
+        assertCurrent: () => assertLegacyPrincipalCurrent(attempt, principalSnapshot),
+      });
+    } catch (error) {
+      principalSessionCoordinator.assertCurrent(attempt);
+      logLine("collab", `读取客户端配置失败：${error.message || error}`);
+    }
+    await assertLegacyPrincipalCurrent(attempt, principalSnapshot);
+
+    state.collab.token = issuedToken;
+    setCollabIdentity(state.collab.displayName || confirmedUsername);
+    refreshTopIdentity();
+    renderHistory(payload.history || []);
+    resetPresenceState();
+    setUserDirectory(payload.users || payload.onlineUsers || [], { silent: true });
+    syncGptStatsFilterInputs();
+    const gptStatsTasks = await Promise.allSettled([
+      loadGptSummaryStats(),
+      loadGptRangeStats({ silent: true }),
+    ]);
+    principalSessionCoordinator.assertCurrent(attempt);
+    gptStatsTasks
+      .filter((item) => item.status === "rejected")
+      .forEach((item) => {
+        logLine("app", `加载 GPT 统计失败：${item.reason?.message || item.reason || "未知错误"}`);
+      });
+    if (!silent) {
+      setCollabFeedback("登录成功。", "success");
+      state.view = "sender";
+    }
+    setCollabControls();
+    return payload;
+  } catch (error) {
+    if (issuedToken) await discardLegacyLoginToken(serverUrl, issuedToken);
+    try {
+      await rollbackLegacyPrincipalIfOwned(activatedPrincipal);
+    } catch (rollbackError) {
+      const recoveryError = new Error(
+        "登录失败，且本地账号状态未能恢复，请重新启动应用后再试",
+        { cause: error },
+      );
+      recoveryError.rollbackError = rollbackError;
+      throw recoveryError;
+    }
+    throw error;
   }
-  renderHistory(payload.history || []);
-  resetPresenceState();
-  setUserDirectory(payload.users || payload.onlineUsers || [], { silent: true });
-  if (el("c_password")) {
-    el("c_password").value = state.collab.rememberPassword ? state.collab.savedPassword : "";
-  }
-  syncGptStatsFilterInputs();
-  const gptStatsTasks = await Promise.allSettled([
-    loadGptSummaryStats(),
-    loadGptRangeStats({ silent: true }),
-  ]);
-  gptStatsTasks
-    .filter((item) => item.status === "rejected")
-    .forEach((item) => {
-      logLine("app", `加载 GPT 统计失败：${item.reason?.message || item.reason || "未知错误"}`);
-    });
-  if (!silent) {
-    setCollabFeedback("登录成功。", "success");
-    state.view = "sender";
-  }
-  setCollabControls();
-  return payload;
 }
 
 async function collabLogin() {
@@ -4864,6 +5031,7 @@ async function attemptSilentCollabRelogin() {
     setCollabFeedback("服务已恢复连接。", "success");
     connectCollabWebSocket();
   } catch (err) {
+    if (err?.code === "STALE_PRINCIPAL_SESSION") return;
     state.collab.silentReloginInFlight = false;
     state.collab.connected = false;
     const message = err?.message || String(err);
@@ -4885,6 +5053,7 @@ async function submitCollabLogin() {
     await collabLogin();
     logLine("collab", "登录成功");
   } catch (err) {
+    if (err?.code === "STALE_PRINCIPAL_SESSION") return;
     const message = err.message || String(err);
     setCollabState("登录失败");
     setCollabControls();
@@ -6459,8 +6628,8 @@ async function main() {
 
   const principal = await window.api.getSettingsPrincipal();
   const settings = await window.api.loadSettings({
-    expectedPrincipalId: safeText(principal?.principalId),
-    expectedPrincipalGeneration: Number(principal?.generation),
+    expectedPrincipalId: principal.principalId,
+    expectedPrincipalGeneration: principal.generation,
   });
   state.settings = settings;
   fillForm(settings);

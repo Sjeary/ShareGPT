@@ -103,6 +103,7 @@ export interface AdvancedAiEnvironment {
 
 export interface AdvancedAiSettings {
   version: 1
+  initialized?: boolean
   enabled: boolean
   environments: AdvancedAiEnvironment[]
   activeByKind: Record<'gpt' | 'gemini' | 'claude', string>

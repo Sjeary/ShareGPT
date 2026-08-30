@@ -35,6 +35,7 @@ interface LoginTransactionOptions<TPrincipal> {
   refreshProxyAuthorization: (principal: TPrincipal) => Promise<void>
   publishSession: (principal: TPrincipal) => void | Promise<void>
   rollbackLocalPrincipal: () => Promise<void>
+  rollbackActivatedPrincipalIfOwned?: (principal: TPrincipal) => Promise<void>
   discardIssuedToken: () => Promise<void>
   reportProxyAuthorizationFailure?: (error: unknown) => void
 }
@@ -46,9 +47,25 @@ export async function completeCollabLoginTransaction<TPrincipal>(
   options: LoginTransactionOptions<TPrincipal>,
 ): Promise<LoginTransactionResult<TPrincipal>> {
   let principalTransitionStarted = false
+  let principalActivationCompleted = false
+  let activatedPrincipal: TPrincipal
+  let discardIssuedTokenPromise: Promise<void> | null = null
+  const discardIssuedTokenOnce = () => {
+    if (!discardIssuedTokenPromise) {
+      discardIssuedTokenPromise = Promise.resolve()
+        .then(() => options.discardIssuedToken())
+        .catch(() => undefined)
+    }
+    return discardIssuedTokenPromise
+  }
+
   try {
+    // Activation can mutate or persist Principal state before rejecting, so every latest-attempt
+    // failure from this point onward requires recovery to the local Principal.
     principalTransitionStarted = true
     const principal = await options.activatePrincipal()
+    activatedPrincipal = principal
+    principalActivationCompleted = true
     await options.assertCurrent()
     await options.applyPrincipal(principal)
     await options.assertCurrent()
@@ -71,10 +88,16 @@ export async function completeCollabLoginTransaction<TPrincipal>(
     await options.publishSession(principal)
     return { principal, proxyAuthorizationReady, proxyAuthorizationError }
   } catch (error) {
-    await options.discardIssuedToken().catch(() => undefined)
-    if (principalTransitionStarted && options.isCurrent()) {
+    await discardIssuedTokenOnce()
+    const rollback =
+      principalActivationCompleted && options.rollbackActivatedPrincipalIfOwned
+        ? () => options.rollbackActivatedPrincipalIfOwned?.(activatedPrincipal)
+        : principalTransitionStarted && options.isCurrent()
+          ? options.rollbackLocalPrincipal
+          : null
+    if (rollback) {
       try {
-        await options.rollbackLocalPrincipal()
+        await rollback()
       } catch (rollbackError) {
         const recoveryError = new Error('登录失败，且本地账号状态未能恢复，请重新启动应用后再试', {
           cause: error,

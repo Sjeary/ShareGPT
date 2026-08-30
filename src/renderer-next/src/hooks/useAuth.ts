@@ -1,16 +1,21 @@
 import { useCallback } from 'react'
 import { api } from '@/lib/api'
+import {
+  requireSettingsPrincipalSnapshot,
+  settingsPrincipalRuntime,
+} from '@/lib/settingsPrincipalRuntime'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore, type AuthProfile } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import { useAiStore } from '@/store/useAiStore'
 import { normalizeChatMessage, normalizeDirectory } from '@/components/panels/chat/normalize'
+import { discardCollabToken, refreshAuthoritativeClientBootstrap } from '@/hooks/clientBootstrap'
+import { createLatestAttemptCoordinator } from '@/lib/latestAttempt'
 import {
-  hasCompleteSenderBootstrap,
-  normalizeBootstrapPayload,
-  type BootstrapPayload,
-  type BootstrapSender,
-} from '@/components/panels/account/bootstrap'
-import type { SenderSettings } from '@/types/settings'
+  completeCollabLoginTransaction,
+  requireConfirmedLoginResponse,
+} from '@/lib/collabLoginTransaction'
+import type { AppSettings } from '@/types/settings'
 
 // 协作服务器登录/退出逻辑 (移植自旧 renderer.js performCollabLogin / collabLogout)。
 // 端点 (渲染层直连协作服务器, 非 IPC):
@@ -22,7 +27,11 @@ import type { SenderSettings } from '@/types/settings'
 
 const LOGIN_TIMEOUT_MS = 10000
 const LOGOUT_TIMEOUT_MS = 5000
-const BOOTSTRAP_TIMEOUT_MS = 10000
+const loginAttempts = createLatestAttemptCoordinator()
+
+function assertCurrentLoginAttempt(attempt: number): void {
+  loginAttempts.assertCurrent(attempt)
+}
 
 export interface LoginParams {
   serverUrl: string
@@ -33,6 +42,7 @@ export interface LoginParams {
 
 interface LoginResponse {
   token?: string
+  username?: string
   profile?: {
     avatar?: string
     displayName?: string
@@ -45,6 +55,21 @@ interface LoginResponse {
   history?: unknown
   users?: unknown
   onlineUsers?: unknown
+}
+
+interface PrincipalActivation {
+  principalId: string
+  generation: number
+  settings: Record<string, unknown>
+}
+
+function requirePrincipalActivation(value: unknown): PrincipalActivation {
+  const snapshot = requireSettingsPrincipalSnapshot(value)
+  const settings = (value as Partial<PrincipalActivation> | null)?.settings
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    throw new Error('主进程未返回完整的 Principal 设置快照')
+  }
+  return { ...snapshot, settings }
 }
 
 function trimTrailingSlash(url: string): string {
@@ -96,93 +121,6 @@ async function fetchWithTimeout(
   }
 }
 
-// 本机 sender 配置不完整时, 用服务器下发的 sender 字段补全并持久化。
-// 移植自旧 renderer.js applySenderBootstrapConfig(~2770):
-//   - 服务器下发的 sender 本身不完整 -> 不动 (return)。
-//   - 本机 sender 已完整 -> 不覆盖用户已填内容 (return)。
-//   - 否则合并 (服务器值优先填空位) 并 patchSection('sender',...) 落盘。
-async function applySenderBootstrapConfig(serverSender: BootstrapSender): Promise<boolean> {
-  if (!hasCompleteSenderBootstrap(serverSender)) {
-    return false
-  }
-
-  const current = (useAppStore.getState().settings?.sender ?? {}) as Partial<SenderSettings>
-  if (hasCompleteSenderBootstrap(current)) {
-    return false
-  }
-
-  const merged: Partial<SenderSettings> = {
-    proxy_server: serverSender.proxy_server || current.proxy_server || '',
-    proxy_port: serverSender.proxy_port || current.proxy_port || '',
-    proxy_uuid: serverSender.proxy_uuid || current.proxy_uuid || '',
-    socks_listen_port: serverSender.socks_listen_port || current.socks_listen_port || '',
-    fallback_mode: serverSender.fallback_mode || current.fallback_mode || 'system_proxy',
-    fallback_local_port: serverSender.fallback_local_port || current.fallback_local_port || '',
-    target_domains: serverSender.target_domains || current.target_domains || '',
-  }
-
-  await useAppStore.getState().patchSection('sender', merged)
-  return true
-}
-
-// 登录后拉取客户端 bootstrap (更新信息 + 发送端配置同步)。
-// 移植自旧 renderer.js fetchClientBootstrap(~2870): best-effort, 失败不阻塞登录。
-async function fetchClientBootstrap(
-  serverUrl: string,
-  token: string,
-): Promise<BootstrapPayload | null> {
-  const cleaned = trimTrailingSlash(serverUrl.trim())
-  if (!cleaned || !token) return null
-
-  const response = await fetchWithTimeout(
-    `${cleaned}/api/client/bootstrap`,
-    {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${token}` },
-    },
-    BOOTSTRAP_TIMEOUT_MS,
-  )
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    throw new Error(text || `读取客户端配置失败（${response.status}）`)
-  }
-
-  const payload = normalizeBootstrapPayload(await response.json().catch(() => null))
-  // 自动更新已改为查询 GitHub Releases (见 LoggedInView 更新区 / 登录页提示), 不再从服务器读取版本信息。
-  // 本机 sender 不完整时用服务器下发补全。
-  await applySenderBootstrapConfig(payload.sender)
-  // 管理端节点是权威配置：更新时覆盖，撤销时也清掉本机旧副本。
-  // 不改 proxy_mode；若当前选中的节点被撤销，发送端启动校验会要求切回统一代理。
-  await useAppStore
-    .getState()
-    .patchSection('sender', {
-      managed_proxy_routes: payload.proxyRoutes
-        .filter((route) => route.kind === 'managed' && route.outbound)
-        .map((route) => ({
-          id: route.id,
-          name: route.name,
-          enabled: route.enabled,
-          kind: 'managed' as const,
-          outbound: route.outbound || {},
-          expected: route.expected,
-        })),
-      authorized_proxy_route_ids: payload.proxyRoutesAuthoritative
-        ? payload.proxyRoutes.map((route) => route.id)
-        : null,
-      airport_outbound:
-        payload.proxyRoutes.find((route) => route.id === 'internal-airport')?.outbound ||
-        payload.airport?.outbound ||
-        null,
-      airport_name:
-        payload.proxyRoutes.find((route) => route.id === 'internal-airport')?.name ||
-        payload.airport?.name ||
-        '',
-    })
-    .catch(() => undefined)
-  return payload
-}
-
 export function useAuth() {
   const setAuthed = useAppStore((s) => s.setAuthed)
   const patchSection = useAppStore((s) => s.patchSection)
@@ -191,6 +129,7 @@ export function useAuth() {
 
   const login = useCallback(
     async ({ serverUrl, username, password, rememberPassword }: LoginParams) => {
+      const attempt = loginAttempts.begin()
       const cleanedServer = trimTrailingSlash(serverUrl.trim())
       const cleanedUser = username.trim()
 
@@ -214,20 +153,26 @@ export function useAuth() {
         },
         LOGIN_TIMEOUT_MS,
       )
+      assertCurrentLoginAttempt(attempt)
 
-      if (!response.ok) {
-        const text = await response.text().catch(() => '')
-        throw new Error(text || `登录失败（${response.status}）`)
+      const payload = await requireConfirmedLoginResponse<
+        LoginResponse & { token: string; username: string }
+      >(response)
+      const issuedToken = payload.token
+      if (!loginAttempts.isCurrent(attempt)) {
+        await discardCollabToken(cleanedServer, issuedToken).catch(() => undefined)
+        assertCurrentLoginAttempt(attempt)
       }
+      const confirmedUsername = payload.username.trim()
 
-      const payload = (await response.json().catch(() => null)) as LoginResponse | null
-      if (!payload?.token) {
-        throw new Error('登录未成功，请稍后重试')
-      }
+      // 凭据已被服务器确认；先撤下旧会话和 WS，避免旧账号在 Principal 切换期间继续运行。
+      clearSession()
+      useChatStore.getState().setIdentity({ token: '' })
+      setAuthed(false)
 
       const profile: AuthProfile = {
-        username: cleanedUser,
-        displayName: (payload.profile?.displayName ?? '').trim() || cleanedUser,
+        username: confirmedUsername,
+        displayName: (payload.profile?.displayName ?? '').trim() || confirmedUsername,
         avatar: (payload.profile?.avatar ?? '').trim(),
         isAdmin: Boolean(payload.profile?.isAdmin),
         advancedAiAllowed: Boolean(payload.profile?.isAdmin || payload.profile?.advancedAiAllowed),
@@ -237,64 +182,177 @@ export function useAuth() {
         chatDisabled: Boolean(payload.profile?.chatDisabled),
       }
 
-      setSession({ token: payload.token, profile, password })
-
-      // 把登录身份写入聊天 store, 触发 useChat 的 WS 连接与鉴权统计。
-      // (移植自旧 renderer.js performCollabLogin ~4572: state.collab.token/username/...
-      //  + setCollabIdentity。这里只写身份, WS 由 useChat 监听 identity.token 自动建连。)
-      useChatStore.getState().setIdentity({
-        serverUrl: cleanedServer,
-        token: payload.token,
-        username: cleanedUser,
-        displayName: profile.displayName,
-        avatar: profile.avatar,
+      let principalSnapshot: { principalId: string; generation: number } | null = null
+      await completeCollabLoginTransaction<PrincipalActivation>({
+        isCurrent: () => loginAttempts.isCurrent(attempt),
+        assertCurrent: async () => {
+          assertCurrentLoginAttempt(attempt)
+          if (principalSnapshot) settingsPrincipalRuntime.assertCurrent(principalSnapshot)
+        },
+        activatePrincipal: async () => {
+          // Principal 必须来自服务器确认的精确账号。先切换主进程设置所有权，
+          // 再公开 token，避免 A 的配置短暂进入 B 的会话。
+          settingsPrincipalRuntime.invalidate()
+          useAiStore.getState().resetRuntime()
+          const activation = requirePrincipalActivation(
+            await api.activateSettingsPrincipal({
+              serverUrl: cleanedServer,
+              username: confirmedUsername,
+            }),
+          )
+          return activation
+        },
+        applyPrincipal: (principal) => {
+          principalSnapshot = settingsPrincipalRuntime.activate(
+            principal.principalId,
+            principal.generation,
+          )
+          const principalSettings = principal.settings as unknown as AppSettings
+          useAppStore.setState({ settings: principalSettings })
+        },
+        persistPrincipalSettings: async () => {
+          // 与旧版 settings.json 字段 100% 兼容。
+          await patchSection('collab', {
+            server_url: cleanedServer,
+            last_username: confirmedUsername,
+            last_avatar: profile.avatar,
+            remember_password: rememberPassword,
+            auto_login: rememberPassword,
+            saved_password: rememberPassword ? password : '',
+          })
+        },
+        enableAdminCapabilities: async () => {
+          const advancedAi = useAppStore.getState().settings?.advancedAi
+          if (profile.isAdmin && advancedAi && !advancedAi.initialized) {
+            await patchSection('advancedAi', {
+              initialized: true,
+              enabled: true,
+            })
+          }
+        },
+        refreshProxyAuthorization: () => {
+          if (!principalSnapshot) throw new Error('线路授权缺少账号上下文')
+          return refreshAuthoritativeClientBootstrap(cleanedServer, issuedToken, {
+            allowLegacyAdminConfig: profile.isAdmin,
+            principalSnapshot,
+          }).then(() => undefined)
+        },
+        reportProxyAuthorizationFailure: (error) => {
+          // 线路授权仍 fail closed，但它不是协作认证。聊天和账号保持登录，AI/代理入口读取
+          // 已清空的 authorized_proxy_route_ids，并可在后续 bootstrap/重连时恢复。
+          console.warn('Collaboration login continued without proxy authorization', error)
+        },
+        publishSession: () => {
+          setSession({ token: issuedToken, profile, password })
+          useChatStore.getState().setIdentity({
+            serverUrl: cleanedServer,
+            token: issuedToken,
+            username: confirmedUsername,
+            displayName: profile.displayName,
+            avatar: profile.avatar,
+          })
+          if (Array.isArray(payload.history) && payload.history.length) {
+            useChatStore
+              .getState()
+              .mergeMessages(payload.history.map((m) => normalizeChatMessage(m)))
+          }
+          const rawUsers = Array.isArray(payload.users)
+            ? payload.users
+            : Array.isArray(payload.onlineUsers)
+              ? payload.onlineUsers
+              : null
+          if (rawUsers) useChatStore.getState().setDirectory(normalizeDirectory(rawUsers))
+          setAuthed(true)
+        },
+        rollbackLocalPrincipal: async () => {
+          const current = requireSettingsPrincipalSnapshot(await api.getSettingsPrincipal())
+          let local: PrincipalActivation
+          try {
+            local = requirePrincipalActivation(
+              await api.clearSettingsPrincipal({
+                expectedPrincipalId: current.principalId,
+                expectedPrincipalGeneration: current.generation,
+              }),
+            )
+          } catch (error) {
+            const settings = (await api.loadSettings({
+              expectedPrincipalId: current.principalId,
+              expectedPrincipalGeneration: current.generation,
+            })) as unknown as AppSettings
+            settingsPrincipalRuntime.activate(current.principalId, current.generation)
+            useAppStore.setState({ settings })
+            throw error
+          }
+          clearSession()
+          setAuthed(false)
+          useChatStore.getState().setIdentity({ token: '' })
+          useChatStore.getState().setConnection('idle')
+          settingsPrincipalRuntime.invalidate()
+          useAiStore.getState().resetRuntime()
+          settingsPrincipalRuntime.activate(local.principalId, local.generation)
+          const localSettings = local.settings as unknown as AppSettings
+          useAppStore.setState({ settings: localSettings })
+        },
+        rollbackActivatedPrincipalIfOwned: async (activated) => {
+          let local: PrincipalActivation
+          try {
+            local = requirePrincipalActivation(
+              await api.clearSettingsPrincipal({
+                expectedPrincipalId: activated.principalId,
+                expectedPrincipalGeneration: activated.generation,
+              }),
+            )
+          } catch (error) {
+            const current = requireSettingsPrincipalSnapshot(await api.getSettingsPrincipal())
+            if (
+              current.principalId !== activated.principalId ||
+              current.generation !== activated.generation
+            ) {
+              return
+            }
+            throw error
+          }
+          clearSession()
+          setAuthed(false)
+          useChatStore.getState().setIdentity({ token: '' })
+          useChatStore.getState().setConnection('idle')
+          settingsPrincipalRuntime.invalidate()
+          useAiStore.getState().resetRuntime()
+          settingsPrincipalRuntime.activate(local.principalId, local.generation)
+          const localSettings = local.settings as unknown as AppSettings
+          useAppStore.setState({ settings: localSettings })
+        },
+        discardIssuedToken: () => discardCollabToken(cleanedServer, issuedToken),
       })
-
-      // 登录响应可携带初始 history/users, WS 建连前即时灌入避免空白
-      // (移植自旧 renderer.js performCollabLogin ~4593: renderHistory / setUserDirectory)。
-      if (Array.isArray(payload.history) && payload.history.length) {
-        useChatStore.getState().mergeMessages(payload.history.map((m) => normalizeChatMessage(m)))
-      }
-      const rawUsers = Array.isArray(payload.users)
-        ? payload.users
-        : Array.isArray(payload.onlineUsers)
-          ? payload.onlineUsers
-          : null
-      if (rawUsers) {
-        useChatStore.getState().setDirectory(normalizeDirectory(rawUsers))
-      }
-
-      // 持久化 collab 设置 (与旧版 settings.json 字段 100% 兼容)。
-      await patchSection('collab', {
-        server_url: cleanedServer,
-        last_username: cleanedUser,
-        last_avatar: profile.avatar,
-        remember_password: rememberPassword,
-        saved_password: rememberPassword ? password : '',
-      })
-
-      setAuthed(true)
-
-      // 拉取客户端 bootstrap (更新信息 + 发送端配置同步)。best-effort, 失败不阻塞登录。
-      // (移植自旧 performCollabLogin ~4588: try fetchClientBootstrap catch 记日志。)
-      try {
-        await fetchClientBootstrap(cleanedServer, payload.token)
-      } catch {
-        /* 忽略: 登录已成功, bootstrap 失败仅影响更新提示/自动补全 */
-      }
 
       return profile
     },
-    [patchSection, setAuthed, setSession],
+    [clearSession, patchSection, setAuthed, setSession],
   )
 
   const logout = useCallback(async () => {
+    loginAttempts.invalidate()
+    // 主动退出只关闭自动登录，不删除记住的凭据、环境或浏览器数据。
+    await useAppStore.getState().patchSection('collab', { auto_login: false })
     const { token, profile } = useAuthStore.getState()
     const serverUrl = trimTrailingSlash(
       String(useAppStore.getState().settings?.collab?.server_url ?? '').trim(),
     )
 
-    // 通知服务器下线 (best-effort, 失败不阻塞本地退出)。
+    const current = settingsPrincipalRuntime.snapshot()
+    const local = requirePrincipalActivation(
+      await api.clearSettingsPrincipal({
+        expectedPrincipalId: current.principalId,
+        expectedPrincipalGeneration: current.generation,
+      }),
+    )
+    settingsPrincipalRuntime.invalidate()
+    useAiStore.getState().resetRuntime()
+    settingsPrincipalRuntime.activate(local.principalId, local.generation)
+    const localSettings = local.settings as unknown as AppSettings
+    useAppStore.setState({ settings: localSettings })
+
+    // 通知服务器下线 (best-effort, 失败不阻塞已经完成的本地退出)。
     if (serverUrl && token) {
       try {
         await fetchWithTimeout(
@@ -317,7 +375,6 @@ export function useAuth() {
     // 移植自旧 renderer.js collabLogout(~4273): await stopSenderBecauseAccountOffline。
     // 注意: 4002/4003/静默重登失败时的 stopSender 归 chat 域 (useChat.ts), 本域只管主动退出。
     await api.stopSender().catch(() => {})
-
     clearSession()
     setAuthed(false)
 

@@ -54,6 +54,7 @@ const {
   workspaceOwnerIsCurrent,
 } = require("./aiWorkspaceLifecycle");
 const { registerAiRecoverySignals } = require("./aiRecoverySignals");
+const { runSettingsPrincipalTransition } = require("./settingsPrincipalTransition");
 const { applyStableUserDataPath } = require("./userDataPath");
 
 // 记录每个 AI 会话(按 partition)实际访问过的主机名, 供「代理检测」展示页面流量去向。
@@ -472,6 +473,7 @@ function createElectronApp(baseMode = "all") {
   let aiTabCounter = 0;
   let aiRuntimeEpoch = 0;
   let aiLifecycleSuspended = false;
+  const principalAbortControllers = new Set();
   /** @type {Pick<Console, "error" | "warn" | "info" | "debug">} */
   let mainLog = console;
   let disposeAiRecoverySignals = null;
@@ -544,6 +546,23 @@ function createElectronApp(baseMode = "all") {
     const nextKind = isAiKind(safeText(rawKind)) ? safeText(rawKind) : "";
     activeAiKind = nextKind;
     return activeAiKind;
+  }
+
+  function cancelPrincipalRuntime() {
+    aiRuntimeEpoch += 1;
+    aiRouteHealthCache.clear();
+    for (const controller of principalAbortControllers) controller.abort();
+    principalAbortControllers.clear();
+    disposeAiWorkspaces({ incrementEpoch: false });
+  }
+
+  function runPrincipalTransition(transition) {
+    return runSettingsPrincipalTransition(
+      {
+        invalidate: cancelPrincipalRuntime,
+      },
+      transition,
+    );
   }
 
   function assertAiRuntimeEpoch(epoch) {
@@ -2053,6 +2072,26 @@ function createElectronApp(baseMode = "all") {
         generation: payload?.expectedPrincipalGeneration,
       });
       return backend.loadSettings();
+    });
+    ipcMain.handle("settings:principal-activate", (_event, payload) =>
+      runPrincipalTransition(() =>
+        backend.activatePrincipal(payload?.serverUrl, payload?.username),
+      ),
+    );
+    ipcMain.handle("settings:principal-clear", (_event, payload) => {
+      backend.assertSettingsPrincipalSnapshot({
+        principalId: payload?.expectedPrincipalId,
+        generation: payload?.expectedPrincipalGeneration,
+      });
+      return runPrincipalTransition(() => {
+        const settings = backend.clearPrincipal();
+        const principal = backend.getPrincipalContext();
+        return {
+          principalId: principal.principalId,
+          generation: principal.generation,
+          settings,
+        };
+      });
     });
     ipcMain.handle("settings:principal-context", () => backend.getPrincipalContext());
     ipcMain.handle("settings:save", (_event, payload) =>

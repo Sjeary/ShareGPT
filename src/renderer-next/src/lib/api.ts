@@ -6,6 +6,16 @@ const fallback = {
   platform: 'web',
   setThemeSource: async () => undefined,
   loadSettings: async () => ({}),
+  activateSettingsPrincipal: async () => ({
+    principalId: 'local-device',
+    generation: 0,
+    settings: {},
+  }),
+  clearSettingsPrincipal: async () => ({
+    principalId: 'local-device',
+    generation: 0,
+    settings: {},
+  }),
   getSettingsPrincipal: async () => ({ principalId: 'local-device', generation: 0 }),
   saveSettings: async () => undefined,
   patchSettings: async () => ({}),

@@ -8,6 +8,10 @@
 
 import { api } from '@/lib/api'
 import { DEFAULT_TARGET_DOMAINS } from '@/components/panels/service/helpers'
+import {
+  hasAuthoritativeProxyBootstrap,
+  hasLegacyAdminProxyBootstrap,
+} from '@/lib/collabBootstrapAuthorization'
 
 // 与旧 safeText 对齐: 仅接受字符串/数字, 其余视为空串并去首尾空白。
 function safeText(value: unknown): string {
@@ -86,7 +90,10 @@ function currentUpdatePlatformKey(): 'macos' | 'windows' {
 }
 
 // 旧 normalizeBootstrapPayload(~2736): 规整 sender + 当前平台的 update 包信息。
-export function normalizeBootstrapPayload(raw: unknown): BootstrapPayload {
+export function normalizeBootstrapPayload(
+  raw: unknown,
+  options: { allowLegacyAdminConfig?: boolean } = {},
+): BootstrapPayload {
   const payload = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const sender =
     payload.sender && typeof payload.sender === 'object'
@@ -108,8 +115,10 @@ export function normalizeBootstrapPayload(raw: unknown): BootstrapPayload {
     airportRaw && airportRaw.outbound && typeof airportRaw.outbound === 'object'
       ? (airportRaw.outbound as Record<string, unknown>)
       : null
-  const proxyRoutesAuthoritative = Array.isArray(payload.proxyRoutes)
-  const proxyRouteItems: unknown[] = proxyRoutesAuthoritative
+  const legacyAdminConfig =
+    options.allowLegacyAdminConfig === true && hasLegacyAdminProxyBootstrap(payload)
+  const proxyRoutesAuthoritative = hasAuthoritativeProxyBootstrap(payload) || legacyAdminConfig
+  const proxyRouteItems: unknown[] = Array.isArray(payload.proxyRoutes)
     ? (payload.proxyRoutes as unknown[])
     : []
   const proxyRoutes = proxyRouteItems
@@ -141,7 +150,15 @@ export function normalizeBootstrapPayload(raw: unknown): BootstrapPayload {
     })
     .filter((route): route is BootstrapProxyRoute => Boolean(route))
 
-  if (!proxyRoutes.length && airportOutbound) {
+  if (legacyAdminConfig && hasCompleteSenderBootstrap(sender)) {
+    proxyRoutes.unshift({
+      id: 'internal-unified',
+      name: '内置统一代理',
+      enabled: true,
+      kind: 'unified',
+    })
+  }
+  if (legacyAdminConfig && airportOutbound) {
     proxyRoutes.push({
       id: 'internal-airport',
       name: safeText(airportRaw?.name) || '内置机场节点',

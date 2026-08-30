@@ -4,6 +4,9 @@ contextBridge.exposeInMainWorld("api", {
   platform: process.platform,
   setThemeSource: (source) => ipcRenderer.invoke("app:set-theme-source", source),
   loadSettings: (payload) => ipcRenderer.invoke("settings:load", payload),
+  activateSettingsPrincipal: (payload) =>
+    ipcRenderer.invoke("settings:principal-activate", payload),
+  clearSettingsPrincipal: (payload) => ipcRenderer.invoke("settings:principal-clear", payload),
   getSettingsPrincipal: () => ipcRenderer.invoke("settings:principal-context"),
   saveSettings: (payload) => ipcRenderer.invoke("settings:save", payload),
   patchSettings: (payload) => ipcRenderer.invoke("settings:patch", payload),
