@@ -7,6 +7,8 @@ import { useAuthStore } from '@/store/useAuthStore'
 import { canUseTranslation } from '@/lib/aiAccess'
 import { useTranslationStore } from '@/store/useTranslationStore'
 import { registerAiQuery } from './reportGptUsage'
+import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
+import { createPrincipalUrlPersistence } from '@/lib/principalUrlPersistence'
 import {
   AI_QUERY_MARKER,
   isGptAllowedUrl,
@@ -42,30 +44,15 @@ function defaultTitleFor(kind: AiKind): string {
 // 旧 rememberGptUrl / rememberGeminiUrl: url 变更时把 last_url 写回设置。
 // 旧版每次 url 事件都整存一次 settings; 这里防抖合并, 仅在值真正变化时落盘。
 const URL_PERSIST_DELAY = 600
-const persistTimers: Record<AiKind, ReturnType<typeof setTimeout> | null> = {
-  gpt: null,
-  gemini: null,
-  claude: null,
-}
-const lastPersistedUrl: Record<AiKind, string> = { gpt: '', gemini: '', claude: '' }
+const principalUrlPersistence = createPrincipalUrlPersistence({
+  delayMs: URL_PERSIST_DELAY,
+  runtime: settingsPrincipalRuntime,
+  patch: (section, lastUrl) =>
+    useAppStore.getState().patchSection(section as AiKind, { last_url: lastUrl }),
+})
 
 function persistLastUrl(section: AiKind, url: string) {
-  const next = safeText(url)
-  if (!next || next === lastPersistedUrl[section]) return
-  lastPersistedUrl[section] = next
-
-  const timer = persistTimers[section]
-  if (timer) clearTimeout(timer)
-  persistTimers[section] = setTimeout(() => {
-    persistTimers[section] = null
-    void useAppStore
-      .getState()
-      .patchSection(section, { last_url: next })
-      .catch(() => {
-        // 保存页面位置失败不阻塞工作区; 允许下次再写。
-        lastPersistedUrl[section] = ''
-      })
-  }, URL_PERSIST_DELAY)
+  principalUrlPersistence.persist(section, url)
 }
 
 // 对齐旧 normalizeGptTab (泛化到任意 kind)。
@@ -233,6 +220,13 @@ export function useAiEvents() {
 
     api.onAiEvent((raw) => {
       const payload = (raw || {}) as AiEventPayload
+      const principal = settingsPrincipalRuntime.current()
+      if (
+        safeText(payload.principalId) !== principal.principalId ||
+        Number(payload.principalGeneration) !== principal.generation
+      ) {
+        return
+      }
       const kind = safeText(payload?.kind) as AiKind
       if (kind !== 'gpt' && kind !== 'gemini' && kind !== 'claude') return
 
@@ -257,6 +251,8 @@ export function useAiEvents() {
       }
 
       if (payload?.type === 'did-fail-load') {
+        const store = useAiStore.getState()
+        if (safeText(payload.tabId) !== store.activeTabIdByKind[kind]) return
         const errorText =
           safeText(payload.errorDescription) || String(payload.errorCode || '未知错误')
         const label = kind === 'gpt' ? 'GPT' : kind === 'claude' ? 'Claude' : 'Gemini'

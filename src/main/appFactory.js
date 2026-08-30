@@ -43,9 +43,13 @@ const {
   scaleAiHostBounds,
 } = require("./aiEnvironments");
 const {
+  advanceWorkspaceDocument,
   createDurableWorkspaceRegistry,
   createLastIntentReconciler,
+  invalidateWorkspaceDocumentState,
   isWorkspaceViewUsable,
+  markWorkspaceDocumentReady,
+  resetWorkspaceDocumentState,
   retireWorkspaceView,
   routeBindingFingerprint,
   shouldValidateRouteBinding,
@@ -810,8 +814,8 @@ function createElectronApp(baseMode = "all") {
     return aiWorkspaceRegistry.getUsable(kind, tabId, environmentId);
   }
 
-  async function captureAiPageText(kind, tabId = "") {
-    const workspace = getWorkspace(kind, tabId);
+  async function captureAiPageText(kind, tabId = "", environmentId = "") {
+    const workspace = getWorkspace(kind, tabId, normalizeAiEnvironmentId(environmentId));
     const wc = workspace?.view?.webContents;
     if (!workspace || !wc || wc.isDestroyed()) throw new Error("当前网页尚未打开");
 
@@ -1384,6 +1388,7 @@ function createElectronApp(baseMode = "all") {
         at: new Date().toISOString(),
       };
       workspace.viewDead = true;
+      invalidateWorkspaceDocumentState(workspace, { clearUrl: true });
       workspace.initialized = false;
       workspace.loading = false;
       detachWorkspaceView(workspace);
@@ -1400,6 +1405,7 @@ function createElectronApp(baseMode = "all") {
     wc.on("destroyed", () => {
       if (workspace.viewGeneration !== viewGeneration || workspace.view?.webContents !== wc) return;
       workspace.viewDead = true;
+      invalidateWorkspaceDocumentState(workspace, { clearUrl: true });
       workspace.attached = false;
       if (workspaceRuntimeIsCurrent(workspace)) {
         scheduleAiReconcile("web-contents-destroyed", currentAiTarget());
@@ -1486,6 +1492,7 @@ function createElectronApp(baseMode = "all") {
     wc.on("did-start-loading", () => {
       if (!isCurrentView()) return;
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
+      invalidateWorkspaceDocumentState(workspace);
       workspace.loading = true;
       emitAiState(workspace, "did-start-loading");
     });
@@ -1493,6 +1500,8 @@ function createElectronApp(baseMode = "all") {
     wc.on("dom-ready", () => {
       if (!isCurrentView()) return;
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
+      const currentUrl = normalizeAiWorkspaceUrl(workspace, wc.getURL());
+      markWorkspaceDocumentReady(workspace, currentUrl);
       emitAiState(workspace, "dom-ready");
     });
 
@@ -1569,6 +1578,7 @@ function createElectronApp(baseMode = "all") {
       }
       if (isWorkspaceUrlAllowed(workspace, url)) {
         workspace.lastUrl = normalizeAiWorkspaceUrl(workspace, url);
+        advanceWorkspaceDocument(workspace, workspace.lastUrl);
       }
       workspace.initialized = true;
       emitAiState(workspace, "did-navigate", { url });
@@ -1581,6 +1591,7 @@ function createElectronApp(baseMode = "all") {
       }
       if (isWorkspaceUrlAllowed(workspace, url)) {
         workspace.lastUrl = normalizeAiWorkspaceUrl(workspace, url);
+        advanceWorkspaceDocument(workspace, workspace.lastUrl, { ready: true });
       }
       emitAiState(workspace, "did-navigate-in-page", { url });
     });
@@ -1773,6 +1784,7 @@ function createElectronApp(baseMode = "all") {
     });
     workspace.view = view;
     workspace.viewGeneration = Number(workspace.viewGeneration || 0) + 1;
+    resetWorkspaceDocumentState(workspace);
     workspace.viewDead = false;
     workspace.attached = false;
     workspace.managedNavigationCount = 0;
@@ -1882,6 +1894,9 @@ function createElectronApp(baseMode = "all") {
       policy,
       view: null,
       viewGeneration: 0,
+      documentEpoch: 0,
+      documentUrl: "",
+      documentReady: false,
       ensureGeneration: 0,
       viewDead: true,
       attached: false,
@@ -2169,7 +2184,11 @@ function createElectronApp(baseMode = "all") {
       }
     });
     ipcMain.handle("translation:capture-page", (_event, payload) =>
-      captureAiPageText(safeText(payload?.kind), safeText(payload?.tabId)),
+      captureAiPageText(
+        safeText(payload?.kind),
+        safeText(payload?.tabId),
+        safeText(payload?.environmentId),
+      ),
     );
     ipcMain.handle("user-data:export", () => backend.exportUserData());
     ipcMain.handle("user-data:import", () => backend.importUserData());

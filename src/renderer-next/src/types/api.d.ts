@@ -279,6 +279,7 @@ export interface ShareGptApi {
   captureAiPageText: (
     kind: 'gpt' | 'gemini' | 'claude',
     tabId?: string,
+    environmentId?: string,
   ) => Promise<{ title: string; url: string; text: string; truncated: boolean }>
   exportUserData: () => Promise<unknown>
   importUserData: () => Promise<unknown>

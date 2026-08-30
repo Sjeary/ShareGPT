@@ -37,6 +37,7 @@ import type { AiKind } from '@/store/useAiStore'
 import { isSenderRunning } from '@/components/panels/service/helpers'
 import { api } from '@/lib/api'
 import { canUseAdvancedAi, canUseTranslation } from '@/lib/aiAccess'
+import { userFacingAiWorkspaceError } from '@/lib/aiWorkspaceError'
 import { toast } from 'sonner'
 import { useAiHostSync } from '@/hooks/useAiWorkspace'
 import { useAiEvents, applyAiTabsPayload } from './useAiEvents'
@@ -163,6 +164,13 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const toggleTranslation = useTranslationStore((s) => s.toggle)
   const feedback = useAiStore((s) => s.feedbackByKind[kind])
   const setFeedback = useAiStore((s) => s.setFeedback)
+  const reportWorkspaceError = useCallback(
+    (error: unknown) => {
+      const message = userFacingAiWorkspaceError(error)
+      if (message) setFeedback(kind, message, 'error')
+    },
+    [kind, setFeedback],
+  )
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
   const addressInputRef = useRef<HTMLInputElement>(null)
@@ -342,17 +350,17 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   // 宿主可见 = 代理运行中 (面板已激活由 Shell 的条件渲染保证)。
   const hostVisible = networkReady
-  const { hostRef, schedule } = useAiHostSync(kind, hostVisible)
+  const { hostRef, schedule } = useAiHostSync(kind, hostVisible, activeTabId, environmentId)
 
   // 全局只绑定一次 onAiEvent。
   useAiEvents()
 
   // 旧 ensureGptWorkspace / ensureGeminiWorkspace (现已同构)。
   const ensureWorkspace = useCallback(
-    async (forceReload = false) => {
+    async (targetTabId: string, forceReload = false) => {
       if (!networkReady) return
       const store = useAiStore.getState()
-      const tab = store.tabsByKind[kind].find((item) => item.id === store.activeTabIdByKind[kind])
+      const tab = store.tabsByKind[kind].find((item) => item.id === targetTabId)
       if (!tab) return
       const userAgent = embeddedUserAgent()
       const lastUrl = tab.allowExternalBrowsing
@@ -411,10 +419,11 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
             // activeTabId 更新会触发下面的 effect，再统一执行 ensure，避免并发初始化同一视图。
             return
           }
-          await ensureWorkspace()
+          const targetTabId = useAiStore.getState().activeTabIdByKind[kind]
+          if (targetTabId) await ensureWorkspace(targetTabId)
         } catch (err) {
           if (!cancelled) {
-            setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+            reportWorkspaceError(err)
           }
         }
       }
@@ -427,7 +436,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   // 激活标签变化时重新 ensure, 让主进程切换/定位正确的 view。
   useEffect(() => {
-    if (networkReady && activeTabId) void ensureWorkspace()
+    if (networkReady && activeTabId) void ensureWorkspace(activeTabId).catch(reportWorkspaceError)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId])
 
@@ -437,10 +446,10 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       try {
         await api.navigateAiWorkspace({ kind, tabId: activeTabId, action })
       } catch (err) {
-        setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+        reportWorkspaceError(err)
       }
     },
-    [kind, activeTabId, setFeedback],
+    [kind, activeTabId, reportWorkspaceError],
   )
 
   const goHome = useCallback(async () => {
@@ -452,9 +461,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         url: homeUrlFor(kind),
       })
     } catch (err) {
-      setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+      reportWorkspaceError(err)
     }
-  }, [kind, activeTabId, setFeedback])
+  }, [kind, activeTabId, reportWorkspaceError])
 
   // ---- 多标签动作 (GPT / Gemini 通用) ----
   const createTab = useCallback(async () => {
@@ -464,11 +473,12 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         environmentId,
       })) as AiEventPayload
       applyAiTabsPayload(kind, payload)
-      if (networkReady) await ensureWorkspace()
+      const targetTabId = safeText(payload.activeTabId)
+      if (networkReady && targetTabId) await ensureWorkspace(targetTabId)
     } catch (err) {
-      setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+      reportWorkspaceError(err)
     }
-  }, [kind, environmentId, networkReady, ensureWorkspace, setFeedback])
+  }, [kind, environmentId, networkReady, ensureWorkspace, reportWorkspaceError])
 
   const openWebPage = useCallback(async () => {
     if (kind !== 'claude') return
@@ -490,9 +500,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       setWebAddressOpen(false)
       setFeedback(kind, '')
     } catch (err) {
-      setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+      reportWorkspaceError(err)
     }
-  }, [kind, addressValue, environmentId, setFeedback])
+  }, [kind, addressValue, environmentId, setFeedback, reportWorkspaceError])
 
   const switchTab = useCallback(
     async (tabId: string) => {
@@ -500,12 +510,12 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       try {
         const payload = (await api.switchAiView(kind, { tabId })) as AiEventPayload
         applyAiTabsPayload(kind, payload)
-        if (networkReady) await ensureWorkspace()
+        if (networkReady && safeText(payload.activeTabId) === tabId) await ensureWorkspace(tabId)
       } catch (err) {
-        setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+        reportWorkspaceError(err)
       }
     },
-    [kind, networkReady, ensureWorkspace, setFeedback],
+    [kind, networkReady, ensureWorkspace, reportWorkspaceError],
   )
 
   const closeTab = useCallback(
@@ -514,12 +524,13 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       try {
         const payload = (await api.closeAiView(kind, { tabId })) as AiEventPayload
         applyAiTabsPayload(kind, payload)
-        if (networkReady) await ensureWorkspace()
+        const targetTabId = safeText(payload.activeTabId)
+        if (networkReady && targetTabId) await ensureWorkspace(targetTabId)
       } catch (err) {
-        setFeedback(kind, err instanceof Error ? err.message : String(err), 'error')
+        reportWorkspaceError(err)
       }
     },
-    [kind, networkReady, ensureWorkspace, setFeedback],
+    [kind, networkReady, ensureWorkspace, reportWorkspaceError],
   )
 
   // 运行态 / 遮罩内容变化时, 重新同步宿主定位。

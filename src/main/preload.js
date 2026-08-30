@@ -54,8 +54,8 @@ contextBridge.exposeInMainWorld("api", {
     return () => ipcRenderer.removeListener("notes-ai:event", listener);
   },
   translateText: (payload) => ipcRenderer.invoke("translation:translate", payload),
-  captureAiPageText: (kind, tabId) =>
-    ipcRenderer.invoke("translation:capture-page", { kind, tabId }),
+  captureAiPageText: (kind, tabId, environmentId) =>
+    ipcRenderer.invoke("translation:capture-page", { kind, tabId, environmentId }),
   exportUserData: () => ipcRenderer.invoke("user-data:export"),
   importUserData: () => ipcRenderer.invoke("user-data:import"),
   readClipboardAttachment: () => ipcRenderer.invoke("clipboard:read-attachment"),

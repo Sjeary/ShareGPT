@@ -79,6 +79,44 @@ function workspaceOwnerIsCurrent(workspace, principal, runtimeEpoch) {
   );
 }
 
+function resetWorkspaceDocumentState(workspace) {
+  if (!workspace) return false;
+  workspace.documentEpoch = 0;
+  workspace.documentUrl = "";
+  workspace.documentReady = false;
+  return true;
+}
+
+function invalidateWorkspaceDocumentState(workspace, options = {}) {
+  if (!workspace) return false;
+  workspace.documentReady = false;
+  if (options.clearUrl === true) workspace.documentUrl = "";
+  return true;
+}
+
+function advanceWorkspaceDocument(workspace, url, options = {}) {
+  const documentUrl = safeText(url);
+  if (!workspace || !documentUrl) return 0;
+  workspace.documentEpoch = Number(workspace.documentEpoch || 0) + 1;
+  workspace.documentUrl = documentUrl;
+  workspace.documentReady = options.ready === true;
+  return workspace.documentEpoch;
+}
+
+function markWorkspaceDocumentReady(workspace, url) {
+  const documentUrl = safeText(url);
+  if (
+    !workspace ||
+    !documentUrl ||
+    documentUrl !== safeText(workspace.documentUrl) ||
+    Number(workspace.documentEpoch || 0) < 1
+  ) {
+    return false;
+  }
+  workspace.documentReady = true;
+  return true;
+}
+
 function retireWorkspaceView(view, attached, hostContentView) {
   if (!view) return;
   if (attached) {
@@ -313,9 +351,13 @@ function createLastIntentReconciler(reconcile, onError = () => {}) {
 }
 
 module.exports = {
+  advanceWorkspaceDocument,
   createDurableWorkspaceRegistry,
   createLastIntentReconciler,
+  invalidateWorkspaceDocumentState,
   isWorkspaceViewUsable,
+  markWorkspaceDocumentReady,
+  resetWorkspaceDocumentState,
   retireWorkspaceView,
   routeBindingFingerprint,
   shouldValidateRouteBinding,

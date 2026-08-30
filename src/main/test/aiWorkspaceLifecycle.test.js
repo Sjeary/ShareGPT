@@ -1,9 +1,13 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  advanceWorkspaceDocument,
   createDurableWorkspaceRegistry,
   createLastIntentReconciler,
+  invalidateWorkspaceDocumentState,
   isWorkspaceViewUsable,
+  markWorkspaceDocumentReady,
+  resetWorkspaceDocumentState,
   retireWorkspaceView,
   routeBindingFingerprint,
   shouldValidateRouteBinding,
@@ -11,6 +15,33 @@ const {
   workspaceEnsureIsCurrent,
   workspaceOwnerIsCurrent,
 } = require("../aiWorkspaceLifecycle");
+
+test("workspace document epochs invalidate full and same-document navigation targets", () => {
+  const target = {};
+  assert.equal(resetWorkspaceDocumentState(target), true);
+  assert.deepEqual(target, { documentEpoch: 0, documentUrl: "", documentReady: false });
+
+  assert.equal(advanceWorkspaceDocument(target, "https://chatgpt.com/c/a"), 1);
+  assert.equal(target.documentReady, false);
+  assert.equal(markWorkspaceDocumentReady(target, "https://chatgpt.com/c/a"), true);
+  assert.equal(target.documentReady, true);
+
+  assert.equal(advanceWorkspaceDocument(target, "https://chatgpt.com/c/b", { ready: true }), 2);
+  assert.equal(target.documentReady, true);
+  assert.equal(markWorkspaceDocumentReady(target, "https://chatgpt.com/c/a"), false);
+});
+
+test("renderer loss invalidates readiness and recreation resets the document identity", () => {
+  const target = {
+    documentEpoch: 4,
+    documentUrl: "https://claude.ai/chat/a",
+    documentReady: true,
+  };
+  assert.equal(invalidateWorkspaceDocumentState(target, { clearUrl: true }), true);
+  assert.deepEqual(target, { documentEpoch: 4, documentUrl: "", documentReady: false });
+  resetWorkspaceDocumentState(target);
+  assert.deepEqual(target, { documentEpoch: 0, documentUrl: "", documentReady: false });
+});
 
 function fakeView(id) {
   let destroyed = false;

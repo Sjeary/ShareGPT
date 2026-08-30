@@ -9,10 +9,15 @@ import type { AiKind } from '@/store/useAiStore'
 // WebContentsView setBounds 到该矩形上。`visible` 为 false 时主进程隐藏/detach view。
 //
 // 使用方式:
-//   const hostRef = useAiHostSync('gpt', visible)
+//   const hostRef = useAiHostSync('gpt', visible, tabId, environmentId)
 //   <div ref={hostRef} className="..." />
 // 其中 visible 表示"业务上是否应展示" (例如面板已激活且发送服务已运行)。
-export function useAiHostSync(kind: AiKind, visible: boolean) {
+export function useAiHostSync(
+  kind: AiKind,
+  visible: boolean,
+  tabId: string,
+  environmentId: string,
+) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const queuedRef = useRef(false)
   const rafRef = useRef<number | null>(null)
@@ -23,7 +28,7 @@ export function useAiHostSync(kind: AiKind, visible: boolean) {
     if (!host || !api.syncAiViewHost) return
 
     if (!visible) {
-      void api.syncAiViewHost({ kind, visible: false }).catch(() => undefined)
+      void api.syncAiViewHost({ kind, tabId, environmentId, visible: false }).catch(() => undefined)
       return
     }
 
@@ -38,12 +43,14 @@ export function useAiHostSync(kind: AiKind, visible: boolean) {
     void api
       .syncAiViewHost({
         kind,
+        tabId,
+        environmentId,
         // 与旧逻辑一致: 宽高需 > 1 才认为真正可见 (避免布局未完成时的 1px 占位)。
         visible: rect.width > 1 && rect.height > 1,
         bounds,
       })
       .catch(() => undefined)
-  }, [kind, visible])
+  }, [environmentId, kind, tabId, visible])
 
   // 旧 scheduleAiHostsLayoutSync: rAF 合并多次触发, 避免布局抖动。
   const schedule = useCallback(() => {
@@ -89,10 +96,12 @@ export function useAiHostSync(kind: AiKind, visible: boolean) {
   useEffect(
     () => () => {
       if (api.syncAiViewHost) {
-        void api.syncAiViewHost({ kind, visible: false }).catch(() => undefined)
+        void api
+          .syncAiViewHost({ kind, tabId, environmentId, visible: false })
+          .catch(() => undefined)
       }
     },
-    [kind],
+    [environmentId, kind, tabId],
   )
 
   return { hostRef, syncNow, schedule }
