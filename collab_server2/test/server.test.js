@@ -8,6 +8,7 @@ const assert = require("node:assert");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const WebSocket = require("ws");
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "collab-test-"));
 process.env.USERS_FILE = path.join(tmpDir, "users.json");
@@ -19,7 +20,7 @@ process.env.CALENDARS_FILE = path.join(tmpDir, "calendars.json");
 process.env.FOCUS_FILE = path.join(tmpDir, "focus_stats.json");
 process.env.FEEDBACK_FILE = path.join(tmpDir, "feedback.json");
 process.env.PROXY_MISSING_FILE = path.join(tmpDir, "proxy_missing.json");
-process.env.AIRPORT_FILE = path.join(tmpDir, "airport.json");
+process.env.AIRPORT_FILE = path.join(tmpDir, "legacy-data", "airport.json");
 process.env.PROXY_ROUTES_FILE = path.join(tmpDir, "proxy_routes.json");
 process.env.PROXY_ROUTE_HEALTH_FILE = path.join(tmpDir, "proxy_route_health.json");
 process.env.RELEASES_DIR = path.join(tmpDir, "releases");
@@ -29,6 +30,63 @@ process.env.LOGIN_MAX_FAILS = "3"; // 测试用小阈值
 process.env.LOGIN_LOCK_MS = "10000";
 
 const srv = require("../server.js");
+const proxyRoutesBackupFile = `${process.env.PROXY_ROUTES_FILE}.backup`;
+
+function snapshotFile(file) {
+  return fs.existsSync(file) ? fs.readFileSync(file) : null;
+}
+
+function restoreFile(file, snapshot) {
+  if (fs.existsSync(file)) fs.unlinkSync(file);
+  if (snapshot !== null) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, snapshot);
+  }
+}
+
+function openJsonWebSocket(url) {
+  const ws = new WebSocket(url);
+  const queued = [];
+  const waiters = [];
+
+  ws.on("message", (raw) => {
+    let payload;
+    try {
+      payload = JSON.parse(String(raw));
+    } catch {
+      return;
+    }
+    const waiterIndex = waiters.findIndex((waiter) => waiter.predicate(payload));
+    if (waiterIndex >= 0) {
+      const [waiter] = waiters.splice(waiterIndex, 1);
+      clearTimeout(waiter.timer);
+      waiter.resolve(payload);
+      return;
+    }
+    queued.push(payload);
+  });
+
+  return {
+    ws,
+    opened: new Promise((resolve, reject) => {
+      ws.once("open", resolve);
+      ws.once("error", reject);
+    }),
+    next(predicate, timeoutMs = 3000) {
+      const queuedIndex = queued.findIndex(predicate);
+      if (queuedIndex >= 0) return Promise.resolve(queued.splice(queuedIndex, 1)[0]);
+      return new Promise((resolve, reject) => {
+        const waiter = { predicate, resolve, timer: null };
+        waiter.timer = setTimeout(() => {
+          const index = waiters.indexOf(waiter);
+          if (index >= 0) waiters.splice(index, 1);
+          reject(new Error("等待 WebSocket 消息超时"));
+        }, timeoutMs);
+        waiters.push(waiter);
+      });
+    },
+  };
+}
 
 test("hashPassword: 确定性 + 不同 salt 产生不同 hash", () => {
   const a = srv.hashPassword("pw", "salt-1", 1000, "sha256");
@@ -93,6 +151,15 @@ test("高级 AI 权限在用户记录中显式归一化", () => {
     true,
   );
   assert.strictEqual(srv.normalizeUserRecord({ username: "normal" }).advancedAiAllowed, false);
+  assert.strictEqual(
+    srv.normalizeUserRecord({ username: "legacy" }).legacyProxyEntitled,
+    true,
+    "只有同时缺失现代权限字段的旧账号获得 legacy 资格",
+  );
+  assert.strictEqual(
+    srv.normalizeUserRecord({ username: "modern", advancedAiAllowed: false }).legacyProxyEntitled,
+    false,
+  );
   assert.deepStrictEqual(
     srv.normalizeUserRecord({
       username: "allowed",
@@ -123,7 +190,220 @@ test("代理线路目录支持多线路并拒绝重复稳定 ID", () => {
   assert.strictEqual(saved.routes[0].expected.countryCode, "US");
   assert.strictEqual(saved.routes[0].outbound.tag, undefined, "服务端必须接管 sing-box tag");
   assert.deepStrictEqual(srv.loadProxyRouteCatalog().routes, saved.routes);
+  assert.deepStrictEqual(
+    JSON.parse(fs.readFileSync(proxyRoutesBackupFile, "utf8")),
+    saved,
+    "有效现代主目录必须维护同内容的可信备份",
+  );
+  fs.unlinkSync(proxyRoutesBackupFile);
+  assert.deepStrictEqual(srv.loadProxyRouteCatalog().routes, saved.routes);
+  assert.deepStrictEqual(
+    JSON.parse(fs.readFileSync(proxyRoutesBackupFile, "utf8")),
+    saved,
+    "读取有效现代主目录时必须补回缺失的可信备份",
+  );
   assert.throws(() => srv.saveProxyRouteCatalog([routes[0], routes[0]]), /不能重复/);
+});
+
+test("现代线路目录损坏时只恢复严格验证过的现代备份", (t) => {
+  const catalogSnapshot = snapshotFile(process.env.PROXY_ROUTES_FILE);
+  const backupSnapshot = snapshotFile(proxyRoutesBackupFile);
+  const airportSnapshot = snapshotFile(process.env.AIRPORT_FILE);
+  t.after(() => {
+    restoreFile(process.env.PROXY_ROUTES_FILE, catalogSnapshot);
+    restoreFile(proxyRoutesBackupFile, backupSnapshot);
+    restoreFile(process.env.AIRPORT_FILE, airportSnapshot);
+  });
+
+  const saved = srv.saveProxyRouteCatalog([
+    {
+      id: "recoverable-route",
+      name: "Recoverable",
+      outbound: { type: "socks", server: "recover.example.com", server_port: 1080 },
+    },
+  ]);
+  fs.writeFileSync(process.env.PROXY_ROUTES_FILE, '{"version":1,"routes":[', "utf8");
+  const restored = srv.readProxyRouteCatalogStatus();
+  assert.strictEqual(restored.available, true);
+  assert.strictEqual(restored.source, "modern-backup");
+  assert.deepStrictEqual(restored.catalog, saved);
+  assert.deepStrictEqual(
+    JSON.parse(fs.readFileSync(process.env.PROXY_ROUTES_FILE, "utf8")),
+    saved,
+    "恢复后必须原子重建现代主目录",
+  );
+
+  fs.writeFileSync(process.env.PROXY_ROUTES_FILE, "", "utf8");
+  const restoredFromEmpty = srv.readProxyRouteCatalogStatus();
+  assert.strictEqual(restoredFromEmpty.available, true);
+  assert.strictEqual(restoredFromEmpty.source, "modern-backup");
+  assert.deepStrictEqual(restoredFromEmpty.catalog, saved, "空主文件也必须从现代备份恢复");
+
+  fs.unlinkSync(proxyRoutesBackupFile);
+  fs.mkdirSync(path.dirname(process.env.AIRPORT_FILE), { recursive: true });
+  fs.writeFileSync(
+    process.env.AIRPORT_FILE,
+    JSON.stringify({
+      name: "Stale legacy route",
+      outbound: { type: "socks", server: "legacy.example.com", server_port: 1080 },
+      updatedAt: "2026-08-20T00:00:00.000Z",
+    }),
+    "utf8",
+  );
+  fs.writeFileSync(
+    process.env.PROXY_ROUTES_FILE,
+    JSON.stringify({
+      version: 1,
+      routes: [
+        {
+          id: "valid-route",
+          outbound: { type: "socks", server: "valid.example.com", server_port: 1080 },
+        },
+        { id: "invalid-route" },
+      ],
+    }),
+    "utf8",
+  );
+  const unavailable = srv.readProxyRouteCatalogStatus();
+  assert.strictEqual(unavailable.available, false);
+  assert.strictEqual(unavailable.reason, "catalog_corrupt");
+  assert.deepStrictEqual(unavailable.catalog.routes, []);
+  assert.throws(
+    () =>
+      srv.saveProxyRouteCatalog([
+        {
+          id: "valid-route",
+          outbound: { type: "socks", server: "valid.example.com", server_port: 1080 },
+        },
+        { id: "invalid-route" },
+      ]),
+    /routes\[1\] 无效/,
+    "部分无效线路不得被静默过滤后发布",
+  );
+});
+
+test("线路目录权限或路径错误保持 fail-closed，legacy 只用于明确兼容场景", (t) => {
+  const catalogSnapshot = snapshotFile(process.env.PROXY_ROUTES_FILE);
+  const backupSnapshot = snapshotFile(proxyRoutesBackupFile);
+  const airportSnapshot = snapshotFile(process.env.AIRPORT_FILE);
+  const usersSnapshot = snapshotFile(process.env.USERS_FILE);
+  t.after(() => {
+    restoreFile(process.env.PROXY_ROUTES_FILE, catalogSnapshot);
+    restoreFile(proxyRoutesBackupFile, backupSnapshot);
+    restoreFile(process.env.AIRPORT_FILE, airportSnapshot);
+    restoreFile(process.env.USERS_FILE, usersSnapshot);
+  });
+
+  fs.mkdirSync(path.dirname(process.env.AIRPORT_FILE), { recursive: true });
+  const legacyAirport = {
+    name: "Legacy airport",
+    outbound: { type: "socks", server: "legacy.example.com", server_port: 1080 },
+    updatedAt: "2026-08-20T00:00:00.000Z",
+  };
+  fs.writeFileSync(process.env.AIRPORT_FILE, JSON.stringify(legacyAirport), "utf8");
+  srv.saveProxyRouteCatalog([
+    {
+      id: "modern-route",
+      outbound: { type: "socks", server: "modern.example.com", server_port: 1080 },
+    },
+  ]);
+
+  const originalReadFileSync = fs.readFileSync;
+  try {
+    for (const [code, reason] of [
+      ["EACCES", "catalog_permission_denied"],
+      ["EISDIR", "catalog_unreadable"],
+    ]) {
+      fs.readFileSync = function patchedReadFileSync(file, ...args) {
+        if (path.resolve(String(file)) === path.resolve(process.env.PROXY_ROUTES_FILE)) {
+          const error = new Error("simulated read failure");
+          error.code = code;
+          throw error;
+        }
+        return originalReadFileSync.call(this, file, ...args);
+      };
+      const status = srv.readProxyRouteCatalogStatus();
+      assert.strictEqual(status.available, false);
+      assert.strictEqual(status.reason, reason);
+      assert.deepStrictEqual(status.catalog.routes, [], "不得绕过现代目录回退陈旧 airport");
+    }
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+  }
+
+  fs.unlinkSync(process.env.PROXY_ROUTES_FILE);
+  fs.unlinkSync(proxyRoutesBackupFile);
+  assert.notStrictEqual(
+    path.dirname(process.env.PROXY_ROUTES_FILE),
+    path.dirname(process.env.AIRPORT_FILE),
+    "测试必须覆盖现代与 legacy 数据分目录部署",
+  );
+  const missingModern = srv.readProxyRouteCatalogStatus();
+  assert.strictEqual(missingModern.available, true);
+  assert.strictEqual(missingModern.source, "legacy-airport");
+  assert.deepStrictEqual(
+    missingModern.catalog.routes.map((route) => route.id),
+    ["internal-airport"],
+  );
+
+  const admin = srv.createUserRecord("legacy-admin", "legacy-password", { isAdmin: true });
+  fs.writeFileSync(process.env.USERS_FILE, JSON.stringify({ users: [admin] }), "utf8");
+  assert.deepStrictEqual(
+    srv
+      .proxyRoutesForUser("legacy-admin", { sender: {} }, missingModern.catalog)
+      .map((route) => route.id),
+    ["internal-airport"],
+    "管理员在 legacy-only 部署中仍默认拥有全部有效线路",
+  );
+
+  fs.writeFileSync(process.env.PROXY_ROUTES_FILE, JSON.stringify(legacyAirport), "utf8");
+  const explicitLegacy = srv.readProxyRouteCatalogStatus();
+  assert.strictEqual(explicitLegacy.available, true);
+  assert.strictEqual(explicitLegacy.source, "legacy-proxy-routes-file");
+  assert.deepStrictEqual(
+    explicitLegacy.catalog.routes.map((route) => route.id),
+    ["internal-airport"],
+  );
+});
+
+test("线路授权与多环境权限解耦，管理员始终拥有全部线路", (t) => {
+  const originalCatalog = srv.loadProxyRouteCatalog();
+  t.after(() => srv.saveProxyRouteCatalog(originalCatalog.routes));
+  const password = "proxy-policy-password";
+  const users = [
+    srv.createUserRecord("advanced-only", password, { advancedAiAllowed: true }),
+    srv.createUserRecord("fixed-route", password, {
+      advancedAiAllowed: false,
+      allowedProxyRouteIds: ["route-a"],
+    }),
+    srv.createUserRecord("admin-routes", password, { isAdmin: true }),
+  ];
+  fs.writeFileSync(process.env.USERS_FILE, JSON.stringify({ users }, null, 2));
+  srv.saveProxyRouteCatalog([
+    {
+      id: "route-a",
+      name: "A",
+      enabled: true,
+      outbound: { type: "socks", server: "a.example", server_port: 1080 },
+    },
+    {
+      id: "route-b",
+      name: "B",
+      enabled: true,
+      outbound: { type: "socks", server: "b.example", server_port: 1080 },
+    },
+  ]);
+  const bootstrap = { sender: {} };
+
+  assert.deepStrictEqual(srv.proxyRoutesForUser("advanced-only", bootstrap), []);
+  assert.deepStrictEqual(
+    srv.proxyRoutesForUser("fixed-route", bootstrap).map((route) => route.id),
+    ["route-a"],
+  );
+  assert.deepStrictEqual(
+    srv.proxyRoutesForUser("admin-routes", bootstrap).map((route) => route.id),
+    ["route-a", "route-b"],
+  );
 });
 
 test("putUserStore: 乐观并发 — baseRev 不匹配则拒绝, 防止老版本覆盖新版本", () => {
@@ -194,7 +474,31 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
           isAdmin: true,
           disabled: false,
         },
+        {
+          username: "demoted-admin",
+          displayName: "Demoted Admin",
+          salt,
+          passwordHash: srv.hashPassword(password, salt, 120000, "sha256"),
+          iterations: 120000,
+          digest: "sha256",
+          isAdmin: true,
+          advancedAiAllowed: true,
+          disabled: false,
+        },
       ],
+    }),
+    "utf8",
+  );
+  fs.writeFileSync(
+    process.env.CLIENT_BOOTSTRAP_FILE,
+    JSON.stringify({
+      sender: {
+        proxy_server: "proxy.example",
+        proxy_port: "443",
+        proxy_uuid: "server-secret",
+        socks_listen_port: "19872",
+      },
+      update: {},
     }),
     "utf8",
   );
@@ -223,8 +527,49 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   assert.strictEqual(login.status, 200);
   const loginBody = await login.json();
   const { token } = loginBody;
+  assert.strictEqual(typeof loginBody.token, "string");
+  assert.strictEqual(loginBody.username, "verify-user");
+  assert.ok(loginBody.profile && typeof loginBody.profile === "object");
+  assert.strictEqual(typeof loginBody.roomScope, "string");
+  assert.ok(Array.isArray(loginBody.users));
+  assert.ok(Array.isArray(loginBody.history));
   assert.strictEqual(loginBody.profile.advancedAiAllowed, true);
-  const authHeaders = { Authorization: `Bearer ${token}` };
+  let authHeaders = { Authorization: `Bearer ${token}` };
+
+  const legacySocket = openJsonWebSocket(
+    `${baseUrl.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(token)}`,
+  );
+  t.after(() => legacySocket.ws.terminate());
+  await legacySocket.opened;
+  assert.strictEqual(legacySocket.ws.protocol, "", "旧客户端无需 WebSocket subprotocol");
+  const legacySession = await legacySocket.next((message) => message.type === "session");
+  assert.strictEqual(legacySession.username, "verify-user");
+  assert.strictEqual(typeof legacySession.roomScope, "string");
+  const legacyHistory = await legacySocket.next((message) => message.type === "history");
+  assert.ok(Array.isArray(legacyHistory.messages));
+
+  legacySocket.ws.send(JSON.stringify({ type: "chat", text: "legacy chat message" }));
+  const legacyChat = await legacySocket.next(
+    (message) => message.type === "chat" && message.text === "legacy chat message",
+  );
+  assert.strictEqual(legacyChat.from, "verify-user");
+  assert.strictEqual(legacyChat.username, "verify-user");
+  assert.strictEqual(legacyChat.scope, "subnet");
+  assert.strictEqual(typeof legacyChat.id, "string");
+  assert.strictEqual(typeof legacyChat.timestamp, "string");
+
+  legacySocket.ws.send(JSON.stringify({ type: "history_sync", since: "" }));
+  const legacyHistorySync = await legacySocket.next(
+    (message) =>
+      message.type === "history_sync" &&
+      message.messages?.some((item) => item.id === legacyChat.id),
+  );
+  assert.ok(Array.isArray(legacyHistorySync.messages));
+  assert.strictEqual(typeof legacyHistorySync.roomScope, "string");
+  await new Promise((resolve) => {
+    legacySocket.ws.once("close", resolve);
+    legacySocket.ws.close();
+  });
 
   for (const [username, allowed] of [
     ["normal-user", false],
@@ -252,6 +597,26 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
     bootstrapBody.proxyRoutes.map((route) => route.id),
     ["internal-airport"],
   );
+  assert.strictEqual(bootstrapBody.sender.proxy_server, "");
+  assert.strictEqual(bootstrapBody.sender.proxy_port, "");
+  assert.strictEqual(bootstrapBody.sender.proxy_uuid, "");
+
+  const adminClientLogin = await fetch(`${baseUrl}/api/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "admin-user", password }),
+  });
+  assert.strictEqual(adminClientLogin.status, 200);
+  const adminClientToken = (await adminClientLogin.json()).token;
+  const adminClientBootstrap = await fetch(`${baseUrl}/api/client/bootstrap`, {
+    headers: { Authorization: `Bearer ${adminClientToken}` },
+  });
+  assert.strictEqual(adminClientBootstrap.status, 200);
+  const adminClientBootstrapBody = await adminClientBootstrap.json();
+  assert.ok(adminClientBootstrapBody.sender.proxy_server);
+  assert.ok(adminClientBootstrapBody.sender.proxy_port);
+  assert.ok(adminClientBootstrapBody.sender.proxy_uuid);
+  assert.ok(adminClientBootstrapBody.proxyRoutes.some((route) => route.id === "internal-unified"));
 
   const adminLogin = await fetch(`${baseUrl}/api/admin/login`, {
     method: "POST",
@@ -261,29 +626,118 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   assert.strictEqual(adminLogin.status, 200);
   const adminToken = (await adminLogin.json()).token;
   const adminHeaders = { Authorization: `Bearer ${adminToken}` };
+
+  const demotedLogin = await fetch(`${baseUrl}/api/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "demoted-admin", password }),
+  });
+  const demotedToken = (await demotedLogin.json()).token;
+  const demote = await fetch(`${baseUrl}/api/admin/users/demoted-admin`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({ isAdmin: false }),
+  });
+  assert.strictEqual(demote.status, 200);
+  const demotedBody = await demote.json();
+  assert.strictEqual(demotedBody.user.isAdmin, false);
+  assert.strictEqual(
+    demotedBody.user.advancedAiAllowed,
+    false,
+    "管理员降级且未显式传高级权限时必须清掉隐式授权",
+  );
+  assert.strictEqual(
+    (
+      await fetch(`${baseUrl}/api/client/bootstrap`, {
+        headers: { Authorization: `Bearer ${demotedToken}` },
+      })
+    ).status,
+    401,
+    "管理员降级必须撤销旧 token",
+  );
+  const catalogSocket = openJsonWebSocket(
+    `${baseUrl.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(token)}`,
+  );
+  t.after(() => catalogSocket.ws.terminate());
+  await catalogSocket.opened;
+  await catalogSocket.next((message) => message.type === "session");
+  const catalogSocketClosed = new Promise((resolve) =>
+    catalogSocket.ws.once("close", (code) => resolve(code)),
+  );
+  const routeCatalogPayload = {
+    routes: [
+      {
+        id: "route-us",
+        name: "US primary",
+        enabled: true,
+        outbound: { type: "socks", server: "us.example.com", server_port: 1080 },
+        expected: { countryCode: "US" },
+      },
+      {
+        id: "route-eu",
+        name: "EU backup",
+        enabled: true,
+        outbound: { type: "socks", server: "eu.example.com", server_port: 1080 },
+      },
+    ],
+  };
   const saveRoutes = await fetch(`${baseUrl}/api/admin/proxy-routes`, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...adminHeaders },
-    body: JSON.stringify({
-      routes: [
-        {
-          id: "route-us",
-          name: "US primary",
-          enabled: true,
-          outbound: { type: "socks", server: "us.example.com", server_port: 1080 },
-          expected: { countryCode: "US" },
-        },
-        {
-          id: "route-eu",
-          name: "EU backup",
-          enabled: true,
-          outbound: { type: "socks", server: "eu.example.com", server_port: 1080 },
-        },
-      ],
-    }),
+    body: JSON.stringify(routeCatalogPayload),
   });
   assert.strictEqual(saveRoutes.status, 200);
   assert.strictEqual((await saveRoutes.json()).routes.length, 2);
+  assert.strictEqual(await catalogSocketClosed, 4002, "目录变化必须关闭旧授权 WebSocket");
+  assert.strictEqual(
+    (await fetch(`${baseUrl}/api/client/bootstrap`, { headers: authHeaders })).status,
+    401,
+    "目录变化后旧 token 不得继续取得线路 bootstrap",
+  );
+  const staleSocket = new WebSocket(
+    `${baseUrl.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(token)}`,
+  );
+  t.after(() => staleSocket.terminate());
+  const staleSocketOutcome = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("旧线路授权 WebSocket 未及时拒绝")), 3000);
+    staleSocket.once("open", () => {
+      clearTimeout(timer);
+      resolve("opened");
+    });
+    staleSocket.once("error", () => {
+      clearTimeout(timer);
+      resolve("rejected");
+    });
+    staleSocket.once("close", () => {
+      clearTimeout(timer);
+      resolve("rejected");
+    });
+  });
+  assert.strictEqual(staleSocketOutcome, "rejected", "旧 epoch token 不得重新建立 WebSocket");
+  assert.strictEqual(
+    (await fetch(`${baseUrl}/api/users`, { headers: authHeaders })).status,
+    200,
+    "线路授权过期不应删除 token 或阻断无关 REST",
+  );
+
+  const catalogRelogin = await fetch(`${baseUrl}/api/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "verify-user", password }),
+  });
+  assert.strictEqual(catalogRelogin.status, 200);
+  authHeaders = { Authorization: `Bearer ${(await catalogRelogin.json()).token}` };
+  const saveSameRoutes = await fetch(`${baseUrl}/api/admin/proxy-routes`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify(routeCatalogPayload),
+  });
+  assert.strictEqual(saveSameRoutes.status, 200);
+  assert.strictEqual(
+    (await fetch(`${baseUrl}/api/client/bootstrap`, { headers: authHeaders })).status,
+    200,
+    "等值目录保存不得让现有线路授权过期",
+  );
 
   const authorizeRoute = await fetch(`${baseUrl}/api/admin/users/verify-user`, {
     method: "PATCH",
@@ -293,14 +747,103 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   assert.strictEqual(authorizeRoute.status, 200);
   assert.deepStrictEqual((await authorizeRoute.json()).user.allowedProxyRouteIds, ["route-us"]);
 
+  const revokedBootstrap = await fetch(`${baseUrl}/api/client/bootstrap`, {
+    headers: authHeaders,
+  });
+  assert.strictEqual(revokedBootstrap.status, 401, "线路授权变化必须撤销旧 token");
+
+  const relogin = await fetch(`${baseUrl}/api/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "verify-user", password }),
+  });
+  assert.strictEqual(relogin.status, 200);
+  authHeaders = { Authorization: `Bearer ${(await relogin.json()).token}` };
+  const liveSocket = openJsonWebSocket(
+    `${baseUrl.replace(/^http/, "ws")}/ws?token=${encodeURIComponent(authHeaders.Authorization.slice(7))}`,
+  );
+  t.after(() => liveSocket.ws.terminate());
+  await liveSocket.opened;
+  await liveSocket.next((message) => message.type === "session");
+
+  const sameAuthorization = await fetch(`${baseUrl}/api/admin/users/verify-user`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({ allowedProxyRouteIds: ["route-us"] }),
+  });
+  assert.strictEqual(sameAuthorization.status, 200);
+  assert.strictEqual(
+    (await fetch(`${baseUrl}/api/client/bootstrap`, { headers: authHeaders })).status,
+    200,
+    "等值权限更新不能撤销会话",
+  );
+
+  const socketClosed = new Promise((resolve) => liveSocket.ws.once("close", resolve));
+  const revokeAdvanced = await fetch(`${baseUrl}/api/admin/users/verify-user`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({ advancedAiAllowed: false }),
+  });
+  assert.strictEqual(revokeAdvanced.status, 200);
+  await socketClosed;
+  assert.strictEqual(
+    (await fetch(`${baseUrl}/api/client/bootstrap`, { headers: authHeaders })).status,
+    401,
+    "高级能力变化必须撤销旧 token 和 WebSocket",
+  );
+
+  const restoreAdvanced = await fetch(`${baseUrl}/api/admin/users/verify-user`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({ advancedAiAllowed: true }),
+  });
+  assert.strictEqual(restoreAdvanced.status, 200);
+
+  const secondRelogin = await fetch(`${baseUrl}/api/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "verify-user", password }),
+  });
+  assert.strictEqual(secondRelogin.status, 200);
+  authHeaders = { Authorization: `Bearer ${(await secondRelogin.json()).token}` };
+
   const authorizedBootstrap = await fetch(`${baseUrl}/api/client/bootstrap`, {
     headers: authHeaders,
   });
   assert.strictEqual(authorizedBootstrap.status, 200);
+  const authorizedBootstrapBody = await authorizedBootstrap.json();
   assert.deepStrictEqual(
-    (await authorizedBootstrap.json()).proxyRoutes.map((route) => route.id),
+    authorizedBootstrapBody.proxyRoutes.map((route) => route.id),
     ["route-us"],
   );
+
+  const validCatalog = srv.loadProxyRouteCatalog();
+  fs.unlinkSync(proxyRoutesBackupFile);
+  fs.writeFileSync(process.env.PROXY_ROUTES_FILE, '{"version":1,"routes":[', "utf8");
+  try {
+    const degradedBootstrap = await fetch(`${baseUrl}/api/client/bootstrap`, {
+      headers: authHeaders,
+    });
+    assert.strictEqual(
+      degradedBootstrap.status,
+      503,
+      "旧客户端必须在非 2xx 处停止应用，不能把临时不可用误作权威空线路",
+    );
+    const degradedText = await degradedBootstrap.text();
+    const degradedBody = JSON.parse(degradedText);
+    assert.strictEqual(Object.hasOwn(degradedBody, "proxyRoutes"), false);
+    assert.strictEqual(Object.hasOwn(degradedBody, "airport"), false);
+    assert.strictEqual(Object.hasOwn(degradedBody, "sender"), false);
+    assert.strictEqual(degradedBody.error, "proxy_routes_unavailable");
+    assert.deepStrictEqual(degradedBody.capabilities.proxyRoutes, {
+      available: false,
+      authoritative: false,
+      reason: "catalog_corrupt",
+    });
+    assert.doesNotMatch(degradedText, /SyntaxError|Unexpected|proxy_routes\.json/i);
+  } finally {
+    srv.saveProxyRouteCatalog(validCatalog.routes);
+  }
   const healthReport = await fetch(`${baseUrl}/api/client/proxy-route-health`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders },
@@ -348,14 +891,14 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
 
   const wrong = await fetch(`${baseUrl}/api/account/verify-password`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify({ password: "wrong-password" }),
   });
   assert.strictEqual(wrong.status, 401);
 
   const correct = await fetch(`${baseUrl}/api/account/verify-password`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify({ password }),
   });
   assert.strictEqual(correct.status, 200);
@@ -373,12 +916,12 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   };
   const savePrivacy = await fetch(`${baseUrl}/api/user-store/browser-privacy`, {
     method: "PUT",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", ...authHeaders },
     body: JSON.stringify({ baseRev: 0, data: privacyPayload }),
   });
   assert.strictEqual(savePrivacy.status, 200);
   const loadPrivacy = await fetch(`${baseUrl}/api/user-store/browser-privacy`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: authHeaders,
   });
   assert.strictEqual(loadPrivacy.status, 200);
   assert.deepStrictEqual((await loadPrivacy.json()).data, privacyPayload);

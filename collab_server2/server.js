@@ -120,6 +120,7 @@ const adminSessions = new Map();
 const devSessions = new Map();
 const wsClients = new Set();
 const wsByToken = new Map();
+let proxyAuthorizationEpoch = 1;
 const loginAttempts = new Map();
 // 删除本地网页登录数据前的密码复核只接受已登录会话；失败次数按 token 单独限流，
 // 不改变旧客户端的登录、聊天或其它接口行为。
@@ -187,6 +188,18 @@ function normalizeUserRecord(record) {
     ? record.avatarKind
     : inferAvatarKind(avatar);
   const bio = safeText(record?.bio).slice(0, 200);
+  const hasAdvancedAiAllowed = Object.prototype.hasOwnProperty.call(
+    record || {},
+    "advancedAiAllowed",
+  );
+  const hasAllowedProxyRouteIds = Object.prototype.hasOwnProperty.call(
+    record || {},
+    "allowedProxyRouteIds",
+  );
+  const hasLegacyProxyEntitled = Object.prototype.hasOwnProperty.call(
+    record || {},
+    "legacyProxyEntitled",
+  );
 
   return {
     ...record,
@@ -198,6 +211,9 @@ function normalizeUserRecord(record) {
     isAdmin: Boolean(record?.isAdmin),
     advancedAiAllowed: Boolean(record?.advancedAiAllowed),
     allowedProxyRouteIds: normalizeProxyRouteIds(record?.allowedProxyRouteIds),
+    legacyProxyEntitled: hasLegacyProxyEntitled
+      ? Boolean(record?.legacyProxyEntitled)
+      : !hasAdvancedAiAllowed && !hasAllowedProxyRouteIds,
     disabled: Boolean(record?.disabled),
     chatDisabled: Boolean(record?.chatDisabled),
     lastClient: normalizeClientInfo(record?.lastClient),
@@ -215,7 +231,23 @@ function loadUserStore() {
   ensureUsersFile();
   try {
     const raw = JSON.parse(fs.readFileSync(USERS_FILE, "utf-8"));
-    const users = Array.isArray(raw.users) ? raw.users.map(normalizeUserRecord) : [];
+    const rawUsers = Array.isArray(raw.users) ? raw.users : [];
+    const users = rawUsers.map(normalizeUserRecord);
+    const needsLegacyEntitlementMigration = rawUsers.some(
+      (record) =>
+        record &&
+        typeof record === "object" &&
+        !Object.prototype.hasOwnProperty.call(record, "advancedAiAllowed") &&
+        !Object.prototype.hasOwnProperty.call(record, "allowedProxyRouteIds") &&
+        !Object.prototype.hasOwnProperty.call(record, "legacyProxyEntitled"),
+    );
+    if (needsLegacyEntitlementMigration) {
+      try {
+        saveUserStore({ users });
+      } catch (error) {
+        console.error("[collab] 旧账号代理权限标记持久化失败:", error.message || error);
+      }
+    }
     return { users };
   } catch {
     return { users: [] };
@@ -223,7 +255,7 @@ function loadUserStore() {
 }
 
 function saveUserStore(store) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(store, null, 2), "utf-8");
+  writeJsonAtomic(USERS_FILE, store);
 }
 
 function ensureGptUsageFile() {
@@ -790,6 +822,7 @@ const AIRPORT_FILE =
   process.env.AIRPORT_FILE || path.join(path.dirname(GPT_USAGE_FILE), "airport.json");
 const PROXY_ROUTES_FILE =
   process.env.PROXY_ROUTES_FILE || path.join(path.dirname(GPT_USAGE_FILE), "proxy_routes.json");
+const PROXY_ROUTES_BACKUP_FILE = `${PROXY_ROUTES_FILE}.backup`;
 const PROXY_ROUTE_HEALTH_FILE =
   process.env.PROXY_ROUTE_HEALTH_FILE ||
   path.join(path.dirname(GPT_USAGE_FILE), "proxy_route_health.json");
@@ -830,54 +863,235 @@ function normalizeProxyRoute(record, options = {}) {
   };
 }
 
-function legacyAirportRoute() {
-  const airport = loadAirport();
-  return airport.outbound
+function proxyRouteCatalogError(message) {
+  const error = new Error(message);
+  error.code = "INVALID_PROXY_ROUTE_CATALOG";
+  return error;
+}
+
+function validateProxyRouteCatalog(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw proxyRouteCatalogError("catalog 必须是对象");
+  }
+  if (typeof raw.version !== "undefined" && raw.version !== 1) {
+    throw proxyRouteCatalogError("catalog.version 必须为 1");
+  }
+  if (!Array.isArray(raw.routes)) {
+    throw proxyRouteCatalogError("catalog.routes 必须是数组");
+  }
+  if (raw.routes.length > 64) {
+    throw proxyRouteCatalogError("catalog.routes 不能超过 64 条");
+  }
+  const updatedAt = safeText(raw.updatedAt);
+  const routes = raw.routes.map((route, index) => {
+    const normalized = normalizeProxyRoute(route, {
+      updatedAt: safeText(route?.updatedAt) || updatedAt || "1970-01-01T00:00:00.000Z",
+    });
+    if (!normalized) throw proxyRouteCatalogError(`routes[${index}] 无效`);
+    return normalized;
+  });
+  if (new Set(routes.map((route) => route.id)).size !== routes.length) {
+    throw proxyRouteCatalogError("线路 ID 不能重复");
+  }
+  return { version: 1, routes, updatedAt };
+}
+
+function isExplicitLegacyAirport(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw) || !("outbound" in raw)) return false;
+  if (!Object.keys(raw).every((key) => ["name", "outbound", "updatedAt"].includes(key))) {
+    return false;
+  }
+  return (
+    raw.outbound === null ||
+    (typeof raw.outbound === "object" &&
+      !Array.isArray(raw.outbound) &&
+      Boolean(safeText(raw.outbound.type)))
+  );
+}
+
+function legacyAirportRoute(airport = null) {
+  const record = airport || loadAirport();
+  return record.outbound
     ? normalizeProxyRoute({
         id: "internal-airport",
-        name: airport.name || "内置机场节点",
+        name: record.name || "内置机场节点",
         enabled: true,
-        outbound: airport.outbound,
-        updatedAt: airport.updatedAt,
+        outbound: record.outbound,
+        updatedAt: record.updatedAt,
       })
     : null;
 }
 
-function loadProxyRouteCatalog() {
+function logProxyRouteCatalogIssue(stage, reason, error = null) {
+  const code =
+    safeText(error?.code)
+      .replace(/[^A-Z0-9_]/gi, "")
+      .slice(0, 40) || "UNKNOWN";
+  console.error(
+    `[collab] 代理线路目录异常 stage=${stage} reason=${reason} code=${code} file=${path.basename(PROXY_ROUTES_FILE)}`,
+  );
+}
+
+function readValidatedProxyRouteCatalog(file) {
+  return validateProxyRouteCatalog(JSON.parse(fs.readFileSync(file, "utf-8")));
+}
+
+function maintainProxyRouteCatalogBackup(catalog) {
+  try {
+    const current = readValidatedProxyRouteCatalog(PROXY_ROUTES_BACKUP_FILE);
+    if (JSON.stringify(current) === JSON.stringify(catalog)) return;
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      logProxyRouteCatalogIssue("backup-read", "backup_unusable", error);
+    }
+  }
+  try {
+    fs.mkdirSync(path.dirname(PROXY_ROUTES_BACKUP_FILE), { recursive: true });
+    writeJsonAtomic(PROXY_ROUTES_BACKUP_FILE, catalog);
+  } catch (error) {
+    // 主目录已经严格校验通过；备份维护失败只记录诊断，不把有效主目录降级。
+    logProxyRouteCatalogIssue("backup-write", "backup_unavailable", error);
+  }
+}
+
+function restoreProxyRouteCatalogFromBackup() {
+  let backup;
+  try {
+    backup = readValidatedProxyRouteCatalog(PROXY_ROUTES_BACKUP_FILE);
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      logProxyRouteCatalogIssue("backup-read", "backup_unusable", error);
+    }
+    return null;
+  }
+  try {
+    fs.mkdirSync(path.dirname(PROXY_ROUTES_FILE), { recursive: true });
+    writeJsonAtomic(PROXY_ROUTES_FILE, backup);
+    return backup;
+  } catch (error) {
+    logProxyRouteCatalogIssue("backup-restore", "restore_failed", error);
+    return null;
+  }
+}
+
+function readLegacyAirportStatus() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(AIRPORT_FILE, "utf-8"));
+    if (!isExplicitLegacyAirport(raw)) {
+      throw proxyRouteCatalogError("legacy airport 格式无效");
+    }
+    return { available: true, route: legacyAirportRoute(raw) };
+  } catch (error) {
+    if (error?.code === "ENOENT") return { available: true, route: null };
+    logProxyRouteCatalogIssue("legacy-read", "legacy_airport_unavailable", error);
+    return { available: false, route: null, reason: "legacy_airport_unavailable" };
+  }
+}
+
+function readProxyRouteCatalogStatus() {
   try {
     const raw = JSON.parse(fs.readFileSync(PROXY_ROUTES_FILE, "utf-8"));
-    const routes = (Array.isArray(raw.routes) ? raw.routes : [])
-      .map((route) => normalizeProxyRoute(route))
-      .filter(Boolean);
+    if (isExplicitLegacyAirport(raw)) {
+      const legacy = legacyAirportRoute(raw);
+      return {
+        available: true,
+        source: "legacy-proxy-routes-file",
+        catalog: {
+          version: 1,
+          routes: legacy ? [legacy] : [],
+          updatedAt: legacy?.updatedAt || safeText(raw.updatedAt),
+        },
+      };
+    }
+    const catalog = validateProxyRouteCatalog(raw);
+    maintainProxyRouteCatalogBackup(catalog);
+    return { available: true, source: "modern", catalog };
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      const restored = restoreProxyRouteCatalogFromBackup();
+      if (restored) return { available: true, source: "modern-backup", catalog: restored };
+      const legacyStatus = readLegacyAirportStatus();
+      if (!legacyStatus.available) {
+        return {
+          available: false,
+          reason: legacyStatus.reason,
+          catalog: { version: 1, routes: [], updatedAt: "" },
+        };
+      }
+      const legacy = legacyStatus.route;
+      return {
+        available: true,
+        source: legacy ? "legacy-airport" : "empty",
+        catalog: {
+          version: 1,
+          routes: legacy ? [legacy] : [],
+          updatedAt: legacy?.updatedAt || "",
+        },
+      };
+    }
+
+    const catalogCorrupt =
+      error instanceof SyntaxError || error?.code === "INVALID_PROXY_ROUTE_CATALOG";
+    if (catalogCorrupt) {
+      logProxyRouteCatalogIssue("primary-read", "catalog_corrupt", error);
+      const restored = restoreProxyRouteCatalogFromBackup();
+      if (restored) return { available: true, source: "modern-backup", catalog: restored };
+      return {
+        available: false,
+        reason: "catalog_corrupt",
+        catalog: { version: 1, routes: [], updatedAt: "" },
+      };
+    }
+
+    const reason = ["EACCES", "EPERM"].includes(error?.code)
+      ? "catalog_permission_denied"
+      : "catalog_unreadable";
+    logProxyRouteCatalogIssue("primary-read", reason, error);
     return {
-      version: 1,
-      routes: [...new Map(routes.map((route) => [route.id, route])).values()],
-      updatedAt: safeText(raw.updatedAt),
+      available: false,
+      reason,
+      catalog: { version: 1, routes: [], updatedAt: "" },
     };
-  } catch {
-    const legacy = legacyAirportRoute();
-    return { version: 1, routes: legacy ? [legacy] : [], updatedAt: legacy?.updatedAt || "" };
   }
+}
+
+function loadProxyRouteCatalog() {
+  return readProxyRouteCatalogStatus().catalog;
 }
 
 function saveProxyRouteCatalog(routes) {
   const updatedAt = nowIso();
-  const normalized = (Array.isArray(routes) ? routes : [])
-    .map((route) => normalizeProxyRoute(route, { updatedAt }))
-    .filter(Boolean);
-  const unique = [...new Map(normalized.map((route) => [route.id, route])).values()];
-  if (unique.length !== normalized.length) throw new Error("线路 ID 不能重复");
-  if (unique.length > 64) throw new Error("线路数量不能超过 64 条");
-  const catalog = { version: 1, routes: unique, updatedAt };
+  const catalog = validateProxyRouteCatalog({ version: 1, routes, updatedAt });
+  catalog.routes = catalog.routes.map((route) => ({ ...route, updatedAt }));
+  fs.mkdirSync(path.dirname(PROXY_ROUTES_FILE), { recursive: true });
   writeJsonAtomic(PROXY_ROUTES_FILE, catalog);
+  maintainProxyRouteCatalogBackup(catalog);
   return catalog;
 }
 
-function proxyRoutesForUser(username, bootstrap = null) {
+function sameProxyRouteCatalog(left, right) {
+  const comparable = (routes) =>
+    (Array.isArray(routes) ? routes : []).map((route) => {
+      const normalized = normalizeProxyRoute(route) || {};
+      return {
+        id: normalized.id,
+        name: normalized.name,
+        enabled: normalized.enabled,
+        outbound: normalized.outbound,
+        expected: normalized.expected,
+      };
+    });
+  return JSON.stringify(comparable(left)) === JSON.stringify(comparable(right));
+}
+
+function proxyRoutesForUser(username, bootstrap = null, catalog = null) {
   const { user } = findUser(username);
-  if (!user || (!user.isAdmin && !user.advancedAiAllowed)) return [];
-  const allowed = new Set(normalizeProxyRouteIds(user.allowedProxyRouteIds));
-  const canUse = (id) => user.isAdmin || allowed.has(id);
+  const usesLegacyEntitlement = Boolean(user && !user.isAdmin && user.legacyProxyEntitled);
+  const allowed = new Set(normalizeProxyRouteIds(user?.allowedProxyRouteIds));
+  if (!user || (!user.isAdmin && !allowed.size && !usesLegacyEntitlement)) return [];
+  const legacyRouteIds = new Set(["internal-unified", "internal-airport"]);
+  const canUse = (id) =>
+    user.isAdmin || allowed.has(id) || (usesLegacyEntitlement && legacyRouteIds.has(id));
   const clientBootstrap = bootstrap || loadClientBootstrap();
   const sender = clientBootstrap?.sender || {};
   const routes = [];
@@ -890,7 +1104,7 @@ function proxyRoutesForUser(username, bootstrap = null) {
       expected: { ip: "", countryCode: "", asn: "" },
     });
   }
-  for (const route of loadProxyRouteCatalog().routes) {
+  for (const route of (catalog || loadProxyRouteCatalog()).routes) {
     if (route.enabled && canUse(route.id)) routes.push({ ...route, kind: "managed" });
   }
   return routes;
@@ -1506,6 +1720,40 @@ function closeDuplicateConnections(username, exceptClient) {
   }
 }
 
+function revokeUserSessions(username, reason = "account_updated") {
+  const target = safeText(username);
+  let revoked = 0;
+  for (const [token, session] of sessions.entries()) {
+    if (session.username !== target) continue;
+    sessions.delete(token);
+    const ws = wsByToken.get(token);
+    if (ws && ws.readyState === ws.OPEN) ws.close(4002, reason);
+    wsByToken.delete(token);
+    revoked += 1;
+  }
+  for (const [token, session] of adminSessions.entries()) {
+    if (session.username !== target) continue;
+    adminSessions.delete(token);
+    revoked += 1;
+  }
+  return revoked;
+}
+
+function invalidateAllProxyAuthorizations(reason = "proxy_catalog_updated") {
+  proxyAuthorizationEpoch += 1;
+  let disconnected = 0;
+  for (const ws of wsClients) {
+    if (ws.readyState !== ws.OPEN) continue;
+    ws.close(4002, reason);
+    disconnected += 1;
+  }
+  return disconnected;
+}
+
+function hasCurrentProxyAuthorization(session) {
+  return Boolean(session && session.proxyAuthorizationEpoch === proxyAuthorizationEpoch);
+}
+
 function resolveSessionByToken(token) {
   if (!token) return null;
   const session = sessions.get(token);
@@ -1919,6 +2167,7 @@ const server = http.createServer(async (req, res) => {
         subnetKey,
         subnetLabel,
         clientInfo,
+        proxyAuthorizationEpoch,
       });
 
       sendJson(res, 200, {
@@ -2181,6 +2430,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const payload = safeParseJson(body) || {};
       const nextPassword = String(payload.password || "");
+      let securityChanged = false;
 
       if (typeof payload.displayName !== "undefined")
         user.displayName = safeText(payload.displayName).slice(0, 30) || user.username;
@@ -2189,23 +2439,61 @@ const server = http.createServer(async (req, res) => {
         user.avatar = safeText(payload.avatar).slice(0, MAX_AVATAR_LENGTH);
         user.avatarKind = inferAvatarKind(user.avatar);
       }
-      if (typeof payload.disabled !== "undefined") user.disabled = Boolean(payload.disabled);
-      if (typeof payload.isAdmin !== "undefined") user.isAdmin = Boolean(payload.isAdmin);
+      if (
+        typeof payload.disabled !== "undefined" &&
+        Boolean(payload.disabled) !== Boolean(user.disabled)
+      ) {
+        user.disabled = Boolean(payload.disabled);
+        securityChanged = true;
+      }
+      if (
+        typeof payload.isAdmin !== "undefined" &&
+        Boolean(payload.isAdmin) !== Boolean(user.isAdmin)
+      ) {
+        const wasAdmin = Boolean(user.isAdmin);
+        user.isAdmin = Boolean(payload.isAdmin);
+        if (wasAdmin && !user.isAdmin && typeof payload.advancedAiAllowed === "undefined") {
+          user.advancedAiAllowed = false;
+          user.legacyProxyEntitled = false;
+        }
+        securityChanged = true;
+      }
       if (typeof payload.advancedAiAllowed !== "undefined")
-        user.advancedAiAllowed = Boolean(payload.advancedAiAllowed);
-      if (typeof payload.allowedProxyRouteIds !== "undefined")
-        user.allowedProxyRouteIds = normalizeProxyRouteIds(payload.allowedProxyRouteIds);
-      if (typeof payload.chatDisabled !== "undefined")
+        if (Boolean(payload.advancedAiAllowed) !== Boolean(user.advancedAiAllowed)) {
+          user.advancedAiAllowed = Boolean(payload.advancedAiAllowed);
+          user.legacyProxyEntitled = false;
+          securityChanged = true;
+        }
+      if (typeof payload.allowedProxyRouteIds !== "undefined") {
+        const requestedRouteIds = normalizeProxyRouteIds(payload.allowedProxyRouteIds);
+        const currentRouteIds = normalizeProxyRouteIds(user.allowedProxyRouteIds);
+        const sameRoutes =
+          requestedRouteIds.length === currentRouteIds.length &&
+          requestedRouteIds.every((id) => currentRouteIds.includes(id));
+        if (!sameRoutes) {
+          user.allowedProxyRouteIds = requestedRouteIds;
+          user.legacyProxyEntitled = false;
+          securityChanged = true;
+        }
+      }
+      if (
+        typeof payload.chatDisabled !== "undefined" &&
+        Boolean(payload.chatDisabled) !== Boolean(user.chatDisabled)
+      ) {
         user.chatDisabled = Boolean(payload.chatDisabled);
-      if (nextPassword) {
+        securityChanged = true;
+      }
+      if (nextPassword && !verifyPassword(user, nextPassword)) {
         const salt = crypto.randomBytes(16).toString("hex");
         user.salt = salt;
         user.passwordHash = hashPassword(nextPassword, salt, 120000, "sha256");
         user.iterations = 120000;
         user.digest = "sha256";
+        securityChanged = true;
       }
       user.updatedAt = nowIso();
       saveUserStore(store);
+      if (securityChanged) revokeUserSessions(user.username);
       sendJson(res, 200, {
         ok: true,
         user: adminUserSummary(normalizeUserRecord(user)),
@@ -2377,16 +2665,59 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && pathname === "/api/client/bootstrap") {
     const token = extractBearer(req);
     const session = resolveSessionByToken(token);
-    if (!session) {
+    if (!session || !hasCurrentProxyAuthorization(session)) {
       sendText(res, 401, "未授权");
       return;
     }
 
     const bootstrap = loadClientBootstrap(req);
-    const proxyRoutes = proxyRoutesForUser(session.username, bootstrap);
+    const { user } = findUser(session.username);
+    const routeCatalogStatus = readProxyRouteCatalogStatus();
+    if (!routeCatalogStatus.available) {
+      // v1.0.8 treats any proxyRoutes array as authoritative. A 200 response with an empty array
+      // would therefore erase its cached routes. A non-2xx response preserves legacy client state,
+      // while current clients still revoke runtime authorization before attempting this request.
+      sendJson(res, 503, {
+        error: "proxy_routes_unavailable",
+        capabilities: {
+          proxyRoutes: {
+            available: false,
+            authoritative: false,
+            reason: routeCatalogStatus.reason || "catalog_unavailable",
+          },
+        },
+        fetchedAt: nowIso(),
+      });
+      return;
+    }
+    const proxyRoutes = proxyRoutesForUser(session.username, bootstrap, routeCatalogStatus.catalog);
     const legacyAirport = proxyRoutes.find((route) => route.id === "internal-airport");
+    const unifiedAllowed = proxyRoutes.some((route) => route.id === "internal-unified");
+    const clientBootstrap = unifiedAllowed
+      ? bootstrap
+      : {
+          ...bootstrap,
+          sender: {
+            ...bootstrap.sender,
+            proxy_server: "",
+            proxy_port: "",
+            proxy_uuid: "",
+          },
+        };
     sendJson(res, 200, {
-      ...bootstrap,
+      ...clientBootstrap,
+      capabilities: {
+        proxyRoutes: {
+          available: routeCatalogStatus.available,
+          authoritative: routeCatalogStatus.available,
+        },
+      },
+      authorization: {
+        username: session.username,
+        isAdmin: Boolean(user?.isAdmin),
+        advancedAiAllowed: Boolean(user?.isAdmin || user?.advancedAiAllowed),
+        allowedProxyRouteIds: proxyRoutes.map((route) => route.id),
+      },
       update: sharedReleaseUpdateForClient(req),
       airport: legacyAirport
         ? { name: legacyAirport.name, outbound: legacyAirport.outbound }
@@ -2641,10 +2972,12 @@ const server = http.createServer(async (req, res) => {
       const payload = safeParseJson(body) || {};
       const outbound =
         payload.outbound && typeof payload.outbound === "object" ? payload.outbound : null;
+      const previousStatus = readProxyRouteCatalogStatus();
       const saved = saveAirport(payload.name, outbound);
-      const current = loadProxyRouteCatalog();
-      const withoutLegacy = current.routes.filter((route) => route.id !== "internal-airport");
-      saveProxyRouteCatalog(
+      const withoutLegacy = previousStatus.catalog.routes.filter(
+        (route) => route.id !== "internal-airport",
+      );
+      const savedCatalog = saveProxyRouteCatalog(
         saved.outbound
           ? [
               ...withoutLegacy,
@@ -2657,6 +2990,12 @@ const server = http.createServer(async (req, res) => {
             ]
           : withoutLegacy,
       );
+      if (
+        !previousStatus.available ||
+        !sameProxyRouteCatalog(previousStatus.catalog.routes, savedCatalog.routes)
+      ) {
+        invalidateAllProxyAuthorizations();
+      }
       sendJson(res, 200, {
         ok: true,
         airport: {
@@ -2692,7 +3031,14 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readBody(req, 2 * 1024 * 1024);
       const payload = safeParseJson(body) || {};
+      const previousStatus = readProxyRouteCatalogStatus();
       const saved = saveProxyRouteCatalog(payload.routes);
+      if (
+        !previousStatus.available ||
+        !sameProxyRouteCatalog(previousStatus.catalog.routes, saved.routes)
+      ) {
+        invalidateAllProxyAuthorizations();
+      }
       sendJson(res, 200, { ok: true, ...saved });
     } catch (err) {
       sendText(res, 400, err.message || "保存代理线路失败");
@@ -2962,7 +3308,7 @@ server.on("upgrade", (request, socket, head) => {
   cleanupExpiredSessions();
   const token = String(reqUrl.searchParams.get("token") || "").trim();
   const session = resolveSessionByToken(token);
-  if (!token || !session) {
+  if (!token || !session || !hasCurrentProxyAuthorization(session)) {
     socket.destroy();
     return;
   }
@@ -3423,11 +3769,14 @@ module.exports = {
   clearLoginFails,
   safeParseJson,
   normalizeUserRecord,
+  createUserRecord,
   normalizeProxyRoute,
   normalizeProxyRouteIds,
+  readProxyRouteCatalogStatus,
   loadProxyRouteCatalog,
   saveProxyRouteCatalog,
   proxyRoutesForUser,
   getUserStoreEntry,
   putUserStore,
+  revokeUserSessions,
 };
