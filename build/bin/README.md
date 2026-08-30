@@ -20,6 +20,13 @@ ShareGPT 运行代理能力时依赖以下第三方程序：
 
 当前固定版本：sing-box `windows 1.11.8` / `macos 1.12.17`，frpc `windows 0.65.0`。
 
+GitHub Actions 的 Windows 构建使用 `scripts/prepare-windows-release-assets.ps1` 从上述官方
+Release 下载固定版本并校验 SHA-256，只写入 `build/bin/` 根目录。正式包校验会拒绝
+`resources/bin/windows/*.exe` 与根目录副本同时出现，避免安装包重复携带二进制。
+
+macOS 正式构建使用 `scripts/prepare-macos-release-assets.sh` 下载 arm64 官方归档，先校验
+归档 SHA-256，再校验解包后的可执行文件 SHA-256，校验通过后才写入 `build/bin/sing-box`。
+
 ## 放置方式
 
 可以把下载后的文件放到以下任一位置：
@@ -54,4 +61,3 @@ chmod +x build/bin/macos/sing-box
 
 - 没有这些二进制时，应用仍然可以启动界面、登录、聊天、管理和打包
 - 只有真正点击启动 Sender / Receiver 代理服务时，才会提示缺少对应二进制
-

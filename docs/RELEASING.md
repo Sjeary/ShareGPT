@@ -1,127 +1,61 @@
-# 发布流程（每次更新前的参考清单）
+# ShareGPT 桌面发布流程
 
-本文是「每次要发新版本时照着做」的清单：版本号、更新日志、打包、CI、发布与自动更新。
-面向维护者；普通使用者无需阅读。
+## 版本与更新契约
 
-## 更新与自动更新是怎么工作的
+- `package.json.version` 是构建版本真源，必须与 `package-lock.json` 两处版本一致。
+- 正式身份是 `com.sjeary.sharegpt.desktop`，产品名是 `ShareGPT`。发布契约固定二者，避免升级改变 bundle 身份或 Electron 默认 userData 目录。
+- 客户端更新版本只认 GitHub `/releases/latest` 的最终 tag。`latest.yml` 只服务于 Windows 包下载，不能改写 UI 版本。
+- 版本、身份、文件名、签名配置与旧版别名由 `release.compatibility.json` 和 `npm run verify:release-contract` 固定。
 
-- **自动更新源 = GitHub Releases**（参考 cc-switch），不经过任何自建服务器。
-  客户端读取 `https://github.com/<owner>/<repo>/releases/latest/download/latest.yml`
-  比较版本（见 `src/main/backend.js` 的 `checkLatestRelease()` 与登录页 `checkGithubUpdate()`）。
-- **Windows**：用 NSIS 安装包 + `latest.yml` 做 electron-updater 原地无感更新
-  （后台下载、自动安装并重启，账号 / 聊天记录 / 网页登录态保留）。
-- **macOS**：目前为「提示下载安装包」方式（dmg）。
-- 仓库地址从 `package.json` 的 `homepage` / `repository` 推导，fork 后改这两项即指向自己的仓库。
-
-## 必需更新 vs 可选更新
-
-目前**没有强制更新机制**——是否「必须升级」靠更新日志/Release notes 告知用户。
-
-- **可选更新**：体验优化、非阻断性小修复 → 在 CHANGELOG 顶部用一行 `> 可选更新：…` 标注。
-- **建议/必需更新**：影响可用性、安全或与服务端不兼容的改动 → 在 Release notes 醒目说明。
-
-## 发布清单
-
-### 1) 改完代码，本地跑一遍 CI 等价校验（必须全绿）
-
-CI（`.github/workflows/ci.yml`）只做校验、**不打包**。本地等价命令（仓库根目录）：
+## 合并前验证
 
 ```bash
-npm run format:check          # prettier 全仓格式检查
-npm run lint                  # eslint（Node 端）
-npm run typecheck:main        # 主进程 checkJs
-npm test                      # collab_server2 单元测试
-node --check src/main/*.js    # 主进程语法
-node --check collab_server2/server.js
-npm --prefix src/renderer-next run build   # 渲染层 tsc -b + vite build
-npm --prefix admin_console/ui run build    # 管理端（如有改动）
+npm ci
+npm --prefix src/renderer-next ci
+npm --prefix admin_console/ui ci
+npm --prefix collab_server2 ci
+npm run test:release
+npm run verify:release-contract
+npm run verify:signing-boundaries
+npm run typecheck:main
+npm run lint
+npm run format:check
+npm test
+npm --prefix src/renderer-next run build
+npm --prefix admin_console/ui run build
 ```
 
-### 2) 升级版本号
+`.github/workflows/ci.yml` 还会在真实 Windows runner 下载固定版本的 sing-box/frpc、校验 SHA-256、构建 NSIS 并执行 `verify:release-win`。这用于覆盖 Windows 专属路径，不新增第二套更新机制。
 
-- **唯一真源**：根 `package.json` 的 `version`（`app.getVersion()` 读它，安装包名 `sharegpt-${version}.exe` 也用它）。
-- 同步：
-  - `src/renderer-next/src/components/layout/Sidebar.tsx` 里侧栏底部的兜底版本串（仅在 `meta.version` 缺失时显示）。
-  - 遵循 [语义化版本](https://semver.org/lang/zh-CN/)：修 bug → patch（1.0.0→1.0.1）；加功能且兼容 → minor；不兼容 → major。
-- 注意：`admin_console` 有自己的版本号，与主程序独立，不要一起改。
+## 正式产物
 
-### 3) 写更新日志（两处都写）
+推送与 `package.json.version` 完全相同的 `vX.Y.Z` tag，触发 `Release Desktop`：
 
-- `CHANGELOG.md`：[Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 格式，新增 `## [X.Y.Z] - YYYY-MM-DD`，
-  分 `新增 / 变更 / 修复 / 备注`；可选更新加 `> 可选更新：…`；并更新底部 `[Unreleased]` 与 `[X.Y.Z]` 链接。
-- `src/renderer-next/src/components/panels/account/changelog.ts`：应用内「更新日志」区，数组**顶部**追加一条，
-  2–4 句面向用户的要点（详细以 GitHub Release notes 为准）。
+- Windows：`sharegpt-X.Y.Z.exe`、`.exe.blockmap`、`latest.yml`。
+- macOS：`sharegpt-X.Y.Z-arm64.dmg`、`.zip`，以及字节一致的旧客户端别名 `sharegpt-sender-X.Y.Z-arm64.dmg`。
 
-### 4) 打包
+Windows 任务要求正式 Authenticode PFX 和 `WINDOWS_PUBLISHER_NAME`，复验安装器、unpacked exe 与 `app-update.yml` 的发布者身份、有效签名及时间戳。macOS 任务要求 Developer ID、`MACOS_TEAM_ID` 和 App Store Connect API 凭据，按 [MACOS_SIGNING.md](MACOS_SIGNING.md) 验证发布者 Team ID、签名、公证和 Gatekeeper。
 
-> **正式 Windows Release 只能使用 `dist:win:installer`。** `dist:win` 是 portable
-> 自测包；它同样是完整封装的单文件 EXE，但不是安装包，不生成自动更新所需的
-> `latest.yml` / `.blockmap`。两条命令默认写入同名 `sharegpt-<version>.exe`，所以最后执行的
-> 命令决定该文件究竟是哪一种，不能只看文件名。
+正式 tag 的 commit 必须已经包含在 `origin/main`。两平台先只上传 Actions artifact。publish job 精确验证六个文件，创建或更新 draft，核对 GitHub 远端资产后才公开为 Latest。已公开 tag 会被拒绝覆盖。
 
-```bash
-# Windows 便携版（快速本地自测，无 latest.yml、不参与自动更新）
-npm run dist:win              # → release/sharegpt-<version>.exe
+## Windows 固定二进制
 
-# Windows 安装版（NSIS，含 latest.yml，自动更新用这个）
-npm run dist:win:installer    # → release/ 下 nsis 安装包 + latest.yml
+`scripts/prepare-windows-release-assets.ps1` 从官方 release 下载 `build/bin/checksums.json` 固定的 sing-box 与 frpc，按 SHA-256 验证后只放到 `build/bin` 根目录，避免同时打包根目录和 `windows/` 副本。
 
-# macOS（在 mac 构建机上，见 memory: mac-build-machine）
-npm run dist:mac              # → dmg
-```
+正式构建命令：
 
-- 二进制依赖 `build/bin/`（sing-box、frpc），由 `prepare-assets` 校验/准备。
-- 未签名：Windows 首次运行会触发 SmartScreen，需「更多信息 → 仍要运行」。
-
-#### Windows 产物身份与体积验收
-
-`1.0.6` 同一提交、同一 `win-unpacked` 内容的实测对照如下；数值只作为本次诊断基线，
-后续版本会随代码和二进制更新变化：
-
-| 目标        | 命令                         |        字节 | Windows 显示 | 自动更新文件                   |
-| ----------- | ---------------------------- | ----------: | -----------: | ------------------------------ |
-| portable    | `npm run dist:win`           |  92,114,714 |    87.85 MiB | 无                             |
-| NSIS 安装包 | `npm run dist:win:installer` | 102,559,502 |    97.81 MiB | `latest.yml` + `.exe.blockmap` |
-
-因此“比上一版小约 10 MiB”首先要核对目标类型，不能直接判定为漏文件。portable 仍包含
-`app.asar`、`sing-box.exe` 和 `frpc.exe`；它缺少的是安装/卸载与 electron-updater 的 NSIS
-发布层。正式发布前在 Windows 构建机执行：
-
-本次检查还发现 `win-unpacked/resources/bin/sing-box`（无 `.exe`）是约 34 MB 的非 Windows
-冗余文件，因为 `extraResources` 当前会复制整个 `build/bin`。它不影响功能，也进一步说明此次
-小包不是漏掉 Windows 核心资产。以后若清理跨平台冗余，必须单独提交、重新验证并更新这里的
-体积基线，不能把预期缩小误判为构建缺失。
-
-```bash
-npm run dist:win:installer
+```powershell
+./scripts/prepare-windows-release-assets.ps1
+npm run dist:win:release
 npm run verify:release-win
 ```
 
-`verify:release-win` 必须返回 `target: "nsis"` 和 `ok: true`。它会检查：
+本地未签名 `dist:win:installer` 只用于结构验证，不可作为 GitHub 正式产物。
 
-- 安装包、`latest.yml`、`.exe.blockmap` 均存在且版本/文件大小相互匹配；
-- `win-unpacked/resources/app.asar` 存在；
-- `sing-box.exe`、`frpc.exe` 已进入安装内容，且 SHA-256 与固定清单一致。
+## 发布后验收
 
-若同一目录还要保留 portable，请在构建 NSIS 前把它明确改名为
-`sharegpt-<version>-portable.exe`；不要让 portable 覆盖正式安装包。
-
-### 5) 推送代码 + CI
-
-- 推送到 `main` 或开 PR；CI 自动跑第 1 步的校验。确保绿。
-
-### 6) 发布 GitHub Release（实际让用户能更新的一步）
-
-1. 打 tag：`git tag vX.Y.Z && git push origin vX.Y.Z`。
-2. 在 GitHub 新建 Release，选该 tag，**上传**：
-   - Windows NSIS 安装包（`.exe`）+ `latest.yml` + 对应的 `.exe.blockmap`；
-   - （如有）macOS `.dmg`。
-3. Release notes 可直接引用 `CHANGELOG.md` 对应小节；可选/必需更新在此说明。
-4. 发布后，客户端下次检查即可读到 `latest.yml` 并按版本提示/更新。
-
-## 易踩的坑
-
-- **asar pitfall**：不要在仓库根目录 `npx asar extract-file <app.asar> package.json`——会把 `package.json` 写到当前目录、覆盖真实文件。要解到临时目录。
-- `latest.yml` 必须随安装包一起上传到同一个 Release，否则自动更新读不到。
-- `.exe.blockmap` 必须与安装包同版本、同名上传，否则差分更新会退化或失败。
-- 便携版（portable）不产生 `latest.yml`，不能用于自动更新，仅供本地自测。
+1. GitHub Release 必须为 Latest，资产数和名称精确匹配工作流预期。
+2. `/releases/latest` 最终跳转到当前 tag。
+3. `latest.yml` 的 version/path/size/sha512 与 tag 和 Windows canonical 安装包精确一致，`app-update.yml` 固定 GitHub owner/repo 与正式 publisher。
+4. 从 1.0.8 安装升级，确认账号、设置、协作记录及 AI 网页登录态仍位于原 ShareGPT 数据目录。
+5. Windows 自动更新遇到版本或文件名不一致时必须停止；macOS canonical 与 legacy DMG 必须 `cmp` 一致。

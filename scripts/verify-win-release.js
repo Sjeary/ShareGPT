@@ -2,6 +2,11 @@ const asar = require("@electron/asar");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  assertLatestWindowsContract,
+  assertWindowsAppUpdateContract,
+  sha512Base64,
+} = require("./windowsReleaseContract.cjs");
 
 const root = path.resolve(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -28,11 +33,28 @@ const installerName = `sharegpt-${version}.exe`;
 const installer = requiredFile(path.join(releaseDir, installerName));
 const blockmap = requiredFile(path.join(releaseDir, `${installerName}.blockmap`));
 const latest = requiredFile(path.join(releaseDir, "latest.yml"));
+const appUpdate = requiredFile(
+  path.join(releaseDir, "win-unpacked", "resources", "app-update.yml"),
+);
 const appAsar = requiredFile(path.join(releaseDir, "win-unpacked", "resources", "app.asar"));
 const singBox = requiredFile(
   path.join(releaseDir, "win-unpacked", "resources", "bin", "sing-box.exe"),
 );
 const frpc = requiredFile(path.join(releaseDir, "win-unpacked", "resources", "bin", "frpc.exe"));
+for (const duplicate of ["sing-box", "frpc"]) {
+  const duplicatePath = path.join(
+    root,
+    releaseDir,
+    "win-unpacked",
+    "resources",
+    "bin",
+    "windows",
+    `${duplicate}.exe`,
+  );
+  if (fs.existsSync(duplicatePath)) {
+    throw new Error(`Windows 安装内容包含重复二进制：${path.relative(root, duplicatePath)}`);
+  }
+}
 
 const packagedEntries = asar.listPackage(appAsar.filePath);
 const localCacheEntries = packagedEntries.filter((entry) =>
@@ -49,19 +71,20 @@ if (!rendererIndex) {
 }
 
 const latestText = fs.readFileSync(latest.filePath, "utf8");
-if (!new RegExp(`^version:\\s*${version.replace(/\./g, "\\.")}\\s*$`, "m").test(latestText)) {
-  throw new Error(`latest.yml 版本号不是 ${version}`);
-}
-if (
-  !latestText.includes(`url: ${installerName}`) ||
-  !latestText.includes(`path: ${installerName}`)
-) {
-  throw new Error(`latest.yml 未指向 ${installerName}`);
-}
-const declaredSize = Number(latestText.match(/^\s+size:\s*(\d+)\s*$/m)?.[1]);
-if (declaredSize !== installer.size) {
-  throw new Error(`latest.yml size=${declaredSize}，实际安装包=${installer.size}`);
-}
+const installerBytes = fs.readFileSync(installer.filePath);
+const latestMetadata = assertLatestWindowsContract(latestText, {
+  version,
+  installerName,
+  installerSize: installer.size,
+  installerSha512: sha512Base64(installerBytes),
+});
+const appUpdateMetadata = assertWindowsAppUpdateContract(
+  fs.readFileSync(appUpdate.filePath, "utf8"),
+  {
+    expectedPublisherName: process.env.SHAREGPT_EXPECTED_WINDOWS_PUBLISHER,
+    requirePublisherIdentity: process.env.SHAREGPT_REQUIRE_RELEASE_IDENTITY === "1",
+  },
+);
 
 const checksumFile = path.join(root, "build", "bin", "checksums.json");
 const checksums = JSON.parse(fs.readFileSync(checksumFile, "utf8"));
@@ -90,6 +113,14 @@ process.stdout.write(
       },
       blockmapBytes: blockmap.size,
       latestYml: path.relative(root, latest.filePath),
+      latestSha512: latestMetadata.sha512,
+      appUpdateYml: {
+        path: path.relative(root, appUpdate.filePath),
+        provider: appUpdateMetadata.provider,
+        owner: appUpdateMetadata.owner,
+        repo: appUpdateMetadata.repo,
+        publisherNames: appUpdateMetadata.publisherNames,
+      },
       packagedResources: {
         appAsarBytes: appAsar.size,
         npmCacheEntries: localCacheEntries.length,

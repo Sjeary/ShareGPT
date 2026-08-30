@@ -28,6 +28,7 @@
   "scripts": {
     "test": "npm run test:main && npm --prefix src/renderer-next test",
     "test:main": "node --test collab_server2/test/server.test.js src/main/test/*.test.js",
+    "test:release": "node --experimental-test-coverage --test --test-coverage-include=scripts/releaseContract.cjs --test-coverage-include=scripts/releaseSourceContract.cjs --test-coverage-include=scripts/windowsReleaseContract.cjs --test-coverage-include=src/main/autoUpdateInstall.js --test-coverage-include=src/main/updateRelease.js --test-coverage-include=src/main/userDataPath.js --test-coverage-lines=90 --test-coverage-functions=85 --test-coverage-branches=70 src/main/test/autoUpdateInstall.test.js src/main/test/releaseContract.test.js src/main/test/releaseSourceContract.test.js src/main/test/updateRelease.test.js src/main/test/userDataPath.test.js src/main/test/windowsReleaseContract.test.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
@@ -35,7 +36,11 @@
     "verify:browser-privacy": "electron scripts/verify-browser-privacy.js",
     "verify:browser-privacy-ui": "npm run build:next && node scripts/verify-browser-privacy-ui.js",
     "verify:release-win": "node scripts/verify-win-release.js",
+    "verify:release-contract": "node scripts/verify-release-contract.mjs",
+    "verify:release-source": "node scripts/verify-release-source.mjs",
+    "verify:signing-boundaries": "node scripts/verify-signing-boundaries.mjs",
     "prepare:assets": "node scripts/prepare-assets.mjs all",
+    "prepare:release-mac-assets": "bash scripts/prepare-macos-release-assets.sh",
     "build:next": "npm --prefix src/renderer-next install && npm --prefix src/renderer-next run build",
     "dev": "node scripts/prepare-assets.mjs all && npm exec -- electron .",
     "dev:sender": "node scripts/prepare-assets.mjs sender && npm exec -- electron . --mode=sender",
@@ -45,9 +50,10 @@
     "dist:win:receiver": "node scripts/prepare-assets.mjs receiver --required && npm exec -- electron-builder --win portable --config build.receiver.json",
     "dist:win:split": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --win portable --config build.sender.json && node scripts/prepare-assets.mjs receiver --required && npm exec -- electron-builder --win portable --config build.receiver.json",
     "dist:win:installer": "npm run build:next && node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --win nsis",
-    "dist:mac": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --mac dmg",
-    "dist:mac:sender": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --mac --config build.sender.json",
-    "dist:mac:sender:dmg": "node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --mac dmg --config build.sender.json",
+    "dist:win:release": "npm run build:next && node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --win nsis -c.forceCodeSigning=true",
+    "dist:mac": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --mac --config build.sender.json",
+    "dist:mac:sender": "npm run dist:mac",
+    "dist:mac:sender:local": "npm run build:next && node scripts/prepare-assets.mjs sender --required && CSC_IDENTITY_AUTO_DISCOVERY=false npm exec -- electron-builder --mac dir --config build.sender.json -c.mac.notarize=false -c.mac.hardenedRuntime=false && bash scripts/sign-local-macos.sh release_sender/mac-arm64/ShareGPT.app",
     "dist:linux": "node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --linux AppImage",
     "dev:admin": "npm --prefix admin_console run dev",
     "dist:admin:win": "npm --prefix admin_console run dist:win",
@@ -96,13 +102,20 @@
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Sjeary",
+        "repo": "ShareGPT"
+      }
+    ],
     "win": {
       "target": [
         "portable"
       ],
       "artifactName": "sharegpt-${version}.${ext}",
       "executableName": "sharegpt",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": true
     },
     "nsis": {
       "oneClick": false,

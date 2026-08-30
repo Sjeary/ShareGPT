@@ -10,6 +10,7 @@
     "macos": {
       "file": "sing-box",
       "version": "1.12.17",
+      "archiveSha256": "6dd10bb5bb100c3e9db17b0b88abd2eff00b9c1daea29fffda9142b67f169d9d",
       "sha256": "0b3e7947b53c798adadd282e45748117a7820b21bfb10a7e1a43b46f02fac97a"
     }
   },
