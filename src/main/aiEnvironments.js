@@ -1,4 +1,5 @@
 const AI_KINDS = new Set(["gpt", "gemini", "claude"]);
+const { normalizePrincipalId } = require("./principal");
 
 function safeText(value, maxLength = 120) {
   return String(value ?? "")
@@ -11,13 +12,20 @@ function normalizeAiEnvironmentId(value) {
   return /^[a-z0-9][a-z0-9-]{0,47}$/.test(id) ? id : "";
 }
 
-function partitionForAiEnvironment(kind, environmentId) {
+function partitionForAiEnvironment(kind, environmentId, principalContext = {}) {
   const targetKind = safeText(kind, 16).toLowerCase();
   const targetEnvironmentId = normalizeAiEnvironmentId(environmentId);
-  if (!AI_KINDS.has(targetKind) || !targetEnvironmentId) {
+  const principalId = normalizePrincipalId(principalContext.principalId, { allowLocal: true });
+  const legacyOwnerId = normalizePrincipalId(principalContext.legacyPartitionOwnerId, {
+    allowLocal: true,
+  });
+  if (!AI_KINDS.has(targetKind) || !targetEnvironmentId || !principalId) {
     throw new Error("AI 环境标识不合法");
   }
-  return `persist:sharegpt-ai-${targetKind}-${targetEnvironmentId}`;
+  if (legacyOwnerId && principalId === legacyOwnerId) {
+    return `persist:sharegpt-ai-${targetKind}-${targetEnvironmentId}`;
+  }
+  return `persist:sharegpt-ai-${principalId}-${targetKind}-${targetEnvironmentId}`;
 }
 
 function normalizeAiRouteId(value) {

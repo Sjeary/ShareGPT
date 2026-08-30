@@ -13,14 +13,41 @@ const {
 } = require("../aiEnvironments");
 
 test("高级 AI 环境为每个服务和环境生成独立 partition", () => {
-  assert.equal(partitionForAiEnvironment("gpt", "env-work"), "persist:sharegpt-ai-gpt-env-work");
-  assert.notEqual(
-    partitionForAiEnvironment("gpt", "env-work"),
-    partitionForAiEnvironment("gpt", "env-personal"),
+  const alice = { principalId: "a".repeat(64), legacyPartitionOwnerId: "" };
+  const bob = { principalId: "b".repeat(64), legacyPartitionOwnerId: "" };
+  assert.equal(
+    partitionForAiEnvironment("gpt", "env-work", alice),
+    `persist:sharegpt-ai-${"a".repeat(64)}-gpt-env-work`,
   );
   assert.notEqual(
-    partitionForAiEnvironment("gpt", "env-work"),
-    partitionForAiEnvironment("claude", "env-work"),
+    partitionForAiEnvironment("gpt", "env-work", alice),
+    partitionForAiEnvironment("gpt", "env-personal", alice),
+  );
+  assert.notEqual(
+    partitionForAiEnvironment("gpt", "env-work", alice),
+    partitionForAiEnvironment("claude", "env-work", alice),
+  );
+  assert.notEqual(
+    partitionForAiEnvironment("gpt", "env-work", alice),
+    partitionForAiEnvironment("gpt", "env-work", bob),
+  );
+});
+
+test("1.0.8 advanced partition is retained only by its confirmed legacy owner", () => {
+  const aliceId = "a".repeat(64);
+  assert.equal(
+    partitionForAiEnvironment("gpt", "env-work", {
+      principalId: aliceId,
+      legacyPartitionOwnerId: aliceId,
+    }),
+    "persist:sharegpt-ai-gpt-env-work",
+  );
+  assert.notEqual(
+    partitionForAiEnvironment("gpt", "env-work", {
+      principalId: "b".repeat(64),
+      legacyPartitionOwnerId: aliceId,
+    }),
+    "persist:sharegpt-ai-gpt-env-work",
   );
 });
 
@@ -28,7 +55,11 @@ test("高级 AI 环境拒绝可造成 partition 混淆的标识", () => {
   assert.equal(normalizeAiEnvironmentId(" env-work "), "env-work");
   assert.equal(normalizeAiEnvironmentId("../gpt-chat"), "");
   assert.equal(normalizeAiEnvironmentId("env_work"), "");
-  assert.throws(() => partitionForAiEnvironment("unknown", "env-work"), /环境标识/);
+  assert.throws(
+    () => partitionForAiEnvironment("unknown", "env-work", { principalId: "a".repeat(64) }),
+    /环境标识/,
+  );
+  assert.throws(() => partitionForAiEnvironment("gpt", "env-work"), /环境标识/);
 });
 
 test("高级环境接受服务器签发的稳定线路标识并拒绝不安全标识", () => {
