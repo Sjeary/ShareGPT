@@ -2047,8 +2047,39 @@ function createElectronApp(baseMode = "all") {
         source === "dark" ? "dark" : source === "light" ? "light" : "system";
       return true;
     });
-    ipcMain.handle("settings:load", () => backend.loadSettings());
-    ipcMain.handle("settings:save", (_event, settings) => backend.saveSettings(settings));
+    ipcMain.handle("settings:load", (_event, payload) => {
+      backend.assertSettingsPrincipalSnapshot({
+        principalId: payload?.expectedPrincipalId,
+        generation: payload?.expectedPrincipalGeneration,
+      });
+      return backend.loadSettings();
+    });
+    ipcMain.handle("settings:principal-context", () => backend.getPrincipalContext());
+    ipcMain.handle("settings:save", (_event, payload) =>
+      backend.saveSettingsForPrincipal(
+        payload?.settings,
+        payload?.expectedPrincipalId,
+        payload?.expectedPrincipalGeneration,
+      ),
+    );
+    ipcMain.handle("settings:patch", (_event, payload) =>
+      backend.patchSettings(
+        payload?.section,
+        payload?.patch,
+        payload?.expectedRevision,
+        payload?.expectedPrincipalId,
+        payload?.expectedPrincipalGeneration,
+      ),
+    );
+    ipcMain.handle("settings:operate", (_event, payload) =>
+      backend.operateSettings(
+        payload?.section,
+        payload?.operations,
+        payload?.expectedRevision,
+        payload?.expectedPrincipalId,
+        payload?.expectedPrincipalGeneration,
+      ),
+    );
     ipcMain.handle("settings:import", () => backend.importSettings());
     ipcMain.handle("chat-history:load", () => backend.loadChatHistory());
     ipcMain.handle("chat-history:save", (_event, payload) => backend.saveChatHistory(payload));

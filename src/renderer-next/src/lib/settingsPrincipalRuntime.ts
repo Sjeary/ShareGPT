@@ -3,6 +3,16 @@ export interface SettingsPrincipalSnapshot {
   generation: number
 }
 
+export function requireSettingsPrincipalSnapshot(value: unknown): SettingsPrincipalSnapshot {
+  const candidate = value as Partial<SettingsPrincipalSnapshot> | null
+  const principalId = typeof candidate?.principalId === 'string' ? candidate.principalId.trim() : ''
+  const generation = Number(candidate?.generation)
+  if (!principalId || !Number.isInteger(generation) || generation < 0) {
+    throw new Error('主进程未返回完整的 Principal 快照')
+  }
+  return { principalId, generation }
+}
+
 export interface SettingsPrincipalRuntime {
   activate: (principalId: string, generation?: number) => SettingsPrincipalSnapshot
   invalidate: () => SettingsPrincipalSnapshot

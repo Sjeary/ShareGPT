@@ -83,8 +83,15 @@ function ProfileApp() {
 
   // 头像取首字; 与主窗 settings.ui.theme 对齐主题。
   useEffect(() => {
-    api
-      ?.loadSettings?.()
+    if (!api) return
+    void api
+      .getSettingsPrincipal()
+      .then((principal) =>
+        api.loadSettings({
+          expectedPrincipalId: principal.principalId,
+          expectedPrincipalGeneration: principal.generation,
+        }),
+      )
       .then((s) => {
         const theme = (s as { ui?: { theme?: string } })?.ui?.theme
         document.documentElement.classList.toggle('dark', safeText(theme).toLowerCase() !== 'light')

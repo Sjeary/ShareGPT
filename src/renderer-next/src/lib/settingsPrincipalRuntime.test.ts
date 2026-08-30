@@ -4,7 +4,18 @@ import {
   applyPrincipalOperation,
   createSettingsPrincipalRuntime,
   persistPrincipalSettings,
+  requireSettingsPrincipalSnapshot,
 } from './settingsPrincipalRuntime.ts'
+
+test('main-process Principal snapshots fail closed when identity is incomplete', () => {
+  assert.deepEqual(requireSettingsPrincipalSnapshot({ principalId: 'Alice', generation: 3 }), {
+    principalId: 'Alice',
+    generation: 3,
+  })
+  assert.throws(() => requireSettingsPrincipalSnapshot({ principalId: '', generation: 3 }))
+  assert.throws(() => requireSettingsPrincipalSnapshot({ principalId: 'Alice', generation: 1.5 }))
+  assert.throws(() => requireSettingsPrincipalSnapshot({ principalId: 'Alice' }))
+})
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => undefined

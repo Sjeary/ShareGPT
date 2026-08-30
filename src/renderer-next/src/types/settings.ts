@@ -170,6 +170,7 @@ export interface BrowserPrivacySettings {
 }
 
 export interface AppSettings {
+  settingsRevision: number
   sender: Partial<SenderSettings>
   receiver: Partial<ReceiverSettings>
   collab: Partial<CollabSettings>

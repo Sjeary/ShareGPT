@@ -182,7 +182,11 @@ async function applySavedTheme() {
   if (!window.api?.loadSettings) return;
 
   try {
-    const settings = await window.api.loadSettings();
+    const principal = await window.api.getSettingsPrincipal();
+    const settings = await window.api.loadSettings({
+      expectedPrincipalId: principal.principalId,
+      expectedPrincipalGeneration: principal.generation,
+    });
     document.body.dataset.theme = normalizeTheme(settings?.ui?.theme);
   } catch {
     document.body.dataset.theme = "dark";

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
+import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
 import type { NotesAiProvider } from '@/types/api'
 
 // 知识库 AI provider 配置 (持久化到 app settings.notesAi; 密钥仅存本机)。
@@ -27,7 +28,12 @@ export const useNotesAiStore = create<NotesAiState>((set, get) => ({
   load: async () => {
     if (get().loaded) return
     try {
-      const settings = (await api.loadSettings()) as Record<string, unknown>
+      const principal = settingsPrincipalRuntime.snapshot()
+      const settings = (await api.loadSettings({
+        expectedPrincipalId: principal.principalId,
+        expectedPrincipalGeneration: principal.generation,
+      })) as Record<string, unknown>
+      settingsPrincipalRuntime.assertCurrent(principal)
       const c = (settings?.notesAi ?? {}) as Partial<NotesAiProvider>
       set({
         baseUrl: c.baseUrl || DEFAULTS.baseUrl,
@@ -45,11 +51,21 @@ export const useNotesAiStore = create<NotesAiState>((set, get) => ({
     set(patch)
     const s = get()
     try {
-      const settings = (await api.loadSettings()) as Record<string, unknown>
+      const principal = settingsPrincipalRuntime.snapshot()
+      const settings = (await api.loadSettings({
+        expectedPrincipalId: principal.principalId,
+        expectedPrincipalGeneration: principal.generation,
+      })) as Record<string, unknown>
+      settingsPrincipalRuntime.assertCurrent(principal)
       await api.saveSettings({
-        ...settings,
-        notesAi: { baseUrl: s.baseUrl, apiKey: s.apiKey, model: s.model, effort: s.effort },
+        settings: {
+          ...settings,
+          notesAi: { baseUrl: s.baseUrl, apiKey: s.apiKey, model: s.model, effort: s.effort },
+        },
+        expectedPrincipalId: principal.principalId,
+        expectedPrincipalGeneration: principal.generation,
       })
+      settingsPrincipalRuntime.assertCurrent(principal)
     } catch {
       /* ignore */
     }

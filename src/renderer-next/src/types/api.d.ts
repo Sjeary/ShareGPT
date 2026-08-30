@@ -205,8 +205,30 @@ export interface ShareGptApi {
   setThemeSource: (source: 'dark' | 'light' | 'system') => Promise<unknown>
 
   // 设置 / 数据
-  loadSettings: () => Promise<Record<string, unknown>>
-  saveSettings: (settings: Record<string, unknown>) => Promise<unknown>
+  loadSettings: (payload: {
+    expectedPrincipalId: string
+    expectedPrincipalGeneration: number
+  }) => Promise<Record<string, unknown>>
+  getSettingsPrincipal: () => Promise<{ principalId: string; generation: number }>
+  saveSettings: (payload: {
+    settings: Record<string, unknown>
+    expectedPrincipalId: string
+    expectedPrincipalGeneration: number
+  }) => Promise<Record<string, unknown>>
+  patchSettings: (payload: {
+    section: string
+    patch: Record<string, unknown>
+    expectedRevision?: number
+    expectedPrincipalId: string
+    expectedPrincipalGeneration: number
+  }) => Promise<Record<string, unknown>>
+  operateSettings: (payload: {
+    section: 'advancedAi' | 'translation'
+    operations: Array<{ op: 'set' | 'delete'; path: string[]; value?: unknown }>
+    expectedRevision?: number
+    expectedPrincipalId: string
+    expectedPrincipalGeneration: number
+  }) => Promise<Record<string, unknown>>
   importSettings: () => Promise<unknown>
   loadChatHistory: () => Promise<unknown>
   saveChatHistory: (payload: unknown) => Promise<unknown>

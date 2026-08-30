@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
+import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
 import type { AiKind } from '@/store/useAiStore'
 import type { TranslationProvider, TranslationSettings } from '@/types/settings'
 
@@ -77,7 +78,12 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   load: async () => {
     if (get().loaded) return
     try {
-      const settings = (await api.loadSettings()) as Record<string, unknown>
+      const principal = settingsPrincipalRuntime.snapshot()
+      const settings = (await api.loadSettings({
+        expectedPrincipalId: principal.principalId,
+        expectedPrincipalGeneration: principal.generation,
+      })) as Record<string, unknown>
+      settingsPrincipalRuntime.assertCurrent(principal)
       set({
         config: normalizeSettings(
           settings.translation as Partial<TranslationSettings> | undefined,
@@ -93,8 +99,18 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   saveConfig: async (patch) => {
     const config = normalizeSettings({ ...get().config, ...patch })
     set({ config })
-    const settings = (await api.loadSettings()) as Record<string, unknown>
-    await api.saveSettings({ ...settings, translation: config })
+    const principal = settingsPrincipalRuntime.snapshot()
+    const settings = (await api.loadSettings({
+      expectedPrincipalId: principal.principalId,
+      expectedPrincipalGeneration: principal.generation,
+    })) as Record<string, unknown>
+    settingsPrincipalRuntime.assertCurrent(principal)
+    await api.saveSettings({
+      settings: { ...settings, translation: config },
+      expectedPrincipalId: principal.principalId,
+      expectedPrincipalGeneration: principal.generation,
+    })
+    settingsPrincipalRuntime.assertCurrent(principal)
   },
 
   setProvider: async (provider) => get().saveConfig({ provider }),

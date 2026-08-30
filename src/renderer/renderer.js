@@ -2784,6 +2784,7 @@ function refreshFallbackVisibility() {
 
 async function saveSettings(options = {}) {
   const silent = Boolean(options.silent);
+  const principal = await window.api.getSettingsPrincipal();
   state.settings = {
     sender: getSenderForm(),
     receiver: getReceiverForm(),
@@ -2792,7 +2793,11 @@ async function saveSettings(options = {}) {
     gemini: getGeminiForm(),
     ui: getUiForm(),
   };
-  await window.api.saveSettings(state.settings);
+  await window.api.saveSettings({
+    settings: state.settings,
+    expectedPrincipalId: safeText(principal?.principalId),
+    expectedPrincipalGeneration: Number(principal?.generation),
+  });
   if (!silent) {
     logLine("app", "设置已保存");
   }
@@ -6452,7 +6457,11 @@ async function main() {
     applyGptTabsPayload(await window.api.listGptViews());
   }
 
-  const settings = await window.api.loadSettings();
+  const principal = await window.api.getSettingsPrincipal();
+  const settings = await window.api.loadSettings({
+    expectedPrincipalId: safeText(principal?.principalId),
+    expectedPrincipalGeneration: Number(principal?.generation),
+  });
   state.settings = settings;
   fillForm(settings);
 

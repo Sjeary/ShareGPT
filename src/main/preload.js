@@ -3,8 +3,11 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("api", {
   platform: process.platform,
   setThemeSource: (source) => ipcRenderer.invoke("app:set-theme-source", source),
-  loadSettings: () => ipcRenderer.invoke("settings:load"),
-  saveSettings: (settings) => ipcRenderer.invoke("settings:save", settings),
+  loadSettings: (payload) => ipcRenderer.invoke("settings:load", payload),
+  getSettingsPrincipal: () => ipcRenderer.invoke("settings:principal-context"),
+  saveSettings: (payload) => ipcRenderer.invoke("settings:save", payload),
+  patchSettings: (payload) => ipcRenderer.invoke("settings:patch", payload),
+  operateSettings: (payload) => ipcRenderer.invoke("settings:operate", payload),
   importSettings: () => ipcRenderer.invoke("settings:import"),
   loadChatHistory: () => ipcRenderer.invoke("chat-history:load"),
   saveChatHistory: (payload) => ipcRenderer.invoke("chat-history:save", payload),

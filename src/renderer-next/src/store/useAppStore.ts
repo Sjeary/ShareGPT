@@ -1,5 +1,10 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
+import {
+  requireSettingsPrincipalSnapshot,
+  settingsPrincipalRuntime,
+} from '@/lib/settingsPrincipalRuntime'
+import { createSingleFlight } from '@/lib/singleFlight'
 import type { NavKey } from '@/lib/nav'
 import type { AppSettings, StatusPayload } from '@/types/settings'
 
@@ -88,6 +93,7 @@ function applyTheme(dark: boolean) {
 }
 
 const EMPTY_SETTINGS: AppSettings = {
+  settingsRevision: 0,
   sender: {},
   receiver: {},
   collab: {},
@@ -149,6 +155,9 @@ const EMPTY_SETTINGS: AppSettings = {
   },
   ui: {},
 }
+
+const appStoreInitialization = createSingleFlight<void>()
+let statusSubscriptionInstalled = false
 
 export const useAppStore = create<AppState>((set, get) => ({
   active: 'service',
@@ -383,76 +392,104 @@ export const useAppStore = create<AppState>((set, get) => ({
   tourOpen: false,
   setTourOpen: (v) => set({ tourOpen: v }),
 
-  init: async () => {
-    const [settings, mode, meta, status] = await Promise.all([
-      api.loadSettings().catch(() => ({})),
-      api.getMode().catch(() => 'all'),
-      api.getAppMeta().catch(() => ({})),
-      api.getStatus().catch(() => ({})),
-    ])
-    const mergedSettings = { ...EMPTY_SETTINGS, ...(settings as AppSettings) }
-    set({
-      settings: mergedSettings,
-      mode: String(mode || ''),
-      meta: meta as Record<string, unknown>,
-      status: status as StatusPayload,
+  init: () => {
+    if (get().settings) return Promise.resolve()
+    return appStoreInitialization.run(async () => {
+      const principal = requireSettingsPrincipalSnapshot(await api.getSettingsPrincipal())
+      settingsPrincipalRuntime.activate(principal.principalId, principal.generation)
+      const principalSnapshot = settingsPrincipalRuntime.snapshot()
+      const [settings, mode, meta, status] = await Promise.all([
+        api.loadSettings({
+          expectedPrincipalId: principalSnapshot.principalId,
+          expectedPrincipalGeneration: principalSnapshot.generation,
+        }),
+        api.getMode().catch(() => 'all'),
+        api.getAppMeta().catch(() => ({})),
+        api.getStatus().catch(() => ({})),
+      ])
+      settingsPrincipalRuntime.assertCurrent(principalSnapshot)
+      const mergedSettings = { ...EMPTY_SETTINGS, ...(settings as unknown as AppSettings) }
+      set({
+        settings: mergedSettings,
+        mode: String(mode || ''),
+        meta: meta as Record<string, unknown>,
+        status: status as StatusPayload,
+      })
+      // [LOW] 主题优先取磁盘 settings.ui.theme (跨设备/资料包一致), 无则回退 localStorage 现值。
+      const savedTheme = mergedSettings.ui?.theme
+      if (savedTheme === 'dark' || savedTheme === 'light') {
+        const dark = savedTheme === 'dark'
+        applyTheme(dark)
+        set({ dark })
+      } else {
+        // 无磁盘设置: 用启动时 localStorage 推断的 dark 重新落实到 DOM (确保 class 同步)。
+        applyTheme(get().dark)
+      }
+      // 启动时同步内嵌网页明暗 = 当前 app 主题。
+      void api.setThemeSource(get().dark ? 'dark' : 'light').catch(() => undefined)
+      // 侧栏左右位置同样优先取磁盘设置 (跨设备一致), 无则保留 localStorage 现值。
+      const savedSide = mergedSettings.ui?.sidebarSide
+      if (savedSide === 'left' || savedSide === 'right') {
+        set({ sidebarSide: savedSide })
+      }
+      // 是否展示 Gemini 同样优先取磁盘设置, 无则保留 localStorage 现值。
+      const savedShowGemini = mergedSettings.ui?.showGemini
+      if (typeof savedShowGemini === 'boolean') {
+        set({ showGemini: savedShowGemini })
+        if (!savedShowGemini && get().active === 'gemini') set({ active: 'service' })
+      }
+      const savedHidden = mergedSettings.ui?.hiddenNav
+      if (Array.isArray(savedHidden)) set({ hiddenNav: savedHidden as NavKey[] })
+
+      const savedOrder = mergedSettings.ui?.navOrder
+      if (Array.isArray(savedOrder)) set({ navOrder: savedOrder as NavKey[] })
+
+      const savedShowClaude = mergedSettings.ui?.showClaude
+      if (typeof savedShowClaude === 'boolean') {
+        set({ showClaude: savedShowClaude })
+        if (!savedShowClaude && get().active === 'claude') set({ active: 'service' })
+      }
+      if (!statusSubscriptionInstalled) {
+        api.onStatus((payload) => set({ status: payload as StatusPayload }))
+        statusSubscriptionInstalled = true
+      }
     })
-    // [LOW] 主题优先取磁盘 settings.ui.theme (跨设备/资料包一致), 无则回退 localStorage 现值。
-    const savedTheme = mergedSettings.ui?.theme
-    if (savedTheme === 'dark' || savedTheme === 'light') {
-      const dark = savedTheme === 'dark'
-      applyTheme(dark)
-      set({ dark })
-    } else {
-      // 无磁盘设置: 用启动时 localStorage 推断的 dark 重新落实到 DOM (确保 class 同步)。
-      applyTheme(get().dark)
-    }
-    // 启动时同步内嵌网页明暗 = 当前 app 主题。
-    void api.setThemeSource(get().dark ? 'dark' : 'light').catch(() => undefined)
-    // 侧栏左右位置同样优先取磁盘设置 (跨设备一致), 无则保留 localStorage 现值。
-    const savedSide = mergedSettings.ui?.sidebarSide
-    if (savedSide === 'left' || savedSide === 'right') {
-      set({ sidebarSide: savedSide })
-    }
-    // 是否展示 Gemini 同样优先取磁盘设置, 无则保留 localStorage 现值。
-    const savedShowGemini = mergedSettings.ui?.showGemini
-    if (typeof savedShowGemini === 'boolean') {
-      set({ showGemini: savedShowGemini })
-      if (!savedShowGemini && get().active === 'gemini') set({ active: 'service' })
-    }
-    const savedHidden = mergedSettings.ui?.hiddenNav
-    if (Array.isArray(savedHidden)) set({ hiddenNav: savedHidden as NavKey[] })
-
-    const savedOrder = mergedSettings.ui?.navOrder
-    if (Array.isArray(savedOrder)) set({ navOrder: savedOrder as NavKey[] })
-
-    const savedShowClaude = mergedSettings.ui?.showClaude
-    if (typeof savedShowClaude === 'boolean') {
-      set({ showClaude: savedShowClaude })
-      if (!savedShowClaude && get().active === 'claude') set({ active: 'service' })
-    }
-    api.onStatus((payload) => set({ status: payload as StatusPayload }))
   },
 
   reloadSettings: async () => {
-    const raw = (await api.loadSettings().catch(() => ({}))) as AppSettings
+    const principalSnapshot = settingsPrincipalRuntime.snapshot()
+    const raw = (await api.loadSettings({
+      expectedPrincipalId: principalSnapshot.principalId,
+      expectedPrincipalGeneration: principalSnapshot.generation,
+    })) as unknown as AppSettings
+    settingsPrincipalRuntime.assertCurrent(principalSnapshot)
     const merged = { ...EMPTY_SETTINGS, ...raw }
     set({ settings: merged })
     return merged
   },
 
   saveSettings: async (next) => {
-    set({ settings: next })
-    await api.saveSettings(next as unknown as Record<string, unknown>)
+    const principalSnapshot = settingsPrincipalRuntime.snapshot()
+    const saved = (await api.saveSettings({
+      settings: next as unknown as Record<string, unknown>,
+      expectedPrincipalId: principalSnapshot.principalId,
+      expectedPrincipalGeneration: principalSnapshot.generation,
+    })) as unknown as AppSettings
+    settingsPrincipalRuntime.assertCurrent(principalSnapshot)
+    set({ settings: { ...EMPTY_SETTINGS, ...saved } })
   },
 
   patchSection: async (section, patch) => {
+    const principalSnapshot = settingsPrincipalRuntime.snapshot()
     const cur = get().settings ?? EMPTY_SETTINGS
-    const next: AppSettings = {
-      ...cur,
-      [section]: { ...(cur[section] as object), ...(patch as object) },
-    }
-    set({ settings: next })
-    await api.saveSettings(next as unknown as Record<string, unknown>)
+    const saved = (await api.patchSettings({
+      section: String(section),
+      patch: patch as Record<string, unknown>,
+      expectedRevision: cur.settingsRevision,
+      expectedPrincipalId: principalSnapshot.principalId,
+      expectedPrincipalGeneration: principalSnapshot.generation,
+    })) as unknown as AppSettings
+    settingsPrincipalRuntime.assertCurrent(principalSnapshot)
+    set({ settings: { ...EMPTY_SETTINGS, ...saved } })
   },
 }))
