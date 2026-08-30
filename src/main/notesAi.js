@@ -2,7 +2,7 @@
 // provider {baseUrl, apiKey, model, effort} 由渲染层从本地设置传入, 主进程不持久化密钥。
 const http = require("node:http");
 const https = require("node:https");
-const { URL } = require("node:url");
+const { endpointRequestOptions, parseEndpoint, resolveEndpoint } = require("./endpointSecurity");
 
 const SYS =
   "你是中文写作与知识管理助手。直接输出结果本身，不要任何解释、前后缀，也不要用 markdown 代码围栏包裹。";
@@ -52,33 +52,85 @@ function endpointFor(baseUrl) {
   return b + "/v1/responses";
 }
 
-function createNotesAi({ getWindow }) {
+function createNotesAi({
+  getWindow,
+  getPrincipalId = () => "",
+  requirePrincipalContext = false,
+  lookup = undefined,
+  httpRequest = http.request,
+  httpsRequest = https.request,
+}) {
   let counter = 0;
+  let blockedPrincipalId = "";
   const live = new Map();
+  const MAX_RETRY = 2;
+  const MAX_ERROR_BODY_BYTES = 64 * 1024;
 
-  function emit(streamId, payload) {
+  function emit(stream, payload) {
+    if (stream.cancelled || stream.principalId !== String(getPrincipalId() || "")) return false;
     const win = getWindow();
-    if (win && !win.isDestroyed()) win.webContents.send("notes-ai:event", { streamId, ...payload });
+    if (win && !win.isDestroyed()) {
+      win.webContents.send("notes-ai:event", {
+        streamId: stream.id,
+        principalId: stream.principalId,
+        ...payload,
+      });
+      return true;
+    }
+    return false;
   }
 
   function complete(req) {
     const streamId = `ai_${++counter}`;
+    const principalId = String(getPrincipalId() || "");
+    const expectedPrincipalId = String(req?.principalId || "");
+    if (
+      requirePrincipalContext &&
+      (!principalId ||
+        !expectedPrincipalId ||
+        expectedPrincipalId !== principalId ||
+        blockedPrincipalId === principalId)
+    ) {
+      throw new Error("Notes AI principal 已变化，请重试");
+    }
     const provider = (req && req.provider) || {};
     const baseUrl = String(provider.baseUrl || "").trim();
     const apiKey = String(provider.apiKey || "").trim();
     const model = String(provider.model || "gpt-5.5").trim();
     const effort = String(provider.effort || "medium").trim();
+    const stream = {
+      id: streamId,
+      principalId,
+      request: null,
+      retryTimer: null,
+      attempt: 0,
+      terminal: false,
+      cancelled: false,
+      gotDelta: false,
+    };
+    live.set(streamId, stream);
+
+    const finishOnce = (payload) => {
+      if (stream.terminal || stream.cancelled) return false;
+      stream.terminal = true;
+      if (stream.retryTimer) clearTimeout(stream.retryTimer);
+      stream.retryTimer = null;
+      emit(stream, payload);
+      live.delete(streamId);
+      return true;
+    };
+
     if (!baseUrl || !apiKey) {
-      setImmediate(() => emit(streamId, { type: "error", message: "未配置 AI 接口地址或密钥" }));
-      return { streamId };
+      setImmediate(() => finishOnce({ type: "error", message: "未配置 AI 接口地址或密钥" }));
+      return { streamId, principalId };
     }
 
     let endpoint;
     try {
-      endpoint = new URL(endpointFor(baseUrl));
-    } catch {
-      setImmediate(() => emit(streamId, { type: "error", message: "接口地址不合法" }));
-      return { streamId };
+      endpoint = parseEndpoint(endpointFor(baseUrl), { label: "AI 接口", allowRemoteHttp: true });
+    } catch (error) {
+      setImmediate(() => finishOnce({ type: "error", message: error.message }));
+      return { streamId, principalId };
     }
 
     const payload = {
@@ -91,130 +143,189 @@ function createNotesAi({ getWindow }) {
     if (effort) payload.reasoning = { effort };
     const body = Buffer.from(JSON.stringify(payload), "utf-8");
 
-    const lib = endpoint.protocol === "http:" ? http : https;
-    const MAX_RETRY = 2;
+    const requestImpl = endpoint.protocol === "http:" ? httpRequest : httpsRequest;
     // 仅在「尚未吐出任何内容」且属于上游过载/限流/瞬时错误时才自动重试,
     // 避免把已经流式输出一半的回答重复一遍。
-    let gotDelta = false;
     const retryable = (code, msg) => {
       if ([429, 500, 502, 503, 504, 529].includes(Number(code))) return true;
       return /overload|rate.?limit|too many|temporar|timeout|busy|unavailable|capacity/i.test(
         String(msg || ""),
       );
     };
-    const scheduleRetry = (attempt, reason) => {
-      const delay = 800 * (attempt + 1) + 400 * attempt;
-      emit(streamId, {
+
+    const scheduleRetry = () => {
+      if (stream.cancelled || stream.terminal) return;
+      const nextAttempt = stream.attempt + 1;
+      const delay = 800 * nextAttempt + 400 * (nextAttempt - 1);
+      emit(stream, {
         type: "status",
-        message: `服务繁忙, 正在重试(${attempt + 1}/${MAX_RETRY})…`,
+        message: `服务繁忙, 正在重试(${nextAttempt}/${MAX_RETRY})…`,
       });
-      setTimeout(() => send(attempt + 1), delay);
+      stream.request = null;
+      stream.retryTimer = setTimeout(() => {
+        stream.retryTimer = null;
+        if (!stream.cancelled && !stream.terminal) send(nextAttempt);
+      }, delay);
     };
 
-    function send(attempt) {
-      const r = lib.request(
-        {
-          method: "POST",
-          hostname: endpoint.hostname,
-          port: endpoint.port || (endpoint.protocol === "http:" ? 80 : 443),
-          path: endpoint.pathname + endpoint.search,
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-            Accept: "text/event-stream",
-            "Content-Length": body.length,
+    const failAttempt = (code, message) => {
+      if (stream.cancelled || stream.terminal) return;
+      if (!stream.gotDelta && stream.attempt < MAX_RETRY && retryable(code, message)) {
+        scheduleRetry();
+        return;
+      }
+      finishOnce({
+        type: "error",
+        message:
+          retryable(code, message) && !stream.gotDelta
+            ? `AI 服务繁忙${code ? `(${code})` : ""}, 已重试 ${MAX_RETRY} 次仍失败, 请稍后再试`
+            : message || "网络错误",
+      });
+    };
+
+    const handleSseLine = (line) => {
+      const normalized = String(line || "").trim();
+      if (!normalized.startsWith("data:")) return;
+      const data = normalized.slice(5).trim();
+      if (!data || data === "[DONE]" || stream.terminal || stream.cancelled) return;
+      try {
+        const event = JSON.parse(data);
+        if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+          stream.gotDelta = true;
+          emit(stream, { type: "delta", text: event.delta });
+        } else if (event.type === "response.completed") {
+          finishOnce({ type: "done" });
+        } else if (event.type === "response.failed" || event.type === "error") {
+          finishOnce({ type: "error", message: event.error?.message || "生成失败" });
+        }
+      } catch {
+        // 非法 SSE 行由上游负责重发；不能与下一行拼接，否则会组成错误 JSON。
+      }
+    };
+
+    async function send(attempt) {
+      if (stream.cancelled || stream.terminal) return;
+      stream.attempt = attempt;
+      let attemptSettled = false;
+      let record;
+      try {
+        record = await resolveEndpoint(endpoint, { lookup });
+      } catch (error) {
+        failAttempt(0, error.message || "接口地址校验失败");
+        return;
+      }
+      if (stream.cancelled || stream.terminal) return;
+      let r;
+      try {
+        r = requestImpl(
+          {
+            ...endpointRequestOptions(endpoint, record),
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+              Accept: "text/event-stream",
+              "Content-Length": body.length,
+            },
+            timeout: 120000,
           },
-          timeout: 120000,
-        },
-        (res) => {
-          if (res.statusCode && res.statusCode >= 400) {
-            let err = "";
-            res.on("data", (c) => (err += c));
-            res.on("end", () => {
-              if (!gotDelta && attempt < MAX_RETRY && retryable(res.statusCode, err)) {
-                scheduleRetry(attempt, err);
-              } else {
-                emit(streamId, {
-                  type: "error",
-                  message:
-                    retryable(res.statusCode, err) && !gotDelta
-                      ? `AI 服务繁忙(${res.statusCode}), 已重试 ${MAX_RETRY} 次仍失败, 请稍后再试`
-                      : `接口错误 ${res.statusCode}: ${err.slice(0, 300)}`,
-                });
-                live.delete(streamId);
+          (res) => {
+            if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+              let err = "";
+              let errorBytes = 0;
+              res.on("data", (chunk) => {
+                if (errorBytes >= MAX_ERROR_BODY_BYTES) return;
+                const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+                const remaining = MAX_ERROR_BODY_BYTES - errorBytes;
+                err += value.subarray(0, remaining).toString("utf8");
+                errorBytes += Math.min(value.length, remaining);
+              });
+              res.on("end", () => {
+                if (attemptSettled) return;
+                attemptSettled = true;
+                failAttempt(res.statusCode, `接口错误 ${res.statusCode}: ${err.slice(0, 300)}`);
+              });
+              return;
+            }
+            let buf = "";
+            res.setEncoding("utf8");
+            res.on("data", (chunk) => {
+              buf += chunk;
+              let idx;
+              while ((idx = buf.indexOf("\n")) >= 0) {
+                const line = buf.slice(0, idx).trim();
+                buf = buf.slice(idx + 1);
+                handleSseLine(line);
               }
             });
-            return;
-          }
-          let buf = "";
-          res.setEncoding("utf8");
-          res.on("data", (chunk) => {
-            buf += chunk;
-            let idx;
-            while ((idx = buf.indexOf("\n")) >= 0) {
-              const line = buf.slice(0, idx).trim();
-              buf = buf.slice(idx + 1);
-              if (!line.startsWith("data:")) continue;
-              const data = line.slice(5).trim();
-              if (!data || data === "[DONE]") continue;
-              try {
-                const j = JSON.parse(data);
-                if (j.type === "response.output_text.delta" && typeof j.delta === "string") {
-                  gotDelta = true;
-                  emit(streamId, { type: "delta", text: j.delta });
-                } else if (j.type === "response.completed") {
-                  emit(streamId, { type: "done" });
-                } else if (j.type === "response.failed" || j.type === "error") {
-                  emit(streamId, { type: "error", message: j.error?.message || "生成失败" });
-                }
-              } catch {
-                /* 非完整 JSON, 等下一块 */
+            res.on("end", () => {
+              if (buf.trim()) handleSseLine(buf);
+              if (!attemptSettled) {
+                attemptSettled = true;
+                finishOnce({ type: "done" });
               }
-            }
-          });
-          res.on("end", () => {
-            emit(streamId, { type: "done" });
-            live.delete(streamId);
-          });
-        },
-      );
+            });
+          },
+        );
+      } catch (error) {
+        attemptSettled = true;
+        failAttempt(0, error?.message || "请求创建失败");
+        return;
+      }
       r.on("error", (e) => {
-        if (!gotDelta && attempt < MAX_RETRY && retryable(0, e.message)) {
-          scheduleRetry(attempt, e.message);
-        } else {
-          emit(streamId, { type: "error", message: e.message || "网络错误" });
-          live.delete(streamId);
-        }
+        if (attemptSettled || stream.cancelled || stream.terminal) return;
+        attemptSettled = true;
+        failAttempt(0, e.message || "网络错误");
       });
       r.on("timeout", () => {
+        if (attemptSettled || stream.cancelled || stream.terminal) return;
+        attemptSettled = true;
         r.destroy();
-        if (!gotDelta && attempt < MAX_RETRY) {
-          scheduleRetry(attempt, "timeout");
-        } else {
-          emit(streamId, { type: "error", message: "请求超时" });
-          live.delete(streamId);
-        }
+        failAttempt(0, "请求超时");
       });
-      live.set(streamId, r);
+      stream.request = r;
       r.end(body);
     }
 
     send(0);
-    return { streamId };
+    return { streamId, principalId };
   }
 
   function cancel(streamId) {
-    const r = live.get(streamId);
-    if (r) {
+    const stream = live.get(streamId);
+    if (stream) {
+      stream.cancelled = true;
+      if (stream.retryTimer) clearTimeout(stream.retryTimer);
+      stream.retryTimer = null;
       try {
-        r.destroy();
+        stream.request?.destroy();
       } catch {}
       live.delete(streamId);
     }
     return { ok: true };
   }
 
-  return { complete, cancel };
+  function cancelAll() {
+    const count = live.size;
+    for (const streamId of [...live.keys()]) cancel(streamId);
+    return { ok: true, count };
+  }
+
+  function invalidatePrincipal(expectedPrincipalId = "") {
+    const principalId = String(getPrincipalId() || "");
+    if (expectedPrincipalId && String(expectedPrincipalId) !== principalId) {
+      return { ok: false, count: 0 };
+    }
+    blockedPrincipalId = principalId;
+    return cancelAll();
+  }
+
+  function activatePrincipal() {
+    blockedPrincipalId = "";
+    return { ok: true, principalId: String(getPrincipalId() || "") };
+  }
+
+  return { complete, cancel, cancelAll, invalidatePrincipal, activatePrincipal };
 }
 
 module.exports = { createNotesAi };
