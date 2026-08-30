@@ -41,6 +41,7 @@ const {
   scaleAiHostBounds,
   shouldCloseAiWorkspacesForEnvironment,
 } = require("./aiEnvironments");
+const { applyStableUserDataPath } = require("./userDataPath");
 
 // 记录每个 AI 会话(按 partition)实际访问过的主机名, 供「代理检测」展示页面流量去向。
 // 在 configureAiSession 内通过 webRequest 被动收集 (每个 partition 仅装一次)。
@@ -144,51 +145,6 @@ function normalizeMode(baseMode, argv) {
   }
   const argMode = parseModeArg(argv);
   return argMode || "all";
-}
-
-function copyMissingUserDataEntries(sourceDir, targetDir) {
-  if (!sourceDir || !targetDir) return;
-  const from = path.resolve(sourceDir);
-  const to = path.resolve(targetDir);
-  if (from === to || !fs.existsSync(from)) return;
-
-  fs.mkdirSync(to, { recursive: true });
-  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
-    const sourcePath = path.join(from, entry.name);
-    const targetPath = path.join(to, entry.name);
-    if (fs.existsSync(targetPath)) continue;
-    if (entry.isDirectory()) {
-      fs.cpSync(sourcePath, targetPath, { recursive: true, errorOnExist: false });
-    } else if (entry.isFile()) {
-      fs.copyFileSync(sourcePath, targetPath);
-    }
-  }
-}
-
-function applyStableUserDataPath(appInstance) {
-  // 仅开发环境(未打包)且显式设置 SHAREGPT_USER_DATA 时, 使用隔离数据目录,
-  // 避免与正在运行的生产客户端抢占 userData 目录与缓存锁。生产打包版永不进入此分支。
-  const devUserDataDir = process.env.SHAREGPT_USER_DATA;
-  if (devUserDataDir && !appInstance.isPackaged) {
-    try {
-      fs.mkdirSync(devUserDataDir, { recursive: true });
-    } catch (err) {
-      console.warn("Unable to create dev user data dir:", err.message || err);
-    }
-    appInstance.setPath("userData", devUserDataDir);
-    return;
-  }
-
-  const legacyUserDataDir = appInstance.getPath("userData");
-  const stableUserDataDir = path.join(appInstance.getPath("appData"), "ShareGPT");
-
-  try {
-    copyMissingUserDataEntries(legacyUserDataDir, stableUserDataDir);
-  } catch (err) {
-    console.warn("Unable to migrate existing user data:", err.message || err);
-  }
-
-  appInstance.setPath("userData", stableUserDataDir);
 }
 
 async function flushAiSessionStorage(extraPartitions = []) {
