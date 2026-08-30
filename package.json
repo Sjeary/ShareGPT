@@ -26,7 +26,8 @@
     "sing-box"
   ],
   "scripts": {
-    "test": "node --test collab_server2/test/server.test.js src/main/test/*.test.js",
+    "test": "npm run test:main && npm --prefix src/renderer-next test",
+    "test:main": "node --test collab_server2/test/server.test.js src/main/test/*.test.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",

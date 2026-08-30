@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node --experimental-strip-types --test \"src/**/*.test.ts\"",
+    "typecheck:test": "tsc -p tsconfig.test.json",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
