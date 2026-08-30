@@ -139,7 +139,7 @@ interface UpdateProgress {
   fileName?: string
 }
 
-// 应用内更新区。读 useAuthStore.updateInfo (bootstrap.update) 判定有无更新,
+// 应用内更新区。读 useAuthStore.updateInfo (GitHub Latest) 判定有无更新,
 // 接 api.onAppUpdateProgress 显示进度, 安装走 downloadAppUpdate -> openAppUpdate。
 // 移植自旧 renderer.js syncUpdateControls(~2811) / installAppUpdate(~2911)。
 function UpdateSection() {
@@ -231,7 +231,10 @@ function UpdateSection() {
       setDownloading(true)
       setProgress({ transferred: 0, total: 0, percent: 0, fileName: '更新包' })
       try {
-        const res = (await api.installAppUpdate()) as { updated?: boolean } | null
+        const res = (await api.installAppUpdate({
+          version: latestVersion,
+          fileName: safeText(updateInfo?.fileName),
+        })) as { updated?: boolean } | null
         if (res?.updated) {
           toast.success('新版本已下载，正在原地安装并自动重启…')
         } else {

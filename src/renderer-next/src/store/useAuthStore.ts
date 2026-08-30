@@ -23,7 +23,7 @@ interface AuthState {
   profile: AuthProfile | null
   // 运行期密码 (用于断线静默重登, 不写盘除非用户勾选记住密码)
   runtimePassword: string
-  // 登录后 /api/client/bootstrap 下发的最新版本信息 (供更新 UI 读取)。
+  // 主进程从 GitHub Latest Release 获取的版本信息 (供更新 UI 读取)。
   // null = 尚未拉取过; 旧 state.app.updateInfo (~2817)。
   updateInfo: BootstrapUpdate | null
 

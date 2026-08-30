@@ -319,7 +319,7 @@ export interface ShareGptApi {
   getMode: () => Promise<'sender' | 'receiver' | 'all' | string>
   checkAppUpdate: () => Promise<unknown>
   isUpdateSupported: () => Promise<boolean>
-  installAppUpdate: () => Promise<unknown>
+  installAppUpdate: (payload: { version: string; fileName: string }) => Promise<unknown>
   downloadAppUpdate: (payload: unknown) => Promise<unknown>
   openAppUpdate: (payload: unknown) => Promise<unknown>
   showSystemNotification: (payload: unknown) => Promise<unknown>

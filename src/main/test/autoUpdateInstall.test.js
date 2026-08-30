@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const {
+  assertRequestedAutoUpdate,
   flushUpdateStorage,
   installVerifiedAutoUpdate,
   launchVerifiedAutoUpdate,
@@ -33,6 +34,25 @@ class MockUpdater extends EventEmitter {
 }
 
 const expectedRelease = { version: "1.0.9", fileName: "sharegpt-1.0.9.exe" };
+
+test("renderer install request must match the current GitHub Latest release", () => {
+  assert.deepEqual(
+    assertRequestedAutoUpdate(expectedRelease, { ...expectedRelease }),
+    expectedRelease,
+  );
+  assert.throws(
+    () => assertRequestedAutoUpdate(expectedRelease, { ...expectedRelease, version: "6.0.0" }),
+    /GitHub 最新版本/,
+  );
+  assert.throws(
+    () =>
+      assertRequestedAutoUpdate(expectedRelease, {
+        ...expectedRelease,
+        fileName: "sharegpt-sender-1.0.9.exe",
+      }),
+    /版本契约无效/,
+  );
+});
 
 test("matching metadata downloads once, prepares, and removes listeners", async () => {
   const updater = new MockUpdater(info("1.0.9", "sharegpt-1.0.9.exe"));

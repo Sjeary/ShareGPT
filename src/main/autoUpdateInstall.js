@@ -21,6 +21,18 @@ function normalizeAutoUpdateExpectation(value) {
   return { version, fileName: canonicalFileName };
 }
 
+function assertRequestedAutoUpdate(expected, requested) {
+  const expectation = normalizeAutoUpdateExpectation(expected);
+  const request = normalizeAutoUpdateExpectation(requested);
+  if (
+    request.version !== expectation.version ||
+    request.fileName.toLowerCase() !== expectation.fileName.toLowerCase()
+  ) {
+    throw new Error("更新信息已变化，请重新检查 GitHub 最新版本后再安装");
+  }
+  return expectation;
+}
+
 function assertExpectedAutoUpdate(info, expectation, { requireDownloadedFile = false } = {}) {
   const actualVersion = safeReleaseVersion(info?.version);
   const advertisedFiles = [
@@ -127,6 +139,7 @@ async function flushUpdateStorage(partitions, fromPartition) {
 
 module.exports = {
   assertExpectedAutoUpdate,
+  assertRequestedAutoUpdate,
   flushUpdateStorage,
   installVerifiedAutoUpdate,
   launchVerifiedAutoUpdate,

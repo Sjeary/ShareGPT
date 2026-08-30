@@ -17,6 +17,7 @@ const {
 } = require("electron");
 const { Backend, DEFAULT_TARGET_DOMAINS } = require("./backend");
 const appLog = require("./logger");
+const updateLog = appLog.scoped("update");
 const {
   applyEnvironmentToWebContents,
   clearAiSessionData,
@@ -83,6 +84,13 @@ const {
 const { registerAiRecoverySignals } = require("./aiRecoverySignals");
 const { runSettingsPrincipalTransition } = require("./settingsPrincipalTransition");
 const { applyStableUserDataPath } = require("./userDataPath");
+const {
+  assertRequestedAutoUpdate,
+  flushUpdateStorage,
+  installVerifiedAutoUpdate,
+  launchVerifiedAutoUpdate,
+} = require("./autoUpdateInstall");
+const { assertManualUpdateRequest } = require("./updateRelease");
 
 // 记录每个 AI 会话(按 partition)实际访问过的主机名, 供「代理检测」展示页面流量去向。
 // 在 configureAiSession 内通过 webRequest 被动收集 (每个 partition 仅装一次)。
@@ -186,24 +194,6 @@ function normalizeMode(baseMode, argv) {
   }
   const argMode = parseModeArg(argv);
   return argMode || "all";
-}
-
-async function flushAiSessionStorage(extraPartitions = []) {
-  const partitions = [
-    ...new Set([
-      ...Object.values(AI_WORKSPACE_POLICIES).map((policy) => policy.partition),
-      ...extraPartitions.map((partition) => safeText(partition)).filter(Boolean),
-    ]),
-  ];
-  await Promise.all(
-    partitions.map(async (partition) => {
-      try {
-        await session.fromPartition(partition).flushStorageData();
-      } catch (err) {
-        console.warn(`Unable to flush ${partition}:`, err.message || err);
-      }
-    }),
-  );
 }
 
 function safeText(value) {
@@ -493,6 +483,7 @@ function createElectronApp(baseMode = "all") {
   // mac 未签名无法走 Squirrel 自动更新, 仍用下载 dmg 的方式; dev/未打包也不启用。
   let autoUpdater = null;
   let autoUpdaterBusy = false;
+  const downloadedUpdatePackages = new Set();
   let appMode = normalizeMode(baseMode, process.argv);
   const configuredAiPartitions = new Set();
   const aiWorkspaceRegistry = createDurableWorkspaceRegistry();
@@ -2526,7 +2517,7 @@ function createElectronApp(baseMode = "all") {
     // 是否支持「原地无感更新」(Windows 打包版 = true; mac / dev = false -> 前端回退到下载方式)。
     ipcMain.handle("app:update-supported", () => Boolean(autoUpdater));
     // Windows 无感更新: 检查 -> 下载(进度走 app:update-progress) -> 完成后原地安装并自动重启。
-    ipcMain.handle("app:update-install", async () => {
+    ipcMain.handle("app:update-install", async (_event, payload) => {
       if (!autoUpdater) {
         throw new Error("当前版本不支持原地自动安装，请用下载方式更新");
       }
@@ -2535,69 +2526,63 @@ function createElectronApp(baseMode = "all") {
       }
       autoUpdaterBusy = true;
       try {
-        return await new Promise((resolve, reject) => {
-          const cleanup = () => {
-            autoUpdater.removeListener("update-available", onAvailable);
-            autoUpdater.removeListener("update-not-available", onNotAvailable);
-            autoUpdater.removeListener("update-downloaded", onDownloaded);
-            autoUpdater.removeListener("error", onError);
-          };
-          const onAvailable = () => {
-            autoUpdater.downloadUpdate().catch(onError);
-          };
-          const onNotAvailable = () => {
-            cleanup();
-            resolve({ updated: false });
-          };
-          const onDownloaded = async () => {
-            cleanup();
-            await flushAiSessionStorage(getAiStoragePartitions()).catch(() => {});
+        const expectedRelease = assertRequestedAutoUpdate(
+          await backend.checkLatestRelease(),
+          payload,
+        );
+        const result = await installVerifiedAutoUpdate({
+          autoUpdater,
+          expectedRelease,
+          beforeInstall: async () => {
+            await flushUpdateStorage(getAiStoragePartitions(), (partition) =>
+              session.fromPartition(partition),
+            );
             try {
               backend && backend.createUpdateBackup("before-autoupdate");
-            } catch (_e) {
+            } catch (_error) {
               /* 数据已在固定 userData 目录, 备份失败不阻断安装 */
             }
-            resolve({ updated: true, installing: true });
-            // 静默安装 NSIS 包并自动重启 (isSilent=true, isForceRunAfter=true)。
-            setTimeout(() => {
-              try {
-                autoUpdater.quitAndInstall(true, true);
-              } catch (_e) {
-                /* ignore */
-              }
-            }, 600);
-          };
-          const onError = (err) => {
-            cleanup();
-            reject(err instanceof Error ? err : new Error(String((err && err.message) || err)));
-          };
-          autoUpdater.on("update-available", onAvailable);
-          autoUpdater.on("update-not-available", onNotAvailable);
-          autoUpdater.on("update-downloaded", onDownloaded);
-          autoUpdater.on("error", onError);
-          autoUpdater.checkForUpdates().catch(onError);
+          },
         });
+        if (result.updated) {
+          setTimeout(() => {
+            launchVerifiedAutoUpdate(autoUpdater, (error) => {
+              updateLog.error("Unable to launch verified auto update", error);
+            });
+          }, 600);
+        }
+        return result;
       } finally {
         autoUpdaterBusy = false;
       }
     });
     ipcMain.handle("app:update-download", async (event, payload) => {
-      return backend.downloadUpdatePackage(payload || {}, (progress) => {
+      const request = assertManualUpdateRequest(await backend.checkLatestRelease(), payload);
+      const result = await backend.downloadUpdatePackage(request, (progress) => {
         event.sender.send("app:update-progress", progress);
       });
+      downloadedUpdatePackages.add(path.resolve(result.filePath));
+      return result;
     });
     ipcMain.handle("app:update-open", async (_event, payload) => {
       const filePath = safeText(payload?.filePath);
       if (!filePath) {
         throw new Error("缺少更新包路径");
       }
-      await flushAiSessionStorage(getAiStoragePartitions());
+      const resolvedFilePath = path.resolve(filePath);
+      if (!downloadedUpdatePackages.has(resolvedFilePath)) {
+        throw new Error("更新包不属于当前已验证的下载任务");
+      }
+      await flushUpdateStorage(getAiStoragePartitions(), (partition) =>
+        session.fromPartition(partition),
+      );
       const backup = backend.createUpdateBackup("before-open-update");
-      const result = await shell.openPath(filePath);
+      const result = await shell.openPath(resolvedFilePath);
       if (result) {
         throw new Error(result);
       }
-      shell.showItemInFolder(filePath);
+      downloadedUpdatePackages.delete(resolvedFilePath);
+      shell.showItemInFolder(resolvedFilePath);
       if (payload?.quitAfterOpen !== false) {
         setTimeout(() => {
           app.quit();
