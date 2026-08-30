@@ -28,16 +28,21 @@ interface AiStore {
   setTabs: (kind: AiKind, tabs: AiTab[], activeTabId: string) => void
   patchTab: (kind: AiKind, tabId: string, patch: Partial<AiTab>) => void
   setFeedback: (kind: AiKind, text: string, tone?: string) => void
+  resetRuntime: () => void
 }
 
-export const useAiStore = create<AiStore>((set) => ({
-  tabsByKind: { gpt: [], gemini: [], claude: [] },
-  activeTabIdByKind: { gpt: '', gemini: '', claude: '' },
+const emptyRuntimeState = () => ({
+  tabsByKind: { gpt: [], gemini: [], claude: [] } as Record<AiKind, AiTab[]>,
+  activeTabIdByKind: { gpt: '', gemini: '', claude: '' } as Record<AiKind, string>,
   feedbackByKind: {
     gpt: { text: '', tone: '' },
     gemini: { text: '', tone: '' },
     claude: { text: '', tone: '' },
-  },
+  } as Record<AiKind, { text: string; tone: string }>,
+})
+
+export const useAiStore = create<AiStore>((set) => ({
+  ...emptyRuntimeState(),
 
   setTabs: (kind, tabs, activeTabId) =>
     set((s) => ({
@@ -57,4 +62,6 @@ export const useAiStore = create<AiStore>((set) => ({
     set((s) => ({
       feedbackByKind: { ...s.feedbackByKind, [kind]: { text, tone } },
     })),
+
+  resetRuntime: () => set(emptyRuntimeState()),
 }))
