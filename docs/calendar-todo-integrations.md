@@ -39,7 +39,7 @@
 
 ### 与内嵌 AI（ChatGPT / Claude）
 
-12. **AI 规划今日**：把今天的日程 + 待办拼成 prompt，经 `api.executeAiJavaScript` 注入 ChatGPT 输入框，「让 AI 帮我安排今天」。
+12. **AI 规划今日**：把今天的日程 + 待办拼成 prompt，经 operation-scoped composer fill API 填入当前 ChatGPT 输入框，「让 AI 帮我安排今天」。
 13. **AI 拆解任务**：选中一个大任务 → AI 生成子任务清单 → 回填 `addSubtask`。
 14. **AI 总结/复盘**：把「已完成」任务 + 本周事件喂给 AI 出周报（再可一键发协作聊天）。
 
@@ -61,6 +61,4 @@
 - 待办 store：`useTasksStore`（`addTask/updateTask/addSubtask`；新增 `task.calendarEventId` 关联）。
 - 组队日历：`useTeamCalendarStore` + `useTeamCalendar` hook（server/local 双模）；服务端 `collab_server2/server.js` 的 `/api/team-calendar/*`。
 - 集成层：`src/renderer-next/src/lib/integrations.ts`（本轮新增；规划项继续往这里加）。
-- 复用能力：`api.executeAiJavaScript`(注入 AI 输入框)、`api.showSystemNotification`(通知)、`api.onAppEvent`(通知点击路由)、`socks-proxy-agent`(代理拉取)、资料包导出/备份。
-
-> 备注：本分支为测试分支（`feat/calendar-team-todo`），仅本地，未推送 GitHub。
+- 复用能力：受限 composer fill API（绑定 Principal/workspace/document）、`api.showSystemNotification`(通知)、`api.onAppEvent`(通知点击路由)、`socks-proxy-agent`(代理拉取)、资料包导出/备份。禁止恢复任意 JavaScript IPC。

@@ -59,7 +59,7 @@ WS：
 ## 6. 与内嵌 AI 的联动（差异化亮点）
 
 - 共享**提示词库**：空间成员共享 prompt，点一下即填入当前 ChatGPT/Claude 输入框
-  （可复用 `ai:execute-javascript` 注入文本）。
+  （只能复用绑定 Principal/workspace/document 的 composer fill API，不能执行任意脚本）。
 - 共享**链接/资源**：点击在内嵌视图或外部浏览器打开（走现有代理）。
 - 与翻译插件（见 `translation-plugin-research.md`）正交，可叠加。
 

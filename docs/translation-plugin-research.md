@@ -1,5 +1,7 @@
 # 内置翻译插件 — 调研报告（仅调研，未实现）
 
+> 历史说明（1.0.9）：本文记录早期调研背景。任意 `ai:execute-javascript` IPC 已删除；当前实现只允许主进程生成、固定 isolated world 执行且绑定 Principal/workspace/document 的操作脚本。后续方案不得恢复通用脚本执行通道。
+
 > 目标：在内嵌 AI 网页（ChatGPT/Gemini/Claude）里加一个“好用的翻译”，并且**分情况过代理**
 > （翻译接口该走梯子的走梯子，不该走的直连）。本报告对比可选方案、代理路由做法，并给出推荐。
 > 结论部分可直接作为后续开发任务的输入。
@@ -10,7 +12,7 @@
   分区（`persist:gpt-chat` 等），**没有注入任何 preload / content script**。
 - 网页流量通过 `session.setProxy({ proxyRules: 'socks5://127.0.0.1:<port>' })`
   全量走本机 sing-box 的 SOCKS5（`appFactory.js:1410` 一带）。端口 = sender 的 `socks_listen_port`（默认 1080）。
-- 已有 IPC `ai:execute-javascript`（`appFactory.js` 内）可在视图里执行任意 JS — 是注入内容脚本的现成通道。
+- 填入和发送必须使用 operation-scoped composer API；渲染层不能向内嵌网页传任意脚本。
 - 右键菜单本次已加（`popupAiContextMenu`，`appFactory.js`），翻译项可挂在这里。
 - **根 `package.json` 已依赖 `socks-proxy-agent` 和 `https-proxy-agent`** → 主进程做“分情况过代理的 fetch”几乎零成本。
 - Electron 版本 **31.7.7**。
@@ -22,7 +24,7 @@
 - 流程：右键菜单（或划词气泡）拿到 `params.selectionText` → IPC 到主进程 → 主进程用
   `fetch`/`https` + `socks-proxy-agent` 调翻译 API → 结果回渲染层，以气泡/浮层展示。
 - **分情况过代理**天然好做：按 provider 配置“走代理 / 直连”，主进程按需给 agent 套不套 SOCKS。
-- 轻量、可控、不依赖 Electron 扩展生态；与现有 `ai:execute-javascript` / 右键菜单无缝衔接。
+- 轻量、可控、不依赖 Electron 扩展生态；与现有右键菜单及受限 composer operation 衔接。
 - 缺点：整页“沉浸式双语对照”需要自己注入脚本（见方案 C），划词翻译则很简单。
 
 ### 方案 B：`session.loadExtension` 加载现成翻译扩展（如沉浸式翻译）⚠️ 不推荐（近期）
@@ -37,7 +39,7 @@
 
 ### 方案 C：自注入 content script 做“整页沉浸式翻译”（方案 A 的进阶）
 
-- 用 `ai:execute-javascript` 注入脚本：遍历段落 → 调主进程翻译 API（同样走方案 A 的代理 fetch）
+- 如实现整页翻译，必须由主进程提供固定、版本化的 isolated-world 脚本：遍历段落 → 调主进程翻译 API（同样走方案 A 的代理 fetch）
   → 在原文下方插入译文（双语对照）。等价于自己实现一个迷你“沉浸式翻译”。
 - 可作为方案 A 之后的增量；先做划词，再做整页。
 
@@ -74,7 +76,7 @@
    - 右键菜单加“翻译选中文字”（已预留菜单位）+ 可选划词气泡。
    - 后端首选**微软翻译免费层**（额度大、质量好、多数可直连），DeepL/Google 作为可选高质量项（默认过代理）。
    - 代理路由用**主进程 `fetch` + `socks-proxy-agent`**，provider 级“走代理/直连”开关，端口取 `sender.socks_listen_port`。
-2. **二期做方案 C（整页沉浸式双语）**：复用同一套主进程翻译 + 代理路由，靠 `ai:execute-javascript` 注入对照脚本。
+2. **二期做方案 C（整页沉浸式双语）**：复用同一套主进程翻译 + 代理路由，并为该能力设计固定、可审计的 isolated-world 协议。
 3. **方案 B（加载现成扩展）暂缓**：等 Electron 原生 MV3 支持成熟，或确有必须的扩展再评估。
 
 ## 6. 落地时的具体接入点（备忘）
@@ -82,7 +84,7 @@
 - 右键菜单翻译项：`popupAiContextMenu`（`src/main/appFactory.js`）。
 - 新 IPC：`plugin:translate`（主进程实现代理 fetch）+ preload 暴露 + 渲染层气泡组件。
 - 代理端口/开关：读 `settings.sender.socks_listen_port` 与新增 provider 配置（可放 `settings.ui` 或新 `settings.plugins`）。
-- 整页注入：复用 `ai:execute-javascript`。
+- 整页注入：新增专用、固定脚本协议；禁止恢复通用 JavaScript IPC。
 
 ## 来源
 
