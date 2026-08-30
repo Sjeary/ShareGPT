@@ -24,6 +24,7 @@ const {
   normalizeServerBaseUrl,
   principalIdFor,
 } = require("./principal");
+const { copyMissingChromiumPartitions } = require("./userDataPath");
 
 // 自动更新源 = GitHub Releases (参考 cc-switch 的做法)。仓库地址从 package.json 推导,
 // fork 的人只要改 package.json 的 homepage/repository 就指向自己的仓库, 不写死任何自建服务器。
@@ -186,8 +187,13 @@ const LOCAL_CHAT_HISTORY_MAX_TOTAL = 6000;
 const UPDATE_BACKUP_KEEP = 5;
 const UPDATE_BACKUP_ENTRIES = [
   "settings.json",
+  "vault-meta.json",
   "chat_history.json",
+  "calendar.json",
+  "tasks.json",
+  "focus.json",
   "private.defaults.local.json",
+  "ShareGPT-Vault",
   "Partitions",
 ];
 const UPDATE_BACKUP_SKIP_NAMES = new Set([
@@ -537,6 +543,14 @@ function copyImportantPath(sourcePath, targetPath, errors, options = {}) {
 
   try {
     if (stat.isDirectory()) {
+      if (!overwrite && path.basename(sourcePath) === "Partitions") {
+        copyMissingChromiumPartitions(
+          sourcePath,
+          targetPath,
+          options.chromiumPartitionConflicts || [],
+        );
+        return;
+      }
       fs.mkdirSync(targetPath, { recursive: true });
       for (const name of fs.readdirSync(sourcePath)) {
         if (UPDATE_BACKUP_SKIP_NAMES.has(name)) continue;
@@ -890,6 +904,7 @@ class Backend {
     const userDataDir = this.app.getPath("userData");
     const restored = [];
     const errors = [];
+    const conflicts = [];
 
     for (const entryName of UPDATE_BACKUP_ENTRIES) {
       const sourcePath = path.join(backupDir, entryName);
@@ -897,18 +912,22 @@ class Backend {
       if (!fs.existsSync(sourcePath)) continue;
 
       const before = fs.existsSync(targetPath);
-      copyImportantPath(sourcePath, targetPath, errors, { overwrite: false });
+      copyImportantPath(sourcePath, targetPath, errors, {
+        overwrite: false,
+        chromiumPartitionConflicts: conflicts,
+      });
       const after = fs.existsSync(targetPath);
       if (!before && after) {
         restored.push(entryName);
       }
     }
 
-    if (restored.length || errors.length) {
+    if (restored.length || errors.length || conflicts.length) {
       const report = {
         checkedAt: new Date().toISOString(),
         sourceBackup: backupDir,
         restored,
+        conflicts,
         errors,
       };
       try {

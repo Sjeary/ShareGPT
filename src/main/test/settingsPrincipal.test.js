@@ -602,3 +602,58 @@ test("legacy sharegpt-safe values decrypt in memory and failures never replace t
   assert.throws(() => failing.loadSettings(), /原文件未修改/);
   assert.equal(fs.readFileSync(failing.settingsFile, "utf8"), raw);
 });
+
+test("update backup includes every local data store and browser partition", (t) => {
+  const backend = createBackend(t);
+  const fixtures = {
+    "vault-meta.json": { root: "ShareGPT-Vault" },
+    "calendar.json": { events: [{ id: "calendar-kept" }] },
+    "tasks.json": { tasks: [{ id: "task-kept" }] },
+    "focus.json": { sessions: [{ id: "focus-kept" }] },
+  };
+  const userDataDir = backend.app.getPath("userData");
+  for (const [name, payload] of Object.entries(fixtures)) {
+    fs.writeFileSync(path.join(userDataDir, name), JSON.stringify(payload));
+  }
+  fs.mkdirSync(path.join(userDataDir, "ShareGPT-Vault"), { recursive: true });
+  fs.writeFileSync(path.join(userDataDir, "ShareGPT-Vault", "kept.md"), "# kept");
+  const backup = backend.createUpdateBackup("test");
+  for (const [name, payload] of Object.entries(fixtures)) {
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(path.join(backup.backupDir, name), "utf8")),
+      payload,
+    );
+  }
+  assert.equal(
+    fs.readFileSync(path.join(backup.backupDir, "ShareGPT-Vault", "kept.md"), "utf8"),
+    "# kept",
+  );
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(backup.backupDir, "manifest.json"), "utf8"),
+  );
+  assert.ok(manifest.entries.includes("vault-meta.json"));
+  assert.ok(manifest.entries.includes("ShareGPT-Vault"));
+});
+
+test("update restore preserves an existing Chromium partition and reports the conflict", (t) => {
+  const backend = createBackend(t);
+  const userDataDir = backend.app.getPath("userData");
+  const backupDir = path.join(backend.updateBackupsDir, "update-2099-01-01T00-00-00-000Z");
+  const sourcePartition = path.join(backupDir, "Partitions", "persist-gpt");
+  const targetPartition = path.join(userDataDir, "Partitions", "persist-gpt");
+  fs.mkdirSync(sourcePartition, { recursive: true });
+  fs.mkdirSync(targetPartition, { recursive: true });
+  fs.writeFileSync(path.join(sourcePartition, "Cookies"), "backup-cookie");
+  fs.writeFileSync(path.join(targetPartition, "Local State"), "current-state");
+
+  const report = backend.restoreMissingDataFromLatestUpdateBackup();
+  assert.equal(fs.existsSync(path.join(targetPartition, "Cookies")), false);
+  assert.equal(fs.readFileSync(path.join(targetPartition, "Local State"), "utf8"), "current-state");
+  assert.equal(report.conflicts.length, 1);
+  assert.equal(report.conflicts[0].partition, "persist-gpt");
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(userDataDir, "update_restore_report.json"), "utf8"))
+      .conflicts,
+    report.conflicts,
+  );
+});
