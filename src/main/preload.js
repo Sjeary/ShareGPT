@@ -100,7 +100,6 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("browser-privacy:capture", { kind, tabId }),
   applyBrowserPrivacy: () => ipcRenderer.invoke("browser-privacy:apply"),
   detectProxyEnvironment: () => ipcRenderer.invoke("browser-privacy:detect-proxy-environment"),
-  executeAiJavaScript: (payload) => ipcRenderer.invoke("ai:execute-javascript", payload),
   openProfileEditor: (payload) => ipcRenderer.invoke("profile:open", payload),
   emitProfileUpdated: (payload) => ipcRenderer.send("profile:updated", payload),
   minimizeWindow: () => ipcRenderer.invoke("window:minimize"),

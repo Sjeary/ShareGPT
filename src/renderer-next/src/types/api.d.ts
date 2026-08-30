@@ -386,8 +386,6 @@ export interface ShareGptApi {
     checkedAt: string
     security?: { proxy: boolean; vpn: boolean; tor: boolean; hosting: boolean }
   }>
-  executeAiJavaScript: (payload: unknown) => Promise<unknown>
-
   // profile 独立窗口
   openProfileEditor: (payload: unknown) => Promise<unknown>
   emitProfileUpdated: (payload: unknown) => void

@@ -114,7 +114,6 @@ const fallback = {
   detectProxyEnvironment: async () => {
     throw new Error('仅桌面客户端支持出口环境检测')
   },
-  executeAiJavaScript: async () => undefined,
   openProfileEditor: async () => undefined,
   emitProfileUpdated: noop,
   minimizeWindow: async () => undefined,

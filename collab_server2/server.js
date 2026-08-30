@@ -275,6 +275,7 @@ function normalizeUsageEvent(record) {
     username,
     timestamp: Number.isNaN(parsedTime.getTime()) ? nowIso() : parsedTime.toISOString(),
     count,
+    ...(safeText(record?.usageId) ? { usageId: safeText(record.usageId) } : {}),
   };
 }
 
@@ -702,17 +703,23 @@ function saveUsageStoreFile(file, store) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify({ events }, null, 2), "utf-8");
 }
-function recordServiceUsage(service, username, count = 1) {
+function recordServiceUsage(service, username, count = 1, usageId = "") {
   const u = safeText(username);
-  if (!u) return;
+  if (!u) return { recorded: false, duplicate: false };
+  const id = safeText(usageId);
   const file = serviceUsageFile(service);
   const store = loadUsageStoreFile(file);
+  if (id && store.events.some((event) => event.username === u && event.usageId === id)) {
+    return { recorded: false, duplicate: true };
+  }
   store.events.push({
     username: u,
     timestamp: nowIso(),
     count: Math.max(1, Number.parseInt(String(count || "1"), 10) || 1),
+    ...(id ? { usageId: id } : {}),
   });
   saveUsageStoreFile(file, store);
+  return { recorded: true, duplicate: false };
 }
 function buildServiceUsageStats(service, fromRaw, toRaw) {
   const events = loadUsageStoreFile(serviceUsageFile(service)).events;
@@ -2842,12 +2849,18 @@ const server = http.createServer(async (req, res) => {
           1,
           Math.min(20, Number.parseInt(String(payload?.count || "1"), 10) || 1),
         );
-        recordServiceUsage(usageMatch[1], session.username, count);
+        const usageId = safeText(payload?.usageId);
+        if (usageId && !/^[a-z0-9-]{3,80}$/i.test(usageId)) {
+          sendText(res, 400, "usageId 无效");
+          return;
+        }
+        const result = recordServiceUsage(usageMatch[1], session.username, count, usageId);
         sendJson(res, 200, {
           ok: true,
           service: usageMatch[1],
           username: session.username,
           count,
+          duplicate: result.duplicate,
           recordedAt: nowIso(),
         });
       } catch (err) {

@@ -868,17 +868,33 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   const usage = await fetch(`${baseUrl}/api/gpt/usage`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders },
-    body: JSON.stringify({ count: 1 }),
+    body: JSON.stringify({ count: 1, usageId: "usage-once-1" }),
   });
   assert.strictEqual(usage.status, 200);
   const usageBody = await usage.json();
   assert.strictEqual(usageBody.ok, true);
   assert.strictEqual(usageBody.service, "gpt");
 
+  const duplicateUsage = await fetch(`${baseUrl}/api/gpt/usage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ count: 1, usageId: "usage-once-1" }),
+  });
+  assert.strictEqual(duplicateUsage.status, 200);
+  assert.strictEqual((await duplicateUsage.json()).duplicate, true);
+
+  const legacyUsage = await fetch(`${baseUrl}/api/gpt/usage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ count: 1 }),
+  });
+  assert.strictEqual(legacyUsage.status, 200);
+  assert.strictEqual((await legacyUsage.json()).duplicate, false);
+
   const stats = await fetch(`${baseUrl}/api/gpt/stats`, { headers: authHeaders });
   assert.strictEqual(stats.status, 200);
   const statsBody = await stats.json();
-  assert.strictEqual(statsBody.totalQueries, 1);
+  assert.strictEqual(statsBody.totalQueries, 2);
   assert.ok(Array.isArray(statsBody.users));
 
   const calendar = await fetch(`${baseUrl}/api/user-store/calendar`, { headers: authHeaders });

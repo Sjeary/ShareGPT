@@ -52,6 +52,13 @@ const {
   waitForComposerOutcome,
 } = require("./aiComposerOperation");
 const {
+  createAcceptedSendDedupe,
+  createTrackerToken,
+  createUsageAttemptTracker,
+  installAcceptedSendTracker,
+  parseSendAttemptMessage,
+} = require("./aiUsageAcceptance");
+const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   partitionForAiEnvironment,
@@ -490,6 +497,8 @@ function createElectronApp(baseMode = "all") {
   const configuredAiPartitions = new Set();
   const aiWorkspaceRegistry = createDurableWorkspaceRegistry();
   const composerConfirmations = createComposerConfirmationStore();
+  const usageAttempts = createUsageAttemptTracker();
+  const acceptedSendDedupe = createAcceptedSendDedupe();
   let activeAiKind = "";
   let aiTabCounter = 0;
   let aiRuntimeEpoch = 0;
@@ -572,6 +581,8 @@ function createElectronApp(baseMode = "all") {
   function cancelPrincipalRuntime() {
     aiRuntimeEpoch += 1;
     composerConfirmations.clear();
+    usageAttempts.clear();
+    acceptedSendDedupe.clear();
     aiRouteHealthCache.clear();
     for (const controller of principalAbortControllers) controller.abort();
     principalAbortControllers.clear();
@@ -957,6 +968,49 @@ function createElectronApp(baseMode = "all") {
     return results.filter((result) => result.status === "fulfilled" && result.value).length;
   }
 
+  function emitAcceptedSend(kind, webContentsId, accepted) {
+    if (!accepted?.id) return false;
+    const workspace = aiWorkspaceRegistry
+      .all()
+      .find(
+        (candidate) =>
+          candidate.kind === kind &&
+          Number(candidate.view?.webContents?.id || 0) === Number(webContentsId),
+      );
+    if (!workspaceRuntimeIsCurrent(workspace)) return false;
+    const dedupeKey = `${workspace.ownerPrincipalId}:${kind}:${accepted.id}`;
+    if (!acceptedSendDedupe.accept(dedupeKey)) return false;
+    emitWorkspaceEvent(workspace, "accepted-send", {
+      tabId: workspace.id,
+      environmentId: workspace.environmentId,
+      usageId: accepted.id,
+      acceptedAt: Number(accepted.acceptedAt || Date.now()),
+    });
+    return true;
+  }
+
+  async function syncAcceptedSendTracker(workspace) {
+    if (!workspaceRuntimeIsCurrent(workspace) || !isWorkspaceDocumentAllowed(workspace)) {
+      return false;
+    }
+    const target = captureWorkspaceComposerTarget(workspace);
+    if (
+      !workspace.usageTrackerToken ||
+      workspace.usageTrackerViewGeneration !== workspace.viewGeneration
+    ) {
+      workspace.usageTrackerToken = createTrackerToken();
+      workspace.usageTrackerViewGeneration = workspace.viewGeneration;
+    }
+    const token = workspace.usageTrackerToken;
+    const installed = await installAcceptedSendTracker(workspace.view.webContents, token);
+    assertComposerOperationCurrent(
+      { token, target },
+      captureWorkspaceComposerTarget(workspace),
+    );
+    if (workspace.usageTrackerToken !== token) return false;
+    return installed === true;
+  }
+
   async function writeAiComposer(payload) {
     const operation = createComposerOperation(payload?.target, {
       text: payload?.text,
@@ -1054,6 +1108,17 @@ function createElectronApp(baseMode = "all") {
           // 仅记录真实网络主机 (跳过 devtools/data/blob 等), 上限防止无界增长。
           if (host && contactedHosts.size < 800) contactedHosts.add(host);
         } catch {}
+        emitAcceptedSend(
+          policy.kind,
+          details.webContentsId,
+          usageAttempts.acceptResponse(policy.kind, details),
+        );
+      });
+    } catch {}
+
+    try {
+      targetSession.webRequest.onErrorOccurred((details) => {
+        emitAcceptedSend(policy.kind, details.webContentsId, usageAttempts.failRequest(details));
       });
     } catch {}
 
@@ -1064,6 +1129,11 @@ function createElectronApp(baseMode = "all") {
     try {
       targetSession.webRequest.onBeforeSendHeaders((details, callback) => {
         try {
+          emitAcceptedSend(
+            policy.kind,
+            details.webContentsId,
+            usageAttempts.recordRequestStart(policy.kind, details),
+          );
           const headers = details.requestHeaders || {};
           for (const key of Object.keys(headers)) {
             if (/^sec-ch-ua$/i.test(key) || /^sec-ch-ua-full-version-list$/i.test(key)) {
@@ -1685,6 +1755,7 @@ function createElectronApp(baseMode = "all") {
       const currentUrl = normalizeAiWorkspaceUrl(workspace, wc.getURL());
       markWorkspaceDocumentReady(workspace, currentUrl);
       void syncComposerGuard(workspace).catch(() => undefined);
+      void syncAcceptedSendTracker(workspace).catch(() => undefined);
       emitAiState(workspace, "dom-ready");
     });
 
@@ -1778,6 +1849,7 @@ function createElectronApp(baseMode = "all") {
         invalidateComposerWorkspace(workspace, "same-document-navigation");
         advanceWorkspaceDocument(workspace, workspace.lastUrl, { ready: true });
         void syncComposerGuard(workspace).catch(() => undefined);
+        void syncAcceptedSendTracker(workspace).catch(() => undefined);
       }
       emitAiState(workspace, "did-navigate-in-page", { url });
     });
@@ -1816,7 +1888,16 @@ function createElectronApp(baseMode = "all") {
         } catch {}
         return;
       }
-      emitWorkspaceEvent(workspace, "console-message", { message });
+      const attempt = workspace.usageTrackerToken
+        ? parseSendAttemptMessage(message, workspace.usageTrackerToken)
+        : null;
+      if (attempt) {
+        emitAcceptedSend(
+          workspace.kind,
+          wc.id,
+          usageAttempts.record(attempt, wc.id),
+        );
+      }
     });
 
     // F11: 嵌入的 AI 网页获得焦点时, 渲染层收不到键盘事件; 在此拦截 F11 切换窗口全屏。
@@ -1996,6 +2077,8 @@ function createElectronApp(baseMode = "all") {
     workspace.view = view;
     workspace.viewGeneration = Number(workspace.viewGeneration || 0) + 1;
     invalidateComposerWorkspace(workspace, "renderer-recreated");
+    workspace.usageTrackerToken = "";
+    workspace.usageTrackerViewGeneration = 0;
     resetWorkspaceDocumentState(workspace);
     workspace.viewDead = false;
     workspace.attached = false;
@@ -2111,6 +2194,8 @@ function createElectronApp(baseMode = "all") {
       documentReady: false,
       composerGuardToken: "",
       composerGuardDocumentEpoch: 0,
+      usageTrackerToken: "",
+      usageTrackerViewGeneration: 0,
       ensureGeneration: 0,
       viewDead: true,
       attached: false,
@@ -2145,6 +2230,8 @@ function createElectronApp(baseMode = "all") {
   function disposeAiWorkspaces(options = {}) {
     if (options.incrementEpoch !== false) aiRuntimeEpoch += 1;
     composerConfirmations.clear();
+    usageAttempts.clear();
+    acceptedSendDedupe.clear();
     for (const workspace of aiWorkspaceRegistry.all()) {
       workspace.closing = true;
       detachWorkspaceView(workspace);
@@ -3053,14 +3140,6 @@ function createElectronApp(baseMode = "all") {
 
       emitTabsChanged(kind);
       return getAiStatePayload(workspace);
-    });
-
-    ipcMain.handle("ai:execute-javascript", async (_event, payload) => {
-      const kind = safeText(payload?.kind);
-      const code = String(payload?.code || "");
-      const workspace = getWorkspace(kind, safeText(payload?.tabId));
-      if (!workspace || !code) return null;
-      return workspace.view.webContents.executeJavaScript(code, true);
     });
 
     ipcMain.handle("profile:open", (_event, payload) => {

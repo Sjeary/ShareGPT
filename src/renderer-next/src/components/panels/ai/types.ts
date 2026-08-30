@@ -23,8 +23,9 @@ export interface AiEventPayload {
   // did-fail-load
   errorDescription?: string
   errorCode?: string | number
-  // console-message
-  message?: string
+  // accepted-send (opaque ID; never contains prompt text)
+  usageId?: string
+  acceptedAt?: number
   // composer-confirmation / invalidated (no prompt text)
   requestId?: string
   targetLanguage?: string
