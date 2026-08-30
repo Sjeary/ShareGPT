@@ -293,9 +293,7 @@ export function useAuth() {
             useTranslationStore
               .getState()
               .resetForPrincipal(current.principalId, settings.translation)
-            useNotesAiStore
-              .getState()
-              .resetForPrincipal(current.principalId, settings.translation)
+            useNotesAiStore.getState().resetForPrincipal(current.principalId, settings.translation)
             throw error
           }
           clearSession()
@@ -311,9 +309,7 @@ export function useAuth() {
           useTranslationStore
             .getState()
             .resetForPrincipal(local.principalId, localSettings.translation)
-          useNotesAiStore
-            .getState()
-            .resetForPrincipal(local.principalId, localSettings.translation)
+          useNotesAiStore.getState().resetForPrincipal(local.principalId, localSettings.translation)
         },
         rollbackActivatedPrincipalIfOwned: async (activated) => {
           let local: PrincipalActivation
@@ -347,9 +343,7 @@ export function useAuth() {
           useTranslationStore
             .getState()
             .resetForPrincipal(local.principalId, localSettings.translation)
-          useNotesAiStore
-            .getState()
-            .resetForPrincipal(local.principalId, localSettings.translation)
+          useNotesAiStore.getState().resetForPrincipal(local.principalId, localSettings.translation)
         },
         discardIssuedToken: () => discardCollabToken(cleanedServer, issuedToken),
       })
@@ -381,12 +375,8 @@ export function useAuth() {
     settingsPrincipalRuntime.activate(local.principalId, local.generation)
     const localSettings = local.settings as unknown as AppSettings
     useAppStore.setState({ settings: localSettings })
-    useTranslationStore
-      .getState()
-      .resetForPrincipal(local.principalId, localSettings.translation)
-    useNotesAiStore
-      .getState()
-      .resetForPrincipal(local.principalId, localSettings.translation)
+    useTranslationStore.getState().resetForPrincipal(local.principalId, localSettings.translation)
+    useNotesAiStore.getState().resetForPrincipal(local.principalId, localSettings.translation)
 
     // 通知服务器下线 (best-effort, 失败不阻塞已经完成的本地退出)。
     if (serverUrl && token) {

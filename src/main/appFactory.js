@@ -940,10 +940,7 @@ function createElectronApp(baseMode = "all") {
       ],
       false,
     );
-    assertComposerOperationCurrent(
-      { token, target },
-      captureWorkspaceComposerTarget(workspace),
-    );
+    assertComposerOperationCurrent({ token, target }, captureWorkspaceComposerTarget(workspace));
     if (workspace.composerGuardToken !== token) {
       throw Object.assign(new Error("网页或标签已经变化，请重新操作"), {
         code: "COMPOSER_TARGET_CHANGED",
@@ -994,10 +991,7 @@ function createElectronApp(baseMode = "all") {
     }
     const token = workspace.usageTrackerToken;
     const installed = await installAcceptedSendTracker(workspace.view.webContents, token);
-    assertComposerOperationCurrent(
-      { token, target },
-      captureWorkspaceComposerTarget(workspace),
-    );
+    assertComposerOperationCurrent({ token, target }, captureWorkspaceComposerTarget(workspace));
     if (workspace.usageTrackerToken !== token) return false;
     return installed === true;
   }
@@ -1883,11 +1877,7 @@ function createElectronApp(baseMode = "all") {
         ? parseSendAttemptMessage(message, workspace.usageTrackerToken)
         : null;
       if (attempt) {
-        emitAcceptedSend(
-          workspace.kind,
-          wc.id,
-          usageAttempts.record(attempt, wc.id),
-        );
+        emitAcceptedSend(workspace.kind, wc.id, usageAttempts.record(attempt, wc.id));
       }
     });
 

@@ -1,8 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
-const { releaseContractFailures } = require("../../../scripts/releaseContract.cjs");
+const {
+  releaseContractFailures,
+  releaseWorkflowFailures,
+} = require("../../../scripts/releaseContract.cjs");
 
 const root = path.resolve(__dirname, "../../..");
 const repositoryVersion = require("../../../package.json").version;
@@ -99,4 +103,29 @@ test("CLI validates repository files and exact tag", () => {
 
 test("missing contract input reports failures instead of throwing", () => {
   assert.ok(releaseContractFailures().length > 5);
+});
+
+test("release workflow verifies a tag on main before exposing step-scoped signing secrets", () => {
+  const workflow = fs.readFileSync(path.join(root, ".github/workflows/release.yml"), "utf8");
+  assert.deepEqual(releaseWorkflowFailures(workflow), []);
+  for (const [name, invalid, expected] of [
+    ["manual dispatch", workflow.replace("  push:\n", "  workflow_dispatch:\n  push:\n"), "dispatch"],
+    ["source secret", workflow.replace("  source:\n", "  source:\n    env:\n      TOKEN: ${{ secrets.BAD }}\n"), "without signing secrets"],
+    ["mac source dependency", workflow.replace("  macos:\n    needs: source\n", "  macos:\n"), "must wait"],
+    ["Windows job secret", workflow.replace("  windows:\n    needs: source\n", "  windows:\n    needs: source\n    env:\n      TOKEN: bad\n"), "job-level env"],
+    [
+      "API key before download",
+      workflow
+        .replace("Download and verify pinned macOS proxy binary", "TEMPORARY STEP")
+        .replace("Prepare App Store Connect API key", "Download and verify pinned macOS proxy binary")
+        .replace("TEMPORARY STEP", "Prepare App Store Connect API key"),
+      "before the API key",
+    ],
+    ["retained API key", workflow.replace('rm -f "$APPLE_API_KEY"', "true"), "must be deleted"],
+  ]) {
+    assert.ok(
+      releaseWorkflowFailures(invalid).some((failure) => failure.includes(expected)),
+      `${name} must fail the workflow contract`,
+    );
+  }
 });

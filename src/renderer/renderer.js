@@ -4975,10 +4975,9 @@ async function performCollabLogin({
     try {
       await rollbackLegacyPrincipalIfOwned(activatedPrincipal);
     } catch (rollbackError) {
-      const recoveryError = new Error(
-        "登录失败，且本地账号状态未能恢复，请重新启动应用后再试",
-        { cause: error },
-      );
+      const recoveryError = new Error("登录失败，且本地账号状态未能恢复，请重新启动应用后再试", {
+        cause: error,
+      });
       recoveryError.rollbackError = rollbackError;
       throw recoveryError;
     }

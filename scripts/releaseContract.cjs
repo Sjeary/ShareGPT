@@ -2,6 +2,58 @@ const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const EXPECTED_APP_ID = "com.sjeary.sharegpt.desktop";
 const EXPECTED_PRODUCT_NAME = "ShareGPT";
 
+function workflowJob(source, name) {
+  const text = String(source || "");
+  const match = new RegExp(`^  ${name}:\\s*$`, "m").exec(text);
+  if (!match) return "";
+  const start = match.index;
+  const remaining = text.slice(start + match[0].length);
+  const next = /^  [A-Za-z][A-Za-z0-9_-]*:\s*$/m.exec(remaining);
+  return text.slice(start, next ? start + match[0].length + next.index : undefined);
+}
+
+function releaseWorkflowFailures(source) {
+  const text = String(source || "");
+  const failures = [];
+  if (!/^\s{4}tags:\s*\["v\*"\]\s*$/m.test(text)) {
+    failures.push("release workflow: must run only for v* tag pushes");
+  }
+  if (/^\s{2}workflow_dispatch:\s*$/m.test(text)) {
+    failures.push("release workflow: manual non-tag dispatch must remain disabled");
+  }
+  const sourceJob = workflowJob(text, "source");
+  const macosJob = workflowJob(text, "macos");
+  const windowsJob = workflowJob(text, "windows");
+  if (!sourceJob) failures.push("release workflow: source verification job is required");
+  if (sourceJob.includes("secrets.")) {
+    failures.push("release workflow: source verification must run without signing secrets");
+  }
+  for (const [name, job] of [
+    ["macos", macosJob],
+    ["windows", windowsJob],
+  ]) {
+    if (!job) {
+      failures.push(`release workflow: ${name} job is required`);
+      continue;
+    }
+    if (!/^\s{4}needs:\s*source\s*$/m.test(job)) {
+      failures.push(`release workflow: ${name} must wait for the source job`);
+    }
+    if (/^\s{4}env:\s*$/m.test(job)) {
+      failures.push(`release workflow: ${name} signing secrets must not use job-level env`);
+    }
+  }
+  const assetDownload = macosJob.indexOf("Download and verify pinned macOS proxy binary");
+  const apiKeyPreparation = macosJob.indexOf("Prepare App Store Connect API key");
+  if (assetDownload < 0 || apiKeyPreparation < 0 || assetDownload > apiKeyPreparation) {
+    failures.push("release workflow: pinned assets must download before the API key is created");
+  }
+  if (!macosJob.includes('rm -f "$APPLE_API_KEY"')) {
+    failures.push("release workflow: temporary App Store Connect key must be deleted");
+  }
+  return failures;
+}
+
 /**
  * @typedef {{
  *   version?: unknown,
@@ -117,4 +169,5 @@ module.exports = {
   EXPECTED_PRODUCT_NAME,
   RELEASE_VERSION_PATTERN,
   releaseContractFailures,
+  releaseWorkflowFailures,
 };

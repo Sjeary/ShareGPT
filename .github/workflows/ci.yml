@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -25,10 +26,10 @@ jobs:
 
       - name: 安装依赖 (主程序 + 渲染层 + 管理端 + 协作服务端)
         run: |
-          npm install --no-audit --no-fund
-          npm --prefix src/renderer-next install --no-audit --no-fund
-          npm --prefix admin_console/ui install --no-audit --no-fund
-          npm --prefix collab_server2 install --no-audit --no-fund
+          npm ci --no-audit --no-fund
+          npm --prefix src/renderer-next ci --no-audit --no-fund
+          npm --prefix admin_console/ui ci --no-audit --no-fund
+          npm --prefix collab_server2 ci --no-audit --no-fund
 
       - name: 主进程语法检查 (node --check)
         run: |
@@ -41,11 +42,25 @@ jobs:
         run: node --check collab_server2/server.js
 
       - name: 类型检查 — 渲染层
-        run: npx tsc -b
+        run: |
+          npx tsc -b
+          npm run typecheck:test
+        working-directory: src/renderer-next
+
+      - name: 渲染层行为测试
+        run: npm test
         working-directory: src/renderer-next
 
       - name: 类型检查 — 管理端
         run: npx tsc -b
+        working-directory: admin_console/ui
+
+      - name: 构建渲染层
+        run: npm run build
+        working-directory: src/renderer-next
+
+      - name: 构建管理端
+        run: npm run build
         working-directory: admin_console/ui
 
       - name: 单元测试 (collab_server2)
@@ -59,3 +74,69 @@ jobs:
 
       - name: 主进程类型检查 (checkJs)
         run: npm run typecheck:main
+
+      - name: 发布身份、签名边界和更新逻辑
+        run: |
+          npm run verify:signing-boundaries
+          npm run verify:release-contract
+          npm run test:release
+
+  electron-integration:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: 安装 Electron 集成测试依赖
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix src/renderer-next ci --no-audit --no-fund
+
+      - name: AI workspace 生命周期验收
+        run: npm run verify:ai-workspace-lifecycle
+
+      - name: Composer 与成功发送统计验收
+        run: npm run verify:ai-composer
+
+      - name: 协作登录与客户端/服务端兼容验收
+        run: npm run verify:collab-login-compatibility
+
+      - name: 浏览器隐私与资料清理验收
+        run: |
+          npm run verify:browser-privacy
+          npm run verify:browser-privacy-ui
+
+  windows-package:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: 安装 Windows 构建依赖
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix src/renderer-next ci --no-audit --no-fund
+          npm --prefix collab_server2 ci --no-audit --no-fund
+
+      - name: Windows 发布逻辑回归
+        run: |
+          npm run test:release
+          npm run typecheck:main
+          npm run verify:release-contract
+
+      - name: 下载并校验固定版本 Windows 二进制
+        shell: pwsh
+        run: ./scripts/prepare-windows-release-assets.ps1
+
+      - name: 构建并验收 Windows NSIS 安装包
+        run: |
+          npm run dist:win:installer
+          npm run verify:release-win

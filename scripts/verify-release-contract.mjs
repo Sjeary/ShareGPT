@@ -5,7 +5,11 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
-const { EXPECTED_APP_ID, releaseContractFailures } = require("./releaseContract.cjs");
+const {
+  EXPECTED_APP_ID,
+  releaseContractFailures,
+  releaseWorkflowFailures,
+} = require("./releaseContract.cjs");
 const readJson = (file) => JSON.parse(fs.readFileSync(path.join(root, file), "utf8"));
 const packageJson = readJson("package.json");
 const failures = releaseContractFailures({
@@ -15,6 +19,11 @@ const failures = releaseContractFailures({
   compatibility: readJson("release.compatibility.json"),
   releaseTag: String(process.env.SHAREGPT_RELEASE_TAG || "").trim(),
 });
+failures.push(
+  ...releaseWorkflowFailures(
+    fs.readFileSync(path.join(root, ".github/workflows/release.yml"), "utf8"),
+  ),
+);
 
 if (failures.length) {
   console.error(failures.join("\n"));

@@ -10,10 +10,7 @@ const {
 
 test("remote HTTP is opt-in while credentials, fragments, and non-HTTP schemes stay blocked", () => {
   assert.throws(() => parseEndpoint("http://api.example"), /必须使用 HTTPS/);
-  assert.equal(
-    parseEndpoint("http://api.example/v1", { allowRemoteHttp: true }).protocol,
-    "http:",
-  );
+  assert.equal(parseEndpoint("http://api.example/v1", { allowRemoteHttp: true }).protocol, "http:");
   assert.throws(
     () => parseEndpoint("https://user:secret@api.example/v1", { allowRemoteHttp: true }),
     /账号凭据/,
