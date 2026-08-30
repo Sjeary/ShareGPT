@@ -41,8 +41,14 @@ export function availableAiRoutes(sender: Partial<SenderSettings> = {}): Advance
       : []
   for (const route of [...managed, ...legacy]) {
     const id = text(route?.id, 64).toLowerCase()
-    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(id) || route?.enabled === false || !isAuthorized(id))
-      if (routes.some((candidate) => candidate.id === id)) continue
+    if (
+      !/^[a-z0-9][a-z0-9-]{0,63}$/.test(id) ||
+      route?.enabled === false ||
+      !isAuthorized(id) ||
+      routes.some((candidate) => candidate.id === id)
+    ) {
+      continue
+    }
     routes.push({ id, name: `内置节点 · ${text(route?.name, 80) || id}`, mode: 'singbox' })
   }
   return routes
