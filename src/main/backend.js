@@ -14,8 +14,16 @@ const {
 const {
   hasCompleteUnifiedProxy,
   internalAiProxyRoutes,
+  normalizeAiEnvironmentId,
   validateAiRouteIsolation,
 } = require("./aiEnvironments");
+const {
+  LOCAL_PRINCIPAL_ID,
+  normalizePrincipalId,
+  normalizePrincipalUsername,
+  normalizeServerBaseUrl,
+  principalIdFor,
+} = require("./principal");
 
 // 自动更新源 = GitHub Releases (参考 cc-switch 的做法)。仓库地址从 package.json 推导,
 // fork 的人只要改 package.json 的 homepage/repository 就指向自己的仓库, 不写死任何自建服务器。
@@ -79,7 +87,21 @@ const DEFAULT_TARGET_DOMAINS = [
   "githubusercontent.com",
 ];
 
+const DEFAULT_TRANSLATION_SETTINGS = {
+  version: 1,
+  provider: "ai",
+  sourceLanguage: "auto",
+  targetLanguage: "zh",
+  siteLanguage: "en",
+  confirmNonTargetSend: false,
+  autoTranslateSelection: false,
+  ai: { baseUrl: "", apiKey: "", model: "gpt-5.5", effort: "medium" },
+  api: { baseUrl: "", apiKey: "" },
+  offline: { baseUrl: "http://127.0.0.1:5000" },
+};
+
 const PUBLIC_DEFAULT_SETTINGS = {
+  settingsRevision: 0,
   sender: {
     proxy_server: "",
     proxy_port: "",
@@ -146,10 +168,13 @@ const PUBLIC_DEFAULT_SETTINGS = {
   browserPrivacy: structuredClone(DEFAULT_BROWSER_PRIVACY_SETTINGS),
   advancedAi: {
     version: 1,
+    initialized: false,
     enabled: false,
     environments: [],
     activeByKind: { gpt: "", gemini: "", claude: "" },
   },
+  translation: structuredClone(DEFAULT_TRANSLATION_SETTINGS),
+  principalSettings: null,
   ui: {
     setup_guide_dismissed: false,
     theme: "dark",
@@ -178,10 +203,205 @@ const UPDATE_BACKUP_SKIP_NAMES = new Set([
   "runtime",
 ]);
 
+function normalizeTranslationSettings(raw, legacyNotesAi) {
+  const value = raw && typeof raw === "object" ? raw : {};
+  const legacy = legacyNotesAi && typeof legacyNotesAi === "object" ? legacyNotesAi : {};
+  const provider = ["ai", "api", "offline"].includes(String(value.provider))
+    ? String(value.provider)
+    : DEFAULT_TRANSLATION_SETTINGS.provider;
+  return {
+    ...DEFAULT_TRANSLATION_SETTINGS,
+    ...value,
+    version: 1,
+    provider,
+    confirmNonTargetSend: value.confirmNonTargetSend === true,
+    autoTranslateSelection: value.autoTranslateSelection === true,
+    ai: { ...DEFAULT_TRANSLATION_SETTINGS.ai, ...legacy, ...(value.ai || {}) },
+    api: { ...DEFAULT_TRANSLATION_SETTINGS.api, ...(value.api || {}) },
+    offline: { ...DEFAULT_TRANSLATION_SETTINGS.offline, ...(value.offline || {}) },
+  };
+}
+
+function principalDefaultPartitions(principalId) {
+  const id = normalizePrincipalId(principalId, { allowLocal: true }) || LOCAL_PRINCIPAL_ID;
+  return Object.fromEntries(
+    ["gpt", "gemini", "claude"].map((kind) => [kind, `persist:sharegpt-ai-${id}-${kind}-default`]),
+  );
+}
+
+function legacyPartitionsFromSettings(settings) {
+  return Object.fromEntries(
+    ["gpt", "gemini", "claude"].map((kind) => [
+      kind,
+      String(settings?.[kind]?.partition || PUBLIC_DEFAULT_SETTINGS[kind].partition),
+    ]),
+  );
+}
+
+function normalizePrincipalPartitions(value, fallback) {
+  const source = value && typeof value === "object" ? value : {};
+  return Object.fromEntries(
+    ["gpt", "gemini", "claude"].map((kind) => {
+      const candidate = String(source[kind] || "").trim();
+      return [kind, candidate.startsWith("persist:") ? candidate : fallback[kind]];
+    }),
+  );
+}
+
+function principalDefaultLastUrls() {
+  return Object.fromEntries(
+    ["gpt", "gemini", "claude"].map((kind) => [kind, PUBLIC_DEFAULT_SETTINGS[kind].last_url]),
+  );
+}
+
+function legacyLastUrlsFromSettings(settings) {
+  return Object.fromEntries(
+    ["gpt", "gemini", "claude"].map((kind) => [
+      kind,
+      String(settings?.[kind]?.last_url || PUBLIC_DEFAULT_SETTINGS[kind].last_url),
+    ]),
+  );
+}
+
+function normalizePrincipalLastUrls(value, fallback = principalDefaultLastUrls()) {
+  const source = value && typeof value === "object" ? value : {};
+  return Object.fromEntries(
+    ["gpt", "gemini", "claude"].map((kind) => [
+      kind,
+      String(source[kind] || fallback[kind] || PUBLIC_DEFAULT_SETTINGS[kind].last_url),
+    ]),
+  );
+}
+
+function prepareImportedSettings(value) {
+  const settings =
+    value && typeof value === "object" && !Array.isArray(value) ? structuredClone(value) : {};
+  delete settings.settingsRevision;
+  delete settings.principalSettings;
+  for (const kind of ["gpt", "gemini", "claude"]) {
+    if (settings[kind] && typeof settings[kind] === "object" && !Array.isArray(settings[kind])) {
+      delete settings[kind].partition;
+    }
+  }
+  if (Array.isArray(settings.advancedAi?.environments)) {
+    settings.advancedAi.environments = settings.advancedAi.environments.map((environment) => {
+      if (!environment || typeof environment !== "object" || Array.isArray(environment)) {
+        return environment;
+      }
+      const sanitized = { ...environment };
+      delete sanitized.partition;
+      return sanitized;
+    });
+  }
+  return settings;
+}
+
+const LEGACY_ENCRYPTED_SECRET_PREFIX = "sharegpt-safe:v1:";
+const LEGACY_SECRET_DECRYPTION_FAILED = "LEGACY_SECRET_DECRYPTION_FAILED";
+
+function legacyEncryptedSettingsPresent(value) {
+  if (typeof value === "string") return value.startsWith(LEGACY_ENCRYPTED_SECRET_PREFIX);
+  if (Array.isArray(value)) return value.some(legacyEncryptedSettingsPresent);
+  if (!value || typeof value !== "object") return false;
+  return Object.values(value).some(legacyEncryptedSettingsPresent);
+}
+
+function resolveLegacySecretStorage(storageOverride) {
+  if (storageOverride !== undefined) return storageOverride;
+  try {
+    const electron = require("electron");
+    const storage = electron?.safeStorage;
+    return storage?.isEncryptionAvailable?.() ? storage : null;
+  } catch {
+    return null;
+  }
+}
+
+function decodeLegacyEncryptedSettings(value, storageOverride, decodedSecrets = []) {
+  if (!legacyEncryptedSettingsPresent(value)) return structuredClone(value);
+  const storage = resolveLegacySecretStorage(storageOverride);
+  if (!storage || typeof storage.decryptString !== "function") {
+    throw Object.assign(new Error("旧版加密设置暂时无法解密，原文件未修改"), {
+      code: LEGACY_SECRET_DECRYPTION_FAILED,
+    });
+  }
+
+  const decode = (current, key = "") => {
+    if (typeof current === "string" && current.startsWith(LEGACY_ENCRYPTED_SECRET_PREFIX)) {
+      const encoded = current.slice(LEGACY_ENCRYPTED_SECRET_PREFIX.length);
+      if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+        throw new Error("旧版加密设置内容不合法");
+      }
+      const plaintext = storage.decryptString(Buffer.from(encoded, "base64"));
+      decodedSecrets.push({ key, plaintext, ciphertext: current });
+      return plaintext;
+    }
+    if (Array.isArray(current)) return current.map((nested) => decode(nested, key));
+    if (!current || typeof current !== "object") return current;
+    return Object.fromEntries(
+      Object.entries(current).map(([nestedKey, nested]) => [nestedKey, decode(nested, nestedKey)]),
+    );
+  };
+
+  try {
+    return decode(value);
+  } catch (error) {
+    if (error?.code === LEGACY_SECRET_DECRYPTION_FAILED) throw error;
+    throw Object.assign(
+      new Error(`旧版加密设置解密失败，原文件未修改：${error.message || error}`),
+      {
+        code: LEGACY_SECRET_DECRYPTION_FAILED,
+        cause: error,
+      },
+    );
+  }
+}
+
+function preserveLegacyEncryptedSettings(value, decodedSecrets, key = "") {
+  if (typeof value === "string") {
+    const match = decodedSecrets.find((record) => record.key === key && record.plaintext === value);
+    return match ? match.ciphertext : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((nested) => preserveLegacyEncryptedSettings(nested, decodedSecrets, key));
+  }
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([nestedKey, nested]) => [
+      nestedKey,
+      preserveLegacyEncryptedSettings(nested, decodedSecrets, nestedKey),
+    ]),
+  );
+}
+
+function writeJsonAtomic(file, payload) {
+  const dir = path.dirname(file);
+  const temp = path.join(dir, `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
+  const backup = `${file}.bak`;
+  fs.mkdirSync(dir, { recursive: true });
+  const fd = fs.openSync(temp, "w");
+  try {
+    fs.writeFileSync(fd, JSON.stringify(payload, null, 2), "utf-8");
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    if (fs.existsSync(file)) fs.copyFileSync(file, backup);
+    fs.renameSync(temp, file);
+  } finally {
+    if (fs.existsSync(temp)) fs.unlinkSync(temp);
+  }
+}
+
 function mergeSettings(base, override = {}) {
   const basePrivacy = base.browserPrivacy || DEFAULT_BROWSER_PRIVACY_SETTINGS;
   const overridePrivacy = override.browserPrivacy || {};
   return {
+    settingsRevision: Math.max(
+      0,
+      Number.parseInt(String(override.settingsRevision ?? base.settingsRevision ?? 0), 10) || 0,
+    ),
     sender: { ...base.sender, ...(override.sender || {}) },
     receiver: { ...base.receiver, ...(override.receiver || {}) },
     collab: { ...base.collab, ...(override.collab || {}) },
@@ -211,6 +431,14 @@ function mergeSettings(base, override = {}) {
         ...(override.advancedAi?.activeByKind || {}),
       },
     },
+    translation: normalizeTranslationSettings(
+      override.translation || (override.notesAi ? undefined : base.translation),
+      override.notesAi,
+    ),
+    principalSettings:
+      override.principalSettings && typeof override.principalSettings === "object"
+        ? structuredClone(override.principalSettings)
+        : null,
     ui: { ...base.ui, ...(override.ui || {}) },
   };
 }
@@ -524,10 +752,17 @@ function normalizeChatHistoryStore(store) {
 }
 
 class Backend {
-  constructor(app, getWindow, appMode = "all") {
+  constructor(app, getWindow, appMode = "all", dependencies = {}) {
     this.app = app;
     this.getWindow = getWindow;
     this.appMode = appMode;
+    this.legacySecretStorage = Object.prototype.hasOwnProperty.call(
+      dependencies,
+      "legacySecretStorage",
+    )
+      ? dependencies.legacySecretStorage
+      : undefined;
+    this.legacyEncryptedSecrets = [];
 
     this.settingsFile = path.join(this.app.getPath("userData"), "settings.json");
     this.chatHistoryFile = path.join(this.app.getPath("userData"), "chat_history.json");
@@ -550,6 +785,10 @@ class Backend {
     this.activeSocksPort = null;
     this.activeProxiedSuffixes = null;
     this.activeAiProxyRoutes = [];
+    this.activePrincipalId = LOCAL_PRINCIPAL_ID;
+    this.activePrincipalServerUrl = "";
+    this.activePrincipalUsername = "";
+    this.activePrincipalGeneration = 0;
   }
 
   // 当前发送端配置里「走代理(梯子)」的域名后缀集合。路由规则(buildSenderConfig)与
@@ -774,7 +1013,7 @@ class Backend {
     return uniqueCandidates[0];
   }
 
-  loadSettings() {
+  readStoredSettings() {
     const defaultSettings = this.loadPrivateDefaults();
     if (!fs.existsSync(this.settingsFile)) {
       return structuredClone(defaultSettings);
@@ -782,16 +1021,603 @@ class Backend {
 
     try {
       const raw = JSON.parse(fs.readFileSync(this.settingsFile, "utf-8"));
-      return mergeSettings(defaultSettings, raw);
-    } catch {
-      return structuredClone(defaultSettings);
+      const decodedSecrets = [];
+      const decoded = decodeLegacyEncryptedSettings(raw, this.legacySecretStorage, decodedSecrets);
+      this.legacyEncryptedSecrets = decodedSecrets;
+      return mergeSettings(defaultSettings, decoded);
+    } catch (error) {
+      if (error?.code === LEGACY_SECRET_DECRYPTION_FAILED) {
+        this.log("app", error.message || String(error));
+        throw error;
+      }
+      const backupFile = `${this.settingsFile}.bak`;
+      try {
+        const backup = JSON.parse(fs.readFileSync(backupFile, "utf-8"));
+        const decodedSecrets = [];
+        const decodedBackup = decodeLegacyEncryptedSettings(
+          backup,
+          this.legacySecretStorage,
+          decodedSecrets,
+        );
+        this.legacyEncryptedSecrets = decodedSecrets;
+        this.log("app", `设置文件损坏，已从上一份有效备份恢复：${error.message || error}`);
+        return mergeSettings(defaultSettings, decodedBackup);
+      } catch (backupError) {
+        if (backupError?.code === LEGACY_SECRET_DECRYPTION_FAILED) {
+          this.log("app", backupError.message || String(backupError));
+          throw backupError;
+        }
+        this.log("app", `设置文件损坏且无有效备份，已保留原文件：${error.message || error}`);
+        return structuredClone(defaultSettings);
+      }
     }
   }
 
+  principalSettingsState(stored, owner = null) {
+    const existing = stored?.principalSettings;
+    const requestedServer = normalizeServerBaseUrl(owner?.serverUrl);
+    const requestedUsername = normalizePrincipalUsername(owner?.username);
+
+    if (
+      existing?.version === 2 &&
+      existing.byPrincipal &&
+      typeof existing.byPrincipal === "object"
+    ) {
+      const state = structuredClone(existing);
+      state.byPrincipal = state.byPrincipal || {};
+      state.unowned = {
+        legacyRoot: null,
+        legacyByPrincipal: {},
+        legacyUnowned: null,
+        ...(state.unowned || {}),
+      };
+      const legacyRoot = state.unowned?.legacyRoot;
+      let migrated = false;
+      if (
+        state.unowned.legacyUnowned &&
+        !normalizePrincipalId(state.legacyPartitionOwnerId, { allowLocal: true })
+      ) {
+        const legacyUnowned = state.unowned.legacyUnowned;
+        if (!state.byPrincipal[LOCAL_PRINCIPAL_ID]) {
+          state.byPrincipal[LOCAL_PRINCIPAL_ID] = {
+            partitions: normalizePrincipalPartitions(
+              legacyUnowned.partitions,
+              legacyPartitionsFromSettings(stored),
+            ),
+            lastUrls: normalizePrincipalLastUrls(
+              legacyUnowned.lastUrls,
+              legacyLastUrlsFromSettings(stored),
+            ),
+            advancedAi: structuredClone(
+              legacyUnowned.advancedAi || PUBLIC_DEFAULT_SETTINGS.advancedAi,
+            ),
+            translation: structuredClone(legacyUnowned.translation || DEFAULT_TRANSLATION_SETTINGS),
+          };
+        }
+        state.unowned.legacyUnowned = null;
+        state.legacyPartitionOwnerId = LOCAL_PRINCIPAL_ID;
+        migrated = true;
+      }
+      if (legacyRoot?.settings && !legacyRoot.settings.partitions) {
+        legacyRoot.settings.partitions = legacyPartitionsFromSettings(stored);
+        migrated = true;
+      }
+      if (legacyRoot?.settings && !legacyRoot.settings.lastUrls) {
+        legacyRoot.settings.lastUrls = legacyLastUrlsFromSettings(stored);
+        migrated = true;
+      }
+      const legacyOwnerServer = normalizeServerBaseUrl(legacyRoot?.ownerServer);
+      const legacyOwnerUsername = normalizePrincipalUsername(legacyRoot?.ownerUsername);
+      if (
+        requestedServer &&
+        requestedUsername &&
+        legacyOwnerServer === requestedServer &&
+        legacyOwnerUsername === requestedUsername
+      ) {
+        const principalId = principalIdFor(requestedServer, requestedUsername);
+        if (!state.byPrincipal[principalId]) {
+          state.byPrincipal[principalId] = {
+            ownerServer: requestedServer,
+            ownerUsername: requestedUsername,
+            partitions: normalizePrincipalPartitions(
+              legacyRoot.settings?.partitions,
+              legacyPartitionsFromSettings(stored),
+            ),
+            lastUrls: normalizePrincipalLastUrls(
+              legacyRoot.settings?.lastUrls,
+              legacyLastUrlsFromSettings(stored),
+            ),
+            advancedAi: structuredClone(
+              legacyRoot.settings?.advancedAi || PUBLIC_DEFAULT_SETTINGS.advancedAi,
+            ),
+            translation: structuredClone(
+              legacyRoot.settings?.translation || DEFAULT_TRANSLATION_SETTINGS,
+            ),
+          };
+        }
+        state.unowned.legacyRoot = null;
+        state.legacyPartitionOwnerId = principalId;
+        return { state, migrated: true };
+      }
+      return { state, migrated };
+    }
+
+    if (
+      existing?.version === 1 &&
+      existing.byPrincipal &&
+      typeof existing.byPrincipal === "object"
+    ) {
+      return {
+        migrated: true,
+        state: {
+          version: 2,
+          byPrincipal: {},
+          unowned: {
+            legacyRoot: null,
+            legacyByPrincipal: structuredClone(existing.byPrincipal),
+            legacyUnowned: existing.unowned ? structuredClone(existing.unowned) : null,
+          },
+          // V1 的 owner 使用可碰撞 hash，不能授权任何 V2 principal 复用旧 partition。
+          legacyPartitionOwnerId: "",
+        },
+      };
+    }
+
+    const legacy = {
+      partitions: legacyPartitionsFromSettings(stored),
+      lastUrls: legacyLastUrlsFromSettings(stored),
+      advancedAi: structuredClone(stored?.advancedAi || PUBLIC_DEFAULT_SETTINGS.advancedAi),
+      translation: structuredClone(stored?.translation || DEFAULT_TRANSLATION_SETTINGS),
+    };
+    const legacyOwnerServer = normalizeServerBaseUrl(stored?.collab?.server_url);
+    const legacyOwnerUsername = normalizePrincipalUsername(stored?.collab?.last_username);
+    const ownerMatches = Boolean(
+      requestedServer &&
+      requestedUsername &&
+      legacyOwnerServer === requestedServer &&
+      legacyOwnerUsername === requestedUsername,
+    );
+    const localOwnsLegacy = !legacyOwnerServer && !legacyOwnerUsername;
+    const ownerId = ownerMatches
+      ? principalIdFor(requestedServer, requestedUsername)
+      : localOwnsLegacy
+        ? LOCAL_PRINCIPAL_ID
+        : "";
+    return {
+      migrated: true,
+      state: {
+        version: 2,
+        byPrincipal: ownerId
+          ? {
+              [ownerId]: {
+                ...(ownerId === LOCAL_PRINCIPAL_ID
+                  ? {}
+                  : { ownerServer: requestedServer, ownerUsername: requestedUsername }),
+                partitions: legacyPartitionsFromSettings(stored),
+                ...legacy,
+              },
+            }
+          : {},
+        unowned: {
+          legacyRoot:
+            !ownerId && legacyOwnerServer && legacyOwnerUsername
+              ? {
+                  ownerServer: legacyOwnerServer,
+                  ownerUsername: legacyOwnerUsername,
+                  settings: legacy,
+                }
+              : null,
+          legacyByPrincipal: {},
+          legacyUnowned:
+            ownerId || (legacyOwnerServer && legacyOwnerUsername) ? null : structuredClone(legacy),
+        },
+        legacyPartitionOwnerId: ownerId,
+      },
+    };
+  }
+
+  writeStoredSettings(payload) {
+    writeJsonAtomic(
+      this.settingsFile,
+      preserveLegacyEncryptedSettings(payload, this.legacyEncryptedSecrets),
+    );
+  }
+
+  materializePrincipalSettings(stored) {
+    const { state } = this.principalSettingsState(stored);
+    const principalId = normalizePrincipalId(this.activePrincipalId, { allowLocal: true });
+    const scoped = principalId ? state.byPrincipal?.[principalId] : null;
+    const partitionFallback =
+      principalId &&
+      principalId === normalizePrincipalId(state.legacyPartitionOwnerId, { allowLocal: true })
+        ? legacyPartitionsFromSettings(stored)
+        : principalDefaultPartitions(principalId);
+    const partitions = normalizePrincipalPartitions(scoped?.partitions, partitionFallback);
+    const lastUrlFallback =
+      principalId &&
+      principalId === normalizePrincipalId(state.legacyPartitionOwnerId, { allowLocal: true })
+        ? legacyLastUrlsFromSettings(stored)
+        : principalDefaultLastUrls();
+    const lastUrls = normalizePrincipalLastUrls(scoped?.lastUrls, lastUrlFallback);
+    const result = {
+      ...stored,
+      gpt: { ...stored.gpt, partition: partitions.gpt, last_url: lastUrls.gpt },
+      gemini: { ...stored.gemini, partition: partitions.gemini, last_url: lastUrls.gemini },
+      claude: { ...stored.claude, partition: partitions.claude, last_url: lastUrls.claude },
+      advancedAi: structuredClone(scoped?.advancedAi || PUBLIC_DEFAULT_SETTINGS.advancedAi),
+      translation: normalizeTranslationSettings(scoped?.translation),
+    };
+    delete result.principalSettings;
+    return result;
+  }
+
+  loadSettings() {
+    return this.materializePrincipalSettings(this.readStoredSettings());
+  }
+
+  activatePrincipal(serverUrl, username) {
+    const principalId = principalIdFor(serverUrl, username);
+    if (!principalId) throw new Error("协作账号 principal 信息不合法");
+    const confirmedServer = normalizeServerBaseUrl(serverUrl);
+    const confirmedUsername = normalizePrincipalUsername(username);
+    const stored = this.readStoredSettings();
+    const { state, migrated } = this.principalSettingsState(stored, {
+      serverUrl: confirmedServer,
+      username: confirmedUsername,
+    });
+    if (migrated) {
+      stored.principalSettings = state;
+      stored.settingsRevision = Math.max(0, Number(stored.settingsRevision) || 0) + 1;
+      this.writeStoredSettings(stored);
+    }
+    const previous = {
+      principalId: this.activePrincipalId,
+      serverUrl: this.activePrincipalServerUrl,
+      username: this.activePrincipalUsername,
+      generation: this.activePrincipalGeneration,
+    };
+    try {
+      this.activePrincipalId = principalId;
+      this.activePrincipalServerUrl = confirmedServer;
+      this.activePrincipalUsername = confirmedUsername;
+      this.activePrincipalGeneration = previous.generation + 1;
+      return {
+        principalId,
+        generation: this.activePrincipalGeneration,
+        settings: this.materializePrincipalSettings({ ...stored, principalSettings: state }),
+      };
+    } catch (error) {
+      this.activePrincipalId = previous.principalId;
+      this.activePrincipalServerUrl = previous.serverUrl;
+      this.activePrincipalUsername = previous.username;
+      this.activePrincipalGeneration = previous.generation;
+      throw error;
+    }
+  }
+
+  clearPrincipal() {
+    const previous = {
+      principalId: this.activePrincipalId,
+      serverUrl: this.activePrincipalServerUrl,
+      username: this.activePrincipalUsername,
+      generation: this.activePrincipalGeneration,
+    };
+    try {
+      this.activePrincipalId = LOCAL_PRINCIPAL_ID;
+      this.activePrincipalServerUrl = "";
+      this.activePrincipalUsername = "";
+      this.activePrincipalGeneration = previous.generation + 1;
+      return this.loadSettings();
+    } catch (error) {
+      this.activePrincipalId = previous.principalId;
+      this.activePrincipalServerUrl = previous.serverUrl;
+      this.activePrincipalUsername = previous.username;
+      this.activePrincipalGeneration = previous.generation;
+      throw error;
+    }
+  }
+
+  getPrincipalContext() {
+    const { state } = this.principalSettingsState(this.readStoredSettings());
+    return {
+      principalId: this.activePrincipalId,
+      generation: this.activePrincipalGeneration,
+      serverUrl: this.activePrincipalServerUrl,
+      username: this.activePrincipalUsername,
+      legacyPartitionOwnerId: normalizePrincipalId(state.legacyPartitionOwnerId, {
+        allowLocal: true,
+      }),
+    };
+  }
+
+  assertSettingsPrincipal(expectedPrincipalId) {
+    const expected = normalizePrincipalId(expectedPrincipalId, { allowLocal: true });
+    const active = normalizePrincipalId(this.activePrincipalId, { allowLocal: true });
+    if (!expected || !active || expected !== active) {
+      throw new Error("设置 principal 已变化，请重试");
+    }
+    return active;
+  }
+
+  assertSettingsPrincipalSnapshot(expected) {
+    this.assertSettingsPrincipal(expected?.principalId);
+    if (
+      !Number.isInteger(expected?.generation) ||
+      expected.generation !== this.activePrincipalGeneration
+    ) {
+      throw new Error("设置 principal generation 已变化，请重试");
+    }
+    return this.activePrincipalId;
+  }
+
   saveSettings(data) {
+    const stored = this.readStoredSettings();
+    const currentRevision = this.materializePrincipalSettings(stored).settingsRevision || 0;
+    const suppliedRevision = Number(data?.settingsRevision);
+    if (Number.isInteger(suppliedRevision) && suppliedRevision !== currentRevision) {
+      throw Object.assign(new Error("设置已被其他操作更新，请重试"), {
+        code: "SETTINGS_REVISION_CONFLICT",
+      });
+    }
     const merged = mergeSettings(this.loadPrivateDefaults(), data);
-    fs.writeFileSync(this.settingsFile, JSON.stringify(merged, null, 2), "utf-8");
+    merged.settingsRevision = Math.max(currentRevision, merged.settingsRevision || 0) + 1;
+    const { state } = this.principalSettingsState(stored);
+    const principalId = normalizePrincipalId(this.activePrincipalId, { allowLocal: true });
+    if (!principalId) throw new Error("当前 principal 标识不合法");
+    state.byPrincipal[principalId] = {
+      ...(principalId === LOCAL_PRINCIPAL_ID
+        ? {}
+        : {
+            ownerServer: this.activePrincipalServerUrl,
+            ownerUsername: this.activePrincipalUsername,
+          }),
+      partitions: normalizePrincipalPartitions(
+        {
+          gpt: merged.gpt?.partition,
+          gemini: merged.gemini?.partition,
+          claude: merged.claude?.partition,
+        },
+        principalDefaultPartitions(principalId),
+      ),
+      lastUrls: normalizePrincipalLastUrls({
+        gpt: merged.gpt?.last_url,
+        gemini: merged.gemini?.last_url,
+        claude: merged.claude?.last_url,
+      }),
+      advancedAi: structuredClone(merged.advancedAi),
+      translation: structuredClone(merged.translation),
+    };
+    const persisted = {
+      ...merged,
+      gpt: {
+        ...merged.gpt,
+        partition: stored.gpt?.partition || PUBLIC_DEFAULT_SETTINGS.gpt.partition,
+        last_url: stored.gpt?.last_url || PUBLIC_DEFAULT_SETTINGS.gpt.last_url,
+      },
+      gemini: {
+        ...merged.gemini,
+        partition: stored.gemini?.partition || PUBLIC_DEFAULT_SETTINGS.gemini.partition,
+        last_url: stored.gemini?.last_url || PUBLIC_DEFAULT_SETTINGS.gemini.last_url,
+      },
+      claude: {
+        ...merged.claude,
+        partition: stored.claude?.partition || PUBLIC_DEFAULT_SETTINGS.claude.partition,
+        last_url: stored.claude?.last_url || PUBLIC_DEFAULT_SETTINGS.claude.last_url,
+      },
+      // 根级值仅作为旧版迁移归档保留；有效配置始终来自 principalSettings。
+      advancedAi: stored.advancedAi || PUBLIC_DEFAULT_SETTINGS.advancedAi,
+      translation: stored.translation || DEFAULT_TRANSLATION_SETTINGS,
+      principalSettings: state,
+    };
+    this.writeStoredSettings(persisted);
     return merged;
+  }
+
+  saveSettingsForPrincipal(data, expectedPrincipalId, expectedGeneration) {
+    this.assertSettingsPrincipalSnapshot({
+      principalId: expectedPrincipalId,
+      generation: expectedGeneration,
+    });
+    const current = this.loadSettings();
+    const sanitized = { ...current, ...structuredClone(data || {}) };
+    for (const kind of ["gpt", "gemini", "claude"]) {
+      sanitized[kind] = {
+        ...(sanitized[kind] && typeof sanitized[kind] === "object" ? sanitized[kind] : {}),
+        partition: current[kind].partition,
+      };
+    }
+    if (Array.isArray(sanitized.advancedAi?.environments)) {
+      sanitized.advancedAi.environments = sanitized.advancedAi.environments.map((environment) => {
+        if (!environment || typeof environment !== "object") return environment;
+        const next = { ...environment };
+        delete next.partition;
+        return next;
+      });
+    }
+    return this.saveSettings(sanitized);
+  }
+
+  patchSettings(
+    section,
+    patch,
+    expectedRevision,
+    expectedPrincipalId,
+    expectedPrincipalGeneration,
+  ) {
+    this.assertSettingsPrincipalSnapshot({
+      principalId: expectedPrincipalId,
+      generation: expectedPrincipalGeneration,
+    });
+    const allowed = new Set([
+      "sender",
+      "receiver",
+      "collab",
+      "gpt",
+      "gemini",
+      "claude",
+      "browserPrivacy",
+      "advancedAi",
+      "translation",
+      "ui",
+    ]);
+    const target = String(section || "");
+    if (!allowed.has(target)) throw new Error("不允许修改该设置区域");
+    if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+      throw new Error("设置补丁必须是对象");
+    }
+    if (["gpt", "gemini", "claude"].includes(target) && "partition" in patch) {
+      throw new Error("普通 AI partition 只能由主进程管理");
+    }
+    const current = this.loadSettings();
+    if (
+      Number.isInteger(expectedRevision) &&
+      expectedRevision >= 0 &&
+      expectedRevision !== current.settingsRevision
+    ) {
+      throw Object.assign(new Error("设置已被其他操作更新，请重试"), {
+        code: "SETTINGS_REVISION_CONFLICT",
+        current,
+      });
+    }
+    return this.saveSettings({
+      ...current,
+      [target]: { ...(current[target] || {}), ...patch },
+      settingsRevision: current.settingsRevision,
+    });
+  }
+
+  operateSettings(
+    section,
+    operations,
+    expectedRevision,
+    expectedPrincipalId,
+    expectedPrincipalGeneration,
+  ) {
+    this.assertSettingsPrincipalSnapshot({
+      principalId: expectedPrincipalId,
+      generation: expectedPrincipalGeneration,
+    });
+    const target = String(section || "");
+    if (target !== "advancedAi" && target !== "translation") {
+      throw new Error("该设置区域不支持路径操作");
+    }
+    if (!Array.isArray(operations) || !operations.length || operations.length > 100) {
+      throw new Error("设置操作列表不合法");
+    }
+    const current = this.loadSettings();
+    if (
+      Number.isInteger(expectedRevision) &&
+      expectedRevision >= 0 &&
+      expectedRevision !== current.settingsRevision
+    ) {
+      throw Object.assign(new Error("设置已被其他操作更新，请重试"), {
+        code: "SETTINGS_REVISION_CONFLICT",
+        current,
+      });
+    }
+    const nextSection = structuredClone(current[target]);
+    const blocked = new Set(["__proto__", "constructor", "prototype"]);
+    const assertSegments = (path) => {
+      if (!Array.isArray(path) || !path.length || path.length > 4)
+        throw new Error("设置路径不合法");
+      for (const segment of path) {
+        if (typeof segment !== "string" || !segment || blocked.has(segment)) {
+          throw new Error("设置路径不合法");
+        }
+      }
+    };
+    const allowedTranslation = new Set([
+      "version",
+      "provider",
+      "sourceLanguage",
+      "targetLanguage",
+      "siteLanguage",
+      "confirmNonTargetSend",
+      "autoTranslateSelection",
+      "ai.baseUrl",
+      "ai.apiKey",
+      "ai.model",
+      "ai.effort",
+      "api.baseUrl",
+      "api.apiKey",
+      "offline.baseUrl",
+    ]);
+    const environmentFields = new Set(["name", "routeId"]);
+
+    for (const operation of operations) {
+      if (!operation || typeof operation !== "object" || typeof operation.value === "function") {
+        throw new Error("设置操作不合法");
+      }
+      const path = operation.path;
+      assertSegments(path);
+      const op = operation.op === "delete" ? "delete" : operation.op === "set" ? "set" : "";
+      if (!op) throw new Error("设置操作不合法");
+
+      if (target === "translation") {
+        if (op !== "set" || !allowedTranslation.has(path.join("."))) {
+          throw new Error("不允许修改该翻译设置路径");
+        }
+        let parent = nextSection;
+        for (const segment of path.slice(0, -1)) parent = parent[segment];
+        parent[path.at(-1)] = structuredClone(operation.value);
+        continue;
+      }
+
+      if (path[0] === "enabled" && path.length === 1 && op === "set") {
+        nextSection.enabled = Boolean(operation.value);
+        continue;
+      }
+      if (
+        path[0] === "activeByKind" &&
+        path.length === 2 &&
+        ["gpt", "gemini", "claude"].includes(path[1]) &&
+        op === "set"
+      ) {
+        nextSection.activeByKind[path[1]] = normalizeAiEnvironmentId(operation.value);
+        continue;
+      }
+      if (path[0] !== "environments" || path.length < 2) {
+        throw new Error("不允许修改该高级环境设置路径");
+      }
+      const environmentId = normalizeAiEnvironmentId(path[1]);
+      if (!environmentId || environmentId !== path[1]) throw new Error("AI 环境标识不合法");
+      const index = nextSection.environments.findIndex(
+        (environment) => normalizeAiEnvironmentId(environment?.id) === environmentId,
+      );
+      if (path.length === 2) {
+        if (op === "delete") {
+          if (index >= 0) nextSection.environments.splice(index, 1);
+          for (const kind of ["gpt", "gemini", "claude"]) {
+            if (nextSection.activeByKind[kind] === environmentId)
+              nextSection.activeByKind[kind] = "";
+          }
+          continue;
+        }
+        if (index >= 0) throw new Error("AI 环境已存在");
+        const value = operation.value;
+        if (
+          !value ||
+          typeof value !== "object" ||
+          normalizeAiEnvironmentId(value.id) !== environmentId ||
+          !["gpt", "gemini", "claude"].includes(String(value.kind))
+        ) {
+          throw new Error("AI 环境配置不合法");
+        }
+        nextSection.environments.push(structuredClone(value));
+        continue;
+      }
+      if (path.length !== 3 || op !== "set" || !environmentFields.has(path[2])) {
+        throw new Error("不允许修改该高级环境设置路径");
+      }
+      if (index < 0) throw new Error("AI 环境不存在");
+      nextSection.environments[index][path[2]] = String(operation.value || "").trim();
+    }
+
+    return this.saveSettings({
+      ...current,
+      [target]: nextSection,
+      settingsRevision: current.settingsRevision,
+    });
   }
 
   ensureChatHistoryFile() {
@@ -907,6 +1733,7 @@ class Backend {
   }
 
   async importUserData() {
+    const principal = this.getPrincipalContext();
     const { dialog } = require("electron");
     const window = this.getWindow();
     if (!window) return null;
@@ -922,7 +1749,8 @@ class Backend {
     try {
       const filePath = result.filePaths[0];
       const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      const settings = this.saveSettings(raw?.settings || {});
+      const settings = this.saveImportedSettingsForPrincipal(raw?.settings, principal);
+      this.assertSettingsPrincipalSnapshot(principal);
       const chatHistory = this.saveChatHistory(raw?.chatHistory || {});
       return { settings, chatHistory, filePath };
     } catch (err) {
@@ -974,6 +1802,7 @@ class Backend {
   }
 
   async importSettings() {
+    const principal = this.getPrincipalContext();
     const { dialog } = require("electron");
     const window = this.getWindow();
     if (!window) return null;
@@ -989,10 +1818,28 @@ class Backend {
     try {
       const filePath = result.filePaths[0];
       const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      return this.saveSettings(raw);
+      return this.saveImportedSettingsForPrincipal(raw, principal);
     } catch (err) {
       throw new Error(`无法装载该文件: ${err.message}`);
     }
+  }
+
+  saveImportedSettingsForPrincipal(value, principal) {
+    this.assertSettingsPrincipalSnapshot(principal);
+    const current = this.loadSettings();
+    this.assertSettingsPrincipalSnapshot(principal);
+    const imported = prepareImportedSettings(value);
+    const scoped = {
+      ...imported,
+      settingsRevision: current.settingsRevision,
+    };
+    for (const kind of ["gpt", "gemini", "claude"]) {
+      scoped[kind] = {
+        ...(imported[kind] && typeof imported[kind] === "object" ? imported[kind] : {}),
+        partition: current[kind].partition,
+      };
+    }
+    return this.saveSettingsForPrincipal(scoped, principal.principalId, principal.generation);
   }
 
   getPaths() {
@@ -1891,7 +2738,9 @@ class Backend {
 
 module.exports = {
   Backend,
+  decodeLegacyEncryptedSettings,
   DEFAULT_SETTINGS: PUBLIC_DEFAULT_SETTINGS,
   PUBLIC_DEFAULT_SETTINGS,
   DEFAULT_TARGET_DOMAINS,
+  prepareImportedSettings,
 };
