@@ -24,6 +24,7 @@ const {
   normalizeServerBaseUrl,
   principalIdFor,
 } = require("./principal");
+const { buildUpdateReleaseInfo } = require("./updateRelease");
 const { copyMissingChromiumPartitions } = require("./userDataPath");
 
 // 自动更新源 = GitHub Releases (参考 cc-switch 的做法)。仓库地址从 package.json 推导,
@@ -1904,8 +1905,8 @@ class Backend {
       throw new Error("更新链接无效");
     }
 
-    if (!/^https?:$/i.test(parsed.protocol)) {
-      throw new Error("更新链接仅支持 http/https");
+    if (parsed.protocol !== "https:") {
+      throw new Error("更新链接仅支持 GitHub HTTPS");
     }
 
     const ext = path.extname(parsed.pathname || "");
@@ -2087,47 +2088,83 @@ class Backend {
     });
   }
 
-  // 查询最新版 (自动更新源)。读 release 的 latest.yml (electron-updater feed) 而非 api.github.com:
-  // 后者未登录限流 60 次/小时, 极易被打爆; latest.yml 是 release 资源、不限流。完全不经过自建服务器。
-  async checkLatestRelease() {
-    if (!UPDATE_REPO) return null;
-    const ymlText = await this.fetchText(
-      `https://github.com/${UPDATE_REPO}/releases/latest/download/latest.yml`,
-    );
-    if (!ymlText) return null;
-    const vm = ymlText.match(/^version:\s*(.+)$/m);
-    if (!vm) return null;
-    const version = vm[1]
-      .trim()
-      .replace(/^['"]|['"]$/g, "")
-      .replace(/^v/i, "");
-    if (!version) return null;
-    const tag = `v${version}`;
-    let fileName;
-    if (process.platform === "darwin") {
-      fileName = `sharegpt-sender-${version}-arm64.dmg`;
-    } else {
-      const pm = ymlText.match(/^path:\s*(.+)$/m);
-      fileName = pm ? pm[1].trim().replace(/^['"]|['"]$/g, "") : `sharegpt-sender-${version}.exe`;
+  // GitHub /releases/latest 的最终重定向目标才是发布版本真源。
+  resolveRedirectUrl(url, redirectsLeft = 5, agent) {
+    if (agent === undefined) {
+      agent = (this.updateProxyAgent && this.updateProxyAgent()) || null;
     }
-    return {
-      version,
-      notes: "",
-      publishedAt: "",
-      url: `https://github.com/${UPDATE_REPO}/releases/download/${tag}/${fileName}`,
-      fileName,
-      htmlUrl: `https://github.com/${UPDATE_REPO}/releases/tag/${tag}`,
-      repo: UPDATE_REPO,
-    };
+    return new Promise((resolve) => {
+      try {
+        const protocol = new URL(url).protocol === "http:" ? http : https;
+        const req = protocol.get(
+          url,
+          {
+            headers: { "User-Agent": "ShareGPT-Updater" },
+            timeout: 8000,
+            agent: agent || undefined,
+          },
+          (res) => {
+            const status = Number(res.statusCode || 0);
+            if (
+              [301, 302, 303, 307, 308].includes(status) &&
+              res.headers.location &&
+              redirectsLeft > 0
+            ) {
+              res.resume();
+              this.resolveRedirectUrl(
+                new URL(res.headers.location, url).toString(),
+                redirectsLeft - 1,
+                agent,
+              ).then(resolve);
+              return;
+            }
+            res.resume();
+            resolve(status >= 200 && status < 300 ? url : null);
+          },
+        );
+        req.on("error", () => resolve(null));
+        req.on("timeout", () => {
+          req.destroy();
+          resolve(null);
+        });
+      } catch (_err) {
+        resolve(null);
+      }
+    });
   }
 
-  async downloadUpdatePackage(payload = {}, onProgress = null) {
-    fs.mkdirSync(this.updatesDir, { recursive: true });
-    const { url, filePath } = this.resolveUpdateDownloadTarget(
-      payload?.url,
-      payload?.fileName,
-      payload?.version,
+  // latest.yml 仅在内容与 tag 一致时辅助解析 Windows 文件名；它不能改写 UI 版本。
+  async checkLatestRelease() {
+    if (!UPDATE_REPO) return null;
+    const agent = (this.updateProxyAgent && this.updateProxyAgent()) || null;
+    const latestUrl = await this.resolveRedirectUrl(
+      `https://github.com/${UPDATE_REPO}/releases/latest`,
+      5,
+      agent,
     );
+    if (!latestUrl) return null;
+    const ymlText =
+      (await this.fetchText(
+        `https://github.com/${UPDATE_REPO}/releases/latest/download/latest.yml`,
+        5,
+        agent,
+      )) || "";
+    return buildUpdateReleaseInfo({
+      repo: UPDATE_REPO,
+      latestUrl,
+      ymlText,
+      platform: process.platform,
+      arch: process.arch,
+    });
+  }
+
+  async downloadUpdatePackage(payload = {}, onProgress = null, redirectsLeft = 5, target = null) {
+    fs.mkdirSync(this.updatesDir, { recursive: true });
+    const resolvedTarget =
+      target || this.resolveUpdateDownloadTarget(payload?.url, payload?.fileName, payload?.version);
+    const url = new URL(String(payload?.url || ""));
+    if (url.protocol !== "https:") throw new Error("更新下载重定向必须保持 HTTPS");
+    const { filePath } = resolvedTarget;
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     const protocol = url.protocol === "https:" ? https : http;
     const emitProgress = typeof onProgress === "function" ? onProgress : () => {};
@@ -2138,12 +2175,23 @@ class Backend {
 
         if ([301, 302, 303, 307, 308].includes(status) && response.headers.location) {
           response.resume();
+          if (redirectsLeft <= 0) {
+            reject(new Error("更新下载重定向次数过多"));
+            return;
+          }
+          const redirectedUrl = new URL(response.headers.location, url);
+          if (redirectedUrl.protocol !== "https:") {
+            reject(new Error("更新下载重定向必须保持 HTTPS"));
+            return;
+          }
           this.downloadUpdatePackage(
             {
               ...payload,
-              url: new URL(response.headers.location, url).toString(),
+              url: redirectedUrl.toString(),
             },
             onProgress,
+            redirectsLeft - 1,
+            resolvedTarget,
           ).then(resolve, reject);
           return;
         }
