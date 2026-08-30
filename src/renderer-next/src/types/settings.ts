@@ -56,6 +56,7 @@ export interface CollabSettings {
   last_username: string
   last_avatar: string
   remember_password: boolean
+  auto_login?: boolean
   saved_password: string
   notify_message_popup: boolean
   notify_system_notification: boolean
