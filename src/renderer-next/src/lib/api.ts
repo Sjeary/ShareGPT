@@ -57,6 +57,14 @@ const fallback = {
   captureAiPageText: async () => {
     throw new Error('仅桌面客户端支持整页读取')
   },
+  getAiComposerTarget: async () => {
+    throw new Error('仅桌面客户端支持网页填入')
+  },
+  writeAiComposer: async () => {
+    throw new Error('仅桌面客户端支持网页填入')
+  },
+  syncAiComposerGuard: async () => ({ ok: false, updated: 0 }),
+  resolveAiComposerConfirmation: async () => ({ ok: false, sent: false }),
   exportUserData: async () => undefined,
   importUserData: async () => undefined,
   readClipboardAttachment: async () => undefined,

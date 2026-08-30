@@ -56,6 +56,14 @@ interface TranslationState {
   settingsOpen: boolean
   loaded: boolean
   config: TranslationSettings
+  pendingComposerConfirmation: {
+    kind: AiKind
+    tabId: string
+    environmentId: string
+    requestId: string
+    targetLanguage: string
+    expiresAt: number
+  } | null
   load: () => Promise<void>
   saveConfig: (patch: Partial<TranslationSettings>) => Promise<void>
   setProvider: (provider: TranslationProvider) => Promise<void>
@@ -68,6 +76,7 @@ interface TranslationState {
   setStatus: (status: string) => void
   setLoading: (loading: boolean) => void
   setSettingsOpen: (open: boolean) => void
+  setPendingComposerConfirmation: (pending: TranslationState['pendingComposerConfirmation']) => void
   resetForPrincipal: (principalId: string, settings?: Partial<TranslationSettings>) => void
 }
 
@@ -83,6 +92,7 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   settingsOpen: false,
   loaded: false,
   config: DEFAULT_TRANSLATION_SETTINGS,
+  pendingComposerConfirmation: null,
 
   load: async () => {
     if (get().loaded) return
@@ -124,6 +134,8 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
       await useAppStore.getState().patchSection('translation', config)
       settingsPrincipalRuntime.assertCurrent(principal)
       set({ config: normalizeSettings(useAppStore.getState().settings?.translation) })
+      await api.syncAiComposerGuard().catch(() => undefined)
+      settingsPrincipalRuntime.assertCurrent(principal)
     } catch (error) {
       settingsPrincipalRuntime.assertCurrent(principal)
       set({ config: normalizeSettings(useAppStore.getState().settings?.translation || previous) })
@@ -157,6 +169,8 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   setStatus: (status) => set({ status }),
   setLoading: (loading) => set({ loading }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  setPendingComposerConfirmation: (pendingComposerConfirmation) =>
+    set({ pendingComposerConfirmation }),
   resetForPrincipal: (principalId, settings) =>
     set({
       principalId: String(principalId || ''),
@@ -167,6 +181,7 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
       status: '',
       loading: false,
       settingsOpen: false,
+      pendingComposerConfirmation: null,
       loaded: true,
       config: normalizeSettings(settings),
     }),

@@ -35,6 +35,42 @@ function normalizeSnapshot(value = {}) {
   };
 }
 
+function captureComposerTarget(workspace, principal, runtimeEpoch) {
+  const webContents = workspace?.view?.webContents;
+  const principalId = safeText(principal?.principalId);
+  const principalGeneration = Number(principal?.generation || 0);
+  const documentUrl = safeText(workspace?.documentUrl);
+  let currentUrl = "";
+  try {
+    currentUrl = safeText(webContents?.getURL?.());
+  } catch {}
+  if (
+    !workspace ||
+    workspace.closing ||
+    Number(workspace.runtimeEpoch) !== Number(runtimeEpoch) ||
+    safeText(workspace.ownerPrincipalId) !== principalId ||
+    Number(workspace.ownerPrincipalGeneration || 0) !== principalGeneration ||
+    !webContents ||
+    webContents.isDestroyed?.() ||
+    workspace.documentReady !== true ||
+    Number(workspace.documentEpoch || 0) < 1 ||
+    !documentUrl ||
+    currentUrl !== documentUrl
+  ) {
+    throw new Error("当前网页仍在导航，请稍后重试");
+  }
+  return Object.freeze({
+    principalId,
+    kind: safeText(workspace.kind),
+    environmentId: safeText(workspace.environmentId),
+    tabId: safeText(workspace.id),
+    workspaceInstanceId: safeText(workspace.workspaceInstanceId),
+    webContentsId: Number(webContents.id || 0),
+    documentEpoch: Number(workspace.documentEpoch || 0),
+    url: documentUrl,
+  });
+}
+
 function createComposerOperation(snapshot, options = {}) {
   const target = normalizeSnapshot(snapshot);
   const text = safeText(options.text);
@@ -587,6 +623,7 @@ module.exports = {
   COMPOSER_OPERATION_WORLD_ID,
   MAX_COMPOSER_CHARS,
   assertComposerOperationCurrent,
+  captureComposerTarget,
   composerConfirmationFinalizeScript,
   composerConfirmationGuardScript,
   composerConfirmationMarker,

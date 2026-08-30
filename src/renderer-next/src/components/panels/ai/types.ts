@@ -5,7 +5,10 @@ import type { AiKind } from '@/store/useAiStore'
 export interface AiEventPayload {
   kind?: AiKind | string
   type?: string
+  principalId?: string
+  principalGeneration?: number
   tabId?: string
+  environmentId?: string
   title?: string
   url?: string
   loading?: boolean
@@ -22,6 +25,10 @@ export interface AiEventPayload {
   errorCode?: string | number
   // console-message
   message?: string
+  // composer-confirmation / invalidated (no prompt text)
+  requestId?: string
+  targetLanguage?: string
+  expiresAt?: number
   // translate-selection
   text?: string
   // external-open-failed

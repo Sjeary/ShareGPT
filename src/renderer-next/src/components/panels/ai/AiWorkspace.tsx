@@ -162,6 +162,14 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     (s) => translationAllowed && s.open && s.kind === kind,
   )
   const toggleTranslation = useTranslationStore((s) => s.toggle)
+  const pendingComposerConfirmation = useTranslationStore((s) => {
+    const pending = s.pendingComposerConfirmation
+    return pending?.kind === kind &&
+      pending.tabId === activeTabId &&
+      pending.environmentId === environmentId
+      ? pending
+      : null
+  })
   const feedback = useAiStore((s) => s.feedbackByKind[kind])
   const setFeedback = useAiStore((s) => s.setFeedback)
   const reportWorkspaceError = useCallback(
@@ -171,6 +179,48 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     },
     [kind, setFeedback],
   )
+
+  const resolveComposerConfirmation = useCallback(
+    async (confirmed: boolean, showStatus = true) => {
+      const pending = useTranslationStore.getState().pendingComposerConfirmation
+      if (
+        !pending ||
+        pending.kind !== kind ||
+        pending.tabId !== activeTabId ||
+        pending.environmentId !== environmentId
+      )
+        return
+      useTranslationStore.getState().setPendingComposerConfirmation(null)
+      try {
+        await api.resolveAiComposerConfirmation({
+          requestId: pending.requestId,
+          confirmed,
+        })
+        if (showStatus) setFeedback(kind, confirmed ? '已发送' : '已取消发送')
+      } catch (error) {
+        const raw = error instanceof Error ? error.message : String(error)
+        const message = raw
+          .replace(/^Error invoking remote method '[^']+': Error:\s*/i, '')
+          .replace(/^Error:\s*/i, '')
+        if (!/网页或标签已经变化|发送确认已失效/.test(message)) {
+          setFeedback(kind, message, 'error')
+        }
+      }
+    },
+    [activeTabId, environmentId, kind, setFeedback],
+  )
+
+  useEffect(() => {
+    if (!pendingComposerConfirmation) return
+    const delay = Math.max(0, pendingComposerConfirmation.expiresAt - Date.now())
+    const timer = window.setTimeout(() => {
+      const current = useTranslationStore.getState().pendingComposerConfirmation
+      if (current?.requestId === pendingComposerConfirmation.requestId) {
+        useTranslationStore.getState().setPendingComposerConfirmation(null)
+      }
+    }, delay)
+    return () => window.clearTimeout(timer)
+  }, [pendingComposerConfirmation])
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null
   const addressInputRef = useRef<HTMLInputElement>(null)
@@ -888,6 +938,41 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           </div>
         )}
 
+        {pendingComposerConfirmation && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/45 bg-amber-500/10 px-4 py-2 text-xs text-amber-800 dark:text-amber-200">
+            <ShieldAlert className="size-4 shrink-0" />
+            <span className="min-w-48 flex-1">
+              当前内容可能不是网页接收语言（
+              {pendingComposerConfirmation.targetLanguage.toUpperCase()}），是否仍要发送？
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7"
+              onClick={() => void resolveComposerConfirmation(false)}
+            >
+              取消
+            </Button>
+            <Button
+              size="sm"
+              className="h-7"
+              onClick={() => void resolveComposerConfirmation(true)}
+            >
+              发送
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              title="关闭发送提示"
+              aria-label="关闭发送提示"
+              onClick={() => void resolveComposerConfirmation(false, false)}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </div>
+        )}
+
         {proxyOpen && (
           <div className="shrink-0 border-b border-border bg-muted/30">
             <ProxyReportPanel
@@ -916,7 +1001,14 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               </div>
             )}
           </div>
-          {translationOpen && <TranslationPanel kind={kind} tabId={activeTabId} />}
+          {translationOpen && (
+            <TranslationPanel
+              key={`${kind}:${environmentId}:${activeTabId}`}
+              kind={kind}
+              tabId={activeTabId}
+              environmentId={environmentId}
+            />
+          )}
         </div>
       </div>
     </PanelScaffold>

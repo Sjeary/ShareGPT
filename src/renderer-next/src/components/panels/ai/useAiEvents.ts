@@ -246,6 +246,29 @@ export function useAiEvents() {
 
       applyState(kind, payload)
 
+      if (payload?.type === 'composer-confirmation') {
+        const requestId = safeText(payload.requestId)
+        const tabId = safeText(payload.tabId)
+        const expiresAt = Number(payload.expiresAt)
+        if (requestId && tabId && Number.isFinite(expiresAt)) {
+          useTranslationStore.getState().setPendingComposerConfirmation({
+            kind,
+            tabId,
+            environmentId: safeText(payload.environmentId),
+            requestId,
+            targetLanguage: safeText(payload.targetLanguage) || 'en',
+            expiresAt,
+          })
+        }
+      }
+
+      if (payload?.type === 'composer-confirmation-invalidated') {
+        const current = useTranslationStore.getState().pendingComposerConfirmation
+        if (current?.requestId === safeText(payload.requestId)) {
+          useTranslationStore.getState().setPendingComposerConfirmation(null)
+        }
+      }
+
       if (payload?.type === 'console-message') {
         handleTrackerMessage(kind, payload.message)
       }

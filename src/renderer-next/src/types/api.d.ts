@@ -26,6 +26,17 @@ export interface AiProxyReport {
   hosts?: AiProxyHost[]
 }
 
+export interface AiComposerTarget {
+  principalId: string
+  kind: 'gpt' | 'gemini' | 'claude'
+  environmentId: string
+  tabId: string
+  workspaceInstanceId: string
+  webContentsId: number
+  documentEpoch: number
+  url: string
+}
+
 export interface BrowserFingerprintSnapshot {
   schemaVersion: 1
   kind: 'gpt' | 'gemini' | 'claude'
@@ -281,6 +292,21 @@ export interface ShareGptApi {
     tabId?: string,
     environmentId?: string,
   ) => Promise<{ title: string; url: string; text: string; truncated: boolean }>
+  getAiComposerTarget: (payload: {
+    kind: 'gpt' | 'gemini' | 'claude'
+    tabId: string
+    environmentId: string
+  }) => Promise<AiComposerTarget>
+  writeAiComposer: (payload: {
+    target: AiComposerTarget
+    text: string
+    send: boolean
+  }) => Promise<{ ok: boolean; sent: boolean }>
+  syncAiComposerGuard: () => Promise<{ ok: boolean; updated: number }>
+  resolveAiComposerConfirmation: (payload: {
+    requestId: string
+    confirmed: boolean
+  }) => Promise<{ ok: boolean; sent: boolean }>
   exportUserData: () => Promise<unknown>
   importUserData: () => Promise<unknown>
   readClipboardAttachment: () => Promise<unknown>

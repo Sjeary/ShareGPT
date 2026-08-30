@@ -36,6 +36,22 @@ const {
 const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
 const { translateText } = require("./translation");
 const {
+  COMPOSER_OPERATION_WORLD_ID,
+  assertComposerOperationCurrent,
+  captureComposerTarget,
+  composerConfirmationGuardScript,
+  composerConfirmationResolveScript,
+  createComposerConfirmationStore,
+  createComposerOperation,
+  createOperationToken,
+  executeComposerWrite,
+  parseComposerConfirmationMessage,
+  sendComposerEnter,
+  shouldGuardComposerSubmit,
+  waitForComposerConfirmationReplay,
+  waitForComposerOutcome,
+} = require("./aiComposerOperation");
+const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   partitionForAiEnvironment,
@@ -473,6 +489,7 @@ function createElectronApp(baseMode = "all") {
   let appMode = normalizeMode(baseMode, process.argv);
   const configuredAiPartitions = new Set();
   const aiWorkspaceRegistry = createDurableWorkspaceRegistry();
+  const composerConfirmations = createComposerConfirmationStore();
   let activeAiKind = "";
   let aiTabCounter = 0;
   let aiRuntimeEpoch = 0;
@@ -554,6 +571,7 @@ function createElectronApp(baseMode = "all") {
 
   function cancelPrincipalRuntime() {
     aiRuntimeEpoch += 1;
+    composerConfirmations.clear();
     aiRouteHealthCache.clear();
     for (const controller of principalAbortControllers) controller.abort();
     principalAbortControllers.clear();
@@ -842,6 +860,161 @@ function createElectronApp(baseMode = "all") {
       text: chunks.join("\n"),
       truncated,
     };
+  }
+
+  function captureWorkspaceComposerTarget(workspace) {
+    if (!workspace) throw new Error("当前网页尚未准备好");
+    if (!workspaceRuntimeIsCurrent(workspace)) {
+      throw Object.assign(new Error("账号已切换，请重试"), { code: "STALE_PRINCIPAL" });
+    }
+    const target = captureComposerTarget(
+      workspace,
+      backend?.getPrincipalContext?.() || {},
+      aiRuntimeEpoch,
+    );
+    if (!isWorkspaceUrlAllowed(workspace, target.url)) {
+      throw new Error("当前网页尚未准备好");
+    }
+    return target;
+  }
+
+  function composerWorkspaceFromTarget(target) {
+    const kind = safeText(target?.kind);
+    const tabId = safeText(target?.tabId);
+    const environmentId = normalizeAiEnvironmentId(target?.environmentId);
+    if (!isAiKind(kind) || !tabId) throw new Error("当前网页尚未准备好");
+    const workspace = getWorkspace(kind, tabId, environmentId);
+    if (!workspace) throw new Error("当前网页尚未准备好");
+    return workspace;
+  }
+
+  function invalidateComposerConfirmations(workspace, reason) {
+    if (!workspace) return 0;
+    const removed = composerConfirmations.deleteFor(
+      (entry) => entry.target?.workspaceInstanceId === workspace.workspaceInstanceId,
+    );
+    for (const entry of removed) {
+      emitWorkspaceEvent(workspace, "composer-confirmation-invalidated", {
+        tabId: workspace.id,
+        environmentId: workspace.environmentId,
+        requestId: entry.requestId,
+        reason: safeText(reason),
+      });
+    }
+    return removed.length;
+  }
+
+  function invalidateComposerWorkspace(workspace, reason) {
+    invalidateComposerConfirmations(workspace, reason);
+    if (!workspace) return;
+    workspace.composerGuardToken = "";
+    workspace.composerGuardDocumentEpoch = 0;
+  }
+
+  async function syncComposerGuard(workspace) {
+    if (!workspaceRuntimeIsCurrent(workspace) || !isWorkspaceDocumentAllowed(workspace)) {
+      return false;
+    }
+    const target = captureWorkspaceComposerTarget(workspace);
+    invalidateComposerConfirmations(workspace, "guard-refresh");
+    if (
+      !workspace.composerGuardToken ||
+      workspace.composerGuardDocumentEpoch !== target.documentEpoch
+    ) {
+      workspace.composerGuardToken = createOperationToken();
+      workspace.composerGuardDocumentEpoch = target.documentEpoch;
+    }
+    const token = workspace.composerGuardToken;
+    const settings = backend?.loadSettings?.() || {};
+    const result = await workspace.view.webContents.executeJavaScriptInIsolatedWorld(
+      COMPOSER_OPERATION_WORLD_ID,
+      [
+        {
+          code: composerConfirmationGuardScript(token, {
+            enabled: shouldGuardComposerSubmit(settings),
+            targetLanguage: safeText(settings.translation?.siteLanguage) || "en",
+          }),
+        },
+      ],
+      false,
+    );
+    assertComposerOperationCurrent(
+      { token, target },
+      captureWorkspaceComposerTarget(workspace),
+    );
+    if (workspace.composerGuardToken !== token) {
+      throw Object.assign(new Error("网页或标签已经变化，请重新操作"), {
+        code: "COMPOSER_TARGET_CHANGED",
+      });
+    }
+    return Boolean(result && typeof result.installed === "boolean");
+  }
+
+  async function syncAllComposerGuards() {
+    const results = await Promise.allSettled(
+      aiWorkspaceRegistry.all().map((workspace) => syncComposerGuard(workspace)),
+    );
+    return results.filter((result) => result.status === "fulfilled" && result.value).length;
+  }
+
+  async function writeAiComposer(payload) {
+    const operation = createComposerOperation(payload?.target, {
+      text: payload?.text,
+      send: payload?.send === true,
+    });
+    const workspace = composerWorkspaceFromTarget(operation.target);
+    const currentTarget = () => captureWorkspaceComposerTarget(workspace);
+    assertComposerOperationCurrent(operation, currentTarget());
+    const webContents = workspace.view.webContents;
+    await executeComposerWrite(webContents, operation);
+    assertComposerOperationCurrent(operation, currentTarget());
+    if (!operation.send) return { ok: true, sent: false };
+
+    sendComposerEnter(webContents);
+    const outcome = await waitForComposerOutcome(webContents, operation.token);
+    if (outcome?.status !== "accepted") {
+      throw Object.assign(new Error("网页没有接受本次发送，请重试"), {
+        code: "COMPOSER_SEND_REJECTED",
+      });
+    }
+    return { ok: true, sent: true };
+  }
+
+  async function resolveComposerConfirmation(payload) {
+    const pending = composerConfirmations.take(payload?.requestId);
+    if (!pending) throw new Error("发送确认已失效");
+    const workspace = composerWorkspaceFromTarget(pending.target);
+    const operation = { token: pending.token, target: pending.target };
+    const currentTarget = () => captureWorkspaceComposerTarget(workspace);
+    assertComposerOperationCurrent(operation, currentTarget());
+    const webContents = workspace.view.webContents;
+    const result = await webContents.executeJavaScriptInIsolatedWorld(
+      COMPOSER_OPERATION_WORLD_ID,
+      [
+        {
+          code: composerConfirmationResolveScript(
+            pending.token,
+            pending.requestId,
+            payload?.confirmed === true,
+          ),
+        },
+      ],
+      false,
+    );
+    if (!result?.ok) throw new Error("发送确认已失效");
+    if (payload?.confirmed !== true) return { ok: true, sent: false };
+    assertComposerOperationCurrent(operation, currentTarget());
+    if (result.replay === "enter") sendComposerEnter(webContents);
+    if (result.replay !== "enter" && result.replay !== "click") {
+      throw new Error("发送确认已失效");
+    }
+    const replay = await waitForComposerConfirmationReplay(
+      webContents,
+      pending.token,
+      result.replayId,
+    );
+    if (replay?.consumed !== true) throw new Error("网页没有接受本次发送，请重试");
+    return { ok: true, sent: true };
   }
 
   function listWorkspaces(kind, environmentId) {
@@ -1388,6 +1561,7 @@ function createElectronApp(baseMode = "all") {
         at: new Date().toISOString(),
       };
       workspace.viewDead = true;
+      invalidateComposerWorkspace(workspace, "renderer-gone");
       invalidateWorkspaceDocumentState(workspace, { clearUrl: true });
       workspace.initialized = false;
       workspace.loading = false;
@@ -1405,6 +1579,7 @@ function createElectronApp(baseMode = "all") {
     wc.on("destroyed", () => {
       if (workspace.viewGeneration !== viewGeneration || workspace.view?.webContents !== wc) return;
       workspace.viewDead = true;
+      invalidateComposerWorkspace(workspace, "renderer-destroyed");
       invalidateWorkspaceDocumentState(workspace, { clearUrl: true });
       workspace.attached = false;
       if (workspaceRuntimeIsCurrent(workspace)) {
@@ -1489,9 +1664,16 @@ function createElectronApp(baseMode = "all") {
       handleBlockedAiNavigation(workspace, url);
     });
 
+    wc.on("did-start-navigation", (details) => {
+      if (!isCurrentView() || !details?.isMainFrame) return;
+      invalidateComposerWorkspace(workspace, "navigation-started");
+      invalidateWorkspaceDocumentState(workspace);
+    });
+
     wc.on("did-start-loading", () => {
       if (!isCurrentView()) return;
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
+      invalidateComposerWorkspace(workspace, "navigation");
       invalidateWorkspaceDocumentState(workspace);
       workspace.loading = true;
       emitAiState(workspace, "did-start-loading");
@@ -1502,6 +1684,7 @@ function createElectronApp(baseMode = "all") {
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
       const currentUrl = normalizeAiWorkspaceUrl(workspace, wc.getURL());
       markWorkspaceDocumentReady(workspace, currentUrl);
+      void syncComposerGuard(workspace).catch(() => undefined);
       emitAiState(workspace, "dom-ready");
     });
 
@@ -1578,6 +1761,7 @@ function createElectronApp(baseMode = "all") {
       }
       if (isWorkspaceUrlAllowed(workspace, url)) {
         workspace.lastUrl = normalizeAiWorkspaceUrl(workspace, url);
+        invalidateComposerWorkspace(workspace, "navigation-committed");
         advanceWorkspaceDocument(workspace, workspace.lastUrl);
       }
       workspace.initialized = true;
@@ -1591,7 +1775,9 @@ function createElectronApp(baseMode = "all") {
       }
       if (isWorkspaceUrlAllowed(workspace, url)) {
         workspace.lastUrl = normalizeAiWorkspaceUrl(workspace, url);
+        invalidateComposerWorkspace(workspace, "same-document-navigation");
         advanceWorkspaceDocument(workspace, workspace.lastUrl, { ready: true });
+        void syncComposerGuard(workspace).catch(() => undefined);
       }
       emitAiState(workspace, "did-navigate-in-page", { url });
     });
@@ -1604,8 +1790,33 @@ function createElectronApp(baseMode = "all") {
       emitTabsChanged(workspace.kind);
     });
 
-    wc.on("console-message", (_event, _level, message) => {
-      emitAiEvent(workspace.kind, "console-message", { message: String(message || "") });
+    wc.on("console-message", (details, _level, legacyMessage) => {
+      if (!isCurrentView()) return;
+      const message = String(details?.message ?? legacyMessage ?? "");
+      const confirmation = workspace.composerGuardToken
+        ? parseComposerConfirmationMessage(message, workspace.composerGuardToken)
+        : null;
+      if (confirmation) {
+        try {
+          const target = captureWorkspaceComposerTarget(workspace);
+          const pending = composerConfirmations.put(confirmation.id, {
+            token: workspace.composerGuardToken,
+            target,
+            action: confirmation.action,
+          });
+          if (pending) {
+            emitWorkspaceEvent(workspace, "composer-confirmation", {
+              tabId: workspace.id,
+              environmentId: workspace.environmentId,
+              requestId: pending.requestId,
+              targetLanguage: confirmation.targetLanguage,
+              expiresAt: pending.expiresAt,
+            });
+          }
+        } catch {}
+        return;
+      }
+      emitWorkspaceEvent(workspace, "console-message", { message });
     });
 
     // F11: 嵌入的 AI 网页获得焦点时, 渲染层收不到键盘事件; 在此拦截 F11 切换窗口全屏。
@@ -1784,6 +1995,7 @@ function createElectronApp(baseMode = "all") {
     });
     workspace.view = view;
     workspace.viewGeneration = Number(workspace.viewGeneration || 0) + 1;
+    invalidateComposerWorkspace(workspace, "renderer-recreated");
     resetWorkspaceDocumentState(workspace);
     workspace.viewDead = false;
     workspace.attached = false;
@@ -1897,6 +2109,8 @@ function createElectronApp(baseMode = "all") {
       documentEpoch: 0,
       documentUrl: "",
       documentReady: false,
+      composerGuardToken: "",
+      composerGuardDocumentEpoch: 0,
       ensureGeneration: 0,
       viewDead: true,
       attached: false,
@@ -1930,6 +2144,7 @@ function createElectronApp(baseMode = "all") {
 
   function disposeAiWorkspaces(options = {}) {
     if (options.incrementEpoch !== false) aiRuntimeEpoch += 1;
+    composerConfirmations.clear();
     for (const workspace of aiWorkspaceRegistry.all()) {
       workspace.closing = true;
       detachWorkspaceView(workspace);
@@ -2189,6 +2404,22 @@ function createElectronApp(baseMode = "all") {
         safeText(payload?.tabId),
         safeText(payload?.environmentId),
       ),
+    );
+    ipcMain.handle("translation:composer-target", (_event, payload) => {
+      const kind = safeText(payload?.kind);
+      const tabId = safeText(payload?.tabId);
+      const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
+      if (!isAiKind(kind) || !tabId) throw new Error("当前网页尚未准备好");
+      const workspace = getWorkspace(kind, tabId, environmentId);
+      return captureWorkspaceComposerTarget(workspace);
+    });
+    ipcMain.handle("translation:write-composer", (_event, payload) => writeAiComposer(payload));
+    ipcMain.handle("translation:composer-guard-sync", async () => ({
+      ok: true,
+      updated: await syncAllComposerGuards(),
+    }));
+    ipcMain.handle("translation:composer-confirmation-resolve", (_event, payload) =>
+      resolveComposerConfirmation(payload),
     );
     ipcMain.handle("user-data:export", () => backend.exportUserData());
     ipcMain.handle("user-data:import", () => backend.importUserData());

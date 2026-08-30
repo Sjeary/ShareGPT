@@ -9,6 +9,7 @@ const {
   composerConfirmationGuardScript,
   composerConfirmationResolveScript,
   composerWriteScript,
+  captureComposerTarget,
   createComposerConfirmationStore,
   createComposerOperation,
   createOperationToken,
@@ -33,6 +34,59 @@ function snapshot(overrides = {}) {
     ...overrides,
   };
 }
+
+function workspace(overrides = {}) {
+  const url = "https://chatgpt.com/c/one";
+  return {
+    id: "gpt-1",
+    kind: "gpt",
+    environmentId: "env-work",
+    workspaceInstanceId: "workspace-one",
+    ownerPrincipalId: "principal-a",
+    ownerPrincipalGeneration: 7,
+    runtimeEpoch: 9,
+    documentEpoch: 3,
+    documentUrl: url,
+    documentReady: true,
+    closing: false,
+    view: {
+      webContents: {
+        id: 42,
+        isDestroyed: () => false,
+        getURL: () => url,
+      },
+    },
+    ...overrides,
+  };
+}
+
+test("composer targets are captured only from the current ready workspace document", () => {
+  const principal = { principalId: "principal-a", generation: 7 };
+  assert.deepEqual(captureComposerTarget(workspace(), principal, 9), snapshot());
+  assert.throws(() => captureComposerTarget(workspace({ documentReady: false }), principal, 9), {
+    message: "当前网页仍在导航，请稍后重试",
+  });
+  assert.throws(() => captureComposerTarget(workspace(), principal, 10), {
+    message: "当前网页仍在导航，请稍后重试",
+  });
+  assert.throws(
+    () =>
+      captureComposerTarget(
+        workspace({
+          view: {
+            webContents: {
+              id: 42,
+              isDestroyed: () => false,
+              getURL: () => "https://chatgpt.com/c/two",
+            },
+          },
+        }),
+        principal,
+        9,
+      ),
+    { message: "当前网页仍在导航，请稍后重试" },
+  );
+});
 
 test("an explicit composer operation is bound to one live view and document epoch", () => {
   const operation = createComposerOperation(snapshot(), {
