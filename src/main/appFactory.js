@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { randomUUID } = require("node:crypto");
 const {
   app,
   BrowserWindow,
@@ -10,6 +11,7 @@ const {
   ipcMain,
   nativeTheme,
   net: electronNet,
+  powerMonitor,
   session,
   shell,
 } = require("electron");
@@ -39,8 +41,19 @@ const {
   partitionForAiEnvironment,
   resolvedProxyMatchesRoute,
   scaleAiHostBounds,
-  shouldCloseAiWorkspacesForEnvironment,
 } = require("./aiEnvironments");
+const {
+  createDurableWorkspaceRegistry,
+  createLastIntentReconciler,
+  isWorkspaceViewUsable,
+  retireWorkspaceView,
+  routeBindingFingerprint,
+  shouldValidateRouteBinding,
+  workspaceEnsureIsCurrent,
+  workspaceHostIsReady,
+  workspaceOwnerIsCurrent,
+} = require("./aiWorkspaceLifecycle");
+const { registerAiRecoverySignals } = require("./aiRecoverySignals");
 const { applyStableUserDataPath } = require("./userDataPath");
 
 // 记录每个 AI 会话(按 partition)实际访问过的主机名, 供「代理检测」展示页面流量去向。
@@ -454,12 +467,14 @@ function createElectronApp(baseMode = "all") {
   let autoUpdaterBusy = false;
   let appMode = normalizeMode(baseMode, process.argv);
   const configuredAiPartitions = new Set();
-  const aiWorkspaces = new Map();
-  // GPT 与 Gemini 均支持多标签: 标签顺序 / 活动标签 / 宿主矩形 均按 kind 索引。
-  const tabOrderByKind = { gpt: [], gemini: [], claude: [] };
-  const activeTabIdByKind = { gpt: "", gemini: "", claude: "" };
+  const aiWorkspaceRegistry = createDurableWorkspaceRegistry();
   let activeAiKind = "";
   let aiTabCounter = 0;
+  let aiRuntimeEpoch = 0;
+  let aiLifecycleSuspended = false;
+  /** @type {Pick<Console, "error" | "warn" | "info" | "debug">} */
+  let mainLog = console;
+  let disposeAiRecoverySignals = null;
   const hostStateByKind = {
     gpt: { visible: false, bounds: null },
     gemini: { visible: false, bounds: null },
@@ -491,7 +506,7 @@ function createElectronApp(baseMode = "all") {
 
     // getBoundingClientRect 使用外层页面的 CSS 像素，而 WebContentsView 需要窗口 DIP。
     // 缩放期间先摘下原生层，等待渲染层用新倍率重新同步边界，避免中间帧盖住工具栏。
-    for (const workspace of aiWorkspaces.values()) {
+    for (const workspace of aiWorkspaceRegistry.all()) {
       detachWorkspaceView(workspace);
       const wc = workspace?.view?.webContents;
       if (wc && !wc.isDestroyed()) wc.setZoomLevel(next);
@@ -507,25 +522,64 @@ function createElectronApp(baseMode = "all") {
     return true;
   }
 
+  function activeTabIdFor(kind, environmentId) {
+    return aiWorkspaceRegistry.activeId(kind, environmentId);
+  }
+
+  function currentAiEnvironment(kind) {
+    return aiWorkspaceRegistry.environmentFor(kind);
+  }
+
+  function currentAiTarget() {
+    const kind = isAiKind(activeAiKind) ? activeAiKind : "";
+    const environmentId = kind ? currentAiEnvironment(kind) : "";
+    return {
+      kind,
+      environmentId,
+      tabId: kind ? activeTabIdFor(kind, environmentId) : "",
+    };
+  }
+
   function setActiveAiKind(rawKind) {
     const nextKind = isAiKind(safeText(rawKind)) ? safeText(rawKind) : "";
-    if (nextKind === activeAiKind) return activeAiKind;
     activeAiKind = nextKind;
-    for (const workspace of aiWorkspaces.values()) {
-      detachWorkspaceView(workspace);
-    }
     return activeAiKind;
   }
 
-  function emitAiEvent(kind, type, payload = {}) {
+  function assertAiRuntimeEpoch(epoch) {
+    if (epoch !== aiRuntimeEpoch) {
+      throw Object.assign(new Error("账号已切换，请重新操作"), { code: "STALE_PRINCIPAL" });
+    }
+  }
+
+  function emitAiEvent(kind, type, payload = {}, principalOverride = null) {
     if (!mainWindow || mainWindow.isDestroyed()) return null;
+    const principal = principalOverride || backend?.getPrincipalContext?.() || {};
     const eventPayload = {
       kind,
       type,
       ...payload,
+      principalId: safeText(principal.principalId),
+      principalGeneration: Number(principal.generation || 0),
     };
     mainWindow.webContents.send("ai:event", eventPayload);
     return eventPayload;
+  }
+
+  function workspaceRuntimeIsCurrent(workspace) {
+    return workspaceOwnerIsCurrent(
+      workspace,
+      backend?.getPrincipalContext?.() || {},
+      aiRuntimeEpoch,
+    );
+  }
+
+  function emitWorkspaceEvent(workspace, type, payload = {}) {
+    if (!workspaceRuntimeIsCurrent(workspace)) return null;
+    return emitAiEvent(workspace.kind, type, payload, {
+      principalId: workspace.ownerPrincipalId,
+      generation: workspace.ownerPrincipalGeneration,
+    });
   }
 
   function emitAppEvent(type, payload = {}) {
@@ -599,9 +653,10 @@ function createElectronApp(baseMode = "all") {
     const targetEnvironmentId = normalizeAiEnvironmentId(environmentId);
     if (targetEnvironmentId) {
       getConfiguredAiEnvironment(targetKind, targetEnvironmentId);
+      const principalContext = backend.getPrincipalContext();
       return {
         ...base,
-        partition: partitionForAiEnvironment(targetKind, targetEnvironmentId),
+        partition: partitionForAiEnvironment(targetKind, targetEnvironmentId, principalContext),
       };
     }
     const configured = safeText(backend?.loadSettings()?.[targetKind]?.partition);
@@ -635,7 +690,8 @@ function createElectronApp(baseMode = "all") {
   async function checkAiRouteHealth(route, options = {}) {
     const routeId = normalizeAiRouteId(route?.id);
     if (!routeId || route?.mode !== "singbox") throw new Error("只能检测内置 sing-box 线路");
-    const cached = aiRouteHealthCache.get(routeId);
+    const cacheKey = routeBindingFingerprint(route);
+    const cached = aiRouteHealthCache.get(cacheKey);
     if (!options.force && cached && Date.now() - cached.cachedAt < AI_ROUTE_HEALTH_TTL_MS) {
       return cached.report;
     }
@@ -664,7 +720,7 @@ function createElectronApp(baseMode = "all") {
       checks,
       ...detected,
     };
-    aiRouteHealthCache.set(routeId, { cachedAt: Date.now(), report });
+    aiRouteHealthCache.set(cacheKey, { cachedAt: Date.now(), report });
     return report;
   }
 
@@ -676,7 +732,13 @@ function createElectronApp(baseMode = "all") {
     const isolated = Array.isArray(advanced?.environments)
       ? advanced.environments.flatMap((environment) => {
           try {
-            return [partitionForAiEnvironment(environment?.kind, environment?.id)];
+            return [
+              partitionForAiEnvironment(
+                environment?.kind,
+                environment?.id,
+                backend.getPrincipalContext(),
+              ),
+            ];
           } catch {
             return [];
           }
@@ -719,16 +781,12 @@ function createElectronApp(baseMode = "all") {
     }
   }
 
-  function workspaceKey(kind, tabId = "") {
-    const targetKind = safeText(kind);
-    return `${targetKind}:${safeText(tabId) || "default"}`;
+  function getLogicalWorkspace(kind, tabId = "", environmentId) {
+    return aiWorkspaceRegistry.getLogical(kind, tabId, environmentId);
   }
 
-  function getWorkspace(kind, tabId = "") {
-    const targetKind = safeText(kind);
-    const targetTabId = safeText(tabId) || activeTabIdByKind[targetKind];
-    if (!targetTabId) return null;
-    return aiWorkspaces.get(workspaceKey(targetKind, targetTabId)) || null;
+  function getWorkspace(kind, tabId = "", environmentId) {
+    return aiWorkspaceRegistry.getUsable(kind, tabId, environmentId);
   }
 
   async function captureAiPageText(kind, tabId = "") {
@@ -761,9 +819,12 @@ function createElectronApp(baseMode = "all") {
     };
   }
 
-  function listWorkspaces(kind) {
-    const order = tabOrderByKind[safeText(kind)] || [];
-    return order.map((tabId) => getWorkspace(kind, tabId)).filter(Boolean);
+  function listWorkspaces(kind, environmentId) {
+    return aiWorkspaceRegistry.list(kind, environmentId);
+  }
+
+  function allWorkspacesForKind(kind) {
+    return aiWorkspaceRegistry.all(kind);
   }
 
   function defaultTitleForKind(kind) {
@@ -870,11 +931,12 @@ function createElectronApp(baseMode = "all") {
   }
 
   async function captureWorkspaceFingerprint(kind, tabId = "", options = {}) {
+    const epoch = aiRuntimeEpoch;
     const targetKind = safeText(kind);
     if (!isAiKind(targetKind)) throw new Error("不支持的 AI 服务");
     const workspace =
       getWorkspace(targetKind, safeText(tabId)) ||
-      getWorkspace(targetKind, activeTabIdByKind[targetKind]);
+      getWorkspace(targetKind, activeTabIdFor(targetKind));
     if (!workspace || workspace.view.webContents.isDestroyed()) {
       throw new Error("请先打开该服务的网页，再采集可见信息");
     }
@@ -914,6 +976,7 @@ function createElectronApp(baseMode = "all") {
       networkPromise,
       proxyPromise,
     ]);
+    assertAiRuntimeEpoch(epoch);
 
     const settings = backend.loadSettings();
     const privacy = normalizeBrowserPrivacySettings(settings.browserPrivacy);
@@ -950,6 +1013,7 @@ function createElectronApp(baseMode = "all") {
   }
 
   async function rememberBeforeClear(kind) {
+    const epoch = aiRuntimeEpoch;
     const targetKind = safeText(kind);
     const settings = backend.loadSettings();
     const privacy = normalizeBrowserPrivacySettings(settings.browserPrivacy);
@@ -959,6 +1023,7 @@ function createElectronApp(baseMode = "all") {
     } catch {
       // 页面可能未打开或仍在导航；此时回退到最后一次已保存的当前快照。
     }
+    assertAiRuntimeEpoch(epoch);
     privacy.audit.beforeClear[targetKind] = snapshot || privacy.audit.current[targetKind] || null;
     privacy.audit.current[targetKind] = null;
     settings.browserPrivacy = privacy;
@@ -967,13 +1032,14 @@ function createElectronApp(baseMode = "all") {
   }
 
   function isWorkspaceDocumentAllowed(workspace) {
-    const currentUrl = safeText(workspace?.view?.webContents?.getURL?.());
+    if (!isWorkspaceViewUsable(workspace)) return false;
+    const currentUrl = safeText(workspace.view.webContents.getURL());
     return Boolean(currentUrl && isWorkspaceUrlAllowed(workspace, currentUrl));
   }
 
   function getAiStatePayload(workspace) {
-    const wc = workspace.view.webContents;
-    const currentUrl = safeText(wc.getURL()) || workspace.lastUrl || workspace.policy.homeUrl;
+    const wc = isWorkspaceViewUsable(workspace) ? workspace.view.webContents : null;
+    const currentUrl = safeText(wc?.getURL?.()) || workspace.lastUrl || workspace.policy.homeUrl;
     if (currentUrl && isWorkspaceUrlAllowed(workspace, currentUrl)) {
       workspace.lastUrl = currentUrl;
     }
@@ -981,10 +1047,10 @@ function createElectronApp(baseMode = "all") {
     let canGoBack = false;
     let canGoForward = false;
     try {
-      canGoBack = wc.canGoBack();
+      canGoBack = wc?.canGoBack?.() || false;
     } catch {}
     try {
-      canGoForward = wc.canGoForward();
+      canGoForward = wc?.canGoForward?.() || false;
     } catch {}
 
     return {
@@ -1000,18 +1066,26 @@ function createElectronApp(baseMode = "all") {
       environmentId: safeText(workspace.environmentId),
       proxyMode: safeText(workspace.proxyMode),
       proxyLabel: safeText(workspace.proxyLabel),
+      rendererAlive: Boolean(wc),
+      rendererExit: workspace.lastRendererExit || null,
     };
   }
 
   function emitAiState(workspace, type = "state", payload = {}) {
-    return emitAiEvent(workspace.kind, type, {
+    return emitWorkspaceEvent(workspace, type, {
       ...getAiStatePayload(workspace),
       ...payload,
     });
   }
 
   function attachWorkspaceView(workspace) {
-    if (!mainWindow || mainWindow.isDestroyed() || workspace.attached) {
+    if (
+      !mainWindow ||
+      mainWindow.isDestroyed() ||
+      !workspaceRuntimeIsCurrent(workspace) ||
+      !isWorkspaceViewUsable(workspace) ||
+      workspace.attached
+    ) {
       return;
     }
     mainWindow.contentView.addChildView(workspace.view);
@@ -1026,6 +1100,7 @@ function createElectronApp(baseMode = "all") {
       } catch {}
       workspace.attached = false;
     }
+    if (!isWorkspaceViewUsable(workspace)) return;
     workspace.view.setVisible(false);
     workspace.view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
   }
@@ -1037,29 +1112,12 @@ function createElectronApp(baseMode = "all") {
         ...getAiStatePayload(workspace),
         id: safeText(workspace.id),
       })),
-      activeTabId: activeTabIdByKind[targetKind] || "",
+      activeTabId: activeTabIdFor(targetKind),
     };
   }
 
   function emitTabsChanged(kind) {
     return emitAiEvent(safeText(kind), "tabs-changed", listTabsPayload(kind));
-  }
-
-  function syncActiveWorkspace(kind) {
-    const targetKind = safeText(kind);
-    const activeWorkspace = getWorkspace(targetKind, activeTabIdByKind[targetKind]);
-
-    for (const workspace of listWorkspaces(targetKind)) {
-      if (targetKind !== activeAiKind || workspace.id !== activeTabIdByKind[targetKind]) {
-        detachWorkspaceView(workspace);
-      }
-    }
-
-    if (!activeWorkspace || targetKind !== activeAiKind) {
-      return false;
-    }
-
-    return syncAiBounds(activeWorkspace, hostStateByKind[targetKind]);
   }
 
   function createTabWorkspace(kind, options = {}) {
@@ -1071,13 +1129,8 @@ function createElectronApp(baseMode = "all") {
       environmentId: safeText(options.environmentId),
     });
 
-    const order = tabOrderByKind[targetKind];
-    if (order && !order.includes(workspace.id)) {
-      order.push(workspace.id);
-    }
-
-    if (!activeTabIdByKind[targetKind]) {
-      activeTabIdByKind[targetKind] = workspace.id;
+    if (!activeTabIdFor(targetKind, workspace.environmentId)) {
+      aiWorkspaceRegistry.setActive(targetKind, workspace.id, workspace.environmentId);
     }
 
     emitTabsChanged(targetKind);
@@ -1087,23 +1140,19 @@ function createElectronApp(baseMode = "all") {
   function closeTabWorkspace(kind, tabId) {
     const targetKind = safeText(kind);
     const targetId = safeText(tabId);
-    const workspace = getWorkspace(targetKind, targetId);
+    const environmentId = currentAiEnvironment(targetKind);
+    const workspace = getLogicalWorkspace(targetKind, targetId, environmentId);
     if (!workspace) {
-      const active = getWorkspace(targetKind, activeTabIdByKind[targetKind]);
+      const active = getLogicalWorkspace(targetKind, activeTabIdFor(targetKind), environmentId);
       return {
         ...listTabsPayload(targetKind),
         activeState: active ? getAiStatePayload(active) : null,
       };
     }
 
+    workspace.closing = true;
     detachWorkspaceView(workspace);
-    aiWorkspaces.delete(workspaceKey(targetKind, targetId));
-
-    const order = tabOrderByKind[targetKind] || [];
-    const orderIndex = order.indexOf(targetId);
-    if (orderIndex >= 0) {
-      order.splice(orderIndex, 1);
-    }
+    const removed = aiWorkspaceRegistry.remove(targetKind, targetId, environmentId);
 
     try {
       if (!workspace.view.webContents.isDestroyed()) {
@@ -1111,12 +1160,13 @@ function createElectronApp(baseMode = "all") {
       }
     } catch {}
 
-    if (activeTabIdByKind[targetKind] === targetId) {
-      activeTabIdByKind[targetKind] = order[Math.max(0, orderIndex - 1)] || order[0] || "";
-    }
-
-    syncActiveWorkspace(targetKind);
-    const activeWorkspace = getWorkspace(targetKind, activeTabIdByKind[targetKind]);
+    const activeWorkspace = getLogicalWorkspace(targetKind, removed.activeTabId, environmentId);
+    scheduleAiReconcile("tab-close", {
+      kind: activeAiKind === targetKind ? targetKind : activeAiKind,
+      environmentId:
+        activeAiKind === targetKind ? environmentId : currentAiEnvironment(activeAiKind),
+      tabId: activeAiKind === targetKind ? removed.activeTabId : activeTabIdFor(activeAiKind),
+    });
     emitTabsChanged(targetKind);
     return {
       ...listTabsPayload(targetKind),
@@ -1124,12 +1174,13 @@ function createElectronApp(baseMode = "all") {
     };
   }
 
-  async function closeWorkspacesForKind(kind) {
+  async function closeWorkspacesForKind(kind, environmentId) {
     const targetKind = safeText(kind);
-    const ids = [...(tabOrderByKind[targetKind] || [])];
-    const webContentsList = ids.map(
-      (tabId) => getWorkspace(targetKind, tabId)?.view?.webContents || null,
-    );
+    const workspaces =
+      environmentId === undefined
+        ? [...allWorkspacesForKind(targetKind)]
+        : [...listWorkspaces(targetKind, environmentId)];
+    const webContentsList = workspaces.map((workspace) => workspace.view?.webContents || null);
     const destroyed = webContentsList.map((webContents) => {
       if (!webContents || webContents.isDestroyed()) return Promise.resolve(true);
       return new Promise((resolve) => {
@@ -1140,16 +1191,22 @@ function createElectronApp(baseMode = "all") {
         });
       });
     });
-    for (const tabId of ids) {
-      closeTabWorkspace(targetKind, tabId);
+    for (const workspace of workspaces) {
+      workspace.closing = true;
+      detachWorkspaceView(workspace);
+      try {
+        if (!workspace.view?.webContents?.isDestroyed?.()) {
+          workspace.view.webContents.close({ waitForBeforeUnload: false });
+        }
+      } catch {}
     }
     const closed = await Promise.all(destroyed);
     if (closed.some((value) => !value)) {
       throw new Error("目标网页标签未能安全关闭，请重启客户端后再清除");
     }
-    tabOrderByKind[targetKind] = [];
-    activeTabIdByKind[targetKind] = "";
+    aiWorkspaceRegistry.clear(targetKind, environmentId);
     hostStateByKind[targetKind] = { visible: false, bounds: null };
+    scheduleAiReconcile("workspace-close", currentAiTarget());
   }
 
   function syncAiBounds(workspace, options = {}) {
@@ -1157,6 +1214,8 @@ function createElectronApp(baseMode = "all") {
     const bounds = options.bounds || null;
 
     workspace.visible = visible;
+
+    if (!workspaceRuntimeIsCurrent(workspace) || !isWorkspaceViewUsable(workspace)) return false;
 
     if (!visible || !bounds || bounds.width <= 0 || bounds.height <= 0) {
       detachWorkspaceView(workspace);
@@ -1170,11 +1229,83 @@ function createElectronApp(baseMode = "all") {
     return true;
   }
 
+  async function reconcileAiWorkspace(intent, context) {
+    const target = {
+      kind: isAiKind(safeText(intent?.kind)) ? safeText(intent.kind) : "",
+      environmentId: normalizeAiEnvironmentId(intent?.environmentId),
+      tabId: safeText(intent?.tabId),
+    };
+    const epoch = aiRuntimeEpoch;
+
+    for (const workspace of aiWorkspaceRegistry.all()) {
+      const isTarget =
+        workspace.kind === target.kind &&
+        safeText(workspace.environmentId) === target.environmentId &&
+        workspace.id === target.tabId;
+      if (!isTarget) detachWorkspaceView(workspace);
+    }
+
+    if (
+      aiLifecycleSuspended ||
+      !target.kind ||
+      !target.tabId ||
+      !mainWindow ||
+      mainWindow.isDestroyed() ||
+      !mainWindow.isVisible() ||
+      mainWindow.isMinimized()
+    ) {
+      return false;
+    }
+
+    const workspace = getLogicalWorkspace(target.kind, target.tabId, target.environmentId);
+    if (!workspaceRuntimeIsCurrent(workspace)) return false;
+    const hostState = hostStateByKind[target.kind];
+    if (!workspaceHostIsReady(hostState)) {
+      detachWorkspaceView(workspace);
+      return false;
+    }
+    if (!isWorkspaceViewUsable(workspace)) {
+      await rebuildAiWorkspaceView(workspace, {
+        epoch,
+        isCurrent: context.isCurrent,
+        reason: context.reason,
+      });
+    }
+    if (epoch !== aiRuntimeEpoch || !context.isCurrent() || !isWorkspaceViewUsable(workspace)) {
+      detachWorkspaceView(workspace);
+      return false;
+    }
+    return syncAiBounds(workspace, hostState);
+  }
+
+  const aiReconciler = createLastIntentReconciler(reconcileAiWorkspace, (error, item) => {
+    mainLog.error("AI workspace reconcile failed", {
+      reason: item.reason,
+      target: item.intent,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+
+  function requestAiReconcile(reason, target = currentAiTarget()) {
+    return aiReconciler.submit(
+      {
+        kind: safeText(target?.kind),
+        environmentId: safeText(target?.environmentId),
+        tabId: safeText(target?.tabId),
+      },
+      reason,
+    );
+  }
+
+  function scheduleAiReconcile(reason, target = currentAiTarget()) {
+    requestAiReconcile(reason, target).catch(() => undefined);
+  }
+
   function handleBlockedAiNavigation(workspace, rawUrl) {
     const url = safeText(rawUrl);
     if (!url) return;
     void openExternalUrl(url).catch((err) => {
-      emitAiEvent(workspace.kind, "external-open-failed", {
+      emitWorkspaceEvent(workspace, "external-open-failed", {
         url,
         message: err.message || String(err),
       });
@@ -1182,37 +1313,80 @@ function createElectronApp(baseMode = "all") {
   }
 
   async function loadAiWorkspaceUrl(workspace, rawUrl) {
+    if (!isWorkspaceViewUsable(workspace)) throw new Error("网页运行进程正在恢复");
     const normalizedUrl = normalizeHttpUrl(rawUrl);
     if (!normalizedUrl || !isWorkspaceUrlAllowed(workspace, normalizedUrl)) {
       throw new Error("不允许加载该页面");
     }
     const targetUrl = normalizeAiWorkspaceUrl(workspace, normalizedUrl);
+    const viewGeneration = workspace.viewGeneration;
+    const wc = workspace.view.webContents;
     workspace.managedNavigationCount = (workspace.managedNavigationCount || 0) + 1;
     try {
       return await loadUrlWithTransientRetry(() =>
-        workspace.view.webContents
-          .loadURL(targetUrl, htmlNavigationOptions(workspace))
-          .catch((err) => {
-            // ChatGPT 登录重定向链常在途中止(ERR_ABORTED / -3), 页面实际已正常加载,
-            // 属良性, 不应作为加载失败上报。仅吞此类中止, 其余错误照常抛出。
-            const message = String((err && (err.message || err)) || "");
-            const code = err && (err.code || err.errno);
-            if (code === -3 || code === "ERR_ABORTED" || /ERR_ABORTED|\(-3\)/i.test(message)) {
-              return;
-            }
-            throw err;
-          }),
+        wc.loadURL(targetUrl, htmlNavigationOptions(workspace)).catch((err) => {
+          // ChatGPT 登录重定向链常在途中止(ERR_ABORTED / -3), 页面实际已正常加载,
+          // 属良性, 不应作为加载失败上报。仅吞此类中止, 其余错误照常抛出。
+          const message = String((err && (err.message || err)) || "");
+          const code = err && (err.code || err.errno);
+          if (code === -3 || code === "ERR_ABORTED" || /ERR_ABORTED|\(-3\)/i.test(message)) {
+            return;
+          }
+          throw err;
+        }),
       );
     } finally {
-      workspace.managedNavigationCount = Math.max(0, (workspace.managedNavigationCount || 1) - 1);
-      workspace.suppressLoadErrorsUntil = Date.now() + 250;
+      if (workspace.viewGeneration === viewGeneration && workspace.view?.webContents === wc) {
+        workspace.managedNavigationCount = Math.max(0, (workspace.managedNavigationCount || 1) - 1);
+        workspace.suppressLoadErrorsUntil = Date.now() + 250;
+      }
     }
   }
 
   function bindAiWorkspaceEvents(workspace) {
     const wc = workspace.view.webContents;
+    const viewGeneration = workspace.viewGeneration;
+    const isCurrentView = () =>
+      workspace.viewGeneration === viewGeneration &&
+      workspace.view?.webContents === wc &&
+      !workspace.viewDead &&
+      workspaceRuntimeIsCurrent(workspace);
+
+    wc.on("render-process-gone", (_event, details = {}) => {
+      if (!isCurrentView()) return;
+      const currentUrl = safeText(wc.getURL?.());
+      if (currentUrl && isWorkspaceUrlAllowed(workspace, currentUrl))
+        workspace.lastUrl = currentUrl;
+      workspace.lastRendererExit = {
+        reason: safeText(details.reason) || "unknown",
+        exitCode: Number(details.exitCode) || 0,
+        at: new Date().toISOString(),
+      };
+      workspace.viewDead = true;
+      workspace.initialized = false;
+      workspace.loading = false;
+      detachWorkspaceView(workspace);
+      mainLog.warn("AI renderer exited", {
+        kind: workspace.kind,
+        tabId: workspace.id,
+        partition: workspace.policy.partition,
+        details: workspace.lastRendererExit,
+      });
+      emitAiState(workspace, "renderer-gone", { details: workspace.lastRendererExit });
+      if (!workspace.closing) scheduleAiReconcile("renderer-gone", currentAiTarget());
+    });
+
+    wc.on("destroyed", () => {
+      if (workspace.viewGeneration !== viewGeneration || workspace.view?.webContents !== wc) return;
+      workspace.viewDead = true;
+      workspace.attached = false;
+      if (workspaceRuntimeIsCurrent(workspace)) {
+        scheduleAiReconcile("web-contents-destroyed", currentAiTarget());
+      }
+    });
 
     wc.setWindowOpenHandler(({ url }) => {
+      if (!isCurrentView()) return { action: "deny" };
       if (isWorkspaceUrlAllowed(workspace, url)) {
         const targetUrl = normalizeAiWorkspaceUrl(workspace, url);
         workspace.loading = true;
@@ -1221,7 +1395,7 @@ function createElectronApp(baseMode = "all") {
         emitAiState(workspace, "did-start-loading", { url: targetUrl });
         void loadAiWorkspaceUrl(workspace, targetUrl).catch((err) => {
           workspace.loading = false;
-          emitAiEvent(workspace.kind, "did-fail-load", {
+          emitWorkspaceEvent(workspace, "did-fail-load", {
             ...getAiStatePayload(workspace),
             url: targetUrl,
             errorDescription: err.message || String(err),
@@ -1235,6 +1409,10 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("will-navigate", (event, url) => {
+      if (!isCurrentView()) {
+        event.preventDefault();
+        return;
+      }
       if (isWorkspaceUrlAllowed(workspace, url)) {
         const targetUrl = normalizeAiWorkspaceUrl(workspace, url);
         if (targetUrl === url) return;
@@ -1245,7 +1423,7 @@ function createElectronApp(baseMode = "all") {
         emitAiState(workspace, "did-start-loading", { url: targetUrl });
         void loadAiWorkspaceUrl(workspace, targetUrl).catch((err) => {
           workspace.loading = false;
-          emitAiEvent(workspace.kind, "did-fail-load", {
+          emitWorkspaceEvent(workspace, "did-fail-load", {
             ...getAiStatePayload(workspace),
             url: targetUrl,
             errorDescription: err.message || String(err),
@@ -1258,6 +1436,10 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("will-redirect", (event, url) => {
+      if (!isCurrentView()) {
+        event.preventDefault();
+        return;
+      }
       if (isWorkspaceUrlAllowed(workspace, url)) {
         const targetUrl = normalizeAiWorkspaceUrl(workspace, url);
         if (targetUrl === url) return;
@@ -1268,7 +1450,7 @@ function createElectronApp(baseMode = "all") {
         emitAiState(workspace, "did-start-loading", { url: targetUrl });
         void loadAiWorkspaceUrl(workspace, targetUrl).catch((err) => {
           workspace.loading = false;
-          emitAiEvent(workspace.kind, "did-fail-load", {
+          emitWorkspaceEvent(workspace, "did-fail-load", {
             ...getAiStatePayload(workspace),
             url: targetUrl,
             errorDescription: err.message || String(err),
@@ -1281,17 +1463,20 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("did-start-loading", () => {
+      if (!isCurrentView()) return;
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
       workspace.loading = true;
       emitAiState(workspace, "did-start-loading");
     });
 
     wc.on("dom-ready", () => {
+      if (!isCurrentView()) return;
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
       emitAiState(workspace, "dom-ready");
     });
 
     wc.on("did-stop-loading", () => {
+      if (!isCurrentView()) return;
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
       workspace.loading = false;
       workspace.initialized = true;
@@ -1299,16 +1484,18 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("did-finish-load", () => {
+      if (!isCurrentView()) return;
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
       if (workspace.kind !== "gpt") return;
       void detectRawChatGptDocument(wc)
         .then((isRawDocument) => {
+          if (!isCurrentView()) return;
           if (!isRawDocument) {
             workspace.rawDocumentRecoveryAttempted = false;
             return;
           }
           if (workspace.rawDocumentRecoveryAttempted) {
-            emitAiEvent(workspace.kind, "raw-document-detected", {
+            emitWorkspaceEvent(workspace, "raw-document-detected", {
               ...getAiStatePayload(workspace),
               url: safeText(wc.getURL()) || workspace.lastUrl || workspace.policy.homeUrl,
             });
@@ -1325,7 +1512,7 @@ function createElectronApp(baseMode = "all") {
           // 回退到 4.2.0: 仅重载, 不 clearCache (清缓存会一并清掉 Cloudflare 验证中间态)。
           void loadAiWorkspaceUrl(workspace, workspace.policy.homeUrl).catch((err) => {
             workspace.loading = false;
-            emitAiEvent(workspace.kind, "did-fail-load", {
+            emitWorkspaceEvent(workspace, "did-fail-load", {
               ...getAiStatePayload(workspace),
               url: workspace.policy.homeUrl,
               errorDescription: err.message || String(err),
@@ -1336,6 +1523,7 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+      if (!isCurrentView()) return;
       if (Number(errorCode) === -3) return;
       if (
         workspace.environmentBootstrapping ||
@@ -1345,7 +1533,7 @@ function createElectronApp(baseMode = "all") {
         return;
       }
       workspace.loading = false;
-      emitAiEvent(workspace.kind, "did-fail-load", {
+      emitWorkspaceEvent(workspace, "did-fail-load", {
         ...getAiStatePayload(workspace),
         url: safeText(validatedURL) || workspace.lastUrl,
         errorCode,
@@ -1354,6 +1542,7 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("did-navigate", (_event, url) => {
+      if (!isCurrentView()) return;
       if (workspace.environmentBootstrapping || !isWorkspaceUrlAllowed(workspace, url)) {
         return;
       }
@@ -1365,6 +1554,7 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("did-navigate-in-page", (_event, url) => {
+      if (!isCurrentView()) return;
       if (workspace.environmentBootstrapping || !isWorkspaceUrlAllowed(workspace, url)) {
         return;
       }
@@ -1375,6 +1565,7 @@ function createElectronApp(baseMode = "all") {
     });
 
     wc.on("page-title-updated", (event, title) => {
+      if (!isCurrentView()) return;
       event.preventDefault();
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
       workspace.title = normalizeAiTabTitle(title, workspace.defaultTitle);
@@ -1498,7 +1689,7 @@ function createElectronApp(baseMode = "all") {
       push({
         label: "翻译选中文字",
         click: () =>
-          emitAiEvent(workspace.kind, "translate-selection", {
+          emitWorkspaceEvent(workspace, "translate-selection", {
             tabId: workspace.id,
             text: text.slice(0, 30000),
           }),
@@ -1530,34 +1721,22 @@ function createElectronApp(baseMode = "all") {
     menu.popup({ window: mainWindow ?? undefined });
   }
 
-  function getOrCreateAiWorkspace(kind, tabId = "", options = {}) {
-    const targetKind = safeText(kind);
-    const targetTabId = safeText(tabId) || `${targetKind}-${++aiTabCounter}`;
-    const existing = getWorkspace(targetKind, targetTabId);
-    if (existing) {
-      const requestedEnvironmentId = normalizeAiEnvironmentId(options.environmentId);
-      if (safeText(existing.environmentId) !== requestedEnvironmentId) {
-        throw new Error("目标标签不属于当前 AI 环境");
-      }
-      return existing;
-    }
-
+  function createAiWorkspaceView(workspace) {
     if (!mainWindow || mainWindow.isDestroyed()) {
       throw new Error("主窗口尚未就绪");
     }
-
-    const environmentId = normalizeAiEnvironmentId(options.environmentId);
-    const policy = getAiPolicy(targetKind, environmentId);
-    if (!policy) {
-      throw new Error("不支持的 AI 工作区");
+    if (!workspaceRuntimeIsCurrent(workspace)) {
+      throw Object.assign(new Error("账号已切换，请重新操作"), { code: "STALE_PRINCIPAL" });
     }
 
-    const targetSession = session.fromPartition(policy.partition);
-    configureAiSession(targetSession, policy);
+    const previousView = workspace.view;
+    const previousAttached = Boolean(workspace.attached);
+    const targetSession = session.fromPartition(workspace.policy.partition);
+    configureAiSession(targetSession, workspace.policy);
 
     const view = new WebContentsView({
       webPreferences: {
-        partition: policy.partition,
+        partition: workspace.policy.partition,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -1571,13 +1750,119 @@ function createElectronApp(baseMode = "all") {
         paintWhenInitiallyHidden: true,
       },
     });
+    workspace.view = view;
+    workspace.viewGeneration = Number(workspace.viewGeneration || 0) + 1;
+    workspace.viewDead = false;
+    workspace.attached = false;
+    workspace.managedNavigationCount = 0;
+    workspace.suppressLoadErrorsUntil = 0;
+    retireWorkspaceView(previousView, previousAttached, mainWindow.contentView);
+    bindAiWorkspaceEvents(workspace);
+    view.webContents.setZoomLevel(mainWindow.webContents.getZoomLevel());
+    if (workspace.userAgent) view.webContents.setUserAgent(workspace.userAgent);
+    view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
+    view.setVisible(false);
+    return view;
+  }
+
+  async function rebuildAiWorkspaceView(workspace, context = {}) {
+    if (!workspace) return null;
+    const epoch = Number(context.epoch ?? aiRuntimeEpoch);
+    if (
+      epoch !== aiRuntimeEpoch ||
+      context.isCurrent?.() === false ||
+      !workspaceRuntimeIsCurrent(workspace)
+    ) {
+      return null;
+    }
+    if (isWorkspaceViewUsable(workspace)) return workspace;
+
+    createAiWorkspaceView(workspace);
+    const viewGeneration = workspace.viewGeneration;
+    workspace.initialized = false;
+    workspace.loading = true;
+    try {
+      await applyWorkspacePrivacy(workspace);
+    } catch (error) {
+      if (workspace.viewGeneration === viewGeneration) {
+        const failedView = workspace.view;
+        const failedAttached = Boolean(workspace.attached);
+        workspace.viewDead = true;
+        workspace.initialized = false;
+        workspace.loading = false;
+        workspace.attached = false;
+        workspace.privacyAppliedViewGeneration = 0;
+        workspace.privacyAppliedUserAgent = "";
+        retireWorkspaceView(failedView, failedAttached, mainWindow?.contentView);
+      }
+      throw error;
+    }
+    if (
+      epoch !== aiRuntimeEpoch ||
+      context.isCurrent?.() === false ||
+      workspace.viewGeneration !== viewGeneration ||
+      !workspaceRuntimeIsCurrent(workspace) ||
+      !isWorkspaceViewUsable(workspace)
+    ) {
+      return null;
+    }
+    const targetUrl =
+      normalizeAiWorkspaceUrl(workspace, workspace.lastUrl || workspace.policy.homeUrl) ||
+      workspace.policy.homeUrl;
+    workspace.lastUrl = targetUrl;
+    workspace.privacyAppliedViewGeneration = viewGeneration;
+    workspace.privacyAppliedUserAgent = workspace.userAgent;
+    emitAiState(workspace, "renderer-recreated", {
+      reason: safeText(context.reason) || "reconcile",
+      url: targetUrl,
+    });
+    void loadAiWorkspaceUrl(workspace, targetUrl).catch((error) => {
+      if (workspace.viewGeneration !== viewGeneration || !workspaceRuntimeIsCurrent(workspace)) {
+        return;
+      }
+      workspace.loading = false;
+      emitWorkspaceEvent(workspace, "did-fail-load", {
+        ...getAiStatePayload(workspace),
+        url: targetUrl,
+        errorDescription: error.message || String(error),
+      });
+    });
+    return workspace;
+  }
+
+  function getOrCreateAiWorkspace(kind, tabId = "", options = {}) {
+    const targetKind = safeText(kind);
+    const targetTabId = safeText(tabId) || `${targetKind}-${++aiTabCounter}`;
+    const environmentId = normalizeAiEnvironmentId(options.environmentId);
+    const existing = getLogicalWorkspace(targetKind, targetTabId, environmentId);
+    if (existing) return existing;
+
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      throw new Error("主窗口尚未就绪");
+    }
+
+    const policy = getAiPolicy(targetKind, environmentId);
+    if (!policy) throw new Error("不支持的 AI 工作区");
+    const principal = backend?.getPrincipalContext?.() || {};
+    const ownerPrincipalId = safeText(principal.principalId);
+    const ownerPrincipalGeneration = Number(principal.generation || 0);
+    if (!ownerPrincipalId || ownerPrincipalGeneration < 1) {
+      throw new Error("账号身份尚未准备好");
+    }
 
     const workspace = {
       id: targetTabId,
       kind: targetKind,
       environmentId,
+      workspaceInstanceId: randomUUID(),
+      ownerPrincipalId,
+      ownerPrincipalGeneration,
+      runtimeEpoch: aiRuntimeEpoch,
       policy,
-      view,
+      view: null,
+      viewGeneration: 0,
+      ensureGeneration: 0,
+      viewDead: true,
       attached: false,
       initialized: false,
       loading: false,
@@ -1587,27 +1872,30 @@ function createElectronApp(baseMode = "all") {
       defaultTitle: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
       title: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
       proxySignature: "",
+      verifiedRouteBinding: "",
       proxyMode: "sender",
       proxyLabel: "当前统一代理",
       proxyPort: null,
       userAgent: "",
       appliedUserAgent: "",
+      privacyAppliedViewGeneration: 0,
+      privacyAppliedUserAgent: "",
       rawDocumentRecoveryAttempted: false,
       environmentBootstrapping: false,
       managedNavigationCount: 0,
       suppressLoadErrorsUntil: 0,
+      lastRendererExit: null,
+      closing: false,
     };
-
-    bindAiWorkspaceEvents(workspace);
-    view.webContents.setZoomLevel(mainWindow.webContents.getZoomLevel());
-    view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
-    view.setVisible(false);
-    aiWorkspaces.set(workspaceKey(targetKind, workspace.id), workspace);
+    aiWorkspaceRegistry.add(workspace);
+    createAiWorkspaceView(workspace);
     return workspace;
   }
 
-  function disposeAiWorkspaces() {
-    for (const workspace of aiWorkspaces.values()) {
+  function disposeAiWorkspaces(options = {}) {
+    if (options.incrementEpoch !== false) aiRuntimeEpoch += 1;
+    for (const workspace of aiWorkspaceRegistry.all()) {
+      workspace.closing = true;
       detachWorkspaceView(workspace);
 
       try {
@@ -1617,15 +1905,12 @@ function createElectronApp(baseMode = "all") {
       } catch {}
     }
 
-    aiWorkspaces.clear();
-    tabOrderByKind.gpt.length = 0;
-    tabOrderByKind.gemini.length = 0;
-    tabOrderByKind.claude.length = 0;
-    activeTabIdByKind.gpt = "";
-    activeTabIdByKind.gemini = "";
-    activeTabIdByKind.claude = "";
+    aiWorkspaceRegistry.reset();
     activeAiKind = "";
     configuredAiPartitions.clear();
+    for (const kind of Object.keys(hostStateByKind)) {
+      hostStateByKind[kind] = { visible: false, bounds: null };
+    }
   }
 
   function attachWindowGuards(targetWindow) {
@@ -1731,6 +2016,15 @@ function createElectronApp(baseMode = "all") {
     }
     mainWindow.removeMenu();
     loadMainRenderer(mainWindow);
+    const reconcileOnWindowEvent = (eventName) => () =>
+      scheduleAiReconcile(`window-${eventName}`, currentAiTarget());
+    mainWindow.on("show", reconcileOnWindowEvent("show"));
+    mainWindow.on("focus", reconcileOnWindowEvent("focus"));
+    mainWindow.on("restore", reconcileOnWindowEvent("restore"));
+    mainWindow.on("maximize", reconcileOnWindowEvent("maximize"));
+    mainWindow.on("unmaximize", reconcileOnWindowEvent("unmaximize"));
+    mainWindow.on("hide", reconcileOnWindowEvent("hide"));
+    mainWindow.on("minimize", reconcileOnWindowEvent("minimize"));
     mainWindow.on("closed", () => {
       disposeAiWorkspaces();
       mainWindow = null;
@@ -1914,21 +2208,24 @@ function createElectronApp(baseMode = "all") {
 
     // 原生 WebContentsView 位于渲染层之上，必须由当前导航页做全局门控；
     // 仅靠组件卸载时的异步隐藏通知会产生竞态，导致旧 Claude/GPT 盖住其它页面。
-    ipcMain.handle("ai:set-active-kind", (_event, payload) => {
-      return { activeKind: setActiveAiKind(payload?.kind) };
+    ipcMain.handle("ai:set-active-kind", async (_event, payload) => {
+      const activeKind = setActiveAiKind(payload?.kind);
+      const target = currentAiTarget();
+      const reconcile = await requestAiReconcile("active-kind", target);
+      return { activeKind, target, intentRevision: reconcile.revision };
     });
 
     // 标签管理 (GPT / Gemini / Claude 通用, 由 payload.kind 区分)。
     ipcMain.handle("ai-tabs:list", (_event, payload) => {
       const kind = safeText(payload?.kind) || "gpt";
-      const active = getWorkspace(kind, activeTabIdByKind[kind]);
+      const active = getLogicalWorkspace(kind, activeTabIdFor(kind));
       return {
         ...listTabsPayload(kind),
         activeState: active ? getAiStatePayload(active) : null,
       };
     });
 
-    ipcMain.handle("ai-tabs:create", (_event, payload) => {
+    ipcMain.handle("ai-tabs:create", async (_event, payload) => {
       const kind = safeText(payload?.kind) || "gpt";
       const workspace = createTabWorkspace(kind, {
         title: safeText(payload?.title),
@@ -1936,34 +2233,49 @@ function createElectronApp(baseMode = "all") {
         allowExternalBrowsing: Boolean(payload?.allowExternalBrowsing),
         environmentId: safeText(payload?.environmentId),
       });
-      activeTabIdByKind[kind] = workspace.id;
-      syncActiveWorkspace(kind);
+      aiWorkspaceRegistry.setActive(kind, workspace.id, workspace.environmentId);
+      const target = {
+        kind: activeAiKind === kind ? kind : activeAiKind,
+        environmentId:
+          activeAiKind === kind ? workspace.environmentId : currentAiEnvironment(activeAiKind),
+        tabId: activeAiKind === kind ? workspace.id : activeTabIdFor(activeAiKind),
+      };
+      const reconcile = await requestAiReconcile("tab-create", target);
       emitTabsChanged(kind);
       return {
         ...listTabsPayload(kind),
         activeState: getAiStatePayload(workspace),
+        intentRevision: reconcile.revision,
       };
     });
 
-    ipcMain.handle("ai-tabs:switch", (_event, payload) => {
+    ipcMain.handle("ai-tabs:switch", async (_event, payload) => {
       const kind = safeText(payload?.kind) || "gpt";
       const tabId = safeText(payload?.tabId);
-      const workspace = getWorkspace(kind, tabId);
+      const environmentId = currentAiEnvironment(kind);
+      const workspace = getLogicalWorkspace(kind, tabId, environmentId);
       if (!workspace) {
         throw new Error("目标会话不存在");
       }
-      activeTabIdByKind[kind] = workspace.id;
-      syncActiveWorkspace(kind);
+      aiWorkspaceRegistry.setActive(kind, workspace.id, environmentId);
+      const target = {
+        kind: activeAiKind === kind ? kind : activeAiKind,
+        environmentId: activeAiKind === kind ? environmentId : currentAiEnvironment(activeAiKind),
+        tabId: activeAiKind === kind ? workspace.id : activeTabIdFor(activeAiKind),
+      };
+      const reconcile = await requestAiReconcile("tab-switch", target);
       emitTabsChanged(kind);
       return {
         ...listTabsPayload(kind),
         activeState: getAiStatePayload(workspace),
+        intentRevision: reconcile.revision,
       };
     });
 
-    ipcMain.handle("ai-tabs:close", (_event, payload) => {
-      const kind = safeText(payload?.kind) || "gpt";
-      return closeTabWorkspace(kind, payload?.tabId);
+    ipcMain.handle("ai-tabs:close", async (_event, payload) => {
+      const result = closeTabWorkspace(safeText(payload?.kind) || "gpt", payload?.tabId);
+      await aiReconciler.idle();
+      return result;
     });
 
     ipcMain.handle("ai:environment-activate", async (_event, payload) => {
@@ -1971,23 +2283,36 @@ function createElectronApp(baseMode = "all") {
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
       const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
       if (environmentId) getConfiguredAiEnvironment(kind, environmentId);
-      const workspaces = listWorkspaces(kind);
-      const changed = shouldCloseAiWorkspacesForEnvironment(workspaces, environmentId);
-      if (changed) await closeWorkspacesForKind(kind);
+      const { changed } = aiWorkspaceRegistry.activateEnvironment(kind, environmentId);
+      const target = {
+        kind: activeAiKind === kind ? kind : activeAiKind,
+        environmentId: activeAiKind === kind ? environmentId : currentAiEnvironment(activeAiKind),
+        tabId:
+          activeAiKind === kind
+            ? activeTabIdFor(kind, environmentId)
+            : activeTabIdFor(activeAiKind),
+      };
+      await requestAiReconcile("environment-activate", target);
+      emitTabsChanged(kind);
       return { ok: true, kind, environmentId, changed };
     });
 
     ipcMain.handle("ai:environment-delete", async (_event, payload) => {
+      const epoch = aiRuntimeEpoch;
       const kind = safeText(payload?.kind);
       const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
       if (!isAiKind(kind) || !environmentId) throw new Error("AI 环境标识不合法");
       getConfiguredAiEnvironment(kind, environmentId);
-      const targetLoaded = listWorkspaces(kind).some(
-        (workspace) => safeText(workspace.environmentId) === environmentId,
+      const targetLoaded = listWorkspaces(kind, environmentId).length > 0;
+      if (targetLoaded) await closeWorkspacesForKind(kind, environmentId);
+      assertAiRuntimeEpoch(epoch);
+      const partition = partitionForAiEnvironment(
+        kind,
+        environmentId,
+        backend.getPrincipalContext(),
       );
-      if (targetLoaded) await closeWorkspacesForKind(kind);
-      const partition = partitionForAiEnvironment(kind, environmentId);
       await clearAiSessionData(session.fromPartition(partition));
+      assertAiRuntimeEpoch(epoch);
       aiContactedHostsByPartition.get(partition)?.clear();
       return { ok: true, kind, environmentId };
     });
@@ -2005,29 +2330,62 @@ function createElectronApp(baseMode = "all") {
 
     ipcMain.handle("ai:ensure", async (_event, payload) => {
       const kind = safeText(payload?.kind);
+      if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
       const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
       const requestedTabId = safeText(payload?.tabId);
-      if (!requestedTabId && !activeTabIdByKind[kind]) {
-        return null;
-      }
-      const workspace = getOrCreateAiWorkspace(kind, requestedTabId || activeTabIdByKind[kind], {
+      const targetTabId = requestedTabId || activeTabIdFor(kind, environmentId);
+      if (!targetTabId) return null;
+      const epoch = aiRuntimeEpoch;
+      const workspace = getOrCreateAiWorkspace(kind, targetTabId, {
         lastUrl: safeText(payload?.lastUrl),
         allowExternalBrowsing: Boolean(payload?.allowExternalBrowsing),
         environmentId,
       });
-      if (!activeTabIdByKind[kind]) {
-        activeTabIdByKind[kind] = workspace.id;
+      if (!activeTabIdFor(kind, environmentId)) {
+        aiWorkspaceRegistry.setActive(kind, workspace.id, environmentId);
       }
+      if (!isWorkspaceViewUsable(workspace)) createAiWorkspaceView(workspace);
+      const viewGeneration = workspace.viewGeneration;
+      const ensureGeneration = Number(workspace.ensureGeneration || 0) + 1;
+      workspace.ensureGeneration = ensureGeneration;
+      const target = Object.freeze({ kind, environmentId, tabId: workspace.id });
+      const assertCurrent = () => {
+        const current = getLogicalWorkspace(kind, workspace.id, environmentId);
+        const activeTarget = currentAiTarget();
+        if (
+          !workspaceEnsureIsCurrent(
+            workspace,
+            {
+              runtimeEpoch: epoch,
+              viewGeneration,
+              ensureGeneration,
+              target,
+            },
+            {
+              runtimeEpoch: aiRuntimeEpoch,
+              logicalWorkspace: current,
+              target: activeTarget,
+            },
+          )
+        ) {
+          throw Object.assign(new Error("网页运行状态已变化，请重试"), {
+            code: "STALE_AI_WORKSPACE",
+          });
+        }
+      };
       const sender = {
         host: safeText(payload?.host || "127.0.0.1") || "127.0.0.1",
         port: Number.parseInt(String(payload?.port || "1080"), 10),
       };
       const route = getWorkspaceProxyRoute(kind, environmentId, sender);
-      if (environmentId) {
+      const routeFingerprint = routeBindingFingerprint(route);
+      if (environmentId && shouldValidateRouteBinding(workspace, routeFingerprint)) {
         const health = await checkAiRouteHealth(route);
+        assertCurrent();
         if (!health.ok) {
           throw new Error(`线路 ${route.label} 未通过出口、DNS 或防泄漏预检，已阻止页面访问`);
         }
+        workspace.verifiedRouteBinding = routeFingerprint;
       }
       const userAgent = sanitizeEmbeddedUserAgent(payload?.userAgent);
       const homeUrl = safeText(payload?.homeUrl);
@@ -2038,22 +2396,17 @@ function createElectronApp(baseMode = "all") {
       configureAiSession(targetSession, workspace.policy);
 
       const proxySignature = `${route.host}:${route.port}`;
-      const resolvedSessionProxy = await targetSession
-        .resolveProxy(workspace.lastUrl || workspace.policy.homeUrl)
-        .then((value) => safeText(value))
-        .catch(() => "");
-      if (
-        workspace.proxySignature !== proxySignature ||
-        !resolvedProxyMatchesRoute(resolvedSessionProxy, route)
-      ) {
+      if (workspace.proxySignature !== proxySignature) {
         await targetSession.setProxy({
           proxyRules: `socks5://${route.host}:${route.port}`,
           proxyBypassRules: "",
         });
         await targetSession.closeAllConnections();
+        assertCurrent();
         const verifiedProxy = safeText(
           await targetSession.resolveProxy(workspace.lastUrl || workspace.policy.homeUrl),
         );
+        assertCurrent();
         if (!resolvedProxyMatchesRoute(verifiedProxy, route)) {
           throw new Error(`AI 会话未能绑定指定线路 ${proxySignature}，已阻止页面访问`);
         }
@@ -2067,7 +2420,15 @@ function createElectronApp(baseMode = "all") {
         workspace.userAgent = userAgent;
         workspace.view.webContents.setUserAgent(userAgent);
       }
-      await applyWorkspacePrivacy(workspace);
+      if (
+        workspace.privacyAppliedViewGeneration !== viewGeneration ||
+        workspace.privacyAppliedUserAgent !== workspace.userAgent
+      ) {
+        await applyWorkspacePrivacy(workspace);
+        assertCurrent();
+        workspace.privacyAppliedViewGeneration = viewGeneration;
+        workspace.privacyAppliedUserAgent = workspace.userAgent;
+      }
 
       const targetUrl =
         normalizeAiWorkspaceUrl(
@@ -2086,8 +2447,9 @@ function createElectronApp(baseMode = "all") {
         workspace.lastUrl = targetUrl;
         emitAiState(workspace, "did-start-loading", { url: targetUrl });
         void loadAiWorkspaceUrl(workspace, targetUrl).catch((err) => {
+          if (epoch !== aiRuntimeEpoch || workspace.viewGeneration !== viewGeneration) return;
           workspace.loading = false;
-          emitAiEvent(workspace.kind, "did-fail-load", {
+          emitWorkspaceEvent(workspace, "did-fail-load", {
             ...getAiStatePayload(workspace),
             url: targetUrl,
             errorDescription: err.message || String(err),
@@ -2099,20 +2461,28 @@ function createElectronApp(baseMode = "all") {
         workspace.view.webContents.reload();
       }
 
+      assertCurrent();
+      const reconcile = await requestAiReconcile("ensure", target);
+      assertCurrent();
       emitTabsChanged(kind);
-      return getAiStatePayload(workspace);
+      return { ...getAiStatePayload(workspace), intentRevision: reconcile.revision };
     });
 
     // 只允许按单个 AI 服务清理；UI 必须先经协作账号密码复核，主进程不提供“全部清理”。
     ipcMain.handle("ai:data-clear", async (_event, payload) => {
+      const epoch = aiRuntimeEpoch;
       const kind = safeText(payload?.kind);
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
       await verifyBrowserDestructiveAction(payload);
+      assertAiRuntimeEpoch(epoch);
       const beforeSnapshot = await rememberBeforeClear(kind);
+      assertAiRuntimeEpoch(epoch);
       const policy = getAiPolicy(kind);
       await closeWorkspacesForKind(kind);
+      assertAiRuntimeEpoch(epoch);
       const targetSession = session.fromPartition(policy.partition);
       await clearAiSessionData(targetSession);
+      assertAiRuntimeEpoch(epoch);
       aiContactedHostsByPartition.get(policy.partition)?.clear();
 
       const settings = backend.loadSettings();
@@ -2129,14 +2499,19 @@ function createElectronApp(baseMode = "all") {
     });
 
     ipcMain.handle("ai:profile-rebuild", async (_event, payload) => {
+      const epoch = aiRuntimeEpoch;
       const kind = safeText(payload?.kind);
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
       await verifyBrowserDestructiveAction(payload);
+      assertAiRuntimeEpoch(epoch);
       const beforeSnapshot = await rememberBeforeClear(kind);
+      assertAiRuntimeEpoch(epoch);
       const oldPolicy = getAiPolicy(kind);
       await closeWorkspacesForKind(kind);
+      assertAiRuntimeEpoch(epoch);
       const oldSession = session.fromPartition(oldPolicy.partition);
       await clearAiSessionData(oldSession);
+      assertAiRuntimeEpoch(epoch);
       aiContactedHostsByPartition.get(oldPolicy.partition)?.clear();
 
       const settings = backend.loadSettings();
@@ -2169,7 +2544,8 @@ function createElectronApp(baseMode = "all") {
 
     ipcMain.handle("browser-privacy:apply", async () => {
       const results = [];
-      for (const workspace of aiWorkspaces.values()) {
+      for (const workspace of aiWorkspaceRegistry.all()) {
+        if (!isWorkspaceViewUsable(workspace)) continue;
         try {
           const applied = await applyWorkspacePrivacy(workspace);
           results.push({ kind: workspace.kind, tabId: workspace.id, ok: true, applied });
@@ -2193,20 +2569,32 @@ function createElectronApp(baseMode = "all") {
       return detectProxyEnvironment(port);
     });
 
-    ipcMain.handle("ai:sync-host", (_event, payload) => {
+    ipcMain.handle("ai:sync-host", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       const bounds = payload?.bounds;
       const visible = Boolean(payload?.visible);
       if (hostStateByKind[kind]) {
-        if (kind !== activeAiKind) {
-          hostStateByKind[kind] = { bounds: null, visible: false };
-          for (const workspace of listWorkspaces(kind)) detachWorkspaceView(workspace);
+        const target = currentAiTarget();
+        const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
+        const tabId = safeText(payload?.tabId);
+        if (
+          kind !== target.kind ||
+          environmentId !== target.environmentId ||
+          tabId !== target.tabId
+        ) {
           return false;
         }
         hostStateByKind[kind] = { bounds, visible };
-        return syncActiveWorkspace(kind);
+        const result = await requestAiReconcile("host-relayout", target);
+        return Boolean(result.value);
       }
-      const workspace = getWorkspace(kind);
+      const workspace = getWorkspace(
+        kind,
+        safeText(payload?.tabId),
+        payload?.environmentId === undefined
+          ? currentAiEnvironment(kind)
+          : normalizeAiEnvironmentId(payload.environmentId),
+      );
       if (!workspace) return false;
       return syncAiBounds(workspace, { bounds, visible });
     });
@@ -2218,7 +2606,7 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("ai:proxy-check", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       const workspace =
-        getWorkspace(kind, safeText(payload?.tabId)) || getWorkspace(kind, activeTabIdByKind[kind]);
+        getWorkspace(kind, safeText(payload?.tabId)) || getWorkspace(kind, activeTabIdFor(kind));
       if (!workspace) {
         return { ok: false, reason: "no-workspace" };
       }
@@ -2314,7 +2702,7 @@ function createElectronApp(baseMode = "all") {
           emitAiState(workspace, "did-start-loading", { url: targetUrl });
           void loadAiWorkspaceUrl(workspace, targetUrl).catch((err) => {
             workspace.loading = false;
-            emitAiEvent(workspace.kind, "did-fail-load", {
+            emitWorkspaceEvent(workspace, "did-fail-load", {
               ...getAiStatePayload(workspace),
               url: targetUrl,
               errorDescription: err.message || String(err),
@@ -2465,6 +2853,7 @@ function createElectronApp(baseMode = "all") {
     applyStableUserDataPath(app);
     appLog.init(app.getPath("userData"));
     const log = appLog.scoped("main");
+    mainLog = log;
     // 主进程未捕获异常兜底: 记录日志而非静默崩溃 (写入 userData/logs/main.log)。
     process.on("uncaughtException", (err) => log.error("uncaughtException:", err));
     process.on("unhandledRejection", (reason) => log.error("unhandledRejection:", reason));
@@ -2475,12 +2864,25 @@ function createElectronApp(baseMode = "all") {
     createWindow();
     setupAutoUpdater();
 
+    disposeAiRecoverySignals = registerAiRecoverySignals(powerMonitor, {
+      onSuspend: (reason) => {
+        aiLifecycleSuspended = true;
+        scheduleAiReconcile(`system-${reason}`, currentAiTarget());
+      },
+      onRecover: (reason) => {
+        aiLifecycleSuspended = false;
+        scheduleAiReconcile(`system-${reason}`, currentAiTarget());
+      },
+    });
+
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
   });
 
   app.on("before-quit", () => {
+    disposeAiRecoverySignals?.();
+    disposeAiRecoverySignals = null;
     disposeAiWorkspaces();
     if (backend) backend.stopAll();
   });
