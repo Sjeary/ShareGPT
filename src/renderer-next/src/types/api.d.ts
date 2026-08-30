@@ -187,15 +187,21 @@ export interface NotesAiRequest {
   }
   instructions?: string
 }
+export interface NotesAiCompletionRequest extends NotesAiRequest {
+  principalId: string
+  principalGeneration: number
+}
 export interface NotesAiEvent {
   streamId: string
+  principalId: string
   type: 'delta' | 'done' | 'error' | 'status'
   text?: string
   message?: string
 }
 export interface NotesAiApi {
-  complete: (req: NotesAiRequest) => Promise<{ streamId: string }>
+  complete: (req: NotesAiCompletionRequest) => Promise<{ streamId: string; principalId: string }>
   cancel: (streamId: string) => Promise<{ ok: boolean }>
+  invalidatePrincipal: (principalId: string) => Promise<{ ok: boolean; count: number }>
 }
 
 export interface ShareGptApi {

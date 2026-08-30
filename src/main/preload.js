@@ -45,6 +45,8 @@ contextBridge.exposeInMainWorld("api", {
   notesAi: {
     complete: (req) => ipcRenderer.invoke("notes-ai:complete", req),
     cancel: (id) => ipcRenderer.invoke("notes-ai:cancel", id),
+    invalidatePrincipal: (principalId) =>
+      ipcRenderer.invoke("notes-ai:invalidate-principal", principalId),
   },
   onNotesAiEvent: (handler) => {
     const listener = (_event, payload) => handler(payload);

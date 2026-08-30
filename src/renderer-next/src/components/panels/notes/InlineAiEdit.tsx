@@ -68,6 +68,11 @@ function DiffView({ a, b }: { a: string; b: string }) {
 
 // 内联 AI 编辑面板: 对选中文本(或光标处)下指令 → 流式生成 → diff 预览 → 保留/放弃/重试。
 export function InlineAiEdit() {
+  const principalGeneration = useNotesAiStore((s) => s.principalGeneration)
+  return <InlineAiEditRuntime key={principalGeneration} />
+}
+
+function InlineAiEditRuntime() {
   const aiEdit = useEditorBridge((s) => s.aiEdit)
   const close = useEditorBridge((s) => s.closeAiEdit)
   const replaceRange = useEditorBridge((s) => s.replaceRange)
@@ -117,6 +122,11 @@ export function InlineAiEdit() {
         onDone: () => setRunning(false),
         onError: (m) => {
           setErr(m)
+          setRunning(false)
+        },
+        onCancelled: () => {
+          setResult('')
+          setErr('')
           setRunning(false)
         },
       },

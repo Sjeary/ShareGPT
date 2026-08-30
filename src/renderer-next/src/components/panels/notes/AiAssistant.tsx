@@ -97,6 +97,11 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
 }
 
 export function AiAssistant() {
+  const principalGeneration = useNotesAiStore((s) => s.principalGeneration)
+  return <AiAssistantRuntime key={principalGeneration} />
+}
+
+function AiAssistantRuntime() {
   const currentPath = useVaultStore((s) => s.currentPath)
   const note = useVaultStore((s) => (s.currentPath ? s.notesByPath[s.currentPath] : null))
   const configured = useNotesAiStore((s) => Boolean(s.apiKey && s.baseUrl))
@@ -141,6 +146,11 @@ export function AiAssistant() {
         onDone: () => setRunning(false),
         onError: (m) => {
           setErr(m)
+          setRunning(false)
+        },
+        onCancelled: () => {
+          setResult('')
+          setErr('')
           setRunning(false)
         },
       },

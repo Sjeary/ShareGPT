@@ -788,7 +788,11 @@ class Backend {
     // 知识库 vault 管理器 (笔记真源 = 磁盘 .md 文件夹; 仅做文件 IO + 监听, 解析/索引在渲染层)。
     this.vault = new VaultManager(this.app, this.getWindow);
     // 知识库 AI 助手 (OpenAI Responses / Codex 中转, 流式; provider 由渲染层传入, 不持久化密钥)。
-    this.notesAi = createNotesAi({ getWindow: this.getWindow });
+    this.notesAi = createNotesAi({
+      getWindow: this.getWindow,
+      getPrincipalId: () => this.activePrincipalId,
+      requirePrincipalContext: true,
+    });
     this.runtimeDir = path.join(this.app.getPath("userData"), "runtime");
     this.updatesDir = path.join(this.app.getPath("downloads"), "ShareGPT Updates");
     this.updateBackupsDir = path.join(this.app.getPath("appData"), "ShareGPT Backups");

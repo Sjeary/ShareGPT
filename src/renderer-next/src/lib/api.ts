@@ -46,8 +46,9 @@ const fallback = {
   },
   onVaultChanged: () => noop,
   notesAi: {
-    complete: async () => ({ streamId: '' }),
+    complete: async () => ({ streamId: '', principalId: 'local-device' }),
     cancel: async () => ({ ok: true }),
+    invalidatePrincipal: async () => ({ ok: true, count: 0 }),
   },
   onNotesAiEvent: () => noop,
   translateText: async () => {

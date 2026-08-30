@@ -7,6 +7,7 @@ import {
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore, type AuthProfile } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import { useNotesAiStore } from '@/store/useNotesAiStore'
 import { useAiStore } from '@/store/useAiStore'
 import { normalizeChatMessage, normalizeDirectory } from '@/components/panels/chat/normalize'
 import { discardCollabToken, refreshAuthoritativeClientBootstrap } from '@/hooks/clientBootstrap'
@@ -194,6 +195,7 @@ export function useAuth() {
           // 再公开 token，避免 A 的配置短暂进入 B 的会话。
           settingsPrincipalRuntime.invalidate()
           useAiStore.getState().resetRuntime()
+          useNotesAiStore.getState().invalidatePrincipal()
           const activation = requirePrincipalActivation(
             await api.activateSettingsPrincipal({
               serverUrl: cleanedServer,
@@ -209,6 +211,9 @@ export function useAuth() {
           )
           const principalSettings = principal.settings as unknown as AppSettings
           useAppStore.setState({ settings: principalSettings })
+          useNotesAiStore
+            .getState()
+            .resetForPrincipal(principal.principalId, principalSettings.translation)
         },
         persistPrincipalSettings: async () => {
           // 与旧版 settings.json 字段 100% 兼容。
@@ -281,6 +286,9 @@ export function useAuth() {
             })) as unknown as AppSettings
             settingsPrincipalRuntime.activate(current.principalId, current.generation)
             useAppStore.setState({ settings })
+            useNotesAiStore
+              .getState()
+              .resetForPrincipal(current.principalId, settings.translation)
             throw error
           }
           clearSession()
@@ -289,9 +297,13 @@ export function useAuth() {
           useChatStore.getState().setConnection('idle')
           settingsPrincipalRuntime.invalidate()
           useAiStore.getState().resetRuntime()
+          useNotesAiStore.getState().invalidatePrincipal()
           settingsPrincipalRuntime.activate(local.principalId, local.generation)
           const localSettings = local.settings as unknown as AppSettings
           useAppStore.setState({ settings: localSettings })
+          useNotesAiStore
+            .getState()
+            .resetForPrincipal(local.principalId, localSettings.translation)
         },
         rollbackActivatedPrincipalIfOwned: async (activated) => {
           let local: PrincipalActivation
@@ -318,9 +330,13 @@ export function useAuth() {
           useChatStore.getState().setConnection('idle')
           settingsPrincipalRuntime.invalidate()
           useAiStore.getState().resetRuntime()
+          useNotesAiStore.getState().invalidatePrincipal()
           settingsPrincipalRuntime.activate(local.principalId, local.generation)
           const localSettings = local.settings as unknown as AppSettings
           useAppStore.setState({ settings: localSettings })
+          useNotesAiStore
+            .getState()
+            .resetForPrincipal(local.principalId, localSettings.translation)
         },
         discardIssuedToken: () => discardCollabToken(cleanedServer, issuedToken),
       })
@@ -348,9 +364,13 @@ export function useAuth() {
     )
     settingsPrincipalRuntime.invalidate()
     useAiStore.getState().resetRuntime()
+    useNotesAiStore.getState().invalidatePrincipal()
     settingsPrincipalRuntime.activate(local.principalId, local.generation)
     const localSettings = local.settings as unknown as AppSettings
     useAppStore.setState({ settings: localSettings })
+    useNotesAiStore
+      .getState()
+      .resetForPrincipal(local.principalId, localSettings.translation)
 
     // 通知服务器下线 (best-effort, 失败不阻塞已经完成的本地退出)。
     if (serverUrl && token) {

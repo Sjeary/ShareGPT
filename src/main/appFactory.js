@@ -553,6 +553,7 @@ function createElectronApp(baseMode = "all") {
     aiRouteHealthCache.clear();
     for (const controller of principalAbortControllers) controller.abort();
     principalAbortControllers.clear();
+    backend?.notesAi?.invalidatePrincipal?.();
     disposeAiWorkspaces({ incrementEpoch: false });
   }
 
@@ -560,6 +561,7 @@ function createElectronApp(baseMode = "all") {
     return runSettingsPrincipalTransition(
       {
         invalidate: cancelPrincipalRuntime,
+        activate: () => backend?.notesAi?.activatePrincipal?.(),
       },
       transition,
     );
@@ -2149,6 +2151,9 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("vault:import", (_event, src) => backend.vault.importFrom(src));
     ipcMain.handle("notes-ai:complete", (_event, req) => backend.notesAi.complete(req));
     ipcMain.handle("notes-ai:cancel", (_event, id) => backend.notesAi.cancel(id));
+    ipcMain.handle("notes-ai:invalidate-principal", (_event, principalId) =>
+      backend.notesAi.invalidatePrincipal(principalId),
+    );
     ipcMain.handle("translation:translate", (_event, payload) => translateText(payload));
     ipcMain.handle("translation:capture-page", (_event, payload) =>
       captureAiPageText(safeText(payload?.kind), safeText(payload?.tabId)),
