@@ -1,11 +1,12 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
 import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
+import { useAppStore } from '@/store/useAppStore'
 import type { AiKind } from '@/store/useAiStore'
 import type { TranslationProvider, TranslationSettings } from '@/types/settings'
 
 const DEFAULT_AI = {
-  baseUrl: 'http://47.113.226.118:8080',
+  baseUrl: '',
   apiKey: '',
   model: 'gpt-5.5',
   effort: 'medium',
@@ -16,6 +17,9 @@ export const DEFAULT_TRANSLATION_SETTINGS: TranslationSettings = {
   provider: 'ai',
   sourceLanguage: 'auto',
   targetLanguage: 'zh',
+  siteLanguage: 'en',
+  confirmNonTargetSend: false,
+  autoTranslateSelection: false,
   ai: DEFAULT_AI,
   api: { baseUrl: '', apiKey: '' },
   offline: { baseUrl: 'http://127.0.0.1:5000' },
@@ -29,6 +33,8 @@ function normalizeSettings(
     ...DEFAULT_TRANSLATION_SETTINGS,
     ...raw,
     version: 1,
+    confirmNonTargetSend: raw?.confirmNonTargetSend === true,
+    autoTranslateSelection: raw?.autoTranslateSelection === true,
     provider: ['ai', 'api', 'offline'].includes(String(raw?.provider))
       ? (raw?.provider as TranslationProvider)
       : 'ai',
@@ -39,6 +45,7 @@ function normalizeSettings(
 }
 
 interface TranslationState {
+  principalId: string
   open: boolean
   kind: AiKind
   tabId: string
@@ -61,9 +68,11 @@ interface TranslationState {
   setStatus: (status: string) => void
   setLoading: (loading: boolean) => void
   setSettingsOpen: (open: boolean) => void
+  resetForPrincipal: (principalId: string, settings?: Partial<TranslationSettings>) => void
 }
 
 export const useTranslationStore = create<TranslationState>((set, get) => ({
+  principalId: 'local-device',
   open: false,
   kind: 'gpt',
   tabId: '',
@@ -77,13 +86,14 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
 
   load: async () => {
     if (get().loaded) return
+    const principal = settingsPrincipalRuntime.snapshot()
     try {
-      const principal = settingsPrincipalRuntime.snapshot()
       const settings = (await api.loadSettings({
         expectedPrincipalId: principal.principalId,
         expectedPrincipalGeneration: principal.generation,
       })) as Record<string, unknown>
       settingsPrincipalRuntime.assertCurrent(principal)
+      if (get().principalId !== principal.principalId) return
       set({
         config: normalizeSettings(
           settings.translation as Partial<TranslationSettings> | undefined,
@@ -97,20 +107,28 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   },
 
   saveConfig: async (patch) => {
-    const config = normalizeSettings({ ...get().config, ...patch })
-    set({ config })
     const principal = settingsPrincipalRuntime.snapshot()
-    const settings = (await api.loadSettings({
-      expectedPrincipalId: principal.principalId,
-      expectedPrincipalGeneration: principal.generation,
-    })) as Record<string, unknown>
-    settingsPrincipalRuntime.assertCurrent(principal)
-    await api.saveSettings({
-      settings: { ...settings, translation: config },
-      expectedPrincipalId: principal.principalId,
-      expectedPrincipalGeneration: principal.generation,
+    if (get().principalId !== principal.principalId) {
+      throw new Error('当前翻译配置账号已失效，请重新登录')
+    }
+    const previous = get().config
+    const config = normalizeSettings({
+      ...previous,
+      ...patch,
+      ai: { ...previous.ai, ...patch.ai },
+      api: { ...previous.api, ...patch.api },
+      offline: { ...previous.offline, ...patch.offline },
     })
-    settingsPrincipalRuntime.assertCurrent(principal)
+    set({ config })
+    try {
+      await useAppStore.getState().patchSection('translation', config)
+      settingsPrincipalRuntime.assertCurrent(principal)
+      set({ config: normalizeSettings(useAppStore.getState().settings?.translation) })
+    } catch (error) {
+      settingsPrincipalRuntime.assertCurrent(principal)
+      set({ config: normalizeSettings(useAppStore.getState().settings?.translation || previous) })
+      throw error
+    }
   },
 
   setProvider: async (provider) => get().saveConfig({ provider }),
@@ -139,4 +157,17 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   setStatus: (status) => set({ status }),
   setLoading: (loading) => set({ loading }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  resetForPrincipal: (principalId, settings) =>
+    set({
+      principalId: String(principalId || ''),
+      open: false,
+      tabId: '',
+      sourceText: '',
+      result: '',
+      status: '',
+      loading: false,
+      settingsOpen: false,
+      loaded: true,
+      config: normalizeSettings(settings),
+    }),
 }))

@@ -4,6 +4,7 @@ import { useAiStore } from '@/store/useAiStore'
 import type { AiKind, AiTab } from '@/store/useAiStore'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
+import { canUseTranslation } from '@/lib/aiAccess'
 import { useTranslationStore } from '@/store/useTranslationStore'
 import { registerAiQuery } from './reportGptUsage'
 import {
@@ -236,8 +237,8 @@ export function useAiEvents() {
       if (kind !== 'gpt' && kind !== 'gemini' && kind !== 'claude') return
 
       if (payload?.type === 'translate-selection') {
-        const profile = useAuthStore.getState().profile
-        if (!profile?.isAdmin && !profile?.advancedAiAllowed) return
+        const auth = useAuthStore.getState()
+        if (!canUseTranslation(auth.token, auth.profile)) return
         useTranslationStore
           .getState()
           .openSelection(kind, safeText(payload.tabId), safeText(payload.text))

@@ -2154,7 +2154,20 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("notes-ai:invalidate-principal", (_event, principalId) =>
       backend.notesAi.invalidatePrincipal(principalId),
     );
-    ipcMain.handle("translation:translate", (_event, payload) => translateText(payload));
+    ipcMain.handle("translation:translate", async (_event, payload) => {
+      const controller = new AbortController();
+      const epoch = aiRuntimeEpoch;
+      principalAbortControllers.add(controller);
+      try {
+        const result = await translateText(payload, { signal: controller.signal });
+        if (epoch !== aiRuntimeEpoch) {
+          throw Object.assign(new Error("账号已切换，请重试"), { code: "STALE_PRINCIPAL" });
+        }
+        return result;
+      } finally {
+        principalAbortControllers.delete(controller);
+      }
+    });
     ipcMain.handle("translation:capture-page", (_event, payload) =>
       captureAiPageText(safeText(payload?.kind), safeText(payload?.tabId)),
     );

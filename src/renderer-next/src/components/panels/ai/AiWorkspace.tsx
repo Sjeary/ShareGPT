@@ -36,6 +36,7 @@ import { useTranslationStore } from '@/store/useTranslationStore'
 import type { AiKind } from '@/store/useAiStore'
 import { isSenderRunning } from '@/components/panels/service/helpers'
 import { api } from '@/lib/api'
+import { canUseAdvancedAi, canUseTranslation } from '@/lib/aiAccess'
 import { toast } from 'sonner'
 import { useAiHostSync } from '@/hooks/useAiWorkspace'
 import { useAiEvents, applyAiTabsPayload } from './useAiEvents'
@@ -102,9 +103,8 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const aiHeaderHidden = useAppStore((s) => s.aiHeaderHidden)
   const setAiHeaderHidden = useAppStore((s) => s.setAiHeaderHidden)
   const toggleAiHeaderHidden = useAppStore((s) => s.toggleAiHeaderHidden)
-  const advancedAiAllowed = useAuthStore((s) =>
-    Boolean(s.profile?.isAdmin || s.profile?.advancedAiAllowed),
-  )
+  const advancedAiAllowed = useAuthStore((s) => canUseAdvancedAi(s.token, s.profile))
+  const translationAllowed = useAuthStore((s) => canUseTranslation(s.token, s.profile))
   const senderRunning = isSenderRunning(status)
   const advancedAi = useMemo(
     () => normalizeAdvancedAiSettings(settings?.advancedAi),
@@ -157,7 +157,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   const tabs = useAiStore((s) => s.tabsByKind[kind])
   const activeTabId = useAiStore((s) => s.activeTabIdByKind[kind])
-  const translationOpen = useTranslationStore((s) => advancedAiAllowed && s.open && s.kind === kind)
+  const translationOpen = useTranslationStore(
+    (s) => translationAllowed && s.open && s.kind === kind,
+  )
   const toggleTranslation = useTranslationStore((s) => s.toggle)
   const feedback = useAiStore((s) => s.feedbackByKind[kind])
   const setFeedback = useAiStore((s) => s.setFeedback)
@@ -724,7 +726,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
                 </span>
               )}
             </Button>
-            {advancedAiAllowed && (
+            {translationAllowed && (
               <Button
                 variant="ghost"
                 size="icon"

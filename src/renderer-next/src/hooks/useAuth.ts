@@ -8,6 +8,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore, type AuthProfile } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useNotesAiStore } from '@/store/useNotesAiStore'
+import { useTranslationStore } from '@/store/useTranslationStore'
 import { useAiStore } from '@/store/useAiStore'
 import { normalizeChatMessage, normalizeDirectory } from '@/components/panels/chat/normalize'
 import { discardCollabToken, refreshAuthoritativeClientBootstrap } from '@/hooks/clientBootstrap'
@@ -211,6 +212,9 @@ export function useAuth() {
           )
           const principalSettings = principal.settings as unknown as AppSettings
           useAppStore.setState({ settings: principalSettings })
+          useTranslationStore
+            .getState()
+            .resetForPrincipal(principal.principalId, principalSettings.translation)
           useNotesAiStore
             .getState()
             .resetForPrincipal(principal.principalId, principalSettings.translation)
@@ -286,6 +290,9 @@ export function useAuth() {
             })) as unknown as AppSettings
             settingsPrincipalRuntime.activate(current.principalId, current.generation)
             useAppStore.setState({ settings })
+            useTranslationStore
+              .getState()
+              .resetForPrincipal(current.principalId, settings.translation)
             useNotesAiStore
               .getState()
               .resetForPrincipal(current.principalId, settings.translation)
@@ -301,6 +308,9 @@ export function useAuth() {
           settingsPrincipalRuntime.activate(local.principalId, local.generation)
           const localSettings = local.settings as unknown as AppSettings
           useAppStore.setState({ settings: localSettings })
+          useTranslationStore
+            .getState()
+            .resetForPrincipal(local.principalId, localSettings.translation)
           useNotesAiStore
             .getState()
             .resetForPrincipal(local.principalId, localSettings.translation)
@@ -334,6 +344,9 @@ export function useAuth() {
           settingsPrincipalRuntime.activate(local.principalId, local.generation)
           const localSettings = local.settings as unknown as AppSettings
           useAppStore.setState({ settings: localSettings })
+          useTranslationStore
+            .getState()
+            .resetForPrincipal(local.principalId, localSettings.translation)
           useNotesAiStore
             .getState()
             .resetForPrincipal(local.principalId, localSettings.translation)
@@ -368,6 +381,9 @@ export function useAuth() {
     settingsPrincipalRuntime.activate(local.principalId, local.generation)
     const localSettings = local.settings as unknown as AppSettings
     useAppStore.setState({ settings: localSettings })
+    useTranslationStore
+      .getState()
+      .resetForPrincipal(local.principalId, localSettings.translation)
     useNotesAiStore
       .getState()
       .resetForPrincipal(local.principalId, localSettings.translation)

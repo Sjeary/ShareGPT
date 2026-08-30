@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
 import { runAi } from '@/lib/notes/aiClient'
 import { cn } from '@/lib/utils'
+import { REMOTE_HTTP_WARNING, usesRemoteHttp } from '@/lib/remoteHttp'
 import { useTranslationStore } from '@/store/useTranslationStore'
 import type { AiKind } from '@/store/useAiStore'
 import type { TranslationProvider, TranslationSettings } from '@/types/settings'
@@ -108,6 +109,12 @@ export function TranslationPanel({ kind, tabId }: TranslationPanelProps) {
             cancelRef.current = null
             state.setLoading(false)
             state.setStatus(message)
+          },
+          onCancelled: () => {
+            cancelRef.current = null
+            state.setResult('')
+            state.setLoading(false)
+            state.setStatus('')
           },
         },
       )
@@ -289,6 +296,11 @@ function TranslationSettingsForm({
             placeholder="AI 接口地址"
             onChange={(event) => onChange({ ai: { ...config.ai, baseUrl: event.target.value } })}
           />
+          {usesRemoteHttp(config.ai.baseUrl) && (
+            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
+              {REMOTE_HTTP_WARNING}
+            </p>
+          )}
           <Input
             className={inputClass}
             type="password"
@@ -327,6 +339,11 @@ function TranslationSettingsForm({
             placeholder="LibreTranslate 兼容接口地址"
             onChange={(event) => onChange({ api: { ...config.api, baseUrl: event.target.value } })}
           />
+          {usesRemoteHttp(config.api.baseUrl) && (
+            <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
+              {REMOTE_HTTP_WARNING}
+            </p>
+          )}
           <Input
             className={inputClass}
             type="password"
@@ -351,6 +368,20 @@ function TranslationSettingsForm({
           </p>
         </>
       )}
+      <label className="flex items-start gap-2 border-t border-border pt-2 text-xs">
+        <input
+          type="checkbox"
+          className="mt-0.5 size-4 accent-primary"
+          checked={config.confirmNonTargetSend}
+          onChange={(event) => onChange({ confirmNonTargetSend: event.target.checked })}
+        />
+        <span>
+          <span className="block font-medium text-foreground">发送前确认</span>
+          <span className="text-muted-foreground">
+            仅用于“翻译并发送”，不会接管网页中的普通 Enter。
+          </span>
+        </span>
+      </label>
     </div>
   )
 }
