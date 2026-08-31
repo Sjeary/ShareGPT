@@ -99,8 +99,8 @@ export function Titlebar() {
 
   const maxLabel = maximized ? '还原窗口' : '最大化'
 
-  // macOS 全屏时系统红绿灯会隐藏, 此时左侧不再为它留白(否则图标停在右侧、左边空一块)。
-  // 进入/退出全屏窗口尺寸会变, 必触发 DOM resize, 据此重新查询全屏态, 无需主进程额外广播。
+  // macOS 全屏时系统红绿灯会隐藏，此时左侧不再为它留白。Electron 的全屏过渡中
+  // renderer resize 可能早于 isFullScreen() 更新，因此以 main 的完成事件为权威，resize 仅兜底。
   const isMac = api.platform === 'darwin'
   const [fullScreen, setFullScreen] = useState(false)
   useEffect(() => {
@@ -113,9 +113,16 @@ export function Titlebar() {
         .catch(() => alive && setFullScreen(false))
     }
     sync()
+    const unsubscribe = api.onAppEvent((payload: unknown) => {
+      if (!payload || typeof payload !== 'object') return
+      const event = payload as { type?: unknown; fullScreen?: unknown }
+      if (event.type !== 'window-fullscreen-changed') return
+      setFullScreen(Boolean(event.fullScreen))
+    })
     window.addEventListener('resize', sync)
     return () => {
       alive = false
+      unsubscribe()
       window.removeEventListener('resize', sync)
     }
   }, [isMac])

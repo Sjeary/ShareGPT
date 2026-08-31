@@ -2329,11 +2329,20 @@ function createElectronApp(baseMode = "all") {
     loadMainRenderer(mainWindow);
     const reconcileOnWindowEvent = (eventName) => () =>
       scheduleAiReconcile(`window-${eventName}`, currentAiTarget());
+    const reconcileOnFullScreenChange = (fullScreen) => () => {
+      emitAppEvent("window-fullscreen-changed", { fullScreen });
+      scheduleAiReconcile(
+        `window-${fullScreen ? "enter" : "leave"}-full-screen`,
+        currentAiTarget(),
+      );
+    };
     mainWindow.on("show", reconcileOnWindowEvent("show"));
     mainWindow.on("focus", reconcileOnWindowEvent("focus"));
     mainWindow.on("restore", reconcileOnWindowEvent("restore"));
     mainWindow.on("maximize", reconcileOnWindowEvent("maximize"));
     mainWindow.on("unmaximize", reconcileOnWindowEvent("unmaximize"));
+    mainWindow.on("enter-full-screen", reconcileOnFullScreenChange(true));
+    mainWindow.on("leave-full-screen", reconcileOnFullScreenChange(false));
     mainWindow.on("hide", reconcileOnWindowEvent("hide"));
     mainWindow.on("minimize", reconcileOnWindowEvent("minimize"));
     mainWindow.on("closed", () => {
