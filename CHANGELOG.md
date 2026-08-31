@@ -7,9 +7,7 @@
 
 ## [Unreleased]
 
-## [1.0.9] - 2026-08-31
-
-> **稳定性与升级安全更新**：从 1.0.8 稳定基线重建账号隔离、AI 网页生命周期、翻译/发送与发布契约，升级保留既有设置和网页登录状态。建议升级。
+> **1.0.9 待发布：稳定性与升级安全更新**。从 1.0.8 稳定基线重建账号隔离、AI 网页生命周期、翻译/发送与发布契约，升级保留既有设置和网页登录状态。
 
 ### 账号与数据
 
@@ -254,8 +252,7 @@
 
 - 更早的 5.x 为测试版本，不在此正式记录。
 
-[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.9...HEAD
-[1.0.9]: https://github.com/Sjeary/ShareGPT/compare/v1.0.8...v1.0.9
+[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.8...HEAD
 [1.0.8]: https://github.com/Sjeary/ShareGPT/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/Sjeary/ShareGPT/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/Sjeary/ShareGPT/compare/v1.0.5...v1.0.6

@@ -4,14 +4,14 @@
 
 export interface ChangelogEntry {
   version: string
-  date: string // YYYY-MM-DD
+  date: string // 已发布版本使用 YYYY-MM-DD；候选版本使用“待发布”
   highlights: string[]
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
     version: '1.0.9',
-    date: '2026-08-31',
+    date: '待发布',
     highlights: [
       '升级继续沿用 ShareGPT 数据目录并保留账号、配置和 AI 网页登录状态；更新版本只以 GitHub Latest 的真实 tag 为准，不再误显示 6.0.0。',
       '大小写不同的账号和不同服务器路径现在完全隔离；管理员首次登录默认启用高级 AI，关闭或撤权不会删除环境与网页数据。',
