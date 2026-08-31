@@ -34,5 +34,3 @@ build.sender.temp.json
 # 本地自用文档(不公开): 进度清单 + 维护/运维笔记
 TODO.md
 *.local.md
-AGENT.md
-AGENTS.md
