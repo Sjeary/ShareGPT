@@ -95,6 +95,7 @@ test("an explicit composer operation is bound to one live view and document epoc
   });
   assert.equal(operation.text, "translated question");
   assert.equal(operation.send, true);
+  assert.equal(operation.strategy, "replace");
   assert.equal(composerOperationIsCurrent(operation, snapshot()), true);
   assert.equal(
     composerOperationIsCurrent(operation, snapshot({ workspaceInstanceId: "replacement-view" })),
@@ -372,6 +373,17 @@ test("write execution uses a fixed isolated-world call and rejects page failure"
   webContents.executeJavaScriptInIsolatedWorld = async () => ({
     ok: false,
     sent: false,
+    conflict: "existing-draft",
+  });
+  assert.deepEqual(await executeComposerWrite(webContents, operation), {
+    ok: false,
+    sent: false,
+    conflict: "existing-draft",
+  });
+
+  webContents.executeJavaScriptInIsolatedWorld = async () => ({
+    ok: false,
+    sent: false,
     reason: "no-editor",
   });
   await assert.rejects(() => executeComposerWrite(webContents, operation), {
@@ -472,6 +484,32 @@ test("the executable write operation mutates only its captured page", () => {
   const stale = runComposerScript(operation, { url: "https://chatgpt.com/c/two" });
   assert.deepEqual({ ...stale.result }, { ok: false, reason: "page-changed" });
   assert.equal(stale.editor.value, "");
+});
+
+test("composer write strategies preserve, append, or replace an existing web draft", () => {
+  const preserve = runComposerScript(
+    createComposerOperation(snapshot(), {
+      text: "translated",
+      strategy: "fail-if-not-empty",
+    }),
+    { initialText: "existing draft" },
+  );
+  assert.deepEqual({ ...preserve.result }, { ok: false, sent: false, conflict: "existing-draft" });
+  assert.equal(preserve.editor.value, "existing draft");
+
+  const append = runComposerScript(
+    createComposerOperation(snapshot(), { text: "translated", strategy: "append" }),
+    { initialText: "existing draft" },
+  );
+  assert.deepEqual({ ...append.result }, { ok: true, sent: false });
+  assert.equal(append.editor.value, "existing draft\n\ntranslated");
+
+  const replace = runComposerScript(
+    createComposerOperation(snapshot(), { text: "translated", strategy: "replace" }),
+    { initialText: "existing draft" },
+  );
+  assert.deepEqual({ ...replace.result }, { ok: true, sent: false });
+  assert.equal(replace.editor.value, "translated");
 });
 
 test("the executable send gate accepts one trusted Enter and rejects an untrusted one", () => {

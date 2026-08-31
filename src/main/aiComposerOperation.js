@@ -3,6 +3,7 @@ const crypto = require("node:crypto");
 const COMPOSER_OPERATION_WORLD_ID = 1001;
 const COMPOSER_OPERATION_TTL_MS = 1200;
 const MAX_COMPOSER_CHARS = 30000;
+const COMPOSER_WRITE_STRATEGIES = new Set(["replace", "append", "fail-if-not-empty"]);
 const TOKEN_PATTERN = /^[a-zA-Z0-9_-]{32,128}$/;
 const CONFIRMATION_ID_PATTERN = /^[a-z0-9-]{8,80}$/i;
 const COMPOSER_CONFIRMATION_MARKER_PREFIX = "__SHAREGPT_COMPOSER_CONFIRM_V1__:";
@@ -85,11 +86,13 @@ function createComposerOperation(snapshot, options = {}) {
   }
   if (!text) throw new Error("没有可填入的译文");
   if (text.length > MAX_COMPOSER_CHARS) throw new Error("待发送内容过长");
+  const strategy = COMPOSER_WRITE_STRATEGIES.has(options.strategy) ? options.strategy : "replace";
   return Object.freeze({
     token: createOperationToken(),
     target: Object.freeze(target),
     text,
     send: options.send === true,
+    strategy,
   });
 }
 
@@ -422,6 +425,7 @@ function composerWriteScript(operation, options = {}) {
     url: target.url,
     text,
     send: operation.send === true,
+    strategy: COMPOSER_WRITE_STRATEGIES.has(operation.strategy) ? operation.strategy : "replace",
     ttlMs: Math.max(100, Math.min(3000, Number(options.ttlMs) || COMPOSER_OPERATION_TTL_MS)),
   });
   const composerEditorSource = isLikelyComposerEditorInPage.toString();
@@ -453,7 +457,18 @@ function composerWriteScript(operation, options = {}) {
       const editor = candidates.find((node) => visible(node) && isLikelyComposerEditor(node));
       if (!editor) return { ok: false, reason: 'no-editor' };
 
-      const read = () => String('value' in editor ? editor.value : editor.innerText || editor.textContent || '').trim();
+      const readRaw = () => String('value' in editor ? editor.value : editor.innerText || editor.textContent || '');
+      const read = () => readRaw().trim();
+      const existingText = readRaw();
+      if (payload.strategy === 'fail-if-not-empty' && existingText.trim()) {
+        return { ok: false, sent: false, conflict: 'existing-draft' };
+      }
+      const finalText = payload.strategy === 'append' && existingText.trim()
+        ? existingText.trimEnd() + '\\n\\n' + payload.text
+        : payload.text;
+      if (finalText.length > ${MAX_COMPOSER_CHARS}) {
+        return { ok: false, sent: false, reason: 'content-too-long' };
+      }
       const inputEvent = (type, init) => {
         try {
           return new InputEvent(type, init);
@@ -471,7 +486,7 @@ function composerWriteScript(operation, options = {}) {
         bubbles: true,
         cancelable: true,
         composed: true,
-        data: payload.text,
+        data: finalText,
         inputType: 'insertReplacementText',
       });
       if ('value' in editor) {
@@ -479,9 +494,9 @@ function composerWriteScript(operation, options = {}) {
         if (!editor.dispatchEvent(beforeInput)) return { ok: false, reason: 'write-cancelled' };
         const prototype = Object.getPrototypeOf(editor);
         const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
-        if (setter) setter.call(editor, payload.text);
-        else editor.value = payload.text;
-        editor.setSelectionRange?.(payload.text.length, payload.text.length);
+        if (setter) setter.call(editor, finalText);
+        else editor.value = finalText;
+        editor.setSelectionRange?.(finalText.length, finalText.length);
       } else {
         if (!editor.isContentEditable) return { ok: false, reason: 'no-editor' };
         const selection = globalThis.getSelection?.();
@@ -492,9 +507,9 @@ function composerWriteScript(operation, options = {}) {
         if (!editor.dispatchEvent(beforeInput)) return { ok: false, reason: 'write-cancelled' };
         let inserted = false;
         try {
-          inserted = Boolean(document.execCommand?.('insertText', false, payload.text));
+          inserted = Boolean(document.execCommand?.('insertText', false, finalText));
         } catch {}
-        if (!inserted) editor.replaceChildren(document.createTextNode(payload.text));
+        if (!inserted) editor.replaceChildren(document.createTextNode(finalText));
         const finalRange = document.createRange?.();
         finalRange?.selectNodeContents(editor);
         finalRange?.collapse(false);
@@ -505,10 +520,10 @@ function composerWriteScript(operation, options = {}) {
         bubbles: true,
         composed: true,
         inputType: 'insertReplacementText',
-        data: payload.text,
+        data: finalText,
       }));
       editor.dispatchEvent(new Event('change', { bubbles: true }));
-      if (currentUrl() !== payload.url || read() !== payload.text) {
+      if (currentUrl() !== payload.url || read() !== finalText.trim()) {
         return { ok: false, reason: 'write-rejected' };
       }
       if (!payload.send) return { ok: true, sent: false };
@@ -519,7 +534,7 @@ function composerWriteScript(operation, options = {}) {
         token: payload.token,
         url: payload.url,
         editor,
-        expectedText: payload.text,
+        expectedText: finalText.trim(),
         status: 'armed',
         reason: '',
         timer: null,
@@ -582,8 +597,15 @@ async function executeComposerWrite(webContents, operation, options = {}) {
     false,
   );
   if (!result?.ok) {
+    if (result?.conflict === "existing-draft") {
+      return { ok: false, sent: false, conflict: "existing-draft" };
+    }
     const message =
-      result?.reason === "no-editor" ? "请先点击网页输入框" : "网页已经变化，请重新操作";
+      result?.reason === "no-editor"
+        ? "请先点击网页输入框"
+        : result?.reason === "content-too-long"
+          ? "合并后的网页输入内容过长"
+          : "网页已经变化，请重新操作";
     throw Object.assign(new Error(message), { code: "COMPOSER_WRITE_REJECTED" });
   }
   return result;

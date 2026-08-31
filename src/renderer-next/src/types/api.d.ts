@@ -303,7 +303,8 @@ export interface ShareGptApi {
     target: AiComposerTarget
     text: string
     send: boolean
-  }) => Promise<{ ok: boolean; sent: boolean }>
+    strategy?: 'replace' | 'append' | 'fail-if-not-empty'
+  }) => Promise<{ ok: boolean; sent: boolean; conflict?: 'existing-draft' }>
   syncAiComposerGuard: () => Promise<{ ok: boolean; updated: number }>
   resolveAiComposerConfirmation: (payload: {
     requestId: string

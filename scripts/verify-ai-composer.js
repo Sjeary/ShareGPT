@@ -267,6 +267,31 @@ async function main() {
     process.stdout.write(
       "[verify] explicit programmatic fill and send use the captured document\n",
     );
+    await setPrompt(wc, "existing draft");
+    const preserve = createComposerOperation(snapshot(), {
+      text: "translated",
+      send: false,
+      strategy: "fail-if-not-empty",
+    });
+    assert.deepEqual(await executeComposerWrite(wc, preserve), {
+      ok: false,
+      sent: false,
+      conflict: "existing-draft",
+    });
+    assert.equal(
+      await wc.executeJavaScript("document.querySelector('#prompt').value"),
+      "existing draft",
+    );
+    const append = createComposerOperation(snapshot(), {
+      text: "translated",
+      send: false,
+      strategy: "append",
+    });
+    await executeComposerWrite(wc, append);
+    assert.equal(
+      await wc.executeJavaScript("document.querySelector('#prompt').value"),
+      "existing draft\n\ntranslated",
+    );
     const fill = createComposerOperation(snapshot(), { text: "filled text", send: false });
     await executeComposerWrite(wc, fill);
     assert.equal(

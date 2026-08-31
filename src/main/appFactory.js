@@ -1001,14 +1001,16 @@ function createElectronApp(baseMode = "all") {
     const operation = createComposerOperation(payload?.target, {
       text: payload?.text,
       send: payload?.send === true,
+      strategy: payload?.strategy,
     });
     const workspace = composerWorkspaceFromTarget(operation.target);
     const currentTarget = () => captureWorkspaceComposerTarget(workspace);
     assertComposerOperationCurrent(operation, currentTarget());
     const webContents = workspace.view.webContents;
-    await executeComposerWrite(webContents, operation);
+    const writeResult = await executeComposerWrite(webContents, operation);
     assertComposerOperationCurrent(operation, currentTarget());
-    if (!operation.send) return { ok: true, sent: false };
+    if (writeResult?.conflict) return writeResult;
+    if (!operation.send) return writeResult;
 
     sendComposerEnter(webContents);
     const outcome = await waitForComposerOutcome(webContents, operation.token);
