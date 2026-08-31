@@ -365,12 +365,32 @@ async function patchTranslation(page, principalId, patch) {
   });
 }
 
-async function composerTarget(page, tabId) {
+async function composerTarget(page, tabId, kind = "gpt") {
   return api(page, "getAiComposerTarget", {
-    kind: "gpt",
+    kind,
     tabId,
     environmentId: "",
   });
+}
+
+async function emitFixtureWebContentsEvent(electronApp, urlPattern, eventName) {
+  return electronApp.evaluate(
+    ({ webContents }, { pattern, name }) => {
+      const contents = webContents
+        .getAllWebContents()
+        .filter(
+          (candidate) =>
+            !candidate.isDestroyed() &&
+            !candidate.isCrashed() &&
+            new RegExp(pattern).test(candidate.getURL()),
+        )
+        .sort((left, right) => right.id - left.id)[0];
+      if (!contents) throw new Error(`fixture webContents not found for ${pattern}`);
+      contents.emit(name);
+      return contents.id;
+    },
+    { pattern: urlPattern, name: eventName },
+  );
 }
 
 async function writeComposer(page, tabId, text) {
@@ -895,6 +915,21 @@ async function main() {
       electronApp,
       "fixture\\.invalid/claude/a",
       "localStorage.setItem('workspace-identity:claude', 'CLAUDE'); window.__sharegptLifecycleFixture",
+    );
+
+    process.stdout.write("[verify] Claude loading pulse keeps the ready composer document\n");
+    const claudeTargetBeforePulse = await composerTarget(page, claudeId, "claude");
+    await emitFixtureWebContentsEvent(
+      electronApp,
+      "fixture\\.invalid/claude/a",
+      "did-start-loading",
+    );
+    const claudeTargetAfterPulse = await composerTarget(page, claudeId, "claude");
+    assert.deepEqual(claudeTargetAfterPulse, claudeTargetBeforePulse);
+    await emitFixtureWebContentsEvent(
+      electronApp,
+      "fixture\\.invalid/claude/a",
+      "did-stop-loading",
     );
 
     process.stdout.write("[verify] GPT / Claude / ordinary navigation detaches without reload\n");

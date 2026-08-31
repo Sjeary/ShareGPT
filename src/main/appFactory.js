@@ -1729,8 +1729,9 @@ function createElectronApp(baseMode = "all") {
     wc.on("did-start-loading", () => {
       if (!isCurrentView()) return;
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
-      invalidateComposerWorkspace(workspace, "navigation");
-      invalidateWorkspaceDocumentState(workspace);
+      // did-start-loading 不提供 frame / navigation 身份，Claude 的 SPA 会在当前文档
+      // 已 ready 后再次产生 loading pulse。真正的主框架导航由 did-start-navigation
+      // 负责失效 document；这里仅维护加载态，避免把健康 composer 永久标成导航中。
       workspace.loading = true;
       emitAiState(workspace, "did-start-loading");
     });
