@@ -3,7 +3,7 @@ import { api } from '@/lib/api'
 import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
 import { useAppStore } from '@/store/useAppStore'
 import type { AiKind } from '@/store/useAiStore'
-import type { TranslationProvider, TranslationSettings } from '@/types/settings'
+import type { TranslationProvider, TranslationSettings, TranslationStyle } from '@/types/settings'
 
 const DEFAULT_AI = {
   baseUrl: '',
@@ -18,6 +18,8 @@ export const DEFAULT_TRANSLATION_SETTINGS: TranslationSettings = {
   sourceLanguage: 'auto',
   targetLanguage: 'zh',
   siteLanguage: 'en',
+  style: 'natural',
+  glossary: '',
   confirmNonTargetSend: false,
   autoTranslateSelection: false,
   ai: DEFAULT_AI,
@@ -29,10 +31,15 @@ function normalizeSettings(
   raw: Partial<TranslationSettings> | undefined,
   notesAi?: Partial<TranslationSettings['ai']>,
 ): TranslationSettings {
+  const style = ['natural', 'literal', 'concise'].includes(String(raw?.style))
+    ? (raw?.style as TranslationStyle)
+    : 'natural'
   return {
     ...DEFAULT_TRANSLATION_SETTINGS,
     ...raw,
     version: 1,
+    style,
+    glossary: String(raw?.glossary || '').slice(0, 4000),
     confirmNonTargetSend: raw?.confirmNonTargetSend === true,
     autoTranslateSelection: raw?.autoTranslateSelection === true,
     provider: ['ai', 'api', 'offline'].includes(String(raw?.provider))

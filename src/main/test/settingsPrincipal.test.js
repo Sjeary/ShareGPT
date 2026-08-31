@@ -104,7 +104,11 @@ test("A/B/A keeps each account's environments and Notes AI configuration", (t) =
   patchSettings(
     backend,
     "translation",
-    { ai: { baseUrl: "http://alice.example", apiKey: "alice-key", model: "a" } },
+    {
+      style: "literal",
+      glossary: "ShareGPT = ShareGPT",
+      ai: { baseUrl: "http://alice.example", apiKey: "alice-key", model: "a" },
+    },
     saved.settingsRevision,
     alice.principalId,
   );
@@ -114,15 +118,23 @@ test("A/B/A keeps each account's environments and Notes AI configuration", (t) =
   saved = patchSettings(
     backend,
     "translation",
-    { ai: { baseUrl: "https://bob.example", apiKey: "bob-key", model: "b" } },
+    {
+      style: "concise",
+      glossary: "workspace = 工作区",
+      ai: { baseUrl: "https://bob.example", apiKey: "bob-key", model: "b" },
+    },
     bob.settings.settingsRevision,
     bob.principalId,
   );
   assert.equal(saved.translation.ai.apiKey, "bob-key");
+  assert.equal(saved.translation.style, "concise");
+  assert.equal(saved.translation.glossary, "workspace = 工作区");
 
   const aliceAgain = backend.activatePrincipal("https://collab.example/root", "Alice").settings;
   assert.equal(aliceAgain.advancedAi.environments[0].id, "alice-env");
   assert.equal(aliceAgain.translation.ai.apiKey, "alice-key");
+  assert.equal(aliceAgain.translation.style, "literal");
+  assert.equal(aliceAgain.translation.glossary, "ShareGPT = ShareGPT");
 });
 
 test("ordinary AI partitions are isolated while the exact 1.0.8 owner keeps legacy data", (t) => {

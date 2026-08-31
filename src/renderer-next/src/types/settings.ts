@@ -185,6 +185,7 @@ export interface AppSettings {
 }
 
 export type TranslationProvider = 'ai' | 'api' | 'offline'
+export type TranslationStyle = 'natural' | 'literal' | 'concise'
 
 export interface TranslationSettings {
   version: 1
@@ -192,6 +193,8 @@ export interface TranslationSettings {
   sourceLanguage: string
   targetLanguage: string
   siteLanguage: string
+  style: TranslationStyle
+  glossary: string
   confirmNonTargetSend: boolean
   autoTranslateSelection: boolean
   ai: {

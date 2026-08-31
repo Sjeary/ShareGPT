@@ -3,7 +3,30 @@ const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { PassThrough } = require("node:stream");
 const { createPinnedLookup } = require("../endpointSecurity");
-const { createNotesAi } = require("../notesAi");
+const { buildTranslationPrompt, createNotesAi } = require("../notesAi");
+
+test("translation prompts preserve structured content and apply quality settings", () => {
+  const prompt = buildTranslationPrompt("请查看 `value` 和 https://example.test/@Alice", {
+    targetLanguage: "English",
+    translationStyle: "concise",
+    glossary: "ShareGPT = ShareGPT\n工作区 = workspace",
+  });
+  assert.match(prompt, /目标语言：English/);
+  assert.match(prompt, /简洁、直接/);
+  assert.match(prompt, /代码块、行内代码、URL、文件路径、变量名、占位符和 @mention 原样保留/);
+  assert.match(prompt, /ShareGPT = ShareGPT/);
+  assert.match(prompt, /<待翻译原文>[\s\S]*`value`[\s\S]*https:\/\/example\.test\/@Alice/);
+});
+
+test("translation prompts reject unknown styles and bound glossary input", () => {
+  const prompt = buildTranslationPrompt("source", {
+    targetLanguage: "中文",
+    translationStyle: "invented",
+    glossary: "x".repeat(5000),
+  });
+  assert.match(prompt, /自然、准确/);
+  assert.ok(prompt.length < 4400);
+});
 
 function waitForTurn() {
   return new Promise((resolve) => setImmediate(resolve));

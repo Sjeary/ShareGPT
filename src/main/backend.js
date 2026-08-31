@@ -95,6 +95,8 @@ const DEFAULT_TRANSLATION_SETTINGS = {
   sourceLanguage: "auto",
   targetLanguage: "zh",
   siteLanguage: "en",
+  style: "natural",
+  glossary: "",
   confirmNonTargetSend: false,
   autoTranslateSelection: false,
   ai: { baseUrl: "", apiKey: "", model: "gpt-5.5", effort: "medium" },
@@ -216,11 +218,16 @@ function normalizeTranslationSettings(raw, legacyNotesAi) {
   const provider = ["ai", "api", "offline"].includes(String(value.provider))
     ? String(value.provider)
     : DEFAULT_TRANSLATION_SETTINGS.provider;
+  const style = ["natural", "literal", "concise"].includes(String(value.style))
+    ? String(value.style)
+    : DEFAULT_TRANSLATION_SETTINGS.style;
   return {
     ...DEFAULT_TRANSLATION_SETTINGS,
     ...value,
     version: 1,
     provider,
+    style,
+    glossary: String(value.glossary || "").slice(0, 4000),
     confirmNonTargetSend: value.confirmNonTargetSend === true,
     autoTranslateSelection: value.autoTranslateSelection === true,
     ai: { ...DEFAULT_TRANSLATION_SETTINGS.ai, ...legacy, ...(value.ai || {}) },
@@ -1556,6 +1563,8 @@ class Backend {
       "sourceLanguage",
       "targetLanguage",
       "siteLanguage",
+      "style",
+      "glossary",
       "confirmNonTargetSend",
       "autoTranslateSelection",
       "ai.baseUrl",

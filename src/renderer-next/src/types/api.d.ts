@@ -195,6 +195,8 @@ export interface NotesAiRequest {
     context?: string
     instruction?: string
     targetLanguage?: string
+    translationStyle?: 'natural' | 'literal' | 'concise'
+    glossary?: string
   }
   instructions?: string
 }
