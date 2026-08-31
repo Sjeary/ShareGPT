@@ -7,6 +7,41 @@
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-08-31
+
+> **稳定性与升级安全更新**：从 1.0.8 稳定基线重建账号隔离、AI 网页生命周期、翻译/发送与发布契约，升级保留既有设置和网页登录状态。建议升级。
+
+### 账号与数据
+
+- 协作账号使用“服务器 origin + path + 服务端确认的精确用户名”作为唯一 Principal；大小写不同的用户名及不同服务路径不再共用 AI Environment、Translation 或 Notes AI 配置。
+- 兼容 1.0.8 已记住的账号并自动登录；主动退出只关闭自动登录，不删除已保存配置。管理员首次登录默认获得高级 AI 功能，之后仍可自行关闭。
+- 关闭或撤销高级 AI 权限不会删除环境、Cookie、Local Storage、IndexedDB 或 Chromium partition；重新授权后继续使用原有数据。
+
+### AI 网页与翻译
+
+- AI 标签改为持久逻辑 workspace：快速切换、窗口恢复、系统唤醒或 renderer 异常退出后，使用原 partition 和最后安全 URL 恢复，不要求重新登录。
+- 页面切换按最后一次明确目标串行收敛；线路健康预检只在首次绑定或线路配置变化时执行，不再让普通导航等待 composer 注入。
+- Notes AI 的流式事件按 Principal 和 generation 隔离；切换账号后旧 delta、done、error 不会进入当前账号。
+- Translation API 与 Notes AI 均允许 HTTP/HTTPS。HTTP 会明确提示内容和密钥明文传输风险，SSRF、metadata、私网地址及危险 DNS 防护继续生效。
+
+### 填入、发送与统计
+
+- 双语填入/发送固定绑定当前 Principal、环境、标签、renderer、document epoch 和 URL；SPA 导航或标签变化会安静取消旧操作。
+- 非目标语言发送确认默认关闭；开启后只拦截明确的非目标语言提交，取消、关闭和确认发送均为一次性操作，不影响普通 Enter。
+- 使用次数只在已知网页对话请求返回成功响应后记录一次；被拦截、取消、失败或 Enter 与发送按钮重复触发不会重复计数。
+
+### 修复
+
+- 桌面端只以 GitHub `releases/latest` 最终解析出的 tag 作为版本权威；即使 `latest.yml` 残留 `6.0.0` 等错误值，也不会在界面显示或安装错误版本。
+- Windows 自动安装会重新核对 GitHub Latest、UI 请求、electron-updater 的可用/已下载事件和实际文件名；任一不一致或 AI 网页资料写盘失败均停止安装，安装前备份采用 best effort 且不改变既有用户数据目录。
+
+### 发布与兼容
+
+- macOS 应用身份固定为 `com.sjeary.sharegpt.desktop`，产品名继续为 `ShareGPT`，升级不改变 Electron 用户数据目录。
+- Windows 继续发布标准 `sharegpt-1.0.9.exe`、blockmap 与 `latest.yml`；macOS 同时保留旧客户端使用的 `sharegpt-sender-1.0.9-arm64.dmg` 字节一致下载别名。
+- GitHub 公开发布要求 macOS Developer ID 签名、公证与 Gatekeeper 复验，以及 Windows Authenticode 签名和时间戳；本地自签名只用于本机测试。
+- 1.0.x 服务端响应继续采用增量兼容：旧客户端依赖的登录、WebSocket、聊天、历史和 bootstrap 字段保留，新客户端能力字段均为可选扩展。
+
 ## [1.0.8] - 2026-08-20
 
 > **Claude 网页入口更新**：需要验证码、登录或授权页面时，可从 Claude 工具栏按需打开网页；输入区默认隐藏，不影响日常对话视野。建议使用 Claude 网页的用户升级。
@@ -219,7 +254,8 @@
 
 - 更早的 5.x 为测试版本，不在此正式记录。
 
-[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.8...HEAD
+[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.9...HEAD
+[1.0.9]: https://github.com/Sjeary/ShareGPT/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/Sjeary/ShareGPT/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/Sjeary/ShareGPT/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/Sjeary/ShareGPT/compare/v1.0.5...v1.0.6

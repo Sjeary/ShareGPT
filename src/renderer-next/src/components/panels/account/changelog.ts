@@ -10,6 +10,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '1.0.9',
+    date: '2026-08-31',
+    highlights: [
+      '升级继续沿用 ShareGPT 数据目录并保留账号、配置和 AI 网页登录状态；更新版本只以 GitHub Latest 的真实 tag 为准，不再误显示 6.0.0。',
+      '大小写不同的账号和不同服务器路径现在完全隔离；管理员首次登录默认启用高级 AI，关闭或撤权不会删除环境与网页数据。',
+      'ChatGPT、Claude 和 Gemini 标签在快速切换、系统唤醒或网页进程异常后会复用原有 partition 自动恢复，不再因导航重建登录状态。',
+      'Translation 与 Notes AI 均支持 HTTP/HTTPS；可选发送确认默认关闭，开启后只拦截明确的非目标语言，并仅在网页真实发送成功后统计一次。',
+    ],
+  },
+  {
     version: '1.0.8',
     date: '2026-08-20',
     highlights: [
