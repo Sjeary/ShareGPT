@@ -87,8 +87,6 @@ const state = {
     activeTabId: "",
     webviewInitialized: false,
     webviewLoading: false,
-    lastTrackedQueryText: "",
-    lastTrackedQueryAt: 0,
     canGoBack: false,
     canGoForward: false,
   },
@@ -109,6 +107,18 @@ const principalSessionCoordinator =
   window.ShareGptPrincipalSession?.createPrincipalSessionCoordinator?.();
 if (!principalSessionCoordinator) {
   throw new Error("Principal session coordinator 未加载");
+}
+const legacyAcceptedUsageConsumer =
+  window.ShareGptLegacyAcceptedUsage?.createLegacyAcceptedUsageConsumer?.({
+    getPrincipal: () => window.api.getSettingsPrincipal(),
+    getAuth: () => ({ serverUrl: state.collab.serverUrl, token: state.collab.token }),
+    report: reportGptUsage,
+    onError: (error) => {
+      logLine("app", `上报 GPT 使用次数失败：${error?.message || error}`);
+    },
+  });
+if (!legacyAcceptedUsageConsumer) {
+  throw new Error("Legacy accepted usage consumer 未加载");
 }
 
 const GPT_ALLOWED_HOSTS = [
@@ -132,7 +142,6 @@ const GEMINI_ALLOWED_HOSTS = [
 const DEFAULT_TARGET_DOMAINS = [...new Set([...GPT_ALLOWED_HOSTS, ...GEMINI_ALLOWED_HOSTS])].join(
   ",",
 );
-const GPT_QUERY_MARKER = "__GPT_QUERY__";
 const GPT_PROXY_HOST = "127.0.0.1";
 const GPT_PROXY_PORT = "1080";
 const CHAT_ATTACHMENT_MAX_BYTES = 30 * 1024 * 1024;
@@ -1302,8 +1311,8 @@ function bindAiWorkspaceEvents() {
 
     applyAiWorkspaceState(kind, payload);
 
-    if (payload?.type === "console-message" && kind === "gpt") {
-      handleGptTrackerMessage(payload.message);
+    if (payload?.type === "accepted-send" && kind === "gpt") {
+      void legacyAcceptedUsageConsumer.consume(payload);
     }
 
     if (payload?.type === "did-fail-load") {
@@ -1329,10 +1338,6 @@ function bindAiWorkspaceEvents() {
       } else if (kind === "gemini") {
         setGeminiFeedback(`外部链接打开失败：${errorText}`, "error");
       }
-    }
-
-    if (payload?.type === "dom-ready" && kind === "gpt") {
-      installGptQueryTracker(payload.tabId);
     }
 
     if (kind === "gpt") {
@@ -1581,27 +1586,6 @@ function updateGptCounters() {
   renderGptStats();
 }
 
-function registerGptQuery(text = "") {
-  const normalizedText = safeText(text).slice(0, 160);
-  const now = Date.now();
-
-  if (!normalizedText) return;
-
-  if (
-    normalizedText &&
-    normalizedText === state.gpt.lastTrackedQueryText &&
-    now - state.gpt.lastTrackedQueryAt < 1800
-  ) {
-    return;
-  }
-
-  state.gpt.lastTrackedQueryText = normalizedText;
-  state.gpt.lastTrackedQueryAt = now;
-  reportGptUsage().catch((err) => {
-    logLine("app", `上报 GPT 使用次数失败：${err.message || err}`);
-  });
-}
-
 async function persistGptState() {
   await saveSettings({ silent: true });
 }
@@ -1697,29 +1681,26 @@ async function loadGptRangeStats(options = {}) {
   }
 }
 
-async function reportGptUsage() {
-  if (!state.collab.serverUrl || !state.collab.token) return;
-
+async function reportGptUsage({ serverUrl, token, usageId }) {
   const response = await fetchWithFriendlyError(
-    `${state.collab.serverUrl}/api/gpt/usage`,
+    `${serverUrl}/api/gpt/usage`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${state.collab.token}`,
+        Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ count: 1 }),
+      body: JSON.stringify({ count: 1, usageId }),
     },
     8000,
   );
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `记录 GPT 使用次数失败（${response.status}）`);
+    const error = new Error(text || `记录 GPT 使用次数失败（${response.status}）`);
+    error.retryable = response.status >= 500;
+    throw error;
   }
-
-  await loadGptSummaryStats();
-  await loadGptRangeStats({ silent: true });
 }
 
 async function openGptExternal(rawUrl) {
@@ -1741,68 +1722,6 @@ function rememberGptUrl(rawUrl, tabId = state.gpt.activeTabId) {
   persistGptState().catch((err) => {
     logLine("app", `保存 GPT 页面位置失败：${err.message || err}`);
   });
-}
-
-function handleGptTrackerMessage(message) {
-  const raw = String(message || "");
-  if (!raw.startsWith(GPT_QUERY_MARKER)) return false;
-
-  try {
-    const payload = JSON.parse(raw.slice(GPT_QUERY_MARKER.length));
-    registerGptQuery(payload?.text || "");
-  } catch {
-    registerGptQuery("");
-  }
-  return true;
-}
-
-function installGptQueryTracker(tabId = state.gpt.activeTabId) {
-  const targetId = safeText(tabId) || state.gpt.activeTabId;
-  const activeTab = state.gpt.tabs.find((item) => item.id === targetId);
-  if (!window.api?.executeAiJavaScript || !activeTab || !isGptAllowedUrl(activeTab.url)) return;
-
-  const marker = JSON.stringify(GPT_QUERY_MARKER);
-  window.api
-    .executeAiJavaScript({
-      kind: "gpt",
-      tabId: targetId,
-      code: `
-    (() => {
-      if (window.__gptQueryTrackerInstalled) return;
-      window.__gptQueryTrackerInstalled = true;
-
-      const emit = () => {
-        const textarea = document.querySelector("textarea");
-        const editor = document.querySelector('[contenteditable="true"]');
-        const text = String(textarea?.value || editor?.innerText || "").trim().slice(0, 160);
-        console.log(${marker} + JSON.stringify({ text, stamp: Date.now() }));
-      };
-
-      document.addEventListener("keydown", (event) => {
-        if (event.key !== "Enter" || event.shiftKey) return;
-        const target = event.target;
-        const editable = Boolean(
-          target?.closest?.("textarea")
-          || target?.closest?.('[contenteditable="true"]')
-          || target?.matches?.('[contenteditable="true"]'),
-        );
-        if (!editable) return;
-        setTimeout(emit, 0);
-      }, true);
-
-      document.addEventListener("click", (event) => {
-        const button = event.target?.closest?.(
-          'button[data-testid="send-button"], button[aria-label*="Send"], button[aria-label*="发送"]',
-        );
-        if (!button) return;
-        setTimeout(emit, 0);
-      }, true);
-    })();
-  `,
-    })
-    .catch(() => {
-      // ignore tracker injection failures
-    });
 }
 
 async function createGptTab() {
