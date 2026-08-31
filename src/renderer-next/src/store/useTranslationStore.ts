@@ -56,8 +56,13 @@ interface TranslationState {
   open: boolean
   kind: AiKind
   tabId: string
+  environmentId: string
+  sourceKind: 'manual' | 'selection' | 'page'
   sourceText: string
   result: string
+  phase: 'idle' | 'translating' | 'ready' | 'stale' | 'writing' | 'error'
+  resultEdited: boolean
+  autoTranslateRequest: number
   status: string
   loading: boolean
   settingsOpen: boolean
@@ -74,12 +79,21 @@ interface TranslationState {
   load: () => Promise<void>
   saveConfig: (patch: Partial<TranslationSettings>) => Promise<void>
   setProvider: (provider: TranslationProvider) => Promise<void>
-  toggle: (kind: AiKind, tabId: string) => void
-  openSelection: (kind: AiKind, tabId: string, text: string) => void
+  toggle: (kind: AiKind, tabId: string, environmentId: string) => void
+  openSelection: (kind: AiKind, tabId: string, environmentId: string, text: string) => void
   close: () => void
   setSourceText: (text: string) => void
+  setCapturedSource: (
+    sourceKind: 'selection' | 'page',
+    text: string,
+    options?: { autoTranslate?: boolean; status?: string },
+  ) => void
   setResult: (text: string) => void
   appendResult: (text: string) => void
+  editResult: (text: string) => void
+  beginTranslation: () => void
+  completeTranslation: () => void
+  markStale: (status?: string) => void
   setStatus: (status: string) => void
   setLoading: (loading: boolean) => void
   setSettingsOpen: (open: boolean) => void
@@ -92,8 +106,13 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   open: false,
   kind: 'gpt',
   tabId: '',
+  environmentId: '',
+  sourceKind: 'manual',
   sourceText: '',
   result: '',
+  phase: 'idle',
+  resultEdited: false,
+  autoTranslateRequest: 0,
   status: '',
   loading: false,
   settingsOpen: false,
@@ -151,28 +170,82 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
   },
 
   setProvider: async (provider) => get().saveConfig({ provider }),
-  toggle: (kind, tabId) =>
+  toggle: (kind, tabId, environmentId) =>
+    set((state) => {
+      const sameWorkspace =
+        state.kind === kind && state.tabId === tabId && state.environmentId === environmentId
+      if (sameWorkspace) {
+        return { open: !state.open, status: '', settingsOpen: false }
+      }
+      return {
+        open: true,
+        kind,
+        tabId,
+        environmentId,
+        sourceKind: 'manual',
+        sourceText: '',
+        result: '',
+        phase: 'idle',
+        resultEdited: false,
+        status: '',
+        settingsOpen: false,
+      }
+    }),
+  openSelection: (kind, tabId, environmentId, text) =>
     set((state) => ({
-      open: state.kind === kind ? !state.open : true,
-      kind,
-      tabId,
-      status: '',
-      settingsOpen: false,
-    })),
-  openSelection: (kind, tabId, text) =>
-    set({
       open: true,
       kind,
       tabId,
+      environmentId,
+      sourceKind: 'selection',
       sourceText: text,
       result: '',
-      status: '',
+      phase: 'idle',
+      resultEdited: false,
+      autoTranslateRequest: state.autoTranslateRequest + 1,
+      status: '已读取网页选中文字',
       settingsOpen: false,
-    }),
+    })),
   close: () => set({ open: false, loading: false, status: '', settingsOpen: false }),
-  setSourceText: (sourceText) => set({ sourceText }),
-  setResult: (result) => set({ result }),
+  setSourceText: (sourceText) =>
+    set((state) => ({
+      sourceText,
+      phase: state.result ? 'stale' : 'idle',
+      status: state.result ? '原文已变化，请重新翻译' : '',
+    })),
+  setCapturedSource: (sourceKind, sourceText, options) =>
+    set((state) => ({
+      sourceKind,
+      sourceText,
+      result: '',
+      phase: 'idle',
+      resultEdited: false,
+      autoTranslateRequest: options?.autoTranslate
+        ? state.autoTranslateRequest + 1
+        : state.autoTranslateRequest,
+      status: options?.status || '',
+    })),
+  setResult: (result) => set({ result, resultEdited: false }),
   appendResult: (text) => set((state) => ({ result: state.result + text })),
+  editResult: (result) =>
+    set((state) => ({
+      result,
+      resultEdited: true,
+      phase: state.phase === 'stale' ? 'stale' : result.trim() ? 'ready' : 'idle',
+      status: state.phase === 'stale' ? state.status : '译文已修改',
+    })),
+  beginTranslation: () =>
+    set({
+      result: '',
+      resultEdited: false,
+      phase: 'translating',
+      loading: true,
+      status: '正在翻译…',
+    }),
+  completeTranslation: () =>
+    set({ phase: 'ready', loading: false, status: '译文已就绪，可以修改或填入' }),
+  markStale: (status = '翻译设置已变化，请重新翻译') =>
+    set((state) => ({ phase: state.result ? 'stale' : state.phase, status })),
   setStatus: (status) => set({ status }),
   setLoading: (loading) => set({ loading }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
@@ -183,8 +256,13 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
       principalId: String(principalId || ''),
       open: false,
       tabId: '',
+      environmentId: '',
+      sourceKind: 'manual',
       sourceText: '',
       result: '',
+      phase: 'idle',
+      resultEdited: false,
+      autoTranslateRequest: 0,
       status: '',
       loading: false,
       settingsOpen: false,

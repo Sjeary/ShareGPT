@@ -159,7 +159,12 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const tabs = useAiStore((s) => s.tabsByKind[kind])
   const activeTabId = useAiStore((s) => s.activeTabIdByKind[kind])
   const translationOpen = useTranslationStore(
-    (s) => translationAllowed && s.open && s.kind === kind,
+    (s) =>
+      translationAllowed &&
+      s.open &&
+      s.kind === kind &&
+      s.tabId === activeTabId &&
+      s.environmentId === environmentId,
   )
   const toggleTranslation = useTranslationStore((s) => s.toggle)
   const pendingComposerConfirmation = useTranslationStore((s) => {
@@ -795,7 +800,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
                 title={translationOpen ? '关闭翻译侧栏' : '打开翻译侧栏'}
                 aria-label={translationOpen ? '关闭翻译侧栏' : '打开翻译侧栏'}
                 aria-pressed={translationOpen}
-                onClick={() => toggleTranslation(kind, activeTabId)}
+                onClick={() => toggleTranslation(kind, activeTabId, environmentId)}
               >
                 <Languages className="size-4" />
               </Button>

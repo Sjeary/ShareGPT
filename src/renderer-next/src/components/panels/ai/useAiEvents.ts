@@ -159,7 +159,12 @@ export function useAiEvents() {
         if (!canUseTranslation(auth.token, auth.profile)) return
         useTranslationStore
           .getState()
-          .openSelection(kind, safeText(payload.tabId), safeText(payload.text))
+          .openSelection(
+            kind,
+            safeText(payload.tabId),
+            safeText(payload.environmentId),
+            safeText(payload.text),
+          )
         return
       }
 

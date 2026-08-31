@@ -35,6 +35,27 @@ function closeServer(server) {
   return new Promise((resolve) => server.close(resolve));
 }
 
+function readBody(request) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk) => {
+      body += chunk;
+      if (body.length > 100_000) request.destroy(new Error("fixture request too large"));
+    });
+    request.on("end", () => resolve(body));
+    request.on("error", reject);
+  });
+}
+
+function json(response, status, payload) {
+  response.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  response.end(JSON.stringify(payload));
+}
+
 function fixtureDocument() {
   return `<!doctype html>
     <meta charset="utf-8">
@@ -141,9 +162,37 @@ function createCertificate(directory) {
 }
 
 async function startFixtureServers(directory) {
-  const handler = (request, response) => {
+  const handler = async (request, response) => {
+    const fixtureUrl = new URL(request.url || "/", "http://127.0.0.1");
+    if (request.method === "POST" && fixtureUrl.pathname === "/api/login") {
+      const body = JSON.parse((await readBody(request)) || "{}");
+      json(response, 200, {
+        token: "lifecycle-fixture-token",
+        username: String(body.username || ""),
+        profile: {
+          displayName: String(body.username || "Lifecycle Fixture"),
+          isAdmin: true,
+          advancedAiAllowed: true,
+        },
+        history: [],
+        users: [],
+      });
+      return;
+    }
+    if (request.method === "GET" && fixtureUrl.pathname === "/api/client/bootstrap") {
+      json(response, 200, {
+        capabilities: { proxyRoutes: { available: false, authoritative: false } },
+        sender: {},
+        update: {},
+      });
+      return;
+    }
+    if (request.method === "POST" && fixtureUrl.pathname === "/translate") {
+      const body = JSON.parse((await readBody(request)) || "{}");
+      json(response, 200, { translatedText: `Translated: ${String(body.q || "")}` });
+      return;
+    }
     if (request.method === "POST" && request.url?.startsWith("/backend-api/conversation")) {
-      const fixtureUrl = new URL(request.url, "https://chatgpt.com");
       const requestedStatus = Number(fixtureUrl.searchParams.get("status"));
       const status =
         Number.isInteger(requestedStatus) && requestedStatus >= 100 ? requestedStatus : 200;
@@ -249,6 +298,138 @@ async function api(page, method, ...args) {
     methodName: method,
     methodArgs: args,
   });
+}
+
+async function loginThroughForm(page, baseUrl) {
+  await page.locator("#account-server").waitFor({ state: "visible" });
+  await page.locator("#account-server").fill(baseUrl);
+  await page.locator("#account-username").fill("lifecycle-fixture");
+  await page.locator("#account-password").fill("fixture-password");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByRole("button", { name: /账户/ }).waitFor({ state: "visible" });
+  const skipTour = page.getByRole("button", { name: "跳过", exact: true });
+  if (await skipTour.isVisible().catch(() => false)) await skipTour.click();
+  const closeGuide = page.getByRole("button", { name: "关闭引导", exact: true });
+  if (await closeGuide.isVisible().catch(() => false)) await closeGuide.click();
+}
+
+async function verifyTranslationWorkbench({
+  electronApp,
+  page,
+  tabId,
+  translationBaseUrl,
+  screenshotPath,
+}) {
+  const urlPattern = "chatgpt\\.com/gpt/a";
+  await page.getByRole("button", { name: /^ChatGPT/ }).click();
+  await activateTab(page, "gpt", tabId);
+  const openButton = page.getByRole("button", { name: "打开翻译侧栏" });
+  await openButton.waitFor({ state: "visible" });
+  await openButton.click();
+  const panel = page.getByRole("complementary", { name: "翻译工作台" });
+  await panel.waitFor({ state: "visible" });
+
+  process.stdout.write("[verify] translation settings use the real offline provider\n");
+  await panel.getByRole("button", { name: "翻译设置" }).click();
+  await panel.getByLabel("翻译服务").selectOption("offline");
+  await page.waitForTimeout(150);
+  await panel.getByLabel("本地翻译服务地址").fill(translationBaseUrl);
+  await page.waitForTimeout(250);
+  await panel.getByRole("button", { name: "测试连接" }).click();
+  await panel.getByText("连接正常", { exact: true }).waitFor({ state: "visible" });
+  await panel.getByRole("button", { name: "翻译设置" }).click();
+
+  process.stdout.write(
+    "[verify] workbench captures selection and full page through production IPC\n",
+  );
+  await fixtureState(
+    electronApp,
+    urlPattern,
+    `(() => {
+      const editor = document.querySelector('#prompt-textarea');
+      editor.value = 'selected fixture text';
+      editor.focus();
+      editor.setSelectionRange(0, 8);
+      return editor.value;
+    })()`,
+  );
+  await panel.getByRole("button", { name: "选中文字" }).click();
+  await waitUntil(
+    async () => (await panel.getByLabel("待翻译原文").inputValue()) === "selected",
+    "selection capture",
+  );
+  await panel.getByRole("button", { name: "读取页面" }).click();
+  await waitUntil(
+    async () =>
+      (await panel.getByLabel("待翻译原文").inputValue()).includes("AI lifecycle fixture"),
+    "page capture",
+  );
+
+  process.stdout.write(
+    "[verify] source edits invalidate output and editable output reaches composer\n",
+  );
+  const source = panel.getByLabel("待翻译原文");
+  const result = panel.getByRole("textbox", { name: "译文", exact: true });
+  await source.fill("hello workbench");
+  await panel.getByRole("button", { name: "翻译", exact: true }).click();
+  await waitUntil(
+    async () => (await result.inputValue()) === "Translated: hello workbench",
+    "first workbench translation",
+  );
+  await source.fill("changed workbench");
+  assert.equal(await panel.getByRole("button", { name: `填入 ChatGPT` }).isDisabled(), true);
+  await panel.getByText("原文已变化，请重新翻译", { exact: true }).waitFor({ state: "visible" });
+  await panel.getByRole("button", { name: "翻译", exact: true }).click();
+  await waitUntil(
+    async () => (await result.inputValue()) === "Translated: changed workbench",
+    "refreshed workbench translation",
+  );
+  await result.fill("Edited translation");
+
+  await fixtureState(
+    electronApp,
+    urlPattern,
+    `(() => {
+      const editor = document.querySelector('#prompt-textarea');
+      editor.value = 'existing draft';
+      editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
+      return editor.value;
+    })()`,
+  );
+  await panel.getByRole("button", { name: "填入 ChatGPT" }).click();
+  await panel
+    .getByRole("alert")
+    .getByText("ChatGPT 输入框中已有草稿", { exact: true })
+    .waitFor({ state: "visible" });
+  await panel.getByRole("button", { name: "追加", exact: true }).click();
+  await waitUntil(
+    async () =>
+      (
+        await fixtureState(
+          electronApp,
+          urlPattern,
+          "document.querySelector('#prompt-textarea').value",
+        )
+      )?.value === "existing draft\n\nEdited translation",
+    "append translated composer text",
+  );
+
+  const bounds = await panel.boundingBox();
+  const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+  assert.ok(bounds);
+  assert.ok(bounds.x >= 0 && bounds.y >= 0);
+  assert.ok(bounds.x + bounds.width <= viewport.width + 1);
+  assert.ok(bounds.y + bounds.height <= viewport.height + 1);
+  const screenshot = await electronApp.evaluate(async ({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+    const image = await window.capturePage();
+    return image.toPNG().toString("base64");
+  });
+  fs.writeFileSync(screenshotPath, Buffer.from(screenshot, "base64"));
+  process.stdout.write(`[verify] translation workbench screenshot: ${screenshotPath}\n`);
+  await panel.getByRole("button", { name: "关闭翻译侧栏" }).click();
+  await page.getByRole("button", { name: /^网络 \/ 代理/ }).click();
+  await activateKind(page, "");
 }
 
 async function appSnapshot(electronApp) {
@@ -849,10 +1030,9 @@ async function main() {
     });
     const page = await electronApp.firstWindow();
     await page.waitForFunction(() => Boolean(window.api?.createAiView));
-    const principal = await api(page, "activateSettingsPrincipal", {
-      serverUrl: `http://127.0.0.1:${httpServer.address().port}`,
-      username: "lifecycle-fixture",
-    });
+    const fixtureBaseUrl = `http://127.0.0.1:${httpServer.address().port}`;
+    await loginThroughForm(page, fixtureBaseUrl);
+    const principal = await api(page, "getSettingsPrincipal");
     assert.ok(principal.principalId);
 
     process.stdout.write(
@@ -916,6 +1096,14 @@ async function main() {
       "fixture\\.invalid/claude/a",
       "localStorage.setItem('workspace-identity:claude', 'CLAUDE'); window.__sharegptLifecycleFixture",
     );
+
+    await verifyTranslationWorkbench({
+      electronApp,
+      page,
+      tabId: gptAId,
+      translationBaseUrl: fixtureBaseUrl,
+      screenshotPath: path.join(temporaryRoot, "translation-workbench.png"),
+    });
 
     process.stdout.write("[verify] Claude loading pulse keeps the ready composer document\n");
     const claudeTargetBeforePulse = await composerTarget(page, claudeId, "claude");
