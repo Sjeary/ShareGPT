@@ -26,6 +26,24 @@ import { formatBytes } from './format'
 const EmojiPicker = lazy(() => import('emoji-picker-react'))
 
 const MAX_BYTES = 30 * 1024 * 1024 // 30MB, 与旧版 CHAT_ATTACHMENT_MAX_BYTES 及服务器约束一致
+const MAX_COMPOSER_HEIGHT = 140
+
+function resizeComposer(node: HTMLTextAreaElement) {
+  node.style.height = 'auto'
+  const style = window.getComputedStyle(node)
+  const borderHeight =
+    (Number.parseFloat(style.borderTopWidth) || 0) +
+    (Number.parseFloat(style.borderBottomWidth) || 0)
+  const contentHeight = node.scrollHeight + borderHeight
+  node.style.height = `${Math.min(MAX_COMPOSER_HEIGHT, contentHeight)}px`
+  node.style.overflowY = contentHeight > MAX_COMPOSER_HEIGHT ? 'auto' : 'hidden'
+}
+
+function resetComposer(node: HTMLTextAreaElement | null) {
+  if (!node) return
+  node.style.height = 'auto'
+  node.style.overflowY = 'hidden'
+}
 
 // 剪贴板兜底描述符 (旧 window.api.readClipboardAttachment 返回结构)。
 interface ClipboardAttachmentDescriptor {
@@ -155,8 +173,7 @@ export function Composer({
       n.focus()
       const pos = start + emoji.length
       n.setSelectionRange(pos, pos)
-      n.style.height = 'auto'
-      n.style.height = `${Math.min(140, n.scrollHeight)}px`
+      resizeComposer(n)
     })
   }
 
@@ -167,8 +184,7 @@ export function Composer({
     if (node) {
       node.focus()
       node.setSelectionRange(node.value.length, node.value.length)
-      node.style.height = 'auto'
-      node.style.height = `${Math.min(140, node.scrollHeight)}px`
+      resizeComposer(node)
     }
   }, [inEdit])
   const canSend = !disabled && (text.trim().length > 0 || (!inEdit && attachment !== null))
@@ -184,14 +200,14 @@ export function Composer({
     setAttachment(null)
     setError('')
     onTyping?.(false)
-    if (textRef.current) textRef.current.style.height = 'auto'
+    resetComposer(textRef.current)
   }
 
   function cancelDraft() {
     onCancelDraft()
     if (inEdit) {
       setText('')
-      if (textRef.current) textRef.current.style.height = 'auto'
+      resetComposer(textRef.current)
     }
   }
 
@@ -393,9 +409,7 @@ export function Composer({
           onChange={(e) => {
             setText(e.target.value)
             if (!inEdit) onTyping?.(e.target.value.trim().length > 0)
-            const node = e.target
-            node.style.height = 'auto'
-            node.style.height = `${Math.min(140, node.scrollHeight)}px`
+            resizeComposer(e.target)
           }}
           onPaste={(e) => void handlePaste(e)}
           onKeyDown={(e) => {
@@ -428,7 +442,7 @@ export function Composer({
             }
           }}
           className={cn(
-            'max-h-36 min-h-9 flex-1 resize-none rounded-2xl border border-input bg-background px-3 py-2 text-sm outline-none',
+            'max-h-36 min-h-9 flex-1 resize-none overflow-y-hidden rounded-2xl border border-input bg-background px-3 py-2 text-sm outline-none',
             'placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50',
             'disabled:cursor-not-allowed disabled:opacity-50',
           )}

@@ -102,6 +102,9 @@ jobs:
       - name: macOS 全屏标题栏验收
         run: npm run verify:macos-fullscreen-titlebar
 
+      - name: 聊天输入框布局验收
+        run: npm run verify:chat-composer-layout
+
       - name: Composer 与成功发送统计验收
         run: npm run verify:ai-composer
 
