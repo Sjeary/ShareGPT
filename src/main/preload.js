@@ -56,6 +56,8 @@ contextBridge.exposeInMainWorld("api", {
   translateText: (payload) => ipcRenderer.invoke("translation:translate", payload),
   captureAiPageText: (kind, tabId, environmentId) =>
     ipcRenderer.invoke("translation:capture-page", { kind, tabId, environmentId }),
+  captureAiSelectionText: (kind, tabId, environmentId) =>
+    ipcRenderer.invoke("translation:capture-selection", { kind, tabId, environmentId }),
   getAiComposerTarget: (payload) => ipcRenderer.invoke("translation:composer-target", payload),
   writeAiComposer: (payload) => ipcRenderer.invoke("translation:write-composer", payload),
   syncAiComposerGuard: () => ipcRenderer.invoke("translation:composer-guard-sync"),

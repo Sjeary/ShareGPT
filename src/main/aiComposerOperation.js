@@ -413,6 +413,36 @@ function serializeScriptData(value) {
     .replace(/\u2029/g, "\\u2029");
 }
 
+function composerSelectionScript() {
+  return `
+    (() => {
+      'use strict';
+      const deepActive = () => {
+        let active = document.activeElement;
+        while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+        return active;
+      };
+      const active = deepActive();
+      let text = '';
+      if (
+        active &&
+        typeof active.value === 'string' &&
+        Number.isInteger(active.selectionStart) &&
+        Number.isInteger(active.selectionEnd) &&
+        active.selectionEnd > active.selectionStart
+      ) {
+        text = active.value.slice(active.selectionStart, active.selectionEnd);
+      }
+      if (!text) text = String(globalThis.getSelection?.()?.toString() || '');
+      text = text.trim();
+      return {
+        text: text.slice(0, ${MAX_COMPOSER_CHARS}),
+        truncated: text.length > ${MAX_COMPOSER_CHARS},
+      };
+    })();
+  `;
+}
+
 function composerWriteScript(operation, options = {}) {
   const token = assertToken(operation?.token);
   const target = normalizeSnapshot(operation?.target);
@@ -652,6 +682,7 @@ module.exports = {
   composerConfirmationResolveScript,
   composerOperationIsCurrent,
   composerOutcomeScript,
+  composerSelectionScript,
   composerWriteScript,
   createComposerConfirmationStore,
   createComposerOperation,

@@ -8,6 +8,7 @@ const {
   composerOperationIsCurrent,
   composerConfirmationGuardScript,
   composerConfirmationResolveScript,
+  composerSelectionScript,
   composerWriteScript,
   captureComposerTarget,
   createComposerConfirmationStore,
@@ -353,6 +354,26 @@ test("the generated script creates only an operation-scoped one-shot Enter gate"
   assert.match(script, /removeEventListener\('keydown'/);
   assert.match(script, /currentUrl\(\) !== state\.url/);
   assert.doesNotMatch(script, /documentNonce|before-input-event|confirmNonTargetSend/);
+});
+
+test("selection capture reads only the active input selection or the page selection", () => {
+  const input = {
+    value: "before selected after",
+    selectionStart: 7,
+    selectionEnd: 15,
+    shadowRoot: null,
+  };
+  const fromInput = vm.runInNewContext(composerSelectionScript(), {
+    document: { activeElement: input },
+    getSelection: () => ({ toString: () => "page selection" }),
+  });
+  assert.deepEqual({ ...fromInput }, { text: "selected", truncated: false });
+
+  const fromPage = vm.runInNewContext(composerSelectionScript(), {
+    document: { activeElement: null },
+    getSelection: () => ({ toString: () => "  page selection  " }),
+  });
+  assert.deepEqual({ ...fromPage }, { text: "page selection", truncated: false });
 });
 
 test("write execution uses a fixed isolated-world call and rejects page failure", async () => {

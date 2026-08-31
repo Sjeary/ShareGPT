@@ -294,6 +294,11 @@ export interface ShareGptApi {
     tabId?: string,
     environmentId?: string,
   ) => Promise<{ title: string; url: string; text: string; truncated: boolean }>
+  captureAiSelectionText: (
+    kind: 'gpt' | 'gemini' | 'claude',
+    tabId?: string,
+    environmentId?: string,
+  ) => Promise<{ text: string; truncated: boolean }>
   getAiComposerTarget: (payload: {
     kind: 'gpt' | 'gemini' | 'claude'
     tabId: string

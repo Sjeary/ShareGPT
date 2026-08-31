@@ -43,6 +43,7 @@ const {
   captureComposerTarget,
   composerConfirmationGuardScript,
   composerConfirmationResolveScript,
+  composerSelectionScript,
   createComposerConfirmationStore,
   createComposerOperation,
   createOperationToken,
@@ -863,6 +864,23 @@ function createElectronApp(baseMode = "all") {
       text: chunks.join("\n"),
       truncated,
     };
+  }
+
+  async function captureAiSelectionText(kind, tabId = "", environmentId = "") {
+    const workspace = getWorkspace(kind, tabId, normalizeAiEnvironmentId(environmentId));
+    const target = captureWorkspaceComposerTarget(workspace);
+    const wc = workspace.view.webContents;
+    const result = await wc.executeJavaScriptInIsolatedWorld(
+      COMPOSER_OPERATION_WORLD_ID,
+      [{ code: composerSelectionScript() }],
+      false,
+    );
+    assertComposerOperationCurrent(
+      { token: createOperationToken(), target },
+      captureWorkspaceComposerTarget(workspace),
+    );
+    if (!safeText(result?.text)) throw new Error("当前网页没有选中文字");
+    return { text: safeText(result.text), truncated: result?.truncated === true };
   }
 
   function captureWorkspaceComposerTarget(workspace) {
@@ -2472,6 +2490,13 @@ function createElectronApp(baseMode = "all") {
     });
     ipcMain.handle("translation:capture-page", (_event, payload) =>
       captureAiPageText(
+        safeText(payload?.kind),
+        safeText(payload?.tabId),
+        safeText(payload?.environmentId),
+      ),
+    );
+    ipcMain.handle("translation:capture-selection", (_event, payload) =>
+      captureAiSelectionText(
         safeText(payload?.kind),
         safeText(payload?.tabId),
         safeText(payload?.environmentId),

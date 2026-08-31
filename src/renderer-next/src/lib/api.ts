@@ -57,6 +57,9 @@ const fallback = {
   captureAiPageText: async () => {
     throw new Error('仅桌面客户端支持整页读取')
   },
+  captureAiSelectionText: async () => {
+    throw new Error('仅桌面客户端支持网页选区读取')
+  },
   getAiComposerTarget: async () => {
     throw new Error('仅桌面客户端支持网页填入')
   },
