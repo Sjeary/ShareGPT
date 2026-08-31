@@ -16,6 +16,7 @@ const {
   shell,
 } = require("electron");
 const { Backend, DEFAULT_TARGET_DOMAINS } = require("./backend");
+const { loadRendererEntry, resolveRendererEntry } = require("./rendererEntry");
 const appLog = require("./logger");
 const updateLog = appLog.scoped("update");
 const {
@@ -2248,38 +2249,29 @@ function createElectronApp(baseMode = "all") {
   }
 
   function loadMainRenderer(win) {
-    // UI 加载策略:
-    // - 开发热更新: SHAREGPT_UI_NEXT=1 + SHAREGPT_UI_DEV_URL 指向 Vite dev server。
-    // - 默认: 加载重构后的新渲染层构建产物 renderer-next/dist (新 UI 为产品默认)。
-    // - 回退: SHAREGPT_UI_LEGACY=1, 或找不到新版产物时, 加载既有(旧)渲染层。
     const devUrl = process.env.SHAREGPT_UI_DEV_URL;
-    if (process.env.SHAREGPT_UI_NEXT === "1" && devUrl && !app.isPackaged) {
-      win.loadURL(devUrl);
-      return;
-    }
-    const builtNext = path.join(__dirname, "../renderer-next/dist/index.html");
-    if (process.env.SHAREGPT_UI_LEGACY !== "1" && fs.existsSync(builtNext)) {
-      win.loadFile(builtNext);
-      return;
-    }
-    win.loadFile(path.join(__dirname, "../renderer/index.html"));
+    return loadRendererEntry(
+      win,
+      resolveRendererEntry({
+        builtFile: path.join(__dirname, "../renderer-next/dist/index.html"),
+        devUrl,
+        isPackaged: app.isPackaged,
+      }),
+    );
   }
 
-  // 个人资料独立窗口加载策略, 与 loadMainRenderer 一致: 默认新版(renderer-next/dist/profile.html),
-  // dev 走 Vite server 的 /profile.html, SHAREGPT_UI_LEGACY=1 或缺产物时回退旧版。
   function loadProfileRenderer(win, query) {
     const devUrl = process.env.SHAREGPT_UI_DEV_URL;
-    if (process.env.SHAREGPT_UI_NEXT === "1" && devUrl && !app.isPackaged) {
-      const qs = new URLSearchParams(query || {}).toString();
-      win.loadURL(`${devUrl.replace(/\/$/, "")}/profile.html${qs ? `?${qs}` : ""}`);
-      return;
-    }
-    const builtNext = path.join(__dirname, "../renderer-next/dist/profile.html");
-    if (process.env.SHAREGPT_UI_LEGACY !== "1" && fs.existsSync(builtNext)) {
-      win.loadFile(builtNext, { query });
-      return;
-    }
-    win.loadFile(path.join(__dirname, "../renderer/profile.html"), { query });
+    return loadRendererEntry(
+      win,
+      resolveRendererEntry({
+        builtFile: path.join(__dirname, "../renderer-next/dist/profile.html"),
+        devUrl,
+        devPath: "profile.html",
+        isPackaged: app.isPackaged,
+        query,
+      }),
+    );
   }
 
   function createWindow() {
