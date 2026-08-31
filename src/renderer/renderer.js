@@ -108,19 +108,6 @@ const principalSessionCoordinator =
 if (!principalSessionCoordinator) {
   throw new Error("Principal session coordinator 未加载");
 }
-const legacyAcceptedUsageConsumer =
-  window.ShareGptLegacyAcceptedUsage?.createLegacyAcceptedUsageConsumer?.({
-    getPrincipal: () => window.api.getSettingsPrincipal(),
-    getAuth: () => ({ serverUrl: state.collab.serverUrl, token: state.collab.token }),
-    report: reportGptUsage,
-    onError: (error) => {
-      logLine("app", `上报 GPT 使用次数失败：${error?.message || error}`);
-    },
-  });
-if (!legacyAcceptedUsageConsumer) {
-  throw new Error("Legacy accepted usage consumer 未加载");
-}
-
 const GPT_ALLOWED_HOSTS = [
   "chatgpt.com",
   "openai.com",
@@ -1311,10 +1298,6 @@ function bindAiWorkspaceEvents() {
 
     applyAiWorkspaceState(kind, payload);
 
-    if (payload?.type === "accepted-send" && kind === "gpt") {
-      void legacyAcceptedUsageConsumer.consume(payload);
-    }
-
     if (payload?.type === "did-fail-load") {
       const errorText = payload.errorDescription || payload.errorCode || "未知错误";
       if (kind === "gpt") {
@@ -1678,28 +1661,6 @@ async function loadGptRangeStats(options = {}) {
     setGptStatsFeedback("统计已更新。", "success");
   } else {
     setGptStatsFeedback("");
-  }
-}
-
-async function reportGptUsage({ serverUrl, token, usageId }) {
-  const response = await fetchWithFriendlyError(
-    `${serverUrl}/api/gpt/usage`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ count: 1, usageId }),
-    },
-    8000,
-  );
-
-  if (!response.ok) {
-    const text = await response.text();
-    const error = new Error(text || `记录 GPT 使用次数失败（${response.status}）`);
-    error.retryable = response.status >= 500;
-    throw error;
   }
 }
 
