@@ -87,7 +87,7 @@ test("legacy settings are claimed only by the exact server path and username", (
   assert.equal(exact.translation.ai.apiKey, "alice-key");
 });
 
-test("A/B/A keeps each account's environments and Notes AI configuration", (t) => {
+test("A/B/A keeps each account's environments and translation configuration", (t) => {
   const backend = createBackend(t);
   const alice = backend.activatePrincipal("https://collab.example/root", "Alice");
   let saved = patchSettings(
@@ -105,6 +105,8 @@ test("A/B/A keeps each account's environments and Notes AI configuration", (t) =
     backend,
     "translation",
     {
+      provider: "managed",
+      managed: { profileId: "alice-team-profile" },
       style: "literal",
       glossary: "ShareGPT = ShareGPT",
       ai: { baseUrl: "http://alice.example", apiKey: "alice-key", model: "a" },
@@ -119,6 +121,8 @@ test("A/B/A keeps each account's environments and Notes AI configuration", (t) =
     backend,
     "translation",
     {
+      provider: "managed",
+      managed: { profileId: "bob-team-profile" },
       style: "concise",
       glossary: "workspace = 工作区",
       ai: { baseUrl: "https://bob.example", apiKey: "bob-key", model: "b" },
@@ -129,12 +133,15 @@ test("A/B/A keeps each account's environments and Notes AI configuration", (t) =
   assert.equal(saved.translation.ai.apiKey, "bob-key");
   assert.equal(saved.translation.style, "concise");
   assert.equal(saved.translation.glossary, "workspace = 工作区");
+  assert.equal(saved.translation.managed.profileId, "bob-team-profile");
 
   const aliceAgain = backend.activatePrincipal("https://collab.example/root", "Alice").settings;
   assert.equal(aliceAgain.advancedAi.environments[0].id, "alice-env");
   assert.equal(aliceAgain.translation.ai.apiKey, "alice-key");
   assert.equal(aliceAgain.translation.style, "literal");
   assert.equal(aliceAgain.translation.glossary, "ShareGPT = ShareGPT");
+  assert.equal(aliceAgain.translation.provider, "managed");
+  assert.equal(aliceAgain.translation.managed.profileId, "alice-team-profile");
 });
 
 test("ordinary AI partitions are isolated while the exact 1.0.8 owner keeps legacy data", (t) => {

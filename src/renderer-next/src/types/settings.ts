@@ -184,7 +184,7 @@ export interface AppSettings {
   ui: Partial<UiSettings>
 }
 
-export type TranslationProvider = 'ai' | 'api' | 'offline'
+export type TranslationProvider = 'managed' | 'ai' | 'api' | 'offline'
 export type TranslationStyle = 'natural' | 'literal' | 'concise'
 
 export interface TranslationSettings {
@@ -197,6 +197,9 @@ export interface TranslationSettings {
   glossary: string
   confirmNonTargetSend: boolean
   autoTranslateSelection: boolean
+  managed: {
+    profileId: string
+  }
   ai: {
     baseUrl: string
     apiKey: string

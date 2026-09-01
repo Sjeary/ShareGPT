@@ -23,6 +23,7 @@ export const DEFAULT_TRANSLATION_SETTINGS: TranslationSettings = {
   glossary: '',
   confirmNonTargetSend: false,
   autoTranslateSelection: false,
+  managed: { profileId: '' },
   ai: DEFAULT_AI,
   api: { baseUrl: '', apiKey: '' },
   offline: { baseUrl: 'http://127.0.0.1:5000' },
@@ -43,10 +44,11 @@ function normalizeSettings(
     glossary: String(raw?.glossary || '').slice(0, 4000),
     confirmNonTargetSend: raw?.confirmNonTargetSend === true,
     autoTranslateSelection: raw?.autoTranslateSelection === true,
-    provider: ['ai', 'api', 'offline'].includes(String(raw?.provider))
+    provider: ['managed', 'ai', 'api', 'offline'].includes(String(raw?.provider))
       ? (raw?.provider as TranslationProvider)
       : 'ai',
     ai: { ...DEFAULT_AI, ...notesAi, ...raw?.ai },
+    managed: { ...DEFAULT_TRANSLATION_SETTINGS.managed, ...raw?.managed },
     api: { ...DEFAULT_TRANSLATION_SETTINGS.api, ...raw?.api },
     offline: { ...DEFAULT_TRANSLATION_SETTINGS.offline, ...raw?.offline },
   }
@@ -196,6 +198,7 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
       ...previous,
       ...patch,
       ai: { ...previous.ai, ...patch.ai },
+      managed: { ...previous.managed, ...patch.managed },
       api: { ...previous.api, ...patch.api },
       offline: { ...previous.offline, ...patch.offline },
     })

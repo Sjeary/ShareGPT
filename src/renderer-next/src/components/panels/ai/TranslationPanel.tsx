@@ -17,10 +17,18 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
+import {
+  createManagedTranslationRequestId,
+  fetchManagedTranslationProfiles,
+  managedTranslate,
+  type ManagedTranslationCatalog,
+} from '@/lib/managedTranslation'
 import { runAi } from '@/lib/notes/aiClient'
 import { REMOTE_HTTP_WARNING, usesRemoteHttp } from '@/lib/remoteHttp'
 import { cn } from '@/lib/utils'
 import { useTranslationStore } from '@/store/useTranslationStore'
+import { useAppStore } from '@/store/useAppStore'
+import { useAuthStore } from '@/store/useAuthStore'
 import type { AiKind } from '@/store/useAiStore'
 import type { AiComposerTarget } from '@/types/api'
 import type { TranslationProvider, TranslationSettings, TranslationStyle } from '@/types/settings'
@@ -39,6 +47,7 @@ const LANGUAGES = [
 
 const TARGET_LABELS = Object.fromEntries(LANGUAGES) as Record<string, string>
 const PROVIDERS: Array<{ id: TranslationProvider; label: string }> = [
+  { id: 'managed', label: '团队配置' },
   { id: 'ai', label: 'AI' },
   { id: 'api', label: '翻译 API' },
   { id: 'offline', label: '本地离线' },
@@ -49,6 +58,8 @@ const STYLE_OPTIONS: Array<{ id: TranslationStyle; label: string }> = [
   { id: 'concise', label: '简洁' },
 ]
 const AI_LABELS: Record<AiKind, string> = { gpt: 'ChatGPT', gemini: 'Gemini', claude: 'Claude' }
+const MANAGED_HTTP_WARNING =
+  '当前协作服务器使用 HTTP。翻译内容和登录令牌会以明文在网络中传输；应用仍允许连接该地址。'
 
 interface TranslationPanelProps {
   kind: AiKind
@@ -77,7 +88,27 @@ function startTranslation(
   sourceLanguage: string,
   targetLanguage: string,
   callbacks: { onDelta?: (text: string) => void; onStatus?: (status: string) => void } = {},
+  managedContext?: { serverUrl: string; token: string },
 ): TranslationRun {
+  if (config.provider === 'managed') {
+    const controller = new AbortController()
+    const promise = managedTranslate(
+      managedContext?.serverUrl || '',
+      managedContext?.token || '',
+      {
+        profileId: config.managed.profileId || undefined,
+        text,
+        source: sourceLanguage,
+        target: targetLanguage,
+        style: config.style,
+        glossary: config.glossary,
+        requestId: createManagedTranslationRequestId(),
+      },
+      { signal: controller.signal },
+    ).then((response) => response.translatedText)
+    return { promise, cancel: () => controller.abort() }
+  }
+
   if (config.provider !== 'ai') {
     let cancelled = false
     const provider = config.provider
@@ -161,10 +192,46 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
   const [pendingWrite, setPendingWrite] = useState(false)
   const [testStatus, setTestStatus] = useState('')
   const [testing, setTesting] = useState(false)
+  const token = useAuthStore((current) => current.token)
+  const serverUrl = useAppStore((current) => String(current.settings?.collab?.server_url || ''))
+  const [managedReload, setManagedReload] = useState(0)
+  const managedRequestKey = `${state.principalId}\0${serverUrl}\0${token}\0${managedReload}`
+  const [managedResult, setManagedResult] = useState<{
+    key: string
+    catalog: ManagedTranslationCatalog | null
+    error: string
+  }>({ key: '', catalog: null, error: '' })
+  const managedCanLoad = Boolean(token && serverUrl)
+  const managedCatalog = managedResult.key === managedRequestKey ? managedResult.catalog : null
+  const managedError = managedResult.key === managedRequestKey ? managedResult.error : ''
+  const managedLoading = managedCanLoad && managedResult.key !== managedRequestKey
 
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    const principalId = state.principalId
+    if (!token || !serverUrl) {
+      return () => controller.abort()
+    }
+    void fetchManagedTranslationProfiles(serverUrl, token, { signal: controller.signal })
+      .then((catalog) => {
+        if (
+          controller.signal.aborted ||
+          useTranslationStore.getState().principalId !== principalId
+        ) {
+          return
+        }
+        setManagedResult({ key: managedRequestKey, catalog, error: '' })
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return
+        setManagedResult({ key: managedRequestKey, catalog: null, error: cleanError(error) })
+      })
+    return () => controller.abort()
+  }, [managedRequestKey, serverUrl, state.principalId, token])
 
   useEffect(() => {
     operationGenerationRef.current += 1
@@ -173,7 +240,7 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
       cancelRef.current?.()
       cancelRef.current = null
     }
-  }, [environmentId, kind, tabId])
+  }, [environmentId, kind, state.principalId, tabId])
 
   const selectMode = (mode: 'read' | 'compose') => {
     if (mode === state.mode) return
@@ -221,6 +288,10 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
         onDelta: current.config.provider === 'ai' ? current.appendReaderResult : undefined,
         onStatus: current.setReaderStatus,
       },
+      {
+        serverUrl: String(useAppStore.getState().settings?.collab?.server_url || ''),
+        token: useAuthStore.getState().token,
+      },
     )
     cancelRef.current = run.cancel
     try {
@@ -266,6 +337,10 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
       {
         onDelta: current.config.provider === 'ai' ? current.appendComposerTranslation : undefined,
         onStatus: current.setComposerStatus,
+      },
+      {
+        serverUrl: String(useAppStore.getState().settings?.collab?.server_url || ''),
+        token: useAuthStore.getState().token,
       },
     )
     cancelRef.current = run.cancel
@@ -363,7 +438,7 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
     if (testing) return
     setTesting(true)
     setTestStatus('正在测试…')
-    const run = startTranslation(state.config, 'Hello', 'en', 'zh')
+    const run = startTranslation(state.config, 'Hello', 'en', 'zh', {}, { serverUrl, token })
     try {
       const result = await run.promise
       setTestStatus(result ? '连接正常' : '服务未返回译文')
@@ -376,12 +451,26 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
 
   const canInsert = state.composer.phase === 'ready' && Boolean(state.composer.preview.trim())
   const providerReady =
-    state.config.provider === 'ai'
-      ? Boolean(state.config.ai.baseUrl && state.config.ai.apiKey)
-      : state.config.provider === 'api'
-        ? Boolean(state.config.api.baseUrl)
-        : Boolean(state.config.offline.baseUrl)
-  const providerStatus = testStatus === '连接正常' ? '已连接' : providerReady ? '已配置' : '未配置'
+    state.config.provider === 'managed'
+      ? Boolean(
+          managedCatalog?.profiles.some(
+            (profile) =>
+              profile.id === (state.config.managed.profileId || managedCatalog.defaultProfileId),
+          ),
+        )
+      : state.config.provider === 'ai'
+        ? Boolean(state.config.ai.baseUrl && state.config.ai.apiKey)
+        : state.config.provider === 'api'
+          ? Boolean(state.config.api.baseUrl)
+          : Boolean(state.config.offline.baseUrl)
+  const providerStatus =
+    testStatus === '连接正常'
+      ? '已连接'
+      : state.config.provider === 'managed' && managedLoading
+        ? '加载中'
+        : providerReady
+          ? '可用'
+          : '未配置'
   const sourceNote =
     state.reader.sourceKind === 'selection'
       ? '来自网页选中文字'
@@ -467,6 +556,11 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
           testStatus={testStatus}
           onChange={patchConfig}
           onTest={() => void testConnection()}
+          managedCatalog={managedCatalog}
+          managedLoading={managedLoading}
+          managedError={managedError}
+          managedServerUrl={serverUrl}
+          onReloadManaged={() => setManagedReload((value) => value + 1)}
         />
       )}
 
@@ -798,12 +892,22 @@ function TranslationSettingsForm({
   testStatus,
   onChange,
   onTest,
+  managedCatalog,
+  managedLoading,
+  managedError,
+  managedServerUrl,
+  onReloadManaged,
 }: {
   config: TranslationSettings
   testing: boolean
   testStatus: string
   onChange: (patch: Partial<TranslationSettings>) => void
   onTest: () => void
+  managedCatalog: ManagedTranslationCatalog | null
+  managedLoading: boolean
+  managedError: string
+  managedServerUrl: string
+  onReloadManaged: () => void
 }) {
   const inputClass = 'h-8 text-xs'
   return (
@@ -824,7 +928,7 @@ function TranslationSettingsForm({
             ))}
           </select>
         </label>
-        {config.provider === 'ai' && (
+        {(config.provider === 'ai' || config.provider === 'managed') && (
           <div className="space-y-1 text-[11px] text-muted-foreground">
             <span>翻译风格</span>
             <div
@@ -850,6 +954,62 @@ function TranslationSettingsForm({
           </div>
         )}
       </div>
+
+      {config.provider === 'managed' && (
+        <>
+          <div className="flex gap-2">
+            <select
+              className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+              aria-label="团队翻译配置"
+              value={config.managed.profileId}
+              disabled={managedLoading || !managedCatalog?.profiles.length}
+              onChange={(event) =>
+                onChange({ managed: { ...config.managed, profileId: event.target.value } })
+              }
+            >
+              <option value="">
+                {managedCatalog?.defaultProfileId
+                  ? `管理员默认 · ${managedCatalog.profiles.find((profile) => profile.id === managedCatalog.defaultProfileId)?.name || managedCatalog.defaultProfileId}`
+                  : managedLoading
+                    ? '正在读取管理员配置…'
+                    : '没有可用的团队配置'}
+              </option>
+              {managedCatalog?.profiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name}
+                  {profile.model ? ` · ${profile.model}` : ''}
+                </option>
+              ))}
+            </select>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="size-8 shrink-0"
+              title="刷新团队翻译配置"
+              aria-label="刷新团队翻译配置"
+              disabled={managedLoading}
+              onClick={onReloadManaged}
+            >
+              <RefreshCw className={cn('size-3.5', managedLoading && 'animate-spin')} />
+            </Button>
+          </div>
+          {usesRemoteHttp(managedServerUrl) && <HttpWarning text={MANAGED_HTTP_WARNING} />}
+          {managedError && (
+            <p className="rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[11px] leading-4 text-destructive">
+              {managedError}
+            </p>
+          )}
+          <textarea
+            className="min-h-16 w-full resize-y rounded-md border border-input bg-background px-2 py-1.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={config.glossary}
+            maxLength={4000}
+            aria-label="翻译术语表"
+            placeholder="术语表：每行一个 术语 = 译法"
+            onChange={(event) => onChange({ glossary: event.target.value })}
+          />
+        </>
+      )}
 
       {config.provider === 'ai' && (
         <>
@@ -972,10 +1132,10 @@ function TranslationSettingsForm({
   )
 }
 
-function HttpWarning() {
+function HttpWarning({ text = REMOTE_HTTP_WARNING }: { text?: string }) {
   return (
     <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
-      {REMOTE_HTTP_WARNING}
+      {text}
     </p>
   )
 }

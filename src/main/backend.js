@@ -99,6 +99,7 @@ const DEFAULT_TRANSLATION_SETTINGS = {
   glossary: "",
   confirmNonTargetSend: false,
   autoTranslateSelection: false,
+  managed: { profileId: "" },
   ai: { baseUrl: "", apiKey: "", model: "gpt-5.5", effort: "medium" },
   api: { baseUrl: "", apiKey: "" },
   offline: { baseUrl: "http://127.0.0.1:5000" },
@@ -215,7 +216,7 @@ const UPDATE_BACKUP_SKIP_NAMES = new Set([
 function normalizeTranslationSettings(raw, legacyNotesAi) {
   const value = raw && typeof raw === "object" ? raw : {};
   const legacy = legacyNotesAi && typeof legacyNotesAi === "object" ? legacyNotesAi : {};
-  const provider = ["ai", "api", "offline"].includes(String(value.provider))
+  const provider = ["managed", "ai", "api", "offline"].includes(String(value.provider))
     ? String(value.provider)
     : DEFAULT_TRANSLATION_SETTINGS.provider;
   const style = ["natural", "literal", "concise"].includes(String(value.style))
@@ -231,6 +232,7 @@ function normalizeTranslationSettings(raw, legacyNotesAi) {
     confirmNonTargetSend: value.confirmNonTargetSend === true,
     autoTranslateSelection: value.autoTranslateSelection === true,
     ai: { ...DEFAULT_TRANSLATION_SETTINGS.ai, ...legacy, ...(value.ai || {}) },
+    managed: { ...DEFAULT_TRANSLATION_SETTINGS.managed, ...(value.managed || {}) },
     api: { ...DEFAULT_TRANSLATION_SETTINGS.api, ...(value.api || {}) },
     offline: { ...DEFAULT_TRANSLATION_SETTINGS.offline, ...(value.offline || {}) },
   };
