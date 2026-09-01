@@ -54,6 +54,7 @@ const fallback = {
   translateText: async () => {
     throw new Error('仅桌面客户端支持翻译接口')
   },
+  cancelTranslation: async () => ({ ok: true, cancelled: false }),
   captureAiPageText: async () => {
     throw new Error('仅桌面客户端支持整页读取')
   },

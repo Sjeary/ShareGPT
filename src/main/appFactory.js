@@ -497,6 +497,7 @@ function createElectronApp(baseMode = "all") {
   let aiRuntimeEpoch = 0;
   let aiLifecycleSuspended = false;
   const principalAbortControllers = new Set();
+  const activeTranslationRequests = new Map();
   /** @type {Pick<Console, "error" | "warn" | "info" | "debug">} */
   let mainLog = console;
   let disposeAiRecoverySignals = null;
@@ -2474,9 +2475,14 @@ function createElectronApp(baseMode = "all") {
     ipcMain.handle("notes-ai:invalidate-principal", (_event, principalId) =>
       backend.notesAi.invalidatePrincipal(principalId),
     );
-    ipcMain.handle("translation:translate", async (_event, payload) => {
+    ipcMain.handle("translation:translate", async (event, payload) => {
+      const requestId = safeText(payload?.requestId);
+      if (!/^[a-z0-9-]{8,100}$/i.test(requestId)) throw new Error("翻译 requestId 无效");
+      if (activeTranslationRequests.has(requestId)) throw new Error("相同的翻译请求仍在处理中");
       const controller = new AbortController();
       const epoch = aiRuntimeEpoch;
+      const active = { controller, senderId: event.sender.id };
+      activeTranslationRequests.set(requestId, active);
       principalAbortControllers.add(controller);
       try {
         const result = await translateText(payload, { signal: controller.signal });
@@ -2486,7 +2492,17 @@ function createElectronApp(baseMode = "all") {
         return result;
       } finally {
         principalAbortControllers.delete(controller);
+        if (activeTranslationRequests.get(requestId) === active) {
+          activeTranslationRequests.delete(requestId);
+        }
       }
+    });
+    ipcMain.handle("translation:cancel", (event, payload) => {
+      const requestId = safeText(payload?.requestId);
+      const active = activeTranslationRequests.get(requestId);
+      if (!active || active.senderId !== event.sender.id) return { ok: true, cancelled: false };
+      active.controller.abort();
+      return { ok: true, cancelled: true };
     });
     ipcMain.handle("translation:capture-page", (_event, payload) =>
       captureAiPageText(

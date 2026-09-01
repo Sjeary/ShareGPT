@@ -14,6 +14,12 @@ const REQUEST_TIMEOUT_MS = 45_000;
 const PROFILE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const TRANSLATION_STYLES = new Set(["natural", "literal", "concise"]);
 
+function translationAbortError() {
+  const error = new Error("翻译请求已取消");
+  error.name = "AbortError";
+  return error;
+}
+
 function safeText(value, max = 400) {
   return String(value || "")
     .trim()
@@ -355,57 +361,89 @@ function pinnedLookup(record) {
 }
 
 async function requestJson(endpoint, body, headers = {}, dependencies = {}) {
+  const signal = dependencies.signal;
+  if (signal?.aborted) throw translationAbortError();
   const resolved = await resolvePublicEndpoint(endpoint, dependencies.lookup);
+  if (signal?.aborted) throw translationAbortError();
   const encoded = Buffer.from(JSON.stringify(body), "utf8");
   const requestImpl =
     dependencies.request || (endpoint.protocol === "http:" ? http.request : https.request);
   return new Promise((resolve, reject) => {
-    const req = requestImpl(
-      {
-        protocol: endpoint.protocol,
-        hostname: endpoint.hostname,
-        port: endpoint.port || undefined,
-        path: endpoint.pathname + endpoint.search,
-        method: "POST",
-        agent: false,
-        lookup: pinnedLookup(resolved),
-        ...(endpoint.protocol === "https:" && !net.isIP(endpoint.hostname)
-          ? { servername: endpoint.hostname }
-          : {}),
-        headers: {
-          "content-type": "application/json",
-          "content-length": encoded.length,
-          ...headers,
+    let req = null;
+    let settled = false;
+    const cleanup = () => signal?.removeEventListener("abort", onAbort);
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback(value);
+    };
+    const onAbort = () => {
+      const error = translationAbortError();
+      if (req) req.destroy(error);
+      else finish(reject, error);
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+
+    try {
+      req = requestImpl(
+        {
+          protocol: endpoint.protocol,
+          hostname: endpoint.hostname,
+          port: endpoint.port || undefined,
+          path: endpoint.pathname + endpoint.search,
+          method: "POST",
+          agent: false,
+          lookup: pinnedLookup(resolved),
+          ...(endpoint.protocol === "https:" && !net.isIP(endpoint.hostname)
+            ? { servername: endpoint.hostname }
+            : {}),
+          headers: {
+            "content-type": "application/json",
+            "content-length": encoded.length,
+            ...headers,
+          },
         },
-      },
-      (response) => {
-        const chunks = [];
-        let total = 0;
-        response.on("data", (chunk) => {
-          total += chunk.length;
-          if (total > MAX_RESPONSE_BYTES) {
-            req.destroy(new Error("翻译接口响应过大"));
-            return;
-          }
-          chunks.push(chunk);
-        });
-        response.on("end", () => {
-          const raw = Buffer.concat(chunks).toString("utf8");
-          if ((response.statusCode || 500) < 200 || (response.statusCode || 500) >= 300) {
-            reject(new Error(`翻译接口错误 ${response.statusCode || 0}`));
-            return;
-          }
-          try {
-            resolve(JSON.parse(raw || "{}"));
-          } catch {
-            reject(new Error("翻译接口返回了无效 JSON"));
-          }
-        });
-      },
-    );
-    req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error("翻译接口请求超时")));
-    req.on("error", reject);
-    req.end(encoded);
+        (response) => {
+          const chunks = [];
+          let total = 0;
+          response.on("data", (chunk) => {
+            total += chunk.length;
+            if (total > MAX_RESPONSE_BYTES) {
+              req.destroy(new Error("翻译接口响应过大"));
+              return;
+            }
+            chunks.push(chunk);
+          });
+          response.on("end", () => {
+            if (signal?.aborted) {
+              finish(reject, translationAbortError());
+              return;
+            }
+            const raw = Buffer.concat(chunks).toString("utf8");
+            if ((response.statusCode || 500) < 200 || (response.statusCode || 500) >= 300) {
+              finish(reject, new Error(`翻译接口错误 ${response.statusCode || 0}`));
+              return;
+            }
+            try {
+              finish(resolve, JSON.parse(raw || "{}"));
+            } catch {
+              finish(reject, new Error("翻译接口返回了无效 JSON"));
+            }
+          });
+        },
+      );
+      req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error("翻译接口请求超时")));
+      req.on("error", (error) => finish(reject, error));
+      req.end(encoded);
+    } catch (error) {
+      finish(reject, error);
+    }
   });
 }
 
@@ -488,6 +526,7 @@ function normalizeUsage(payload, profile, inputChars, outputChars) {
 }
 
 async function translateWithCatalog(catalog, masterKey, request, dependencies = {}, actor = {}) {
+  if (dependencies.signal?.aborted) throw translationAbortError();
   const text = String(request?.text || "").trim();
   if (!text) throw new Error("请输入要翻译的内容");
   if (text.length > MAX_TRANSLATION_CHARS) {
@@ -536,6 +575,7 @@ async function translateWithCatalog(catalog, masterKey, request, dependencies = 
   const translatedText = (
     profile.type === "ai" ? extractAiText(payload) : extractApiText(payload)
   ).trim();
+  if (dependencies.signal?.aborted) throw translationAbortError();
   if (!translatedText) throw new Error("翻译服务没有返回可识别的译文");
   return {
     translatedText,
@@ -551,8 +591,8 @@ function createTranslationProfileService({ file, masterKey, dependencies = {} })
     adminCatalog: () => adminCatalog(loadCatalog(file), key),
     publicCatalog: (actor) => publicCatalog(loadCatalog(file), actor, Boolean(key)),
     save: (payload) => adminCatalog(saveCatalog(file, payload, key), key),
-    translate: (request, actor) =>
-      translateWithCatalog(loadCatalog(file), key, request, dependencies, actor),
+    translate: (request, actor, runtime = {}) =>
+      translateWithCatalog(loadCatalog(file), key, request, { ...dependencies, ...runtime }, actor),
   };
 }
 
@@ -571,4 +611,5 @@ module.exports = {
   resolvePublicEndpoint,
   saveCatalog,
   translateWithCatalog,
+  translationAbortError,
 };

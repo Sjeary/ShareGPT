@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { fetchManagedTranslationProfiles, managedTranslate } from './managedTranslation.ts'
+import {
+  cancelManagedTranslation,
+  fetchManagedTranslationProfiles,
+  managedTranslate,
+} from './managedTranslation.ts'
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -68,4 +72,25 @@ test('托管翻译不会把鉴权失败伪装成空配置', async () => {
     }),
     /登录已失效/,
   )
+})
+
+test('托管翻译停止请求使用同一 requestId 和登录身份', async () => {
+  let requestUrl = ''
+  let body: Record<string, unknown> = {}
+  const cancelled = await cancelManagedTranslation(
+    'https://team.example.com/',
+    'token-3',
+    'request-12345678',
+    {
+      fetchImpl: async (input, init) => {
+        requestUrl = String(input)
+        assert.equal((init?.headers as Record<string, string>)?.Authorization, 'Bearer token-3')
+        body = JSON.parse(String(init?.body || '{}')) as Record<string, unknown>
+        return jsonResponse({ ok: true, cancelled: true })
+      },
+    },
+  )
+  assert.equal(requestUrl, 'https://team.example.com/api/translation/cancel')
+  assert.equal(body.requestId, 'request-12345678')
+  assert.equal(cancelled, true)
 })

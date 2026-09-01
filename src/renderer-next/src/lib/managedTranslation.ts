@@ -91,6 +91,26 @@ export async function managedTranslate(
   return { translatedText, profileId: String(payload.profileId || '') }
 }
 
+export async function cancelManagedTranslation(
+  serverUrl: string,
+  token: string,
+  requestId: string,
+  options: { fetchImpl?: typeof fetch } = {},
+): Promise<boolean> {
+  if (!token) return false
+  const fetchImpl = options.fetchImpl || fetch
+  const response = await fetchImpl(`${normalizeServerUrl(serverUrl)}/api/translation/cancel`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ requestId }),
+  })
+  const payload = await readResponse<{ cancelled?: boolean }>(response)
+  return payload.cancelled === true
+}
+
 export function createManagedTranslationRequestId() {
   return (
     globalThis.crypto?.randomUUID?.() ||

@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { EventEmitter } = require("node:events");
 
 const {
   createTranslationProfileService,
@@ -143,6 +144,41 @@ test("翻译上游地址阻止回环、内网、metadata 和 IPv4-mapped IPv6", 
     ]),
     { address: "198.51.100.8", family: 4 },
   );
+});
+
+test("托管翻译取消会销毁上游请求且不会返回成功结果", async () => {
+  const controller = new AbortController();
+  let destroyed = 0;
+  const pendingRequest = (_options, _callback) => {
+    const request = new EventEmitter();
+    request.setTimeout = () => undefined;
+    request.end = () => undefined;
+    request.destroy = (error) => {
+      destroyed += 1;
+      request.emit("error", error);
+    };
+    return request;
+  };
+  const service = createTranslationProfileService({
+    file: path.join(fs.mkdtempSync(path.join(os.tmpdir(), "translation-abort-")), "profiles.json"),
+    masterKey: Buffer.alloc(32, 5).toString("base64"),
+    dependencies: {
+      lookup: async () => [{ address: "198.51.100.8", family: 4 }],
+      request: pendingRequest,
+    },
+  });
+  service.save({ profiles: [profilePayload()] });
+
+  const promise = service.translate(
+    { text: "你好", target: "en" },
+    { username: "Alice", isAdmin: false },
+    { signal: controller.signal },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+
+  await assert.rejects(promise, (error) => error?.name === "AbortError");
+  assert.equal(destroyed, 1);
 });
 
 test("翻译用量只记录元数据、按 requestId 幂等并分币种汇总", () => {

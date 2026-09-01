@@ -6,6 +6,7 @@ const { URL } = require("node:url");
 const { WebSocketServer } = require("ws");
 const { createTranslationProfileService } = require("./translation_profiles");
 const { createTranslationUsageService } = require("./translation_usage");
+const { createTranslationRequestRegistry } = require("./translation_requests");
 
 process.on("uncaughtException", (err) => {
   try {
@@ -143,6 +144,7 @@ const translationProfiles = createTranslationProfileService({
   masterKey: process.env.SHAREGPT_TRANSLATION_MASTER_KEY || "",
 });
 const translationUsage = createTranslationUsageService({ file: TRANSLATION_USAGE_FILE });
+const translationRequests = createTranslationRequestRegistry();
 
 function safeEnvText(value) {
   return String(value || "").trim();
@@ -2352,6 +2354,8 @@ const server = http.createServer(async (req, res) => {
       sendText(res, 429, "翻译请求过于频繁，请稍后重试");
       return;
     }
+    let activeRequest = null;
+    let onDisconnect = null;
     try {
       const payload = safeParseJson(await readBody(req, 128 * 1024));
       if (!payload) {
@@ -2363,7 +2367,19 @@ const server = http.createServer(async (req, res) => {
         sendText(res, 400, "requestId 无效");
         return;
       }
-      const result = await translationProfiles.translate(payload, translationActor(session));
+      if (!requestId) {
+        sendText(res, 400, "requestId 不能为空");
+        return;
+      }
+      activeRequest = translationRequests.begin(session.username, requestId);
+      onDisconnect = () => {
+        if (!res.writableEnded) activeRequest?.controller.abort();
+      };
+      res.once("close", onDisconnect);
+      const result = await translationProfiles.translate(payload, translationActor(session), {
+        signal: activeRequest.controller.signal,
+      });
+      if (activeRequest.controller.signal.aborted) return;
       translationUsage.record({
         requestId,
         username: session.username,
@@ -2376,8 +2392,34 @@ const server = http.createServer(async (req, res) => {
         profileId: result.profileId,
       });
     } catch (err) {
-      sendText(res, 400, err.message || "翻译失败");
+      if (err?.name === "AbortError" || activeRequest?.controller.signal.aborted) {
+        if (!res.destroyed && !res.writableEnded) sendText(res, 499, "翻译请求已取消");
+      } else {
+        sendText(res, 400, err.message || "翻译失败");
+      }
+    } finally {
+      if (onDisconnect) res.removeListener("close", onDisconnect);
+      if (activeRequest) translationRequests.finish(activeRequest.key, activeRequest.controller);
     }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/translation/cancel") {
+    const session = resolveSessionByToken(extractBearer(req));
+    if (!session) {
+      sendText(res, 401, "未授权");
+      return;
+    }
+    const payload = safeParseJson(await readBody(req, 8 * 1024));
+    const requestId = safeText(payload?.requestId).slice(0, 100);
+    if (!requestId || !/^[a-z0-9-]{8,100}$/i.test(requestId)) {
+      sendText(res, 400, "requestId 无效");
+      return;
+    }
+    sendJson(res, 200, {
+      ok: true,
+      cancelled: translationRequests.cancel(session.username, requestId),
+    });
     return;
   }
 

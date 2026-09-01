@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
 import {
+  cancelManagedTranslation,
   createManagedTranslationRequestId,
   fetchManagedTranslationProfiles,
   managedTranslate,
@@ -94,6 +95,7 @@ function startTranslation(
 ): TranslationRun {
   if (config.provider === 'managed') {
     const controller = new AbortController()
+    const requestId = createManagedTranslationRequestId()
     const promise = managedTranslate(
       managedContext?.serverUrl || '',
       managedContext?.token || '',
@@ -104,19 +106,30 @@ function startTranslation(
         target: targetLanguage,
         style: config.style,
         glossary: config.glossary,
-        requestId: createManagedTranslationRequestId(),
+        requestId,
       },
       { signal: controller.signal },
     ).then((response) => response.translatedText)
-    return { promise, cancel: () => controller.abort() }
+    return {
+      promise,
+      cancel: () => {
+        controller.abort()
+        void cancelManagedTranslation(
+          managedContext?.serverUrl || '',
+          managedContext?.token || '',
+          requestId,
+        ).catch(() => undefined)
+      },
+    }
   }
 
   if (config.provider !== 'ai') {
-    let cancelled = false
+    const requestId = createManagedTranslationRequestId()
     const provider = config.provider
     const providerConfig = provider === 'offline' ? config.offline : config.api
     const promise = api
       .translateText({
+        requestId,
         mode: provider,
         baseUrl: providerConfig.baseUrl,
         apiKey: provider === 'api' ? config.api.apiKey : undefined,
@@ -124,11 +137,13 @@ function startTranslation(
         source: sourceLanguage,
         target: targetLanguage,
       })
-      .then((response) => {
-        if (cancelled) throw Object.assign(new Error('操作已取消'), { name: 'AbortError' })
-        return response.translatedText.trim()
-      })
-    return { promise, cancel: () => void (cancelled = true) }
+      .then((response) => response.translatedText.trim())
+    return {
+      promise,
+      cancel: () => {
+        void api.cancelTranslation(requestId).catch(() => undefined)
+      },
+    }
   }
 
   if (!config.ai.baseUrl || !config.ai.apiKey) {

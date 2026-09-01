@@ -675,6 +675,24 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
     (await userTranslationProfiles.json()).profiles.map((profile) => profile.id),
     ["restricted-ai"],
   );
+  assert.strictEqual(
+    (
+      await fetch(`${baseUrl}/api/translation/cancel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: "request-not-active" }),
+      })
+    ).status,
+    401,
+    "翻译取消必须使用已登录身份",
+  );
+  const inactiveTranslationCancel = await fetch(`${baseUrl}/api/translation/cancel`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ requestId: "request-not-active" }),
+  });
+  assert.strictEqual(inactiveTranslationCancel.status, 200);
+  assert.deepStrictEqual(await inactiveTranslationCancel.json(), { ok: true, cancelled: false });
   const normalTranslationLogin = await fetch(`${baseUrl}/api/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
