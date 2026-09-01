@@ -40,6 +40,7 @@
     "verify:ai-workspace-lifecycle": "npm run build:next && node scripts/verify-ai-workspace-lifecycle.js",
     "verify:macos-fullscreen-titlebar": "npm run build:next && node scripts/verify-macos-fullscreen-titlebar.js",
     "verify:chat-composer-layout": "npm run build:next && node scripts/verify-chat-composer-layout.js",
+    "verify:chat-sidebar-layout": "npm run build:next && node scripts/verify-chat-sidebar-layout.js",
     "verify:release-win": "node scripts/verify-win-release.js",
     "verify:release-contract": "node scripts/verify-release-contract.mjs",
     "verify:release-source": "node scripts/verify-release-source.mjs",

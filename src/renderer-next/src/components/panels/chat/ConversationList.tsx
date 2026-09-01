@@ -2,7 +2,6 @@ import { Search, Users } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarBadge, AvatarFallback } from '@/components/ui/avatar'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import type { DirectoryUser } from '@/store/useChatStore'
 import { avatarMark, formatConversationTime } from './format'
@@ -48,8 +47,11 @@ export function ConversationList({
         </div>
       </div>
 
-      <ScrollArea className="min-h-0 flex-1">
-        <ul className="flex flex-col gap-0.5 p-2">
+      <div
+        data-slot="conversation-list-scroll"
+        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden"
+      >
+        <ul className="flex w-full min-w-0 flex-col gap-0.5 p-2">
           {items.length === 0 && (
             <li className="px-3 py-8 text-center text-sm text-muted-foreground">
               {filter ? '没有匹配到会话' : '最近会话会显示在这里'}
@@ -114,11 +116,11 @@ export function ConversationList({
         </ul>
 
         {memberTotal > 0 && (
-          <div className="mt-1 border-t border-border px-2 pb-2 pt-2">
+          <div className="mt-1 w-full min-w-0 border-t border-border px-2 pb-2 pt-2">
             <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-muted-foreground">
               <Users className="size-3.5" />
               <span>群组成员</span>
-              <span className="ml-auto tabular-nums text-[11px] text-muted-foreground/70">
+              <span className="ml-auto shrink-0 whitespace-nowrap tabular-nums text-[11px] text-muted-foreground/70">
                 {memberOnline} / {memberTotal} 在线
               </span>
             </div>
@@ -172,7 +174,7 @@ export function ConversationList({
             )}
           </div>
         )}
-      </ScrollArea>
+      </div>
     </div>
   )
 }
