@@ -8,6 +8,7 @@ User=sharegpt
 Group=sharegpt
 WorkingDirectory=/opt/sharegpt-collab
 Environment=NODE_ENV=production
+EnvironmentFile=-/etc/sharegpt-collab.env
 Environment=PORT=8088
 Environment=HOST=0.0.0.0
 Environment=USERS_FILE=/opt/sharegpt-collab/data/users.json

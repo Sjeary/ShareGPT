@@ -26,6 +26,9 @@ process.env.PROXY_ROUTE_HEALTH_FILE = path.join(tmpDir, "proxy_route_health.json
 process.env.RELEASES_DIR = path.join(tmpDir, "releases");
 process.env.RELEASE_STORE = path.join(tmpDir, "release_shared");
 process.env.SHARED_RELEASE_FILE = path.join(tmpDir, "release_shared", "release.json");
+process.env.TRANSLATION_PROFILES_FILE = path.join(tmpDir, "translation_profiles.json");
+process.env.TRANSLATION_USAGE_FILE = path.join(tmpDir, "translation_usage.json");
+process.env.SHAREGPT_TRANSLATION_MASTER_KEY = Buffer.alloc(32, 7).toString("base64");
 process.env.LOGIN_MAX_FAILS = "3"; // 测试用小阈值
 process.env.LOGIN_LOCK_MS = "10000";
 
@@ -626,6 +629,82 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   assert.strictEqual(adminLogin.status, 200);
   const adminToken = (await adminLogin.json()).token;
   const adminHeaders = { Authorization: `Bearer ${adminToken}` };
+
+  assert.strictEqual(
+    (await fetch(`${baseUrl}/api/admin/translation-profiles`)).status,
+    401,
+    "托管翻译配置只允许管理员读取",
+  );
+  const saveTranslationProfiles = await fetch(`${baseUrl}/api/admin/translation-profiles`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...adminHeaders },
+    body: JSON.stringify({
+      defaultProfileId: "restricted-ai",
+      profiles: [
+        {
+          id: "restricted-ai",
+          name: "Restricted AI",
+          type: "ai",
+          baseUrl: "https://translation.example.com/v1",
+          model: "gpt-5-mini",
+          apiKey: "integration-secret-key",
+          enabled: true,
+          accessMode: "restricted",
+          allowedUsernames: ["verify-user"],
+          pricing: { currency: "USD", inputPerMillion: 1, outputPerMillion: 2 },
+        },
+      ],
+    }),
+  });
+  assert.strictEqual(saveTranslationProfiles.status, 200);
+  const savedTranslationCatalog = await saveTranslationProfiles.json();
+  assert.strictEqual(savedTranslationCatalog.profiles[0].apiKeyConfigured, true);
+  assert.strictEqual(
+    JSON.stringify(savedTranslationCatalog).includes("integration-secret-key"),
+    false,
+  );
+  assert.doesNotMatch(
+    fs.readFileSync(process.env.TRANSLATION_PROFILES_FILE, "utf8"),
+    /integration-secret-key/,
+  );
+  const userTranslationProfiles = await fetch(`${baseUrl}/api/translation/profiles`, {
+    headers: authHeaders,
+  });
+  assert.strictEqual(userTranslationProfiles.status, 200);
+  assert.deepStrictEqual(
+    (await userTranslationProfiles.json()).profiles.map((profile) => profile.id),
+    ["restricted-ai"],
+  );
+  const normalTranslationLogin = await fetch(`${baseUrl}/api/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "normal-user", password }),
+  });
+  const normalTranslationToken = (await normalTranslationLogin.json()).token;
+  const normalTranslationProfiles = await fetch(`${baseUrl}/api/translation/profiles`, {
+    headers: { Authorization: `Bearer ${normalTranslationToken}` },
+  });
+  assert.deepStrictEqual((await normalTranslationProfiles.json()).profiles, []);
+  const forbiddenTranslation = await fetch(`${baseUrl}/api/translation/translate`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${normalTranslationToken}`,
+    },
+    body: JSON.stringify({
+      profileId: "restricted-ai",
+      text: "不得发往上游",
+      target: "en",
+      requestId: "forbidden-request-1",
+    }),
+  });
+  assert.strictEqual(forbiddenTranslation.status, 400, "服务端必须拒绝未获授权的 profileId");
+  assert.match(await forbiddenTranslation.text(), /不存在、未启用或尚未配置密钥/);
+  const translationStats = await fetch(`${baseUrl}/api/admin/translation-usage`, {
+    headers: adminHeaders,
+  });
+  assert.strictEqual(translationStats.status, 200);
+  assert.strictEqual((await translationStats.json()).totals.requests, 0);
 
   const demotedLogin = await fetch(`${baseUrl}/api/login`, {
     method: "POST",

@@ -13,6 +13,7 @@
 - 首次登录自动下发 Sender 默认配置
 - 版本信息与安装包下载地址分发
 - 管理员接口
+- 管理员托管翻译配置、用户授权和用量统计
 
 ## 环境要求
 
@@ -60,6 +61,17 @@ node add_user.js admin MyStrongPass123 --admin
 - `SESSION_TTL_MS`
 - `HISTORY_MAX`
 - `GPT_USAGE_MAX`
+- `SHAREGPT_TRANSLATION_MASTER_KEY`（32 字节 hex 或 base64 主密钥）
+- `TRANSLATION_PROFILES_FILE`
+- `TRANSLATION_USAGE_FILE`
+
+## 托管翻译安全模型
+
+管理员可以创建多个 AI 或通用翻译 API 配置，指定默认配置、授权全部用户或仅授权名单中的用户，并设置用于估算费用的 token/请求单价。客户端只能取得自己可用的配置名称和 ID；上游地址、API Key 及其密文不会下发到客户端。
+
+API Key 使用 `SHAREGPT_TRANSLATION_MASTER_KEY` 通过 AES-256-GCM 加密后落盘。Ubuntu 部署脚本首次安装时会在 `/etc/sharegpt-collab.env` 生成主密钥并将文件权限设为 `0600`，后续部署不会覆盖已有密钥。必须把该环境文件作为机密单独备份；丢失或更换主密钥后，已有 API Key 无法解密，需要管理员重新填写。
+
+翻译用量只保存账号、配置、时间、输入/输出字符数、上游返回的 token 数和按管理员单价计算的估算费用，不保存原文或译文。没有返回 token usage 的通用 API 只能统计请求和字符数。估算费用不是上游账单，应以供应商账单为最终依据。
 
 ## Sender 默认配置来源
 
@@ -127,6 +139,8 @@ sudo -u sharegpt node add_user.js <user> <password>
 
 - `data/users.json`
 - `data/gpt_usage.json`
+- `data/translation_profiles.json`（包含密文，权限应为 `0600`）
+- `data/translation_usage.json`（不包含原文和译文）
 - `data/chat_history.json`
 - `data/client_bootstrap.json`
 - `data/releases/`
@@ -141,6 +155,7 @@ sudo -u sharegpt node add_user.js <user> <password>
 - Sender 默认配置维护
 - 安装包上传
 - 更新说明发布
+- 托管翻译配置、用户授权和用量统计
 
 上传的安装包会保存到：
 

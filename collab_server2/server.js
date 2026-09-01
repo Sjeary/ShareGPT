@@ -4,6 +4,8 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { URL } = require("node:url");
 const { WebSocketServer } = require("ws");
+const { createTranslationProfileService } = require("./translation_profiles");
+const { createTranslationUsageService } = require("./translation_usage");
 
 process.on("uncaughtException", (err) => {
   try {
@@ -37,6 +39,12 @@ const DEV_TOKEN = process.env.DEV_TOKEN || "";
 const RELEASE_STORE = process.env.RELEASE_STORE || path.join(__dirname, "release_shared");
 const SHARED_RELEASE_FILE =
   process.env.SHARED_RELEASE_FILE || path.join(RELEASE_STORE, "release.json");
+const TRANSLATION_PROFILES_FILE =
+  process.env.TRANSLATION_PROFILES_FILE ||
+  path.join(path.dirname(GPT_USAGE_FILE), "translation_profiles.json");
+const TRANSLATION_USAGE_FILE =
+  process.env.TRANSLATION_USAGE_FILE ||
+  path.join(path.dirname(GPT_USAGE_FILE), "translation_usage.json");
 const SESSION_TTL_MS = Number.parseInt(process.env.SESSION_TTL_MS || `${24 * 60 * 60 * 1000}`, 10);
 const HISTORY_MAX = Number.parseInt(process.env.HISTORY_MAX || "2000", 10);
 const MAX_AVATAR_LENGTH = Number.parseInt(process.env.MAX_AVATAR_LENGTH || `${150 * 1024}`, 10);
@@ -127,6 +135,14 @@ const loginAttempts = new Map();
 const passwordVerifyAttempts = new Map();
 const PASSWORD_VERIFY_MAX_FAILS = 5;
 const PASSWORD_VERIFY_LOCK_MS = 15 * 60 * 1000;
+const translationRateLimits = new Map();
+const TRANSLATION_RATE_WINDOW_MS = 60 * 1000;
+const TRANSLATION_RATE_MAX = 30;
+const translationProfiles = createTranslationProfileService({
+  file: TRANSLATION_PROFILES_FILE,
+  masterKey: process.env.SHAREGPT_TRANSLATION_MASTER_KEY || "",
+});
+const translationUsage = createTranslationUsageService({ file: TRANSLATION_USAGE_FILE });
 
 function safeEnvText(value) {
   return String(value || "").trim();
@@ -138,6 +154,20 @@ function safeText(value) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function consumeTranslationRateLimit(username, now = Date.now()) {
+  const key = safeText(username);
+  const current = translationRateLimits.get(key);
+  if (!current || current.resetAt <= now) {
+    translationRateLimits.set(key, { count: 1, resetAt: now + TRANSLATION_RATE_WINDOW_MS });
+    return { allowed: true, retryAfterMs: 0 };
+  }
+  if (current.count >= TRANSLATION_RATE_MAX) {
+    return { allowed: false, retryAfterMs: Math.max(1, current.resetAt - now) };
+  }
+  current.count += 1;
+  return { allowed: true, retryAfterMs: 0 };
 }
 
 function safeParseJson(text) {
@@ -1469,6 +1499,14 @@ function requireAdminSession(req, res) {
   return session;
 }
 
+function translationActor(session) {
+  const { user } = findUser(session?.username);
+  return {
+    username: safeText(session?.username),
+    isAdmin: Boolean(user?.isAdmin),
+  };
+}
+
 function createUserRecord(username, password, extra = {}) {
   const normalized = safeText(username);
   const pwd = String(password || "");
@@ -2288,6 +2326,61 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && pathname === "/api/translation/profiles") {
+    const session = resolveSessionByToken(extractBearer(req));
+    if (!session) {
+      sendText(res, 401, "未授权");
+      return;
+    }
+    try {
+      sendJson(res, 200, translationProfiles.publicCatalog(translationActor(session)));
+    } catch (err) {
+      sendText(res, 500, err.message || "读取翻译配置失败");
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/translation/translate") {
+    const session = resolveSessionByToken(extractBearer(req));
+    if (!session) {
+      sendText(res, 401, "未授权");
+      return;
+    }
+    const rate = consumeTranslationRateLimit(session.username);
+    if (!rate.allowed) {
+      res.setHeader("Retry-After", String(Math.ceil(rate.retryAfterMs / 1000)));
+      sendText(res, 429, "翻译请求过于频繁，请稍后重试");
+      return;
+    }
+    try {
+      const payload = safeParseJson(await readBody(req, 128 * 1024));
+      if (!payload) {
+        sendText(res, 400, "请求 JSON 无效");
+        return;
+      }
+      const requestId = safeText(payload.requestId).slice(0, 100);
+      if (requestId && !/^[a-z0-9-]{8,100}$/i.test(requestId)) {
+        sendText(res, 400, "requestId 无效");
+        return;
+      }
+      const result = await translationProfiles.translate(payload, translationActor(session));
+      translationUsage.record({
+        requestId,
+        username: session.username,
+        profileId: result.profileId,
+        profileName: result.profileName,
+        ...result.usage,
+      });
+      sendJson(res, 200, {
+        translatedText: result.translatedText,
+        profileId: result.profileId,
+      });
+    } catch (err) {
+      sendText(res, 400, err.message || "翻译失败");
+    }
+    return;
+  }
+
   if (req.method === "POST" && pathname === "/api/admin/login") {
     try {
       cleanupExpiredSessions();
@@ -2531,6 +2624,56 @@ const server = http.createServer(async (req, res) => {
       });
     } catch (err) {
       sendText(res, 400, err.message || "保存客户端配置失败");
+    }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/api/admin/translation-profiles") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    try {
+      sendJson(res, 200, translationProfiles.adminCatalog());
+    } catch (err) {
+      sendText(res, 500, err.message || "读取翻译配置失败");
+    }
+    return;
+  }
+
+  if (
+    (req.method === "PUT" || req.method === "POST") &&
+    pathname === "/api/admin/translation-profiles"
+  ) {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    try {
+      const payload = safeParseJson(await readBody(req, 512 * 1024));
+      if (!payload) {
+        sendText(res, 400, "请求 JSON 无效");
+        return;
+      }
+      sendJson(res, 200, { ok: true, ...translationProfiles.save(payload) });
+    } catch (err) {
+      sendText(res, 400, err.message || "保存翻译配置失败");
+    }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/api/admin/translation-usage") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    try {
+      sendJson(
+        res,
+        200,
+        translationUsage.query({
+          from: reqUrl.searchParams.get("from") || "",
+          to: reqUrl.searchParams.get("to") || "",
+          username: reqUrl.searchParams.get("username") || "",
+          profileId: reqUrl.searchParams.get("profileId") || "",
+        }),
+      );
+    } catch (err) {
+      sendText(res, 400, err.message || "读取翻译用量失败");
     }
     return;
   }

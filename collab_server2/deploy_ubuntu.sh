@@ -6,6 +6,7 @@ SERVICE_NAME="sharegpt-collab"
 APP_USER="sharegpt"
 APP_GROUP="sharegpt"
 INSTALL_DIR="/opt/sharegpt-collab"
+ENV_FILE="/etc/sharegpt-collab.env"
 PORT="${PORT:-8088}"
 HOST="${HOST:-0.0.0.0}"
 SESSION_TTL_MS="${SESSION_TTL_MS:-86400000}"
@@ -20,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "[1/7] 安装系统依赖"
 apt-get update
-apt-get install -y curl ca-certificates gnupg rsync
+apt-get install -y curl ca-certificates gnupg openssl rsync
 
 NEED_INSTALL_NODE="0"
 if ! command -v node >/dev/null 2>&1; then
@@ -62,6 +63,15 @@ else
 fi
 
 echo "[6/7] 生成 systemd 服务"
+if [[ ! -f "${ENV_FILE}" ]]; then
+  umask 077
+  printf 'SHAREGPT_TRANSLATION_MASTER_KEY=%s\n' "$(openssl rand -base64 32)" >"${ENV_FILE}"
+elif ! grep -q '^SHAREGPT_TRANSLATION_MASTER_KEY=' "${ENV_FILE}"; then
+  printf 'SHAREGPT_TRANSLATION_MASTER_KEY=%s\n' "$(openssl rand -base64 32)" >>"${ENV_FILE}"
+fi
+chown root:root "${ENV_FILE}"
+chmod 600 "${ENV_FILE}"
+
 cat >/etc/systemd/system/${SERVICE_NAME}.service <<EOF
 [Unit]
 Description=ShareGPT Collaboration Server
@@ -73,6 +83,7 @@ User=${APP_USER}
 Group=${APP_GROUP}
 WorkingDirectory=${INSTALL_DIR}
 Environment=NODE_ENV=production
+EnvironmentFile=-${ENV_FILE}
 Environment=PORT=${PORT}
 Environment=HOST=${HOST}
 Environment=USERS_FILE=${INSTALL_DIR}/data/users.json
@@ -100,4 +111,3 @@ echo ""
 echo "部署完成。"
 echo "健康检查: curl http://127.0.0.1:${PORT}/api/health"
 echo "日志查看:   journalctl -u ${SERVICE_NAME} -f"
-

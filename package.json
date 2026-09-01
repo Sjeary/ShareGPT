@@ -27,7 +27,7 @@
   ],
   "scripts": {
     "test": "npm run test:main && npm --prefix src/renderer-next test",
-    "test:main": "node --test collab_server2/test/server.test.js src/main/test/*.test.js",
+    "test:main": "node --test collab_server2/test/*.test.js src/main/test/*.test.js",
     "test:release": "node --experimental-test-coverage --test --test-coverage-include=scripts/releaseContract.cjs --test-coverage-include=scripts/releaseSourceContract.cjs --test-coverage-include=scripts/windowsReleaseContract.cjs --test-coverage-include=src/main/autoUpdateInstall.js --test-coverage-include=src/main/updateRelease.js --test-coverage-include=src/main/userDataPath.js --test-coverage-lines=90 --test-coverage-functions=85 --test-coverage-branches=70 src/main/test/autoUpdateInstall.test.js src/main/test/releaseContract.test.js src/main/test/releaseSourceContract.test.js src/main/test/updateRelease.test.js src/main/test/userDataPath.test.js src/main/test/windowsReleaseContract.test.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
