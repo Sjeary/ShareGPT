@@ -9,7 +9,6 @@ import {
   MessageSquareText,
   PlugZap,
   RefreshCw,
-  Send,
   Settings2,
   TextCursorInput,
   TriangleAlert,
@@ -159,7 +158,7 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
   const operationGenerationRef = useRef(0)
   const lastAutoTranslateRef = useRef(0)
   const [copied, setCopied] = useCopyIndicator()
-  const [pendingWrite, setPendingWrite] = useState<null | { send: boolean }>(null)
+  const [pendingWrite, setPendingWrite] = useState(false)
   const [testStatus, setTestStatus] = useState('')
   const [testing, setTesting] = useState(false)
 
@@ -176,6 +175,15 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
     }
   }, [environmentId, kind, tabId])
 
+  const selectMode = (mode: 'read' | 'compose') => {
+    if (mode === state.mode) return
+    operationGenerationRef.current += 1
+    cancelRef.current?.()
+    cancelRef.current = null
+    setPendingWrite(false)
+    state.setMode(mode)
+  }
+
   const patchConfig = (patch: Partial<TranslationSettings>) => {
     if (
       Object.keys(patch).some(
@@ -184,38 +192,34 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
     ) {
       state.markStale()
     }
-    void state.saveConfig(patch).catch((error) => state.setStatus(cleanError(error)))
+    void state.saveConfig(patch).catch((error) => {
+      const current = useTranslationStore.getState()
+      const message = cleanError(error)
+      if (current.mode === 'read') current.setReaderStatus(message)
+      else current.setComposerStatus(message)
+    })
   }
 
-  const targetLanguage =
-    state.sourceKind === 'manual'
-      ? state.config.siteLanguage || 'en'
-      : state.config.targetLanguage || 'zh'
-
-  const translate = useCallback(async () => {
+  const translateReader = useCallback(async () => {
     const current = useTranslationStore.getState()
-    const text = current.sourceText.trim()
+    const text = current.reader.sourceText.trim()
     if (!text) {
-      current.setStatus('请先输入、选中或读取要翻译的内容')
+      current.setReaderStatus('请先输入、选中或读取要翻译的内容')
       return
     }
     cancelRef.current?.()
     const generation = operationGenerationRef.current + 1
     operationGenerationRef.current = generation
-    current.beginTranslation()
-    setPendingWrite(null)
-    const currentTargetLanguage =
-      current.sourceKind === 'manual'
-        ? current.config.siteLanguage || 'en'
-        : current.config.targetLanguage || 'zh'
+    current.beginReaderTranslation()
+    setPendingWrite(false)
     const run = startTranslation(
       current.config,
       text,
       current.config.sourceLanguage,
-      currentTargetLanguage,
+      current.config.targetLanguage || 'zh',
       {
-        onDelta: current.config.provider === 'ai' ? current.appendResult : undefined,
-        onStatus: current.setStatus,
+        onDelta: current.config.provider === 'ai' ? current.appendReaderResult : undefined,
+        onStatus: current.setReaderStatus,
       },
     )
     cancelRef.current = run.cancel
@@ -224,17 +228,65 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
       if (operationGenerationRef.current !== generation) return
       cancelRef.current = null
       if (!translated) throw new Error('翻译服务没有返回内容')
-      if (current.config.provider !== 'ai') current.setResult(translated)
-      current.completeTranslation()
+      if (current.config.provider !== 'ai') current.setReaderResult(translated)
+      current.completeReaderTranslation()
     } catch (error) {
       if (operationGenerationRef.current !== generation) return
       cancelRef.current = null
       const message = cleanError(error)
-      useTranslationStore.setState({
-        loading: false,
-        phase: message ? 'error' : 'idle',
-        status: message,
-      })
+      useTranslationStore.setState((latest) => ({
+        reader: {
+          ...latest.reader,
+          loading: false,
+          phase: message ? 'error' : 'idle',
+          status: message,
+        },
+      }))
+      if (/配置 AI/.test(message)) current.setSettingsOpen(true)
+    }
+  }, [])
+
+  const translateComposer = useCallback(async () => {
+    const current = useTranslationStore.getState()
+    const text = current.composer.sourceText.trim()
+    if (!text) {
+      current.setComposerStatus('请先输入要写给 AI 的内容')
+      return
+    }
+    cancelRef.current?.()
+    const generation = operationGenerationRef.current + 1
+    operationGenerationRef.current = generation
+    current.beginComposerTranslation()
+    setPendingWrite(false)
+    const run = startTranslation(
+      current.config,
+      text,
+      current.config.sourceLanguage,
+      current.config.siteLanguage || 'en',
+      {
+        onDelta: current.config.provider === 'ai' ? current.appendComposerTranslation : undefined,
+        onStatus: current.setComposerStatus,
+      },
+    )
+    cancelRef.current = run.cancel
+    try {
+      const translated = await run.promise
+      if (operationGenerationRef.current !== generation) return
+      cancelRef.current = null
+      if (!translated) throw new Error('翻译服务没有返回内容')
+      current.completeComposerTranslation(translated)
+    } catch (error) {
+      if (operationGenerationRef.current !== generation) return
+      cancelRef.current = null
+      const message = cleanError(error)
+      useTranslationStore.setState((latest) => ({
+        composer: {
+          ...latest.composer,
+          loading: false,
+          phase: message ? 'error' : 'idle',
+          status: message,
+        },
+      }))
       if (/配置 AI/.test(message)) current.setSettingsOpen(true)
     }
   }, [])
@@ -242,70 +294,68 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
   useEffect(() => {
     if (
       !state.config.autoTranslateSelection ||
-      state.autoTranslateRequest <= lastAutoTranslateRef.current
+      state.reader.autoTranslateRequest <= lastAutoTranslateRef.current
     ) {
       return
     }
-    lastAutoTranslateRef.current = state.autoTranslateRequest
-    void translate()
-  }, [state.autoTranslateRequest, state.config.autoTranslateSelection, translate])
+    lastAutoTranslateRef.current = state.reader.autoTranslateRequest
+    void translateReader()
+  }, [state.reader.autoTranslateRequest, state.config.autoTranslateSelection, translateReader])
 
   const captureSelection = async () => {
-    state.setLoading(true)
-    state.setStatus('正在读取网页选区…')
+    state.setReaderLoading(true)
+    state.setReaderStatus('正在读取网页选区…')
     try {
       const selection = await api.captureAiSelectionText(kind, tabId, environmentId)
-      state.setCapturedSource('selection', selection.text, {
+      state.setReaderCapturedSource('selection', selection.text, {
         status: selection.truncated ? '选区较长，已读取前 30000 个字符' : '已读取网页选中文字',
       })
     } catch (error) {
-      state.setStatus(cleanError(error))
+      state.setReaderStatus(cleanError(error))
     } finally {
-      state.setLoading(false)
+      state.setReaderLoading(false)
     }
   }
 
   const capturePage = async () => {
-    state.setLoading(true)
-    state.setStatus('正在读取当前网页…')
+    state.setReaderLoading(true)
+    state.setReaderStatus('正在读取当前网页…')
     try {
       const page = await api.captureAiPageText(kind, tabId, environmentId)
-      state.setCapturedSource('page', page.text, {
+      state.setReaderCapturedSource('page', page.text, {
         status: page.truncated ? '内容较长，已读取前 30000 个字符' : '已读取当前网页',
       })
     } catch (error) {
-      state.setStatus(cleanError(error))
+      state.setReaderStatus(cleanError(error))
     } finally {
-      state.setLoading(false)
+      state.setReaderLoading(false)
     }
   }
 
   const writeToComposer = async (
-    send: boolean,
     strategy: 'fail-if-not-empty' | 'append' | 'replace' = 'fail-if-not-empty',
   ) => {
     const current = useTranslationStore.getState()
-    const text = current.result.trim()
-    if (!text || current.phase !== 'ready') return
-    useTranslationStore.setState({ phase: 'writing', status: '正在校验当前网页输入框…' })
+    const text = current.composer.preview.trim()
+    if (!text || current.composer.phase !== 'ready') return
+    const generation = operationGenerationRef.current + 1
+    operationGenerationRef.current = generation
+    current.beginComposerWrite()
     try {
       const target: AiComposerTarget = await api.getAiComposerTarget({ kind, tabId, environmentId })
-      const response = await api.writeAiComposer({ target, text, send, strategy })
+      if (operationGenerationRef.current !== generation) return
+      const response = await api.writeAiComposer({ target, text, send: false, strategy })
+      if (operationGenerationRef.current !== generation) return
       if (response.conflict === 'existing-draft') {
-        setPendingWrite({ send })
-        useTranslationStore.setState({
-          phase: 'ready',
-          status: `${AI_LABELS[kind]} 输入框中已有草稿`,
-        })
+        setPendingWrite(true)
+        current.completeComposerWrite(`${AI_LABELS[kind]} 输入框中已有草稿`)
         return
       }
-      setPendingWrite(null)
-      useTranslationStore.setState({
-        phase: 'ready',
-        status: send ? `已发送到 ${AI_LABELS[kind]}` : `已填入 ${AI_LABELS[kind]}，未自动发送`,
-      })
+      setPendingWrite(false)
+      current.completeComposerWrite(`已插入 ${AI_LABELS[kind]}，尚未发送`)
     } catch (error) {
-      useTranslationStore.setState({ phase: 'ready', status: cleanError(error) })
+      if (operationGenerationRef.current !== generation) return
+      current.completeComposerWrite(cleanError(error))
     }
   }
 
@@ -324,7 +374,7 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
     }
   }
 
-  const canUseResult = state.phase === 'ready' && Boolean(state.result.trim())
+  const canInsert = state.composer.phase === 'ready' && Boolean(state.composer.preview.trim())
   const providerReady =
     state.config.provider === 'ai'
       ? Boolean(state.config.ai.baseUrl && state.config.ai.apiKey)
@@ -333,9 +383,9 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
         : Boolean(state.config.offline.baseUrl)
   const providerStatus = testStatus === '连接正常' ? '已连接' : providerReady ? '已配置' : '未配置'
   const sourceNote =
-    state.sourceKind === 'selection'
+    state.reader.sourceKind === 'selection'
       ? '来自网页选中文字'
-      : state.sourceKind === 'page'
+      : state.reader.sourceKind === 'page'
         ? '来自当前网页'
         : '手工输入'
 
@@ -373,6 +423,43 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
         </Button>
       </div>
 
+      <div className="shrink-0 border-b border-border p-2">
+        <div
+          className="grid h-8 grid-cols-2 rounded-md bg-muted p-0.5"
+          role="tablist"
+          aria-label="翻译模式"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={state.mode === 'read'}
+            className={cn(
+              'rounded-[5px] text-xs font-medium transition-colors',
+              state.mode === 'read'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+            onClick={() => selectMode('read')}
+          >
+            阅读翻译
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={state.mode === 'compose'}
+            className={cn(
+              'rounded-[5px] text-xs font-medium transition-colors',
+              state.mode === 'compose'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+            onClick={() => selectMode('compose')}
+          >
+            写给 AI
+          </button>
+        </div>
+      </div>
+
       {state.settingsOpen && (
         <TranslationSettingsForm
           config={state.config}
@@ -383,194 +470,324 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
         />
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
-        <div className="flex items-center gap-2">
-          <LanguageSelect
-            value={state.config.sourceLanguage}
-            includeAuto
-            label="源语言"
-            onChange={(sourceLanguage) => patchConfig({ sourceLanguage })}
-          />
-          <span className="text-xs text-muted-foreground">→</span>
-          <LanguageSelect
-            value={targetLanguage}
-            label="目标语言"
-            onChange={(value) =>
-              patchConfig(
-                state.sourceKind === 'manual' ? { siteLanguage: value } : { targetLanguage: value },
-              )
-            }
-          />
-        </div>
-
-        <section className="space-y-1.5">
-          <div className="flex min-h-8 items-center gap-2">
-            <span className="text-xs font-medium">原文</span>
-            <span className="text-[11px] text-muted-foreground">{sourceNote}</span>
-            <div className="ml-auto flex gap-1">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 px-2"
-                disabled={state.loading}
-                onClick={() => void captureSelection()}
-              >
-                <TextCursorInput className="size-3.5" />
-                选中文字
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 px-2"
-                disabled={state.loading}
-                onClick={() => void capturePage()}
-              >
-                <FileText className="size-3.5" />
-                读取页面
-              </Button>
-            </div>
+      {state.mode === 'read' ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+          <div className="flex items-center gap-2">
+            <LanguageSelect
+              value={state.config.sourceLanguage}
+              includeAuto
+              label="源语言"
+              onChange={(sourceLanguage) => patchConfig({ sourceLanguage })}
+            />
+            <span className="text-xs text-muted-foreground">→</span>
+            <LanguageSelect
+              value={state.config.targetLanguage}
+              label="目标语言"
+              onChange={(targetLanguage) => patchConfig({ targetLanguage })}
+            />
           </div>
-          <textarea
-            value={state.sourceText}
-            onChange={(event) => state.setSourceText(event.target.value)}
-            placeholder="输入要翻译的内容"
-            aria-label="待翻译原文"
-            spellCheck={false}
-            className={cn(
-              'min-h-28 w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring',
-              state.phase === 'stale' && 'border-amber-500',
-            )}
-          />
-        </section>
 
-        <Button
-          className="w-full gap-2"
-          disabled={state.phase === 'translating' || !state.sourceText.trim()}
-          onClick={() => void translate()}
-        >
-          {state.phase === 'translating' ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <Languages className="size-4" />
-          )}
-          翻译
-        </Button>
-
-        <section className="flex min-h-44 flex-1 flex-col space-y-1.5">
-          <div className="flex min-h-8 items-center gap-2">
-            <span className="text-xs font-medium">译文</span>
-            <span className="text-[11px] text-muted-foreground">
-              {state.resultEdited ? '已修改' : '可在填入前修改'}
-            </span>
-            <div className="ml-auto flex gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                title="复制译文"
-                aria-label="复制译文"
-                disabled={!state.result}
-                onClick={() =>
-                  void navigator.clipboard.writeText(state.result).then(() => setCopied())
-                }
-              >
-                {copied ? (
-                  <Check className="size-4 text-emerald-500" />
-                ) : (
-                  <Clipboard className="size-4" />
-                )}
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-8"
-                title="重新翻译"
-                aria-label="重新翻译"
-                disabled={state.phase === 'translating' || !state.sourceText.trim()}
-                onClick={() => void translate()}
-              >
-                <RefreshCw className="size-4" />
-              </Button>
+          <section className="space-y-1.5">
+            <div className="flex min-h-8 items-center gap-2">
+              <span className="text-xs font-medium">原文</span>
+              <span className="text-[11px] text-muted-foreground">{sourceNote}</span>
+              <div className="ml-auto flex gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 px-2"
+                  disabled={state.reader.loading}
+                  onClick={() => void captureSelection()}
+                >
+                  <TextCursorInput className="size-3.5" />
+                  选中文字
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 px-2"
+                  disabled={state.reader.loading}
+                  onClick={() => void capturePage()}
+                >
+                  <FileText className="size-3.5" />
+                  读取页面
+                </Button>
+              </div>
             </div>
-          </div>
-          <textarea
-            value={state.result}
-            onChange={(event) => state.editResult(event.target.value)}
-            disabled={state.phase === 'translating'}
-            placeholder="译文将在这里显示"
-            aria-label="译文"
-            spellCheck={false}
-            className={cn(
-              'min-h-36 flex-1 resize-y rounded-md border border-input bg-muted/20 px-3 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-ring',
-              state.phase === 'stale' && 'border-amber-500',
-            )}
-          />
-        </section>
+            <textarea
+              value={state.reader.sourceText}
+              onChange={(event) => state.setReaderSourceText(event.target.value)}
+              placeholder="输入要翻译的内容"
+              aria-label="待翻译原文"
+              spellCheck={false}
+              className={cn(
+                'min-h-28 w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring',
+                state.reader.phase === 'stale' && 'border-amber-500',
+              )}
+            />
+          </section>
 
-        {pendingWrite && (
-          <div
-            className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3"
-            role="alert"
-          >
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <TriangleAlert className="size-4 text-amber-600" />
-              {AI_LABELS[kind]} 输入框中已有草稿
-            </div>
-            <div className="flex justify-end gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setPendingWrite(null)}>
-                取消
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void writeToComposer(pendingWrite.send, 'append')}
-              >
-                追加
-              </Button>
-              <Button size="sm" onClick={() => void writeToComposer(pendingWrite.send, 'replace')}>
-                替换
-              </Button>
-            </div>
-          </div>
-        )}
-
-        <div className="grid grid-cols-[1fr_auto] gap-2">
           <Button
-            disabled={!canUseResult}
-            className="gap-2"
-            onClick={() => void writeToComposer(false)}
+            className="w-full gap-2"
+            disabled={state.reader.phase === 'translating' || !state.reader.sourceText.trim()}
+            onClick={() => void translateReader()}
           >
-            {state.phase === 'writing' ? (
+            {state.reader.phase === 'translating' ? (
               <Loader2 className="size-4 animate-spin" />
             ) : (
-              <MessageSquareText className="size-4" />
+              <Languages className="size-4" />
             )}
-            填入 {AI_LABELS[kind]}
+            翻译
           </Button>
-          <Button
-            variant="outline"
-            disabled={!canUseResult}
-            className="gap-2"
-            onClick={() => void writeToComposer(true)}
-          >
-            <Send className="size-4" />
-            发送
-          </Button>
-        </div>
 
-        <div
-          className={cn(
-            'flex min-h-6 items-start gap-1.5 text-xs text-muted-foreground',
-            state.phase === 'ready' && 'text-emerald-600 dark:text-emerald-400',
-            (state.phase === 'stale' || state.phase === 'error') &&
-              'text-amber-600 dark:text-amber-400',
-          )}
-          role="status"
-        >
-          {state.phase === 'ready' ? <CircleCheck className="mt-0.5 size-3.5 shrink-0" /> : null}
-          <span>{state.status}</span>
+          <section className="flex min-h-44 flex-1 flex-col space-y-1.5">
+            <div className="flex min-h-8 items-center gap-2">
+              <span className="text-xs font-medium">译文</span>
+              <span className="text-[11px] text-muted-foreground">仅供阅读，不会写入网页</span>
+              <div className="ml-auto flex gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8"
+                  title="复制译文"
+                  aria-label="复制译文"
+                  disabled={!state.reader.result}
+                  onClick={() =>
+                    void navigator.clipboard.writeText(state.reader.result).then(() => setCopied())
+                  }
+                >
+                  {copied ? (
+                    <Check className="size-4 text-emerald-500" />
+                  ) : (
+                    <Clipboard className="size-4" />
+                  )}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8"
+                  title="重新翻译"
+                  aria-label="重新翻译"
+                  disabled={state.reader.phase === 'translating' || !state.reader.sourceText.trim()}
+                  onClick={() => void translateReader()}
+                >
+                  <RefreshCw className="size-4" />
+                </Button>
+              </div>
+            </div>
+            <div
+              role="region"
+              aria-label="阅读译文"
+              tabIndex={0}
+              className={cn(
+                'min-h-36 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md border border-input bg-muted/20 px-3 py-2 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                state.reader.phase === 'stale' && 'border-amber-500',
+              )}
+            >
+              {state.reader.result || (
+                <span className="text-muted-foreground">译文将在这里显示</span>
+              )}
+            </div>
+          </section>
+
+          <div
+            className={cn(
+              'flex min-h-6 items-start gap-1.5 text-xs text-muted-foreground',
+              state.reader.phase === 'ready' && 'text-emerald-600 dark:text-emerald-400',
+              (state.reader.phase === 'stale' || state.reader.phase === 'error') &&
+                'text-amber-600 dark:text-amber-400',
+            )}
+            role="status"
+          >
+            {state.reader.phase === 'ready' ? (
+              <CircleCheck className="mt-0.5 size-3.5 shrink-0" />
+            ) : null}
+            <span>{state.reader.status}</span>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+            <div className="flex items-center gap-2">
+              <LanguageSelect
+                value={state.config.sourceLanguage}
+                includeAuto
+                label="输入语言"
+                onChange={(sourceLanguage) => patchConfig({ sourceLanguage })}
+              />
+              <span className="text-xs text-muted-foreground">→</span>
+              <LanguageSelect
+                value={state.config.siteLanguage}
+                label="AI 接收语言"
+                onChange={(siteLanguage) => patchConfig({ siteLanguage })}
+              />
+            </div>
+
+            <section className="space-y-1.5">
+              <div className="flex min-h-8 items-center gap-2">
+                <span className="text-xs font-medium">我想说</span>
+                <span className="text-[11px] text-muted-foreground">
+                  先翻译预览，不接触网页输入框
+                </span>
+              </div>
+              <textarea
+                value={state.composer.sourceText}
+                onChange={(event) => state.setComposerSourceText(event.target.value)}
+                placeholder="输入要写给 AI 的内容"
+                aria-label="写给 AI 的原文"
+                spellCheck={false}
+                className={cn(
+                  'min-h-28 w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring',
+                  state.composer.phase === 'stale' && 'border-amber-500',
+                )}
+              />
+            </section>
+
+            <Button
+              className="w-full gap-2"
+              disabled={state.composer.phase === 'translating' || !state.composer.sourceText.trim()}
+              onClick={() => void translateComposer()}
+            >
+              {state.composer.phase === 'translating' ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Languages className="size-4" />
+              )}
+              生成发送预览
+            </Button>
+
+            <section className="flex min-h-44 flex-1 flex-col space-y-1.5">
+              <div className="flex min-h-8 items-center gap-2">
+                <span className="text-xs font-medium">发送预览</span>
+                <span className="text-[11px] text-muted-foreground">
+                  {state.composer.previewEdited ? '已修改' : '确认后才会写入网页'}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="ml-auto size-8"
+                  title="重新生成发送预览"
+                  aria-label="重新生成发送预览"
+                  disabled={
+                    state.composer.phase === 'translating' || !state.composer.sourceText.trim()
+                  }
+                  onClick={() => void translateComposer()}
+                >
+                  <RefreshCw className="size-4" />
+                </Button>
+              </div>
+              <textarea
+                value={
+                  state.composer.phase === 'translating'
+                    ? state.composer.translation
+                    : state.composer.preview
+                }
+                onChange={(event) => state.editComposerPreview(event.target.value)}
+                disabled={state.composer.phase === 'translating'}
+                placeholder="翻译后的发送内容会显示在这里"
+                aria-label="发送预览"
+                spellCheck={false}
+                className={cn(
+                  'min-h-36 flex-1 resize-y rounded-md border border-input bg-muted/20 px-3 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-ring',
+                  state.composer.phase === 'stale' && 'border-amber-500',
+                )}
+              />
+            </section>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">插入格式</span>
+              <div
+                className="grid h-8 flex-1 grid-cols-2 rounded-md border border-input bg-background p-0.5"
+                role="group"
+                aria-label="插入格式"
+              >
+                <button
+                  type="button"
+                  className={cn(
+                    'rounded-[5px] text-xs transition-colors',
+                    state.composer.outputFormat === 'translated'
+                      ? 'bg-accent text-accent-foreground'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                  aria-pressed={state.composer.outputFormat === 'translated'}
+                  disabled={state.composer.phase === 'translating'}
+                  onClick={() => state.setComposerOutputFormat('translated')}
+                >
+                  仅译文
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    'rounded-[5px] text-xs transition-colors',
+                    state.composer.outputFormat === 'bilingual'
+                      ? 'bg-accent text-accent-foreground'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                  aria-pressed={state.composer.outputFormat === 'bilingual'}
+                  disabled={state.composer.phase === 'translating'}
+                  onClick={() => state.setComposerOutputFormat('bilingual')}
+                >
+                  原文 + 译文
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="shrink-0 space-y-2 border-t border-border bg-background p-3">
+            {pendingWrite ? (
+              <div className="space-y-2" role="alert">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <TriangleAlert className="size-4 text-amber-600" />
+                  {AI_LABELS[kind]} 输入框中已有草稿
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => setPendingWrite(false)}>
+                    取消
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void writeToComposer('append')}
+                  >
+                    追加到末尾
+                  </Button>
+                  <Button size="sm" onClick={() => void writeToComposer('replace')}>
+                    替换原草稿
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                disabled={!canInsert}
+                className="w-full gap-2"
+                onClick={() => void writeToComposer()}
+              >
+                {state.composer.phase === 'writing' ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <MessageSquareText className="size-4" />
+                )}
+                插入 {AI_LABELS[kind]}
+              </Button>
+            )}
+
+            <div
+              className={cn(
+                'flex min-h-5 items-start gap-1.5 text-xs text-muted-foreground',
+                state.composer.phase === 'ready' && 'text-emerald-600 dark:text-emerald-400',
+                (state.composer.phase === 'stale' || state.composer.phase === 'error') &&
+                  'text-amber-600 dark:text-amber-400',
+              )}
+              role="status"
+            >
+              {state.composer.phase === 'ready' ? (
+                <CircleCheck className="mt-0.5 size-3.5 shrink-0" />
+              ) : null}
+              <span>{state.composer.status}</span>
+            </div>
+          </div>
+        </div>
+      )}
     </aside>
   )
 }

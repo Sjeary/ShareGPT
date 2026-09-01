@@ -365,26 +365,53 @@ async function verifyTranslationWorkbench({
     "page capture",
   );
 
-  process.stdout.write(
-    "[verify] source edits invalidate output and editable output reaches composer\n",
-  );
+  process.stdout.write("[verify] reading translations never expose composer mutations\n");
   const source = panel.getByLabel("待翻译原文");
-  const result = panel.getByRole("textbox", { name: "译文", exact: true });
+  const result = panel.getByRole("region", { name: "阅读译文", exact: true });
   await source.fill("hello workbench");
   await panel.getByRole("button", { name: "翻译", exact: true }).click();
   await waitUntil(
-    async () => (await result.inputValue()) === "Translated: hello workbench",
+    async () => (await result.textContent()) === "Translated: hello workbench",
     "first workbench translation",
   );
+  assert.equal(await panel.getByRole("button", { name: "插入 ChatGPT" }).count(), 0);
   await source.fill("changed workbench");
-  assert.equal(await panel.getByRole("button", { name: `填入 ChatGPT` }).isDisabled(), true);
   await panel.getByText("原文已变化，请重新翻译", { exact: true }).waitFor({ state: "visible" });
   await panel.getByRole("button", { name: "翻译", exact: true }).click();
   await waitUntil(
-    async () => (await result.inputValue()) === "Translated: changed workbench",
+    async () => (await result.textContent()) === "Translated: changed workbench",
     "refreshed workbench translation",
   );
-  await result.fill("Edited translation");
+
+  process.stdout.write(
+    "[verify] writing mode stages an isolated editable preview before composer insertion\n",
+  );
+  await panel.getByRole("tab", { name: "写给 AI" }).click();
+  const outgoingSource = panel.getByLabel("写给 AI 的原文");
+  const preview = panel.getByRole("textbox", { name: "发送预览", exact: true });
+  await outgoingSource.fill("compose workbench");
+  await panel.getByRole("button", { name: "生成发送预览", exact: true }).click();
+  await waitUntil(
+    async () => (await preview.inputValue()) === "Translated: compose workbench",
+    "first composer preview",
+  );
+  await outgoingSource.fill("changed compose");
+  assert.equal(await panel.getByRole("button", { name: "插入 ChatGPT" }).isDisabled(), true);
+  await panel
+    .getByText("原文已变化，请重新生成发送预览", { exact: true })
+    .waitFor({ state: "visible" });
+  await panel.getByRole("button", { name: "生成发送预览", exact: true }).click();
+  await waitUntil(
+    async () => (await preview.inputValue()) === "Translated: changed compose",
+    "refreshed composer preview",
+  );
+  await panel.getByRole("button", { name: "原文 + 译文" }).click();
+  assert.equal(
+    await preview.inputValue(),
+    "原文：\nchanged compose\n\n译文：\nTranslated: changed compose",
+  );
+  await panel.getByRole("button", { name: "仅译文" }).click();
+  await preview.fill("Edited translation");
 
   await fixtureState(
     electronApp,
@@ -396,12 +423,12 @@ async function verifyTranslationWorkbench({
       return editor.value;
     })()`,
   );
-  await panel.getByRole("button", { name: "填入 ChatGPT" }).click();
+  await panel.getByRole("button", { name: "插入 ChatGPT" }).click();
   await panel
     .getByRole("alert")
     .getByText("ChatGPT 输入框中已有草稿", { exact: true })
     .waitFor({ state: "visible" });
-  await panel.getByRole("button", { name: "追加", exact: true }).click();
+  await panel.getByRole("button", { name: "追加到末尾", exact: true }).click();
   await waitUntil(
     async () =>
       (
@@ -413,6 +440,18 @@ async function verifyTranslationWorkbench({
       )?.value === "existing draft\n\nEdited translation",
     "append translated composer text",
   );
+  await panel.getByText("已插入 ChatGPT，尚未发送", { exact: true }).waitFor({
+    state: "visible",
+  });
+
+  process.stdout.write("[verify] reading and writing drafts survive mode switches independently\n");
+  await panel.getByRole("tab", { name: "阅读翻译" }).click();
+  assert.equal(await panel.getByLabel("待翻译原文").inputValue(), "changed workbench");
+  assert.equal(await result.textContent(), "Translated: changed workbench");
+  assert.equal(await panel.getByRole("button", { name: "插入 ChatGPT" }).count(), 0);
+  await panel.getByRole("tab", { name: "写给 AI" }).click();
+  assert.equal(await outgoingSource.inputValue(), "changed compose");
+  assert.equal(await preview.inputValue(), "Edited translation");
 
   const bounds = await panel.boundingBox();
   const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
