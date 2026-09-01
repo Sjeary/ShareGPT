@@ -149,7 +149,7 @@ test("翻译上游地址阻止回环、内网、metadata 和 IPv4-mapped IPv6", 
 test("托管翻译取消会销毁上游请求且不会返回成功结果", async () => {
   const controller = new AbortController();
   let destroyed = 0;
-  const pendingRequest = (_options, _callback) => {
+  const pendingRequest = () => {
     const request = new EventEmitter();
     request.setTimeout = () => undefined;
     request.end = () => undefined;
