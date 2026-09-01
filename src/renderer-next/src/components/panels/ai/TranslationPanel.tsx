@@ -65,6 +65,8 @@ interface TranslationPanelProps {
   kind: AiKind
   tabId: string
   environmentId: string
+  width: number
+  replacement: boolean
 }
 
 interface TranslationRun {
@@ -182,7 +184,13 @@ function startTranslation(
   return { promise, cancel: () => cancel() }
 }
 
-export function TranslationPanel({ kind, tabId, environmentId }: TranslationPanelProps) {
+export function TranslationPanel({
+  kind,
+  tabId,
+  environmentId,
+  width,
+  replacement,
+}: TranslationPanelProps) {
   const state = useTranslationStore()
   const load = state.load
   const cancelRef = useRef<null | (() => void)>(null)
@@ -480,19 +488,21 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
 
   return (
     <aside
-      className="flex h-full w-[400px] min-w-[340px] max-w-[46%] shrink-0 flex-col border-l border-border bg-background"
+      className="flex h-full min-w-0 shrink-0 flex-col bg-background"
+      style={{ width: replacement ? '100%' : width }}
       aria-label="翻译工作台"
+      data-layout={replacement ? 'replace' : 'split'}
     >
       <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
         <Languages className="size-4 text-primary" />
         <h2 className="text-sm font-semibold">翻译</h2>
-        <span className="text-xs text-muted-foreground">
+        <span className="min-w-0 truncate text-xs text-muted-foreground">
           {PROVIDERS.find((item) => item.id === state.config.provider)?.label} · {providerStatus}
         </span>
         <Button
           variant="ghost"
           size="icon"
-          className={cn('ml-auto size-8', state.settingsOpen && 'bg-accent')}
+          className={cn('ml-auto size-8 shrink-0', state.settingsOpen && 'bg-accent')}
           title="翻译设置"
           aria-label="翻译设置"
           aria-expanded={state.settingsOpen}
@@ -503,7 +513,7 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
         <Button
           variant="ghost"
           size="icon"
-          className="size-8"
+          className="size-8 shrink-0"
           title="关闭翻译侧栏"
           aria-label="关闭翻译侧栏"
           onClick={state.close}
@@ -566,7 +576,7 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
 
       {state.mode === 'read' ? (
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
-          <div className="flex items-center gap-2">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
             <LanguageSelect
               value={state.config.sourceLanguage}
               includeAuto
@@ -582,10 +592,10 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
           </div>
 
           <section className="space-y-1.5">
-            <div className="flex min-h-8 items-center gap-2">
+            <div className="flex min-h-8 flex-wrap items-center gap-2">
               <span className="text-xs font-medium">原文</span>
               <span className="text-[11px] text-muted-foreground">{sourceNote}</span>
-              <div className="ml-auto flex gap-1">
+              <div className="ml-auto flex shrink-0 gap-1">
                 <Button
                   variant="outline"
                   size="sm"
@@ -635,7 +645,7 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
           </Button>
 
           <section className="flex min-h-44 flex-1 flex-col space-y-1.5">
-            <div className="flex min-h-8 items-center gap-2">
+            <div className="flex min-h-8 flex-wrap items-center gap-2">
               <span className="text-xs font-medium">译文</span>
               <span className="text-[11px] text-muted-foreground">仅供阅读，不会写入网页</span>
               <div className="ml-auto flex gap-1">
@@ -702,7 +712,7 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
-            <div className="flex items-center gap-2">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2">
               <LanguageSelect
                 value={state.config.sourceLanguage}
                 includeAuto
@@ -718,7 +728,7 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
             </div>
 
             <section className="space-y-1.5">
-              <div className="flex min-h-8 items-center gap-2">
+              <div className="flex min-h-8 flex-wrap items-center gap-2">
                 <span className="text-xs font-medium">我想说</span>
                 <span className="text-[11px] text-muted-foreground">
                   先翻译预览，不接触网页输入框
@@ -751,7 +761,7 @@ export function TranslationPanel({ kind, tabId, environmentId }: TranslationPane
             </Button>
 
             <section className="flex min-h-44 flex-1 flex-col space-y-1.5">
-              <div className="flex min-h-8 items-center gap-2">
+              <div className="flex min-h-8 flex-wrap items-center gap-2">
                 <span className="text-xs font-medium">发送预览</span>
                 <span className="text-[11px] text-muted-foreground">
                   {state.composer.previewEdited ? '已修改' : '确认后才会写入网页'}

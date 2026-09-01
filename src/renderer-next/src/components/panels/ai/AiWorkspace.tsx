@@ -63,6 +63,22 @@ import {
   routeForEnvironment,
 } from '@/lib/aiEnvironments'
 import type { AdvancedAiSettings, AppSettings } from '@/types/settings'
+import {
+  TRANSLATION_PANEL_DEFAULT_WIDTH,
+  TRANSLATION_PANEL_MIN_WIDTH,
+  normalizeTranslationPanelWidth,
+  resolveTranslationPanelLayout,
+} from '@/lib/translationPanelLayout'
+
+const TRANSLATION_PANEL_WIDTH_KEY = 'sharegpt.translationPanelWidth'
+
+function loadTranslationPanelWidth(): number {
+  try {
+    return normalizeTranslationPanelWidth(window.localStorage.getItem(TRANSLATION_PANEL_WIDTH_KEY))
+  } catch {
+    return TRANSLATION_PANEL_DEFAULT_WIDTH
+  }
+}
 
 function safeText(value: unknown): string {
   if (value === undefined || value === null) return ''
@@ -167,6 +183,47 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       s.environmentId === environmentId,
   )
   const toggleTranslation = useTranslationStore((s) => s.toggle)
+  const translationBodyRef = useRef<HTMLDivElement | null>(null)
+  const translationDragRef = useRef<{
+    pointerId: number
+    startX: number
+    startWidth: number
+  } | null>(null)
+  const [translationBodyWidth, setTranslationBodyWidth] = useState(0)
+  const [preferredTranslationWidth, setPreferredTranslationWidth] =
+    useState(loadTranslationPanelWidth)
+  const preferredTranslationWidthRef = useRef(preferredTranslationWidth)
+  const translationLayout = useMemo(
+    () => resolveTranslationPanelLayout(translationBodyWidth, preferredTranslationWidth),
+    [preferredTranslationWidth, translationBodyWidth],
+  )
+  const translationReplacingHost = translationOpen && translationLayout.mode === 'replace'
+
+  useEffect(() => {
+    const body = translationBodyRef.current
+    if (!body || typeof ResizeObserver === 'undefined') return
+    const update = () => setTranslationBodyWidth(body.getBoundingClientRect().width)
+    update()
+    const observer = new ResizeObserver(update)
+    observer.observe(body)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    preferredTranslationWidthRef.current = preferredTranslationWidth
+  }, [preferredTranslationWidth])
+
+  const setTranslationWidth = useCallback((width: number, persist = false) => {
+    const normalized = normalizeTranslationPanelWidth(width)
+    preferredTranslationWidthRef.current = normalized
+    setPreferredTranslationWidth(normalized)
+    if (!persist) return
+    try {
+      window.localStorage.setItem(TRANSLATION_PANEL_WIDTH_KEY, String(normalized))
+    } catch {
+      // Device-local layout preference is best effort.
+    }
+  }, [])
   const pendingComposerConfirmation = useTranslationStore((s) => {
     const pending = s.pendingComposerConfirmation
     return pending?.kind === kind &&
@@ -404,7 +461,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const proxyPort = resolveProxyPort(settings?.sender?.socks_listen_port)
 
   // 宿主可见 = 代理运行中 (面板已激活由 Shell 的条件渲染保证)。
-  const hostVisible = networkReady
+  const hostVisible = networkReady && !translationReplacingHost
   const { hostRef, schedule } = useAiHostSync(kind, hostVisible, activeTabId, environmentId)
 
   // 全局只绑定一次 onAiEvent。
@@ -993,8 +1050,8 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         )}
 
         {/* 原生 view 宿主 + 遮罩 */}
-        <div className="flex min-h-0 flex-1">
-          <div className="relative min-w-0 flex-1">
+        <div ref={translationBodyRef} className="flex min-h-0 flex-1">
+          <div className={cn('relative min-w-0 flex-1', translationReplacingHost && 'hidden')}>
             <div ref={hostRef} className="absolute inset-0" />
             {overlay && (
               <div className="absolute inset-0 flex items-center justify-center bg-background/95 p-6">
@@ -1006,12 +1063,71 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               </div>
             )}
           </div>
+          {translationOpen && translationLayout.mode === 'split' && (
+            <div
+              role="separator"
+              aria-label="调整翻译栏宽度"
+              aria-orientation="vertical"
+              aria-valuemin={TRANSLATION_PANEL_MIN_WIDTH}
+              aria-valuemax={translationLayout.maximumPanelWidth}
+              aria-valuenow={translationLayout.panelWidth}
+              tabIndex={0}
+              className="group relative w-1.5 shrink-0 cursor-col-resize bg-border/35 outline-none after:absolute after:inset-y-0 after:left-1/2 after:w-px after:-translate-x-1/2 after:bg-border hover:after:w-0.5 hover:after:bg-primary focus-visible:after:w-0.5 focus-visible:after:bg-ring"
+              title="拖动调整翻译栏宽度，双击恢复默认"
+              onDoubleClick={() => setTranslationWidth(TRANSLATION_PANEL_DEFAULT_WIDTH, true)}
+              onKeyDown={(event) => {
+                if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+                event.preventDefault()
+                const step = event.shiftKey ? 48 : 16
+                const direction = event.key === 'ArrowLeft' ? 1 : -1
+                const next = Math.min(
+                  translationLayout.maximumPanelWidth,
+                  Math.max(
+                    TRANSLATION_PANEL_MIN_WIDTH,
+                    translationLayout.panelWidth + direction * step,
+                  ),
+                )
+                setTranslationWidth(next, true)
+              }}
+              onPointerDown={(event) => {
+                translationDragRef.current = {
+                  pointerId: event.pointerId,
+                  startX: event.clientX,
+                  startWidth: translationLayout.panelWidth,
+                }
+                event.currentTarget.setPointerCapture(event.pointerId)
+              }}
+              onPointerMove={(event) => {
+                const drag = translationDragRef.current
+                if (!drag || drag.pointerId !== event.pointerId) return
+                const next = Math.min(
+                  translationLayout.maximumPanelWidth,
+                  Math.max(
+                    TRANSLATION_PANEL_MIN_WIDTH,
+                    drag.startWidth + drag.startX - event.clientX,
+                  ),
+                )
+                setTranslationWidth(next)
+              }}
+              onPointerUp={(event) => {
+                if (translationDragRef.current?.pointerId !== event.pointerId) return
+                translationDragRef.current = null
+                event.currentTarget.releasePointerCapture(event.pointerId)
+                setTranslationWidth(preferredTranslationWidthRef.current, true)
+              }}
+              onPointerCancel={() => {
+                translationDragRef.current = null
+              }}
+            />
+          )}
           {translationOpen && (
             <TranslationPanel
               key={`${kind}:${environmentId}:${activeTabId}`}
               kind={kind}
               tabId={activeTabId}
               environmentId={environmentId}
+              width={translationLayout.panelWidth}
+              replacement={translationLayout.mode === 'replace'}
             />
           )}
         </div>
