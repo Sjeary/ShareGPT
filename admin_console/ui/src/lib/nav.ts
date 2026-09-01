@@ -7,6 +7,7 @@ import {
   MessageSquareText,
   ShieldAlert,
   Network,
+  Languages,
   type LucideIcon,
 } from 'lucide-react'
 import type { AdminTab } from '@/types/admin'
@@ -23,6 +24,7 @@ export const NAV: NavItem[] = [
   { key: 'users', label: '用户管理', icon: Users, hint: '查看 / 新增 / 编辑用户' },
   { key: 'bootstrap', label: 'Sender 配置', icon: Cable, hint: '首登下发默认配置' },
   { key: 'airport', label: '代理线路', icon: Network, hint: '内置线路目录与出口预期' },
+  { key: 'translation', label: '翻译服务', icon: Languages, hint: '托管 API、授权与用量' },
   { key: 'releases', label: '版本发布', icon: Rocket, hint: '上传安装包与说明' },
   { key: 'feedback', label: '反馈建议', icon: MessageSquareText, hint: '用户提交的反馈' },
   { key: 'proxy-missing', label: '漏走代理域名', icon: ShieldAlert, hint: '客户端上报的待补域名' },

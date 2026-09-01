@@ -68,6 +68,7 @@ export type AdminTab =
   | 'feedback'
   | 'proxy-missing'
   | 'airport'
+  | 'translation'
 
 export interface ProxyRoute {
   id: string
@@ -97,6 +98,81 @@ export interface ProxyRouteHealth {
   asn: string
   checks: Record<string, boolean>
   checkedAt: string
+}
+
+export interface TranslationPricing {
+  currency: string
+  inputPerMillion: number
+  outputPerMillion: number
+  perRequest: number
+}
+
+export interface AdminTranslationProfile {
+  id: string
+  name: string
+  type: 'ai' | 'api'
+  baseUrl: string
+  model: string
+  effort: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  enabled: boolean
+  accessMode: 'all' | 'restricted'
+  allowedUsernames: string[]
+  pricing: TranslationPricing
+  apiKeyConfigured: boolean
+  apiKeyHint: string
+  usesPlainHttp: boolean
+  updatedAt?: string
+  apiKey?: string
+  clearApiKey?: boolean
+}
+
+export interface TranslationProfileCatalog {
+  version: 1
+  defaultProfileId: string
+  encryptionReady: boolean
+  profiles: AdminTranslationProfile[]
+  updatedAt?: string
+}
+
+export interface TranslationUsageTotals {
+  requests: number
+  inputChars: number
+  outputChars: number
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  costByCurrency: Record<string, number>
+}
+
+export interface TranslationUsageReport {
+  totals: TranslationUsageTotals
+  byProfile: Array<{
+    profileId: string
+    profileName: string
+    requests: number
+    totalTokens: number
+    costByCurrency: Record<string, number>
+  }>
+  byUser: Array<{
+    username: string
+    requests: number
+    totalTokens: number
+    costByCurrency: Record<string, number>
+  }>
+  recent: Array<{
+    id: string
+    username: string
+    profileId: string
+    profileName: string
+    timestamp: string
+    inputChars: number
+    outputChars: number
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    costMicros: number
+    currency: string
+  }>
 }
 
 // 客户端上报的"会用到但没走代理"的域名 (聚合)。供维护内置代理清单。

@@ -13,6 +13,9 @@ import {
   type FeedbackItem,
   type ProxyMissingItem,
   type SharedRelease,
+  type AdminTranslationProfile,
+  type TranslationProfileCatalog,
+  type TranslationUsageReport,
 } from '@/types/admin'
 
 const THEME_KEY = 'sharegpt-admin-theme'
@@ -73,6 +76,10 @@ interface AdminState {
   proxyRoutes: ProxyRoute[]
   proxyRoutesLoading: boolean
   proxyRouteHealth: ProxyRouteHealth[]
+  translationCatalog: TranslationProfileCatalog | null
+  translationLoading: boolean
+  translationUsage: TranslationUsageReport | null
+  translationUsageLoading: boolean
 
   // 导航 / 偏好
   activeTab: AdminTab
@@ -96,6 +103,15 @@ interface AdminState {
   loadProxyRoutes: (opts?: { silent?: boolean }) => Promise<void>
   loadProxyRouteHealth: (opts?: { silent?: boolean }) => Promise<void>
   saveProxyRoutes: (routes: ProxyRoute[]) => Promise<void>
+  loadTranslationProfiles: (opts?: { silent?: boolean }) => Promise<void>
+  saveTranslationProfiles: (
+    defaultProfileId: string,
+    profiles: AdminTranslationProfile[],
+  ) => Promise<void>
+  loadTranslationUsage: (opts?: {
+    silent?: boolean
+    filters?: { from?: string; to?: string; username?: string; profileId?: string }
+  }) => Promise<void>
 
   // 开发者(全局发布)
   devLogin: (serverUrl: string, key: string) => Promise<void>
@@ -138,6 +154,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
       authed: false,
       users: [],
       bootstrap: null,
+      translationCatalog: null,
+      translationUsage: null,
     })
     if (message) toast.error(message)
   }
@@ -176,6 +194,10 @@ export const useAdminStore = create<AdminState>((set, get) => {
     proxyRoutes: [],
     proxyRoutesLoading: false,
     proxyRouteHealth: [],
+    translationCatalog: null,
+    translationLoading: false,
+    translationUsage: null,
+    translationUsageLoading: false,
 
     activeTab: 'overview',
     setActiveTab: (activeTab) => set({ activeTab }),
@@ -233,6 +255,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
           get().loadBootstrap({ silent: true }),
           get().loadProxyRoutes({ silent: true }),
           get().loadProxyRouteHealth({ silent: true }),
+          get().loadTranslationProfiles({ silent: true }),
+          get().loadTranslationUsage({ silent: true }),
         ])
       } finally {
         set({ busy: false })
@@ -271,6 +295,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
           get().loadBootstrap({ silent: true }),
           get().loadProxyRoutes({ silent: true }),
           get().loadProxyRouteHealth({ silent: true }),
+          get().loadTranslationProfiles({ silent: true }),
+          get().loadTranslationUsage({ silent: true }),
         ])
         toast.success('管理员已初始化，可以直接开始管理服务器。')
       } finally {
@@ -291,6 +317,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
         authed: false,
         users: [],
         bootstrap: null,
+        translationCatalog: null,
+        translationUsage: null,
         activeTab: 'overview',
       })
     },
@@ -414,6 +442,51 @@ export const useAdminStore = create<AdminState>((set, get) => {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
           toast.error(err instanceof Error ? err.message : String(err))
         }
+      }
+    },
+
+    loadTranslationProfiles: async (opts) => {
+      set({ translationLoading: true })
+      try {
+        const payload = await request<TranslationProfileCatalog>('/api/admin/translation-profiles')
+        set({ translationCatalog: payload })
+      } catch (err) {
+        if (!opts?.silent && !(err instanceof AuthExpiredError)) {
+          toast.error(err instanceof Error ? err.message : String(err))
+        }
+      } finally {
+        set({ translationLoading: false })
+      }
+    },
+
+    saveTranslationProfiles: async (defaultProfileId, profiles) => {
+      const payload = await request<TranslationProfileCatalog>('/api/admin/translation-profiles', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ defaultProfileId, profiles }),
+      })
+      set({ translationCatalog: payload })
+      toast.success('托管翻译配置已保存')
+    },
+
+    loadTranslationUsage: async (opts) => {
+      set({ translationUsageLoading: true })
+      try {
+        const query = new URLSearchParams()
+        if (opts?.filters?.from) query.set('from', opts.filters.from)
+        if (opts?.filters?.to) query.set('to', opts.filters.to)
+        if (opts?.filters?.username) query.set('username', opts.filters.username)
+        if (opts?.filters?.profileId) query.set('profileId', opts.filters.profileId)
+        const payload = await request<TranslationUsageReport>(
+          `/api/admin/translation-usage${query.size ? `?${query.toString()}` : ''}`,
+        )
+        set({ translationUsage: payload })
+      } catch (err) {
+        if (!opts?.silent && !(err instanceof AuthExpiredError)) {
+          toast.error(err instanceof Error ? err.message : String(err))
+        }
+      } finally {
+        set({ translationUsageLoading: false })
       }
     },
 

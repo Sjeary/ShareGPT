@@ -10,6 +10,7 @@ import { ExtrasPanel } from '@/components/panels/ExtrasPanel'
 import { FeedbackPanel } from '@/components/panels/FeedbackPanel'
 import { ProxyMissingPanel } from '@/components/panels/ProxyMissingPanel'
 import { AirportPanel } from '@/components/panels/AirportPanel'
+import { TranslationPanel } from '@/components/panels/TranslationPanel'
 
 const REFRESH_INTERVAL = 15000
 
@@ -37,6 +38,7 @@ export function Shell() {
           {active === 'users' && <UsersPanel />}
           {active === 'bootstrap' && <BootstrapPanel />}
           {active === 'airport' && <AirportPanel />}
+          {active === 'translation' && <TranslationPanel />}
           {active === 'releases' && <ReleasesPanel />}
           {active === 'feedback' && <FeedbackPanel />}
           {active === 'proxy-missing' && <ProxyMissingPanel />}
