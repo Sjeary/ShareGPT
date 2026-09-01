@@ -280,7 +280,7 @@ export function TranslationPanel({
   useEffect(() => {
     operationGenerationRef.current += 1
     return () => {
-      cancelActiveTranslation(false)
+      cancelActiveTranslation(true)
     }
   }, [cancelActiveTranslation, environmentId, kind, state.principalId, tabId])
 
@@ -594,7 +594,7 @@ export function TranslationPanel({
           title="关闭翻译侧栏"
           aria-label="关闭翻译侧栏"
           onClick={() => {
-            cancelActiveTranslation(false)
+            cancelActiveTranslation(true)
             state.close()
           }}
         >

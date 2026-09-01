@@ -486,6 +486,27 @@ async function verifyTranslationWorkbench({
     "reading translation after cancellation",
   );
 
+  process.stdout.write("[verify] closing during translation settles state and rejects late IPC\n");
+  await source.fill("slow: reader close");
+  await panel.getByRole("button", { name: "翻译", exact: true }).click();
+  await panel.getByRole("button", { name: "停止翻译", exact: true }).waitFor({
+    state: "visible",
+  });
+  await panel.getByRole("button", { name: "关闭翻译侧栏" }).click();
+  await panel.waitFor({ state: "hidden" });
+  await page.waitForTimeout(1_600);
+  await openButton.click();
+  await panel.waitFor({ state: "visible" });
+  assert.equal(await panel.getByRole("button", { name: "停止翻译", exact: true }).count(), 0);
+  assert.equal(await source.isEnabled(), true);
+  assert.equal(await result.textContent(), "译文将在这里显示");
+  await source.fill("translation after close");
+  await panel.getByRole("button", { name: "翻译", exact: true }).click();
+  await waitUntil(
+    async () => (await result.textContent()) === "Translated: translation after close",
+    "reading translation after closing an active run",
+  );
+
   process.stdout.write(
     "[verify] writing mode stages an isolated editable preview before composer insertion\n",
   );
@@ -562,8 +583,8 @@ async function verifyTranslationWorkbench({
 
   process.stdout.write("[verify] reading and writing drafts survive mode switches independently\n");
   await panel.getByRole("tab", { name: "阅读翻译" }).click();
-  assert.equal(await panel.getByLabel("待翻译原文").inputValue(), "changed workbench");
-  assert.equal(await result.textContent(), "Translated: changed workbench");
+  assert.equal(await panel.getByLabel("待翻译原文").inputValue(), "translation after close");
+  assert.equal(await result.textContent(), "Translated: translation after close");
   assert.equal(await panel.getByRole("button", { name: "插入 ChatGPT" }).count(), 0);
   await panel.getByRole("tab", { name: "写给 AI" }).click();
   assert.equal(await outgoingSource.inputValue(), "changed compose");
