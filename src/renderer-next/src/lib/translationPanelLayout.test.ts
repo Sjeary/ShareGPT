@@ -17,6 +17,10 @@ test('translation panel keeps the preferred width when the workspace has room', 
 })
 
 test('translation panel clamps persisted and effective widths', () => {
+  assert.equal(normalizeTranslationPanelWidth(null), TRANSLATION_PANEL_DEFAULT_WIDTH)
+  assert.equal(normalizeTranslationPanelWidth(undefined), TRANSLATION_PANEL_DEFAULT_WIDTH)
+  assert.equal(normalizeTranslationPanelWidth(''), TRANSLATION_PANEL_DEFAULT_WIDTH)
+  assert.equal(normalizeTranslationPanelWidth('   '), TRANSLATION_PANEL_DEFAULT_WIDTH)
   assert.equal(normalizeTranslationPanelWidth('invalid'), TRANSLATION_PANEL_DEFAULT_WIDTH)
   assert.equal(normalizeTranslationPanelWidth(100), TRANSLATION_PANEL_MIN_WIDTH)
   assert.equal(normalizeTranslationPanelWidth(900), TRANSLATION_PANEL_MAX_WIDTH)

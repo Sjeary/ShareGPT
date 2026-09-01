@@ -347,6 +347,11 @@ async function verifyTranslationWorkbench({
   const panelBeforeResize = await panel.boundingBox();
   const hostBeforeResize = await nativeHost.boundingBox();
   assert.ok(panelBeforeResize && hostBeforeResize);
+  assert.equal(
+    await page.evaluate(() => localStorage.getItem("sharegpt.translationPanelWidth")),
+    null,
+  );
+  assert.ok(Math.abs(panelBeforeResize.width - 400) < 1);
   await separator.press("ArrowLeft");
   await waitUntil(async () => {
     const resized = await panel.boundingBox();

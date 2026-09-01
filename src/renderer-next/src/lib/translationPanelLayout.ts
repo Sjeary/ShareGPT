@@ -10,6 +10,8 @@ export type TranslationPanelLayout =
   | { mode: 'replace'; panelWidth: number; maximumPanelWidth: number }
 
 export function normalizeTranslationPanelWidth(value: unknown): number {
+  if (value === null || value === undefined) return TRANSLATION_PANEL_DEFAULT_WIDTH
+  if (typeof value === 'string' && !value.trim()) return TRANSLATION_PANEL_DEFAULT_WIDTH
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return TRANSLATION_PANEL_DEFAULT_WIDTH
   return Math.min(
