@@ -189,7 +189,13 @@ async function startFixtureServers(directory) {
     }
     if (request.method === "POST" && fixtureUrl.pathname === "/translate") {
       const body = JSON.parse((await readBody(request)) || "{}");
-      json(response, 200, { translatedText: `Translated: ${String(body.q || "")}` });
+      const translatedText = `Translated: ${String(body.q || "")}`;
+      if (String(body.q || "").startsWith("slow:")) {
+        const timer = setTimeout(() => json(response, 200, { translatedText }), 1_500);
+        response.once("close", () => clearTimeout(timer));
+      } else {
+        json(response, 200, { translatedText });
+      }
       return;
     }
     if (request.method === "POST" && request.url?.startsWith("/backend-api/conversation")) {
@@ -331,6 +337,84 @@ async function verifyTranslationWorkbench({
 
   process.stdout.write("[verify] translation settings use the real offline provider\n");
   await panel.getByRole("button", { name: "翻译设置" }).click();
+
+  process.stdout.write(
+    "[verify] translation panel resizes and replaces the native host when narrow\n",
+  );
+  const separator = page.getByRole("separator", { name: "调整翻译栏宽度" });
+  await separator.waitFor({ state: "visible" });
+  const nativeHost = page.getByTestId("ai-workspace-host-gpt");
+  const panelBeforeResize = await panel.boundingBox();
+  const hostBeforeResize = await nativeHost.boundingBox();
+  assert.ok(panelBeforeResize && hostBeforeResize);
+  await separator.press("ArrowLeft");
+  await waitUntil(async () => {
+    const resized = await panel.boundingBox();
+    return resized && resized.width >= panelBeforeResize.width + 15;
+  }, "translation panel keyboard resize");
+  await waitUntil(async () => {
+    const resized = await nativeHost.boundingBox();
+    return resized && resized.width <= hostBeforeResize.width - 15;
+  }, "native host element resize after translation panel resize");
+  assert.equal(
+    await page.evaluate(() => Number(localStorage.getItem("sharegpt.translationPanelWidth"))),
+    Math.round((await panel.boundingBox()).width),
+  );
+
+  const originalWindowSize = await electronApp.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+    return window.getSize();
+  });
+  const attachedHostBounds = await nativeHost.boundingBox();
+  assert.ok(attachedHostBounds);
+  await api(page, "syncAiViewHost", {
+    kind: "gpt",
+    tabId,
+    visible: true,
+    bounds: attachedHostBounds,
+  });
+  await waitUntil(
+    async () => visibleFixture(await appSnapshot(electronApp)).length === 1,
+    "fixture native host attach before narrow layout",
+  );
+  await electronApp.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+    window.setSize(860, Math.max(620, window.getSize()[1]));
+  });
+  await panel.locator("xpath=self::*[@data-layout='replace']").waitFor({ state: "visible" });
+  await waitUntil(
+    async () => visibleFixture(await appSnapshot(electronApp)).length === 0,
+    "native host detach in narrow translation layout",
+  );
+  assert.equal(await separator.count(), 0);
+  const narrowScreenshot = await electronApp.evaluate(async ({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+    const image = await window.capturePage();
+    return image.toPNG().toString("base64");
+  });
+  const narrowScreenshotPath = path.join(
+    path.dirname(screenshotPath),
+    "translation-workbench-narrow.png",
+  );
+  fs.writeFileSync(narrowScreenshotPath, Buffer.from(narrowScreenshot, "base64"));
+  process.stdout.write(`[verify] narrow translation screenshot: ${narrowScreenshotPath}\n`);
+  await electronApp.evaluate(({ BrowserWindow }, size) => {
+    const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+    window.setSize(size[0], size[1]);
+  }, originalWindowSize);
+  await panel.locator("xpath=self::*[@data-layout='split']").waitFor({ state: "visible" });
+  const restoredHostBounds = await nativeHost.boundingBox();
+  assert.ok(restoredHostBounds && restoredHostBounds.width > 1 && restoredHostBounds.height > 1);
+  await api(page, "syncAiViewHost", {
+    kind: "gpt",
+    tabId,
+    visible: true,
+    bounds: restoredHostBounds,
+  });
+  await waitUntil(
+    async () => visibleFixture(await appSnapshot(electronApp)).length === 1,
+    "native host reattach after restoring translation split layout",
+  );
   await panel.getByLabel("翻译服务").selectOption("offline");
   await page.waitForTimeout(150);
   await panel.getByLabel("本地翻译服务地址").fill(translationBaseUrl);
@@ -384,6 +468,25 @@ async function verifyTranslationWorkbench({
   );
 
   process.stdout.write(
+    "[verify] stopping a reading translation cannot be overwritten by late IPC\n",
+  );
+  await source.fill("slow: reader stop");
+  await panel.getByRole("button", { name: "翻译", exact: true }).click();
+  const stopReader = panel.getByRole("button", { name: "停止翻译", exact: true });
+  await stopReader.waitFor({ state: "visible" });
+  await stopReader.click();
+  await panel.getByText("已停止翻译", { exact: true }).waitFor({ state: "visible" });
+  assert.equal(await source.isEnabled(), true);
+  await page.waitForTimeout(1_600);
+  assert.equal(await result.textContent(), "译文将在这里显示");
+  await source.fill("changed workbench");
+  await panel.getByRole("button", { name: "翻译", exact: true }).click();
+  await waitUntil(
+    async () => (await result.textContent()) === "Translated: changed workbench",
+    "reading translation after cancellation",
+  );
+
+  process.stdout.write(
     "[verify] writing mode stages an isolated editable preview before composer insertion\n",
   );
   await panel.getByRole("tab", { name: "写给 AI" }).click();
@@ -395,6 +498,19 @@ async function verifyTranslationWorkbench({
     async () => (await preview.inputValue()) === "Translated: compose workbench",
     "first composer preview",
   );
+  process.stdout.write("[verify] stopping composer translation restores only complete preview\n");
+  await outgoingSource.fill("slow: composer stop");
+  await panel.getByRole("button", { name: "生成发送预览", exact: true }).click();
+  const stopComposer = panel.getByRole("button", { name: "停止翻译", exact: true });
+  await stopComposer.waitFor({ state: "visible" });
+  await stopComposer.click();
+  await panel
+    .getByText("已停止；保留的上一次发送预览已经过期", { exact: true })
+    .waitFor({ state: "visible" });
+  assert.equal(await preview.inputValue(), "Translated: compose workbench");
+  assert.equal(await panel.getByRole("button", { name: "插入 ChatGPT" }).isDisabled(), true);
+  await page.waitForTimeout(1_600);
+  assert.equal(await preview.inputValue(), "Translated: compose workbench");
   await outgoingSource.fill("changed compose");
   assert.equal(await panel.getByRole("button", { name: "插入 ChatGPT" }).isDisabled(), true);
   await panel

@@ -1,7 +1,12 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
 import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
-import { buildComposerPreview, type ComposerOutputFormat } from '@/lib/translationWorkflow'
+import {
+  buildComposerPreview,
+  stoppedComposerState,
+  type ComposerOutputFormat,
+  type ComposerTranslationSnapshot,
+} from '@/lib/translationWorkflow'
 import { useAppStore } from '@/store/useAppStore'
 import type { AiKind } from '@/store/useAiStore'
 import type { TranslationProvider, TranslationSettings, TranslationStyle } from '@/types/settings'
@@ -54,7 +59,7 @@ function normalizeSettings(
   }
 }
 
-type TranslationPhase = 'idle' | 'translating' | 'ready' | 'stale' | 'writing' | 'error'
+type TranslationPhase = 'idle' | 'translating' | 'ready' | 'stale' | 'stopped' | 'writing' | 'error'
 
 interface ReaderTranslationState {
   sourceKind: 'manual' | 'selection' | 'page'
@@ -135,6 +140,7 @@ interface TranslationState {
   appendReaderResult: (text: string) => void
   beginReaderTranslation: () => void
   completeReaderTranslation: () => void
+  stopReaderTranslation: () => void
   setReaderStatus: (status: string) => void
   setReaderLoading: (loading: boolean) => void
   setComposerSourceText: (text: string) => void
@@ -142,6 +148,7 @@ interface TranslationState {
   editComposerPreview: (text: string) => void
   beginComposerTranslation: () => void
   completeComposerTranslation: (translatedText: string) => void
+  stopComposerTranslation: (snapshot: ComposerTranslationSnapshot | null) => void
   setComposerOutputFormat: (format: ComposerOutputFormat) => void
   setComposerStatus: (status: string) => void
   beginComposerWrite: () => void
@@ -320,6 +327,17 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
     set((state) => ({
       reader: { ...state.reader, phase: 'ready', loading: false, status: '译文已就绪' },
     })),
+  stopReaderTranslation: () =>
+    set((state) => ({
+      reader: {
+        ...state.reader,
+        phase: 'stopped',
+        loading: false,
+        status: state.reader.result
+          ? '已停止；当前译文不完整，可复制但请勿当作完整结果'
+          : '已停止翻译',
+      },
+    })),
   setReaderStatus: (status) => set((state) => ({ reader: { ...state.reader, status } })),
   setReaderLoading: (loading) => set((state) => ({ reader: { ...state.reader, loading } })),
   setComposerSourceText: (sourceText) =>
@@ -374,6 +392,14 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
         phase: 'ready',
         loading: false,
         status: '发送预览已就绪，尚未写入网页',
+      },
+    })),
+  stopComposerTranslation: (snapshot) =>
+    set((state) => ({
+      composer: {
+        ...state.composer,
+        ...stoppedComposerState(snapshot),
+        loading: false,
       },
     })),
   setComposerOutputFormat: (outputFormat) =>

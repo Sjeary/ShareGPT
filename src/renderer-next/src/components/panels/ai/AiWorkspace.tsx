@@ -1052,7 +1052,11 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         {/* 原生 view 宿主 + 遮罩 */}
         <div ref={translationBodyRef} className="flex min-h-0 flex-1">
           <div className={cn('relative min-w-0 flex-1', translationReplacingHost && 'hidden')}>
-            <div ref={hostRef} className="absolute inset-0" />
+            <div
+              ref={hostRef}
+              className="absolute inset-0"
+              data-testid={`ai-workspace-host-${kind}`}
+            />
             {overlay && (
               <div className="absolute inset-0 flex items-center justify-center bg-background/95 p-6">
                 <div className="max-w-md text-center">

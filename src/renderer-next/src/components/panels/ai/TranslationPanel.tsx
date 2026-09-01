@@ -10,6 +10,7 @@ import {
   PlugZap,
   RefreshCw,
   Settings2,
+  Square,
   TextCursorInput,
   TriangleAlert,
   X,
@@ -26,6 +27,7 @@ import {
 } from '@/lib/managedTranslation'
 import { runAi } from '@/lib/notes/aiClient'
 import { REMOTE_HTTP_WARNING, usesRemoteHttp } from '@/lib/remoteHttp'
+import type { ComposerTranslationSnapshot } from '@/lib/translationWorkflow'
 import { cn } from '@/lib/utils'
 import { useTranslationStore } from '@/store/useTranslationStore'
 import { useAppStore } from '@/store/useAppStore'
@@ -73,6 +75,13 @@ interface TranslationPanelProps {
 interface TranslationRun {
   promise: Promise<string>
   cancel: () => void
+}
+
+interface ActiveTranslationRun {
+  generation: number
+  mode: 'read' | 'compose'
+  cancel: () => void
+  previousComposer: ComposerTranslationSnapshot | null
 }
 
 function cleanError(error: unknown): string {
@@ -208,7 +217,7 @@ export function TranslationPanel({
 }: TranslationPanelProps) {
   const state = useTranslationStore()
   const load = state.load
-  const cancelRef = useRef<null | (() => void)>(null)
+  const activeRunRef = useRef<ActiveTranslationRun | null>(null)
   const operationGenerationRef = useRef(0)
   const lastAutoTranslateRef = useRef(0)
   const [copied, setCopied] = useCopyIndicator()
@@ -228,6 +237,18 @@ export function TranslationPanel({
   const managedCatalog = managedResult.key === managedRequestKey ? managedResult.catalog : null
   const managedError = managedResult.key === managedRequestKey ? managedResult.error : ''
   const managedLoading = managedCanLoad && managedResult.key !== managedRequestKey
+
+  const cancelActiveTranslation = useCallback((showStoppedState: boolean) => {
+    const active = activeRunRef.current
+    if (!active) return
+    operationGenerationRef.current += 1
+    activeRunRef.current = null
+    active.cancel()
+    if (!showStoppedState) return
+    const current = useTranslationStore.getState()
+    if (active.mode === 'read') current.stopReaderTranslation()
+    else current.stopComposerTranslation(active.previousComposer)
+  }, [])
 
   useEffect(() => {
     void load()
@@ -259,17 +280,13 @@ export function TranslationPanel({
   useEffect(() => {
     operationGenerationRef.current += 1
     return () => {
-      operationGenerationRef.current += 1
-      cancelRef.current?.()
-      cancelRef.current = null
+      cancelActiveTranslation(false)
     }
-  }, [environmentId, kind, state.principalId, tabId])
+  }, [cancelActiveTranslation, environmentId, kind, state.principalId, tabId])
 
   const selectMode = (mode: 'read' | 'compose') => {
     if (mode === state.mode) return
-    operationGenerationRef.current += 1
-    cancelRef.current?.()
-    cancelRef.current = null
+    cancelActiveTranslation(false)
     setPendingWrite(false)
     state.setMode(mode)
   }
@@ -297,7 +314,7 @@ export function TranslationPanel({
       current.setReaderStatus('请先输入、选中或读取要翻译的内容')
       return
     }
-    cancelRef.current?.()
+    cancelActiveTranslation(false)
     const generation = operationGenerationRef.current + 1
     operationGenerationRef.current = generation
     current.beginReaderTranslation()
@@ -308,25 +325,41 @@ export function TranslationPanel({
       current.config.sourceLanguage,
       current.config.targetLanguage || 'zh',
       {
-        onDelta: current.config.provider === 'ai' ? current.appendReaderResult : undefined,
-        onStatus: current.setReaderStatus,
+        onDelta:
+          current.config.provider === 'ai'
+            ? (delta) => {
+                if (operationGenerationRef.current === generation) {
+                  useTranslationStore.getState().appendReaderResult(delta)
+                }
+              }
+            : undefined,
+        onStatus: (status) => {
+          if (operationGenerationRef.current === generation) {
+            useTranslationStore.getState().setReaderStatus(status)
+          }
+        },
       },
       {
         serverUrl: String(useAppStore.getState().settings?.collab?.server_url || ''),
         token: useAuthStore.getState().token,
       },
     )
-    cancelRef.current = run.cancel
+    activeRunRef.current = {
+      generation,
+      mode: 'read',
+      cancel: run.cancel,
+      previousComposer: null,
+    }
     try {
       const translated = await run.promise
       if (operationGenerationRef.current !== generation) return
-      cancelRef.current = null
+      if (activeRunRef.current?.generation === generation) activeRunRef.current = null
       if (!translated) throw new Error('翻译服务没有返回内容')
       if (current.config.provider !== 'ai') current.setReaderResult(translated)
       current.completeReaderTranslation()
     } catch (error) {
       if (operationGenerationRef.current !== generation) return
-      cancelRef.current = null
+      if (activeRunRef.current?.generation === generation) activeRunRef.current = null
       const message = cleanError(error)
       useTranslationStore.setState((latest) => ({
         reader: {
@@ -338,7 +371,7 @@ export function TranslationPanel({
       }))
       if (/配置 AI/.test(message)) current.setSettingsOpen(true)
     }
-  }, [])
+  }, [cancelActiveTranslation])
 
   const translateComposer = useCallback(async () => {
     const current = useTranslationStore.getState()
@@ -347,7 +380,17 @@ export function TranslationPanel({
       current.setComposerStatus('请先输入要写给 AI 的内容')
       return
     }
-    cancelRef.current?.()
+    cancelActiveTranslation(false)
+    const previousComposer: ComposerTranslationSnapshot | null =
+      current.composer.preview.trim() &&
+      (current.composer.phase === 'ready' || current.composer.phase === 'stale')
+        ? {
+            translation: current.composer.translation,
+            preview: current.composer.preview,
+            previewEdited: current.composer.previewEdited,
+            phase: current.composer.phase,
+          }
+        : null
     const generation = operationGenerationRef.current + 1
     operationGenerationRef.current = generation
     current.beginComposerTranslation()
@@ -358,24 +401,40 @@ export function TranslationPanel({
       current.config.sourceLanguage,
       current.config.siteLanguage || 'en',
       {
-        onDelta: current.config.provider === 'ai' ? current.appendComposerTranslation : undefined,
-        onStatus: current.setComposerStatus,
+        onDelta:
+          current.config.provider === 'ai'
+            ? (delta) => {
+                if (operationGenerationRef.current === generation) {
+                  useTranslationStore.getState().appendComposerTranslation(delta)
+                }
+              }
+            : undefined,
+        onStatus: (status) => {
+          if (operationGenerationRef.current === generation) {
+            useTranslationStore.getState().setComposerStatus(status)
+          }
+        },
       },
       {
         serverUrl: String(useAppStore.getState().settings?.collab?.server_url || ''),
         token: useAuthStore.getState().token,
       },
     )
-    cancelRef.current = run.cancel
+    activeRunRef.current = {
+      generation,
+      mode: 'compose',
+      cancel: run.cancel,
+      previousComposer,
+    }
     try {
       const translated = await run.promise
       if (operationGenerationRef.current !== generation) return
-      cancelRef.current = null
+      if (activeRunRef.current?.generation === generation) activeRunRef.current = null
       if (!translated) throw new Error('翻译服务没有返回内容')
       current.completeComposerTranslation(translated)
     } catch (error) {
       if (operationGenerationRef.current !== generation) return
-      cancelRef.current = null
+      if (activeRunRef.current?.generation === generation) activeRunRef.current = null
       const message = cleanError(error)
       useTranslationStore.setState((latest) => ({
         composer: {
@@ -387,7 +446,7 @@ export function TranslationPanel({
       }))
       if (/配置 AI/.test(message)) current.setSettingsOpen(true)
     }
-  }, [])
+  }, [cancelActiveTranslation])
 
   useEffect(() => {
     if (
@@ -500,6 +559,8 @@ export function TranslationPanel({
       : state.reader.sourceKind === 'page'
         ? '来自当前网页'
         : '手工输入'
+  const translationRunning =
+    state.reader.phase === 'translating' || state.composer.phase === 'translating'
 
   return (
     <aside
@@ -521,6 +582,7 @@ export function TranslationPanel({
           title="翻译设置"
           aria-label="翻译设置"
           aria-expanded={state.settingsOpen}
+          disabled={translationRunning}
           onClick={() => state.setSettingsOpen(!state.settingsOpen)}
         >
           <Settings2 className="size-4" />
@@ -531,7 +593,10 @@ export function TranslationPanel({
           className="size-8 shrink-0"
           title="关闭翻译侧栏"
           aria-label="关闭翻译侧栏"
-          onClick={state.close}
+          onClick={() => {
+            cancelActiveTranslation(false)
+            state.close()
+          }}
         >
           <X className="size-4" />
         </Button>
@@ -547,6 +612,7 @@ export function TranslationPanel({
             type="button"
             role="tab"
             aria-selected={state.mode === 'read'}
+            disabled={translationRunning}
             className={cn(
               'rounded-[5px] text-xs font-medium transition-colors',
               state.mode === 'read'
@@ -561,6 +627,7 @@ export function TranslationPanel({
             type="button"
             role="tab"
             aria-selected={state.mode === 'compose'}
+            disabled={translationRunning}
             className={cn(
               'rounded-[5px] text-xs font-medium transition-colors',
               state.mode === 'compose'
@@ -586,6 +653,7 @@ export function TranslationPanel({
           managedError={managedError}
           managedServerUrl={serverUrl}
           onReloadManaged={() => setManagedReload((value) => value + 1)}
+          disabled={translationRunning}
         />
       )}
 
@@ -596,12 +664,14 @@ export function TranslationPanel({
               value={state.config.sourceLanguage}
               includeAuto
               label="源语言"
+              disabled={state.reader.phase === 'translating'}
               onChange={(sourceLanguage) => patchConfig({ sourceLanguage })}
             />
             <span className="text-xs text-muted-foreground">→</span>
             <LanguageSelect
               value={state.config.targetLanguage}
               label="目标语言"
+              disabled={state.reader.phase === 'translating'}
               onChange={(targetLanguage) => patchConfig({ targetLanguage })}
             />
           </div>
@@ -639,6 +709,7 @@ export function TranslationPanel({
               placeholder="输入要翻译的内容"
               aria-label="待翻译原文"
               spellCheck={false}
+              disabled={state.reader.phase === 'translating'}
               className={cn(
                 'min-h-28 w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring',
                 state.reader.phase === 'stale' && 'border-amber-500',
@@ -646,18 +717,25 @@ export function TranslationPanel({
             />
           </section>
 
-          <Button
-            className="w-full gap-2"
-            disabled={state.reader.phase === 'translating' || !state.reader.sourceText.trim()}
-            onClick={() => void translateReader()}
-          >
-            {state.reader.phase === 'translating' ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
+          {state.reader.phase === 'translating' ? (
+            <Button
+              variant="outline"
+              className="w-full gap-2 text-destructive hover:text-destructive"
+              onClick={() => cancelActiveTranslation(true)}
+            >
+              <Square className="size-3.5 fill-current" />
+              停止翻译
+            </Button>
+          ) : (
+            <Button
+              className="w-full gap-2"
+              disabled={!state.reader.sourceText.trim()}
+              onClick={() => void translateReader()}
+            >
               <Languages className="size-4" />
-            )}
-            翻译
-          </Button>
+              翻译
+            </Button>
+          )}
 
           <section className="flex min-h-44 flex-1 flex-col space-y-1.5">
             <div className="flex min-h-8 flex-wrap items-center gap-2">
@@ -700,7 +778,8 @@ export function TranslationPanel({
               tabIndex={0}
               className={cn(
                 'min-h-36 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-md border border-input bg-muted/20 px-3 py-2 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                state.reader.phase === 'stale' && 'border-amber-500',
+                (state.reader.phase === 'stale' || state.reader.phase === 'stopped') &&
+                  'border-amber-500',
               )}
             >
               {state.reader.result || (
@@ -713,7 +792,9 @@ export function TranslationPanel({
             className={cn(
               'flex min-h-6 items-start gap-1.5 text-xs text-muted-foreground',
               state.reader.phase === 'ready' && 'text-emerald-600 dark:text-emerald-400',
-              (state.reader.phase === 'stale' || state.reader.phase === 'error') &&
+              (state.reader.phase === 'stale' ||
+                state.reader.phase === 'stopped' ||
+                state.reader.phase === 'error') &&
                 'text-amber-600 dark:text-amber-400',
             )}
             role="status"
@@ -732,12 +813,14 @@ export function TranslationPanel({
                 value={state.config.sourceLanguage}
                 includeAuto
                 label="输入语言"
+                disabled={state.composer.phase === 'translating'}
                 onChange={(sourceLanguage) => patchConfig({ sourceLanguage })}
               />
               <span className="text-xs text-muted-foreground">→</span>
               <LanguageSelect
                 value={state.config.siteLanguage}
                 label="AI 接收语言"
+                disabled={state.composer.phase === 'translating'}
                 onChange={(siteLanguage) => patchConfig({ siteLanguage })}
               />
             </div>
@@ -755,6 +838,7 @@ export function TranslationPanel({
                 placeholder="输入要写给 AI 的内容"
                 aria-label="写给 AI 的原文"
                 spellCheck={false}
+                disabled={state.composer.phase === 'translating'}
                 className={cn(
                   'min-h-28 w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm leading-6 outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring',
                   state.composer.phase === 'stale' && 'border-amber-500',
@@ -762,18 +846,25 @@ export function TranslationPanel({
               />
             </section>
 
-            <Button
-              className="w-full gap-2"
-              disabled={state.composer.phase === 'translating' || !state.composer.sourceText.trim()}
-              onClick={() => void translateComposer()}
-            >
-              {state.composer.phase === 'translating' ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
+            {state.composer.phase === 'translating' ? (
+              <Button
+                variant="outline"
+                className="w-full gap-2 text-destructive hover:text-destructive"
+                onClick={() => cancelActiveTranslation(true)}
+              >
+                <Square className="size-3.5 fill-current" />
+                停止翻译
+              </Button>
+            ) : (
+              <Button
+                className="w-full gap-2"
+                disabled={!state.composer.sourceText.trim()}
+                onClick={() => void translateComposer()}
+              >
                 <Languages className="size-4" />
-              )}
-              生成发送预览
-            </Button>
+                生成发送预览
+              </Button>
+            )}
 
             <section className="flex min-h-44 flex-1 flex-col space-y-1.5">
               <div className="flex min-h-8 flex-wrap items-center gap-2">
@@ -894,7 +985,9 @@ export function TranslationPanel({
               className={cn(
                 'flex min-h-5 items-start gap-1.5 text-xs text-muted-foreground',
                 state.composer.phase === 'ready' && 'text-emerald-600 dark:text-emerald-400',
-                (state.composer.phase === 'stale' || state.composer.phase === 'error') &&
+                (state.composer.phase === 'stale' ||
+                  state.composer.phase === 'stopped' ||
+                  state.composer.phase === 'error') &&
                   'text-amber-600 dark:text-amber-400',
               )}
               role="status"
@@ -922,6 +1015,7 @@ function TranslationSettingsForm({
   managedError,
   managedServerUrl,
   onReloadManaged,
+  disabled,
 }: {
   config: TranslationSettings
   testing: boolean
@@ -933,10 +1027,14 @@ function TranslationSettingsForm({
   managedError: string
   managedServerUrl: string
   onReloadManaged: () => void
+  disabled: boolean
 }) {
   const inputClass = 'h-8 text-xs'
   return (
-    <div className="max-h-[48%] shrink-0 space-y-2 overflow-y-auto border-b border-border bg-muted/20 p-3">
+    <fieldset
+      disabled={disabled}
+      className="m-0 max-h-[48%] shrink-0 space-y-2 overflow-y-auto border-0 border-b border-border bg-muted/20 p-3"
+    >
       <div className="grid grid-cols-2 gap-2">
         <label className="space-y-1 text-[11px] text-muted-foreground">
           <span>翻译服务</span>
@@ -1153,7 +1251,7 @@ function TranslationSettingsForm({
         />
         网页发送语言不符时确认
       </label>
-    </div>
+    </fieldset>
   )
 }
 
@@ -1169,17 +1267,20 @@ function LanguageSelect({
   value,
   label,
   includeAuto = false,
+  disabled = false,
   onChange,
 }: {
   value: string
   label: string
   includeAuto?: boolean
+  disabled?: boolean
   onChange: (value: string) => void
 }) {
   return (
     <select
       value={value}
       aria-label={label}
+      disabled={disabled}
       className="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs"
       onChange={(event) => onChange(event.target.value)}
     >
