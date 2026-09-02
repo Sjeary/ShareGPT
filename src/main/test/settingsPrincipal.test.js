@@ -199,6 +199,49 @@ test("legacy sender configuration is claimed only by its exact owner", (t) => {
   assert.equal(alice.settings.sender.proxy_uuid, "legacy-route");
 });
 
+test("organization and local-device keep independent browser environment policy", (t) => {
+  const backend = createBackend(t);
+  const alice = backend.activatePrincipal("https://collab.example/root", "Alice");
+  patchSettings(
+    backend,
+    "browserPrivacy",
+    {
+      environment: {
+        ...alice.settings.browserPrivacy.environment,
+        mode: "us",
+        timezone: "America/New_York",
+      },
+    },
+    alice.settings.settingsRevision,
+    alice.principalId,
+  );
+
+  const localSettings = backend.clearPrincipal();
+  assert.equal(localSettings.browserPrivacy.environment.mode, "system");
+  const local = backend.getPrincipalContext();
+  patchSettings(
+    backend,
+    "browserPrivacy",
+    {
+      environment: {
+        ...localSettings.browserPrivacy.environment,
+        mode: "proxy",
+        timezone: "Asia/Tokyo",
+      },
+    },
+    localSettings.settingsRevision,
+    local.principalId,
+    local.generation,
+  );
+
+  const aliceAgain = backend.activatePrincipal("https://collab.example/root", "Alice");
+  assert.equal(aliceAgain.settings.browserPrivacy.environment.mode, "us");
+  assert.equal(aliceAgain.settings.browserPrivacy.environment.timezone, "America/New_York");
+  backend.clearPrincipal();
+  assert.equal(backend.loadSettings().browserPrivacy.environment.mode, "proxy");
+  assert.equal(backend.loadSettings().browserPrivacy.environment.timezone, "Asia/Tokyo");
+});
+
 test("ordinary AI partitions are isolated while the exact 1.0.8 owner keeps legacy data", (t) => {
   const backend = createBackend(t);
   fs.writeFileSync(

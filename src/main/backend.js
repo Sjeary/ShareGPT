@@ -1122,6 +1122,9 @@ class Backend {
               legacyUnowned.sender,
               stored?.sender || PUBLIC_DEFAULT_SETTINGS.sender,
             ),
+            browserPrivacy: normalizeBrowserPrivacySettings(
+              legacyUnowned.browserPrivacy || stored?.browserPrivacy,
+            ),
             partitions: normalizePrincipalPartitions(
               legacyUnowned.partitions,
               legacyPartitionsFromSettings(stored),
@@ -1164,6 +1167,9 @@ class Backend {
             sender: normalizePrincipalSender(
               legacyRoot.settings?.sender,
               stored?.sender || PUBLIC_DEFAULT_SETTINGS.sender,
+            ),
+            browserPrivacy: normalizeBrowserPrivacySettings(
+              legacyRoot.settings?.browserPrivacy || stored?.browserPrivacy,
             ),
             partitions: normalizePrincipalPartitions(
               legacyRoot.settings?.partitions,
@@ -1211,6 +1217,7 @@ class Backend {
 
     const legacy = {
       sender: normalizePrincipalSender(stored?.sender),
+      browserPrivacy: normalizeBrowserPrivacySettings(stored?.browserPrivacy),
       partitions: legacyPartitionsFromSettings(stored),
       lastUrls: legacyLastUrlsFromSettings(stored),
       advancedAi: structuredClone(stored?.advancedAi || PUBLIC_DEFAULT_SETTINGS.advancedAi),
@@ -1295,9 +1302,14 @@ class Backend {
         ? stored?.sender || PUBLIC_DEFAULT_SETTINGS.sender
         : PUBLIC_DEFAULT_SETTINGS.sender,
     );
+    const browserPrivacy = normalizeBrowserPrivacySettings(
+      scoped?.browserPrivacy ||
+        (ownsLegacyRoot ? stored?.browserPrivacy : PUBLIC_DEFAULT_SETTINGS.browserPrivacy),
+    );
     const result = {
       ...stored,
       sender,
+      browserPrivacy,
       gpt: { ...stored.gpt, partition: partitions.gpt, last_url: lastUrls.gpt },
       gemini: { ...stored.gemini, partition: partitions.gemini, last_url: lastUrls.gemini },
       claude: { ...stored.claude, partition: partitions.claude, last_url: lastUrls.claude },
@@ -1442,6 +1454,7 @@ class Backend {
         claude: merged.claude?.last_url,
       }),
       sender: normalizePrincipalSender(merged.sender),
+      browserPrivacy: normalizeBrowserPrivacySettings(merged.browserPrivacy),
       advancedAi: structuredClone(merged.advancedAi),
       translation: structuredClone(merged.translation),
     };
@@ -1449,6 +1462,7 @@ class Backend {
       ...merged,
       // 根级 sender 只归既定 legacy owner，用于旧客户端与迁移归档；有效配置来自 Principal。
       sender: stored.sender || PUBLIC_DEFAULT_SETTINGS.sender,
+      browserPrivacy: stored.browserPrivacy || PUBLIC_DEFAULT_SETTINGS.browserPrivacy,
       gpt: {
         ...merged.gpt,
         partition: stored.gpt?.partition || PUBLIC_DEFAULT_SETTINGS.gpt.partition,
