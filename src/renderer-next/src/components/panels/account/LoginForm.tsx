@@ -8,9 +8,10 @@ import {
   X,
   Cable,
   Laptop,
-  MessageCircle,
-  Bot,
-  BarChart3,
+  Building2,
+  HardDrive,
+  ShieldCheck,
+  ArrowRight,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -217,7 +218,9 @@ export function LoginForm() {
     // 避免 flex + overflow 同时作用时出现的横向偏移。
     <div className="h-full overflow-y-auto">
       <div className="grid min-h-full place-items-center p-6">
-        <div className="flex w-full max-w-sm flex-col items-center gap-3">
+        <div
+          className={`flex w-full flex-col items-center gap-3 ${showWorkspaceEntry ? 'max-w-4xl' : 'max-w-sm'}`}
+        >
           <LoginUpdateBanner />
 
           {!showWorkspaceEntry && (
@@ -226,7 +229,7 @@ export function LoginForm() {
               <div className="min-w-0">
                 <p className="text-sm font-medium">当前：个人工作区</p>
                 <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                  配置、AI 登录状态和翻译凭据仅保存在本机。登录组织后会切换到隔离的组织工作区。
+                  个人代理、翻译配置和 AI 网页会话使用独立本机分区。登录组织后会切换到该账号自己的配置与网页会话。
                 </p>
               </div>
             </div>
@@ -241,143 +244,167 @@ export function LoginForm() {
               <div>
                 <h1 className="text-2xl font-semibold tracking-tight">欢迎使用 {brandName}</h1>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  选择个人使用，或登录组织获得协作与集中配置
+                  个人使用与组织协作拥有彼此隔离的配置和网页会话
                 </p>
               </div>
-              <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5">
-                  <MessageCircle className="size-3.5 text-primary" />
-                  协作聊天
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <Bot className="size-3.5 text-primary" />
-                  内嵌 AI 网页
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <BarChart3 className="size-3.5 text-primary" />
-                  用量统计
-                </span>
-              </div>
+              <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                <ShieldCheck className="size-3.5 text-primary" />
+                切换工作区不会删除另一侧已保存的数据
+              </p>
             </div>
           )}
 
-          <Card className="w-full">
-            <CardHeader className="text-center">
-              <CardTitle className="text-xl">
-                {showWorkspaceEntry ? '登录协作服务' : '登录组织工作区'}
-              </CardTitle>
-              <CardDescription>
-                {showWorkspaceEntry
-                  ? '填写服务地址与账号即可登录'
-                  : '登录后切换到该账号的独立配置和网页会话'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form className="grid gap-4" onSubmit={handleSubmit}>
-                <div className="grid gap-2">
-                  <Label htmlFor="account-server">服务地址</Label>
-                  <Input
-                    ref={serverRef}
-                    id="account-server"
-                    placeholder="http://example.com:8088"
-                    autoComplete="off"
-                    spellCheck={false}
-                    value={serverUrl}
-                    onChange={(e) => setServerUrl(e.target.value)}
-                    disabled={submitting || enteringPersonal}
-                    aria-invalid={errorField === 'server' || undefined}
-                  />
-                </div>
+          <div
+            className={
+              showWorkspaceEntry ? 'grid w-full items-start gap-4 md:grid-cols-2' : 'w-full'
+            }
+          >
+            <Card className="w-full">
+              <CardHeader className="text-center">
+                <CardTitle className="flex items-center justify-center gap-2 text-xl">
+                  <Building2 className="size-5 text-primary" />
+                  {showWorkspaceEntry ? '组织工作区' : '登录组织工作区'}
+                </CardTitle>
+                <CardDescription>
+                  {showWorkspaceEntry
+                    ? '登录协作服务器，使用协作聊天、在线成员、管理员线路与组织用量。'
+                    : '登录后切换到该账号的独立配置和网页会话'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form className="grid gap-4" onSubmit={handleSubmit}>
+                  <div className="grid gap-2">
+                    <Label htmlFor="account-server">服务地址</Label>
+                    <Input
+                      ref={serverRef}
+                      id="account-server"
+                      placeholder="http://example.com:8088"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={serverUrl}
+                      onChange={(e) => setServerUrl(e.target.value)}
+                      disabled={submitting || enteringPersonal}
+                      aria-invalid={errorField === 'server' || undefined}
+                    />
+                  </div>
 
-                <div className="grid gap-2">
-                  <Label htmlFor="account-username">账号</Label>
-                  <Input
-                    ref={usernameRef}
-                    id="account-username"
-                    placeholder="用户名"
-                    autoComplete="username"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    disabled={submitting || enteringPersonal}
-                    aria-invalid={errorField === 'username' || undefined}
-                  />
-                </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="account-username">账号</Label>
+                    <Input
+                      ref={usernameRef}
+                      id="account-username"
+                      placeholder="用户名"
+                      autoComplete="username"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      disabled={submitting || enteringPersonal}
+                      aria-invalid={errorField === 'username' || undefined}
+                    />
+                  </div>
 
-                <div className="grid gap-2">
-                  <Label htmlFor="account-password">密码</Label>
-                  <Input
-                    ref={passwordRef}
-                    id="account-password"
-                    type="password"
-                    placeholder="密码"
-                    autoComplete="current-password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    disabled={submitting || enteringPersonal}
-                    aria-invalid={errorField === 'password' || undefined}
-                  />
-                </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="account-password">密码</Label>
+                    <Input
+                      ref={passwordRef}
+                      id="account-password"
+                      type="password"
+                      placeholder="密码"
+                      autoComplete="current-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      disabled={submitting || enteringPersonal}
+                      aria-invalid={errorField === 'password' || undefined}
+                    />
+                  </div>
 
-                <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-                  <Label htmlFor="account-remember" className="cursor-pointer text-sm font-normal">
-                    记住密码
-                  </Label>
-                  <Switch
-                    id="account-remember"
-                    checked={rememberPassword}
-                    onCheckedChange={setRememberPassword}
-                    disabled={submitting || enteringPersonal}
-                  />
-                </div>
+                  <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+                    <Label
+                      htmlFor="account-remember"
+                      className="cursor-pointer text-sm font-normal"
+                    >
+                      记住密码
+                    </Label>
+                    <Switch
+                      id="account-remember"
+                      checked={rememberPassword}
+                      onCheckedChange={setRememberPassword}
+                      disabled={submitting || enteringPersonal}
+                    />
+                  </div>
 
-                {error && (
-                  <p
-                    role="alert"
-                    className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                  >
-                    {error}
-                  </p>
-                )}
-
-                <Button
-                  type="submit"
-                  className="w-full"
-                  disabled={submitting || enteringPersonal}
-                >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="animate-spin" />
-                      登录中…
-                    </>
-                  ) : (
-                    <>
-                      <LogIn />
-                      登录
-                    </>
+                  {error && (
+                    <p
+                      role="alert"
+                      className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                    >
+                      {error}
+                    </p>
                   )}
-                </Button>
-              </form>
 
-              <Separator className="my-4" />
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={submitting || enteringPersonal}
+                  >
+                    {submitting ? (
+                      <>
+                        <Loader2 className="animate-spin" />
+                        登录中…
+                      </>
+                    ) : (
+                      <>
+                        <LogIn />
+                        登录
+                      </>
+                    )}
+                  </Button>
+                </form>
 
-              <div className="grid gap-2">
-                <p className="text-xs text-muted-foreground">从备份文件恢复本机配置或资料包</p>
-                <ImportActions />
-              </div>
-            </CardContent>
-          </Card>
+                <Separator className="my-4" />
 
-          {showWorkspaceEntry && (
-            <Button
-              variant="ghost"
-              className="w-full text-muted-foreground"
-              onClick={() => void handleEnterPersonal()}
-              disabled={enteringPersonal}
-            >
-              {enteringPersonal ? <Loader2 className="animate-spin" /> : <Laptop />}
-              {enteringPersonal ? '正在准备个人工作区…' : '进入个人工作区'}
-            </Button>
-          )}
+                <div className="grid gap-2">
+                  <p className="text-xs text-muted-foreground">从备份文件恢复本机配置或资料包</p>
+                  <ImportActions />
+                </div>
+              </CardContent>
+            </Card>
+
+            {showWorkspaceEntry && (
+              <Card className="w-full border-primary/30 bg-muted/20">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Laptop className="size-5 text-primary" />
+                    个人工作区
+                  </CardTitle>
+                  <CardDescription className="leading-relaxed">
+                    无需登录协作服务器。进入后不显示协作聊天、在线成员、团队管理和组织用量。
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-3">
+                  <div className="grid gap-2 text-xs leading-relaxed text-muted-foreground">
+                    <p className="flex items-start gap-2">
+                      <HardDrive className="mt-0.5 size-3.5 shrink-0 text-primary" />
+                      个人代理、翻译配置和 ChatGPT、Claude、Gemini 网页会话保存在独立本机分区。
+                    </p>
+                    <p className="flex items-start gap-2">
+                      <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />
+                      不会复用或覆盖组织账号的对应配置与网页登录状态；已记住的组织登录信息仍会保留。
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => void handleEnterPersonal()}
+                    disabled={enteringPersonal}
+                  >
+                    {enteringPersonal ? <Loader2 className="animate-spin" /> : <Laptop />}
+                    {enteringPersonal ? '正在准备个人工作区…' : '在本机独立使用'}
+                    {!enteringPersonal && <ArrowRight className="ml-auto" />}
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+          </div>
         </div>
       </div>
     </div>

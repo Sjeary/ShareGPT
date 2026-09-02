@@ -407,7 +407,36 @@ async function loginThroughForm(window, baseUrl, username, password = PASSWORD) 
   await window.locator("#account-username").fill(username);
   await window.locator("#account-password").fill(password);
   await window.getByRole("button", { name: "登录", exact: true }).click();
-  await window.getByRole("button", { name: /账户/ }).waitFor({ state: "visible" });
+  await window.getByText("已连接协作服务", { exact: true }).waitFor({ state: "visible" });
+}
+
+async function readWorkspaceScope(window) {
+  return window.evaluate(async () => {
+    const principal = await window.api.getSettingsPrincipal();
+    const settings = await window.api.loadSettings({
+      expectedPrincipalId: principal.principalId,
+      expectedPrincipalGeneration: principal.generation,
+    });
+    return {
+      principal,
+      senderHost: settings.sender?.proxy_server || "",
+      personalProxyHost: settings.sender?.personal_proxy_host || "",
+      gptPartition: settings.gpt?.partition || "",
+    };
+  });
+}
+
+async function waitForWorkspaceScope(window, expected, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  let current = null;
+  while (Date.now() < deadline) {
+    current = await readWorkspaceScope(window);
+    if (Object.entries(expected).every(([key, value]) => current[key] === value)) return current;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(
+    `Timed out waiting for workspace settings: ${JSON.stringify({ expected, current })}`,
+  );
 }
 
 async function dismissFirstRunGuides(window) {
@@ -552,6 +581,81 @@ async function verifyPrincipalInvalidationRace(fixture) {
   assert.equal(result.authed, true, "principal race recovery must finish signed in");
   assert.equal(countEvents(events, "logout", username), 1, "the explicit logout must reach server");
   assert.deepEqual(result.exerciseResult, { loginCount: 3, wsCount: 3 });
+  assert.deepEqual(result.blockedRequests, []);
+  return events;
+}
+
+async function verifyPersonalOrganizationIsolation(fixture) {
+  const username = "workspace-isolation";
+  const before = fixture.events.length;
+  const organizationMarker = {
+    senderHost: "organization-proxy.example",
+  };
+  const personalMarker = {
+    personalProxyHost: "personal-proxy.example",
+  };
+
+  const result = await launchCase({
+    baseUrl: fixture.baseUrl,
+    events: fixture.events,
+    username,
+    exercise: async ({ window }) => {
+      await window.locator('[data-tour="nav-service"]').click();
+      await window.locator("#s_proxy_server").fill(organizationMarker.senderHost);
+      const organization = await waitForWorkspaceScope(window, organizationMarker);
+      await window.locator('[data-tour="nav-account"]').click();
+      assert.notEqual(organization.principal.principalId, "local-device");
+
+      await window.getByRole("button", { name: "个人工作区", exact: true }).click();
+      await window.getByText("当前：个人工作区", { exact: true }).waitFor({ state: "visible" });
+      assert.equal(await window.locator('[data-tour="nav-chat"]').count(), 0);
+      assert.equal(await window.locator('[data-tour="nav-team"]').count(), 0);
+      assert.equal(await window.locator('[data-tour="nav-stats"]').count(), 0);
+      assert.equal(await window.locator("#account-server").inputValue(), fixture.baseUrl);
+      assert.equal(await window.locator("#account-username").inputValue(), username);
+
+      const personalBeforeWrite = await readWorkspaceScope(window);
+      assert.equal(personalBeforeWrite.principal.principalId, "local-device");
+      assert.notEqual(personalBeforeWrite.senderHost, organizationMarker.senderHost);
+      assert.notEqual(personalBeforeWrite.gptPartition, organization.gptPartition);
+
+      await window.locator('[data-tour="nav-service"]').click();
+      await window.locator("#s_personal_proxy_host").fill(personalMarker.personalProxyHost);
+      const personal = await waitForWorkspaceScope(window, personalMarker);
+      await window.locator('[data-tour="nav-account"]').click();
+
+      await loginThroughForm(window, fixture.baseUrl, username);
+      const organizationAgain = await readWorkspaceScope(window);
+      assert.equal(organizationAgain.principal.principalId, organization.principal.principalId);
+      assert.equal(organizationAgain.senderHost, organizationMarker.senderHost);
+      assert.equal(organizationAgain.gptPartition, organization.gptPartition);
+      assert.notEqual(organizationAgain.personalProxyHost, personalMarker.personalProxyHost);
+
+      await window.locator('[data-tour="nav-account"]').click();
+      await window.getByRole("button", { name: "个人工作区", exact: true }).click();
+      await window.getByText("当前：个人工作区", { exact: true }).waitFor({ state: "visible" });
+      const personalAgain = await readWorkspaceScope(window);
+      assert.equal(personalAgain.principal.principalId, "local-device");
+      assert.equal(personalAgain.personalProxyHost, personalMarker.personalProxyHost);
+      assert.equal(personalAgain.gptPartition, personal.gptPartition);
+
+      await loginThroughForm(window, fixture.baseUrl, username);
+      return {
+        organizationPrincipalId: organization.principal.principalId,
+        personalPrincipalId: personal.principal.principalId,
+        partitionsSeparated: organization.gptPartition !== personal.gptPartition,
+      };
+    },
+  });
+  const events = fixture.events.slice(before);
+  assert.equal(result.authed, true);
+  assert.notEqual(result.principal.principalId, "local-device");
+  assert.equal(countEvents(events, "logout", username), 2);
+  assert.deepEqual(result.exerciseResult, {
+    organizationPrincipalId: result.principal.principalId,
+    personalPrincipalId: "local-device",
+    partitionsSeparated: true,
+  });
   assert.deepEqual(result.blockedRequests, []);
   return events;
 }
@@ -795,6 +899,7 @@ async function main() {
     }
 
     const principalInvalidationRace = await verifyPrincipalInvalidationRace(fixture);
+    const personalOrganizationIsolation = await verifyPersonalOrganizationIsolation(fixture);
     const authorizationPersistenceFailure = await verifyAuthorizationPersistenceFailure(fixture);
     const sameTokenDoubleRevocation = await verifySameTokenDoubleRevocation(fixture);
 
@@ -850,6 +955,7 @@ async function main() {
           invalidCredentialsRejected: true,
           legacyClientPreservedCachedRoutesOn503: true,
           principalInvalidationRace,
+          personalOrganizationIsolation,
           authorizationPersistenceFailure,
           sameTokenDoubleRevocation,
         },

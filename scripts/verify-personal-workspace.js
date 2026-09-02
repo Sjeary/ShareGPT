@@ -26,6 +26,8 @@ async function assertPersonalWorkspace(page) {
 
 async function main() {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-personal-workspace-"));
+  const entryScreenshot = path.join(temporaryRoot, "workspace-entry.png");
+  const minimumEntryScreenshot = path.join(temporaryRoot, "workspace-entry-minimum.png");
   const screenshot = path.join(temporaryRoot, "personal-workspace.png");
   const accountScreenshot = path.join(temporaryRoot, "personal-account.png");
   let electronApp;
@@ -37,7 +39,44 @@ async function main() {
       env: { ...process.env, SHAREGPT_USER_DATA: path.join(temporaryRoot, "user-data") },
     });
     const page = await electronApp.firstWindow();
-    await page.getByRole("button", { name: "进入个人工作区" }).click();
+    await page.getByRole("button", { name: "在本机独立使用" }).waitFor({ state: "visible" });
+    assert.equal(await page.getByText("组织工作区", { exact: true }).count(), 1);
+    assert.equal(await page.getByText("个人工作区", { exact: true }).count(), 1);
+    assert.equal(
+      await page.getByText(/不显示协作聊天、在线成员、团队管理和组织用量/).count(),
+      1,
+    );
+    assert.equal(await page.getByText(/不会复用或覆盖组织账号/).count(), 1);
+    await page.screenshot({ path: entryScreenshot });
+
+    const originalWindowSize = await electronApp.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+      return window.getSize();
+    });
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+      window.setSize(860, 620);
+    });
+    await page.waitForTimeout(150);
+    const minimumLayout = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      documentWidth: document.documentElement.scrollWidth,
+    }));
+    const personalEntryBounds = await page
+      .getByRole("button", { name: "在本机独立使用" })
+      .boundingBox();
+    assert.ok(personalEntryBounds);
+    assert.ok(minimumLayout.documentWidth <= minimumLayout.viewportWidth);
+    assert.ok(personalEntryBounds.x + personalEntryBounds.width <= minimumLayout.viewportWidth);
+    assert.ok(personalEntryBounds.y + personalEntryBounds.height <= minimumLayout.viewportHeight);
+    await page.screenshot({ path: minimumEntryScreenshot });
+    await electronApp.evaluate(({ BrowserWindow }, size) => {
+      const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
+      window.setSize(size[0], size[1]);
+    }, originalWindowSize);
+
+    await page.getByRole("button", { name: "在本机独立使用" }).click();
     await dismissGuides(page);
     await assertPersonalWorkspace(page);
 
@@ -102,9 +141,9 @@ async function main() {
     await page.screenshot({ path: screenshot });
 
     await page.reload();
-    await page.getByRole("button", { name: "进入个人工作区" }).waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "在本机独立使用" }).waitFor({ state: "visible" });
     assert.equal(await page.locator('[data-tour="nav-service"]').count(), 0);
-    await page.getByRole("button", { name: "进入个人工作区" }).click();
+    await page.getByRole("button", { name: "在本机独立使用" }).click();
     await dismissGuides(page);
     await assertPersonalWorkspace(page);
 
@@ -128,12 +167,12 @@ async function main() {
     });
     const relaunchedPage = await electronApp.firstWindow();
     await relaunchedPage
-      .getByRole("button", { name: "进入个人工作区" })
+      .getByRole("button", { name: "在本机独立使用" })
       .waitFor({ state: "visible" });
     assert.equal(await relaunchedPage.locator('[data-tour="nav-service"]').count(), 0);
 
     process.stdout.write(
-      `${JSON.stringify({ ok: true, principal, screenshot, accountScreenshot })}\n`,
+      `${JSON.stringify({ ok: true, principal, entryScreenshot, minimumEntryScreenshot, screenshot, accountScreenshot })}\n`,
     );
   } finally {
     await electronApp?.close().catch(() => undefined);
