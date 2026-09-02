@@ -3,22 +3,19 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { _electron: electron } = require("playwright");
+const { loginThroughForm, startCollabLoginFixture } = require("./lib/collab-login-fixture");
 
 const ROOT = path.resolve(__dirname, "..");
 
-async function openChat(page) {
-  const skipLogin = page.getByRole("button", { name: "先不登录，随便逛逛" });
-  await skipLogin.waitFor({ state: "visible" });
-  await skipLogin.click();
-
-  const skipTour = page.getByRole("button", { name: "跳过", exact: true });
-  if (await skipTour.isVisible().catch(() => false)) await skipTour.click();
+async function openChat(page, baseUrl) {
+  await loginThroughForm(page, baseUrl);
   await page.getByRole("button", { name: /协作聊天/ }).click();
 }
 
 async function main() {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-chat-sidebar-"));
   const screenshot = path.join(temporaryRoot, "member-status.png");
+  const fixture = await startCollabLoginFixture();
   let electronApp;
 
   try {
@@ -28,7 +25,7 @@ async function main() {
       env: { ...process.env, SHAREGPT_USER_DATA: path.join(temporaryRoot, "user-data") },
     });
     const page = await electronApp.firstWindow();
-    await openChat(page);
+    await openChat(page, fixture.baseUrl);
 
     const scroll = page.locator('[data-slot="conversation-list-scroll"]');
     await scroll.waitFor({ state: "visible" });
@@ -85,6 +82,7 @@ async function main() {
     process.stdout.write(`${JSON.stringify({ ok: true, metrics, screenshot })}\n`);
   } finally {
     await electronApp?.close().catch(() => undefined);
+    await fixture.close();
   }
 }
 

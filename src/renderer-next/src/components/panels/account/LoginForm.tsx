@@ -7,7 +7,7 @@ import {
   Sparkles,
   X,
   Cable,
-  Eye,
+  Laptop,
   MessageCircle,
   Bot,
   BarChart3,
@@ -98,18 +98,16 @@ type ErrorField = 'server' | 'username' | 'password'
 export function LoginForm() {
   const collab = useAppStore((s) => s.settings?.collab)
   const meta = useAppStore((s) => s.meta)
-  const previewMode = useAppStore((s) => s.previewMode)
-  const setPreviewMode = useAppStore((s) => s.setPreviewMode)
-  const { login } = useAuth()
+  const workspaceMode = useAppStore((s) => s.workspaceMode)
+  const { login, enterPersonal } = useAuth()
 
   // 品牌名: 取 app 元信息 productName, 去掉「Sender/Receiver」后缀, 回退 ShareGPT。
   const brandName = String((meta?.productName as string) || 'ShareGPT').replace(
     /\s+(Sender|Receiver)$/i,
     '',
   )
-  // 本表单既用于应用级登录页(LoginScreen), 也用于 Shell 内账户面板(预览态下未登录时)。
-  // 仅在登录页(非预览态)给"先逛逛"入口与品牌头; 预览态下已在 Shell 内, 不再重复。
-  const showPreviewEntry = !previewMode
+  // 本表单既用于工作区入口，也用于个人工作区内登录组织账号。
+  const showWorkspaceEntry = workspaceMode !== 'personal'
 
   const [serverUrl, setServerUrl] = useState(collab?.server_url ?? '')
   const [username, setUsername] = useState(collab?.last_username ?? '')
@@ -129,6 +127,7 @@ export function LoginForm() {
   const autoLoginAttempted = useRef(false)
 
   useEffect(() => {
+    if (workspaceMode === 'personal') return
     const params = autoLoginParams(collab)
     if (!params || autoLoginAttempted.current) return
     autoLoginAttempted.current = true
@@ -142,7 +141,7 @@ export function LoginForm() {
         setErrorField('password')
       })
       .finally(() => setSubmitting(false))
-  }, [collab, login])
+  }, [collab, login, workspaceMode])
 
   function focusField(field: ErrorField, select = false) {
     const ref = field === 'server' ? serverRef : field === 'username' ? usernameRef : passwordRef
@@ -205,7 +204,7 @@ export function LoginForm() {
           <LoginUpdateBanner />
 
           {/* 品牌头 (仅登录页): logo + 名称 + 友好欢迎语 + 一句话功能点, 让开局不再是一张冷冰冰的表单。 */}
-          {showPreviewEntry && (
+          {showWorkspaceEntry && (
             <div className="flex w-full flex-col items-center gap-3 text-center">
               <div className="grid size-14 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
                 <Cable className="size-7" />
@@ -213,7 +212,7 @@ export function LoginForm() {
               <div>
                 <h1 className="text-2xl font-semibold tracking-tight">欢迎使用 {brandName}</h1>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  一站式的团队协作与 AI 网页客户端 · 登录后开启全部能力
+                  选择个人使用，或登录组织获得协作与集中配置
                 </p>
               </div>
               <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
@@ -329,15 +328,14 @@ export function LoginForm() {
             </CardContent>
           </Card>
 
-          {/* 不登录也能先逛逛: 进入只读预览态 (Shell 顶部会挂"预览条"引导随时登录)。 */}
-          {showPreviewEntry && (
+          {showWorkspaceEntry && (
             <Button
               variant="ghost"
               className="w-full text-muted-foreground"
-              onClick={() => setPreviewMode(true)}
+              onClick={enterPersonal}
             >
-              <Eye />
-              先不登录，随便逛逛
+              <Laptop />
+              进入个人工作区
             </Button>
           )}
         </div>

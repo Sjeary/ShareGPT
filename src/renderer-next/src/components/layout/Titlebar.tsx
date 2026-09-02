@@ -62,8 +62,10 @@ export function Titlebar() {
   const mode = useAppStore((s) => s.mode)
   const dark = useAppStore((s) => s.dark)
   const toggleTheme = useAppStore((s) => s.toggleTheme)
-  // 「?」新手导览入口仅在主界面(已登录或预览态)显示; 登录页/加载页没有可高亮的侧栏。
-  const inShell = useAppStore((s) => s.authed || s.previewMode)
+  // 「?」新手导览入口仅在实际工作区显示；入口页/加载页没有可高亮的侧栏。
+  const inShell = useAppStore(
+    (s) => s.workspaceMode === 'personal' || (s.workspaceMode === 'organization' && s.authed),
+  )
   const setTourOpen = useAppStore((s) => s.setTourOpen)
 
   // [LOW] 最大化按钮态 (旧 syncWindowMaxButton ~2640): 监听窗口最大化变化,

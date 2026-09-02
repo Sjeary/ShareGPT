@@ -18,6 +18,7 @@ import {
   requireConfirmedLoginResponse,
 } from '@/lib/collabLoginTransaction'
 import type { AppSettings } from '@/types/settings'
+import { requirePrincipalActivation, type PrincipalActivation } from '@/lib/principalActivation'
 
 // 协作服务器登录/退出逻辑 (移植自旧 renderer.js performCollabLogin / collabLogout)。
 // 端点 (渲染层直连协作服务器, 非 IPC):
@@ -57,21 +58,6 @@ interface LoginResponse {
   history?: unknown
   users?: unknown
   onlineUsers?: unknown
-}
-
-interface PrincipalActivation {
-  principalId: string
-  generation: number
-  settings: Record<string, unknown>
-}
-
-function requirePrincipalActivation(value: unknown): PrincipalActivation {
-  const snapshot = requireSettingsPrincipalSnapshot(value)
-  const settings = (value as Partial<PrincipalActivation> | null)?.settings
-  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
-    throw new Error('主进程未返回完整的 Principal 设置快照')
-  }
-  return { ...snapshot, settings }
 }
 
 function trimTrailingSlash(url: string): string {
@@ -125,6 +111,7 @@ async function fetchWithTimeout(
 
 export function useAuth() {
   const setAuthed = useAppStore((s) => s.setAuthed)
+  const setWorkspaceMode = useAppStore((s) => s.setWorkspaceMode)
   const patchSection = useAppStore((s) => s.patchSection)
   const setSession = useAuthStore((s) => s.setSession)
   const clearSession = useAuthStore((s) => s.clearSession)
@@ -194,6 +181,8 @@ export function useAuth() {
         activatePrincipal: async () => {
           // Principal 必须来自服务器确认的精确账号。先切换主进程设置所有权，
           // 再公开 token，避免 A 的配置短暂进入 B 的会话。
+          // 任何上一工作区的 sender 都必须先停止，避免个人代理继续承载组织会话。
+          await api.stopSender()
           settingsPrincipalRuntime.invalidate()
           useAiStore.getState().resetRuntime()
           useNotesAiStore.getState().invalidatePrincipal()
@@ -414,5 +403,12 @@ export function useAuth() {
     void profile
   }, [clearSession, setAuthed])
 
-  return { login, logout }
+  const enterPersonal = useCallback(() => {
+    // 入口选择必须赢过尚未完成的自动登录。已进入 Principal 事务的旧尝试会按
+    // completeCollabLoginTransaction 的 ownership guard 回滚，不能反向切回组织工作区。
+    loginAttempts.invalidate()
+    setWorkspaceMode('personal')
+  }, [setWorkspaceMode])
+
+  return { login, logout, enterPersonal }
 }

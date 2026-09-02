@@ -7,6 +7,11 @@ import {
 import { createSingleFlight } from '@/lib/singleFlight'
 import type { NavKey } from '@/lib/nav'
 import type { AppSettings, StatusPayload } from '@/types/settings'
+import {
+  workspaceFallbackNav,
+  workspaceNavAvailable,
+  type WorkspaceMode,
+} from '@/lib/workspaceCapabilities'
 
 interface AppState {
   // 导航
@@ -64,10 +69,10 @@ interface AppState {
   authed: boolean
   setAuthed: (v: boolean) => void
 
-  // 预览态 (true = 未登录但点了"先逛逛"进入只读主界面)。仅内存, 不持久化;
-  // 登录成功后由 setAuthed 顺带清掉, 避免和登录态并存。
-  previewMode: boolean
-  setPreviewMode: (v: boolean) => void
+  // 当前产品工作区。chooser 只显示入口；personal 使用 local-device Principal；
+  // organization 使用服务器确认的账号 Principal。
+  workspaceMode: WorkspaceMode
+  setWorkspaceMode: (mode: WorkspaceMode) => void
 
   // 新手引导导览是否正在进行 (仅内存)。首次进入主界面自动开, 也可在标题栏「?」手动重开。
   tourOpen: boolean
@@ -158,6 +163,24 @@ const EMPTY_SETTINGS: AppSettings = {
 
 const appStoreInitialization = createSingleFlight<void>()
 let statusSubscriptionInstalled = false
+
+const WORKSPACE_MODE_STORAGE_KEY = 'sharegpt-workspace-mode'
+
+function loadWorkspaceMode(): WorkspaceMode {
+  try {
+    return localStorage.getItem(WORKSPACE_MODE_STORAGE_KEY) === 'personal' ? 'personal' : 'chooser'
+  } catch {
+    return 'chooser'
+  }
+}
+
+function persistWorkspaceMode(mode: WorkspaceMode): void {
+  try {
+    localStorage.setItem(WORKSPACE_MODE_STORAGE_KEY, mode)
+  } catch {
+    /* ignore */
+  }
+}
 
 export const useAppStore = create<AppState>((set, get) => ({
   active: 'service',
@@ -381,11 +404,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   settings: null,
   status: {},
   authed: false,
-  // 登录成功(authed=true)时一并退出预览态; 退出登录(false)不动预览态。
-  setAuthed: (v) => set(v ? { authed: true, previewMode: false } : { authed: false }),
+  setAuthed: (v) => {
+    if (v) persistWorkspaceMode('organization')
+    set(v ? { authed: true, workspaceMode: 'organization' } : { authed: false })
+  },
 
-  previewMode: false,
-  setPreviewMode: (v) => set({ previewMode: v }),
+  workspaceMode: loadWorkspaceMode(),
+  setWorkspaceMode: (workspaceMode) => {
+    persistWorkspaceMode(workspaceMode)
+    set((state) => ({
+      workspaceMode,
+      active: workspaceNavAvailable(workspaceMode, state.active)
+        ? state.active
+        : workspaceFallbackNav(workspaceMode),
+    }))
+  },
 
   tourOpen: false,
   setTourOpen: (v) => set({ tourOpen: v }),

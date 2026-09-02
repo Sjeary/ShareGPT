@@ -156,7 +156,9 @@ export function useAiEvents() {
 
       if (payload?.type === 'translate-selection') {
         const auth = useAuthStore.getState()
-        if (!canUseTranslation(auth.token, auth.profile)) return
+        if (!canUseTranslation(useAppStore.getState().workspaceMode, auth.token, auth.profile)) {
+          return
+        }
         useTranslationStore
           .getState()
           .openSelection(

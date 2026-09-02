@@ -3,18 +3,25 @@ interface AiCapabilityProfile {
   advancedAiAllowed?: boolean
 }
 
+type AiWorkspaceMode = 'chooser' | 'personal' | 'organization'
+
 export function canUseTranslation(
+  workspaceMode: AiWorkspaceMode,
   token: string | null | undefined,
   profile: AiCapabilityProfile | null | undefined,
 ): boolean {
-  return Boolean(String(token || '').trim() && profile)
+  if (workspaceMode === 'personal') return true
+  return workspaceMode === 'organization' && Boolean(String(token || '').trim() && profile)
 }
 
 export function canUseAdvancedAi(
+  workspaceMode: AiWorkspaceMode,
   token: string | null | undefined,
   profile: AiCapabilityProfile | null | undefined,
 ): boolean {
   return Boolean(
-    canUseTranslation(token, profile) && (profile?.isAdmin || profile?.advancedAiAllowed),
+    canUseTranslation(workspaceMode, token, profile) &&
+    workspaceMode === 'organization' &&
+    (profile?.isAdmin || profile?.advancedAiAllowed),
   )
 }

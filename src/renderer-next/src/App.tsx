@@ -6,10 +6,10 @@ import { Titlebar } from '@/components/layout/Titlebar'
 import { Shell } from '@/components/layout/Shell'
 import { LoginScreen } from '@/components/LoginScreen'
 
-// 应用级登录门: 先等设置加载(确保登录页能预填), 未登录展示登录页, 登录成功(authed)后进入 Shell。
+// 应用级工作区门: 个人工作区无需登录；组织工作区只在服务器确认登录后进入。
 export default function App() {
   const authed = useAppStore((s) => s.authed)
-  const previewMode = useAppStore((s) => s.previewMode)
+  const workspaceMode = useAppStore((s) => s.workspaceMode)
   const settings = useAppStore((s) => s.settings)
   const meta = useAppStore((s) => s.meta)
   const init = useAppStore((s) => s.init)
@@ -46,6 +46,9 @@ export default function App() {
     )
   }
 
-  // 已登录 或 预览态 进入主界面 Shell; 否则展示登录页。预览态下 Shell 顶部挂"预览条"引导登录。
-  return authed || previewMode ? <Shell /> : <LoginScreen />
+  return (workspaceMode === 'organization' && authed) || workspaceMode === 'personal' ? (
+    <Shell />
+  ) : (
+    <LoginScreen />
+  )
 }

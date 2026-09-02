@@ -15,6 +15,7 @@ export function SetupGuide() {
   const mode = useAppStore((s) => s.mode)
   const patchSection = useAppStore((s) => s.patchSection)
   const setActive = useAppStore((s) => s.setActive)
+  const workspaceMode = useAppStore((s) => s.workspaceMode)
   // 新手导览进行中时不弹配置引导, 避免两个覆盖层叠在一起。
   const tourOpen = useAppStore((s) => s.tourOpen)
   const [hidden, setHidden] = useState(false)
@@ -29,15 +30,22 @@ export function SetupGuide() {
     safe(sender.proxy_server) && safe(sender.proxy_port) && safe(sender.proxy_uuid),
   )
 
-  const shouldShow = !hidden && !dismissed && mode !== 'receiver' && (!collabReady || !senderReady)
+  const needsCollaboration = workspaceMode === 'organization'
+  const shouldShow =
+    !hidden &&
+    !dismissed &&
+    mode !== 'receiver' &&
+    ((!collabReady && needsCollaboration) || !senderReady)
   if (!shouldShow) return null
 
   const items: string[] = []
-  if (!collabReady) items.push('先填写账号服务地址，后续才能登录、同步联系人和加载统计。')
+  if (!collabReady && needsCollaboration) {
+    items.push('先填写账号服务地址，后续才能登录、同步联系人和加载统计。')
+  }
   if (!senderReady) items.push('补全代理的服务器地址、连接端口和连接身份码，才能正常启动。')
   items.push('代理启动后，AI 页面都会复用当前 SOCKS5 代理。')
 
-  const needsLogin = !collabReady
+  const needsLogin = needsCollaboration && !collabReady
 
   function dismiss() {
     setHidden(true)

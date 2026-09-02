@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { _electron: electron } = require("playwright");
+const { loginThroughForm, startCollabLoginFixture } = require("./lib/collab-login-fixture");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -25,6 +26,7 @@ async function enableAndFill(composer, value) {
 async function main() {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-chat-composer-"));
   const screenshot = path.join(temporaryRoot, "short-text.png");
+  const fixture = await startCollabLoginFixture();
   let electronApp;
 
   try {
@@ -34,12 +36,7 @@ async function main() {
       env: { ...process.env, SHAREGPT_USER_DATA: path.join(temporaryRoot, "user-data") },
     });
     const page = await electronApp.firstWindow();
-    const skipLogin = page.getByRole("button", { name: "先不登录，随便逛逛" });
-    await skipLogin.waitFor({ state: "visible" });
-    await skipLogin.click();
-
-    const skipTour = page.getByRole("button", { name: "跳过", exact: true });
-    if (await skipTour.isVisible().catch(() => false)) await skipTour.click();
+    await loginThroughForm(page, fixture.baseUrl);
     await page.getByRole("button", { name: /协作聊天/ }).click();
 
     const composer = page.locator('textarea[placeholder="登录账户后即可发送消息"]');
@@ -75,6 +72,7 @@ async function main() {
     process.stdout.write(`${JSON.stringify({ ok: true, short, long, cleared, screenshot })}\n`);
   } finally {
     await electronApp?.close().catch(() => undefined);
+    await fixture.close();
   }
 }
 

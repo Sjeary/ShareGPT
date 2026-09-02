@@ -118,10 +118,13 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const sidebarHidden = useAppStore((s) => s.sidebarHidden)
   const toggleSidebarHidden = useAppStore((s) => s.toggleSidebarHidden)
   const aiHeaderHidden = useAppStore((s) => s.aiHeaderHidden)
+  const workspaceMode = useAppStore((s) => s.workspaceMode)
   const setAiHeaderHidden = useAppStore((s) => s.setAiHeaderHidden)
   const toggleAiHeaderHidden = useAppStore((s) => s.toggleAiHeaderHidden)
-  const advancedAiAllowed = useAuthStore((s) => canUseAdvancedAi(s.token, s.profile))
-  const translationAllowed = useAuthStore((s) => canUseTranslation(s.token, s.profile))
+  const advancedAiAllowed = useAuthStore((s) => canUseAdvancedAi(workspaceMode, s.token, s.profile))
+  const translationAllowed = useAuthStore((s) =>
+    canUseTranslation(workspaceMode, s.token, s.profile),
+  )
   const senderRunning = isSenderRunning(status)
   const advancedAi = useMemo(
     () => normalizeAdvancedAiSettings(settings?.advancedAi),

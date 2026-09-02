@@ -215,8 +215,11 @@ export function TranslationPanel({
   width,
   replacement,
 }: TranslationPanelProps) {
+  const workspaceMode = useAppStore((app) => app.workspaceMode)
   const state = useTranslationStore()
   const load = state.load
+  const translationProvider = state.config.provider
+  const setTranslationProvider = state.setProvider
   const activeRunRef = useRef<ActiveTranslationRun | null>(null)
   const operationGenerationRef = useRef(0)
   const lastAutoTranslateRef = useRef(0)
@@ -253,6 +256,11 @@ export function TranslationPanel({
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    if (workspaceMode !== 'personal' || translationProvider !== 'managed') return
+    void setTranslationProvider('ai').catch(() => undefined)
+  }, [setTranslationProvider, translationProvider, workspaceMode])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -654,6 +662,7 @@ export function TranslationPanel({
           managedServerUrl={serverUrl}
           onReloadManaged={() => setManagedReload((value) => value + 1)}
           disabled={translationRunning}
+          managedEnabled={workspaceMode === 'organization'}
         />
       )}
 
@@ -1016,6 +1025,7 @@ function TranslationSettingsForm({
   managedServerUrl,
   onReloadManaged,
   disabled,
+  managedEnabled,
 }: {
   config: TranslationSettings
   testing: boolean
@@ -1028,6 +1038,7 @@ function TranslationSettingsForm({
   managedServerUrl: string
   onReloadManaged: () => void
   disabled: boolean
+  managedEnabled: boolean
 }) {
   const inputClass = 'h-8 text-xs'
   return (
@@ -1044,11 +1055,13 @@ function TranslationSettingsForm({
             value={config.provider}
             onChange={(event) => onChange({ provider: event.target.value as TranslationProvider })}
           >
-            {PROVIDERS.map((provider) => (
-              <option key={provider.id} value={provider.id}>
-                {provider.label}
-              </option>
-            ))}
+            {PROVIDERS.filter((provider) => managedEnabled || provider.id !== 'managed').map(
+              (provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.label}
+                </option>
+              ),
+            )}
           </select>
         </label>
         {(config.provider === 'ai' || config.provider === 'managed') && (

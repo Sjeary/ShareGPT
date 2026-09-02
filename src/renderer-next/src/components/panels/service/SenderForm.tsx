@@ -10,6 +10,7 @@ import { useAuthStore } from '@/store/useAuthStore'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { SenderSettings } from '@/types/settings'
+import { canStartWorkspaceProxy } from '@/lib/workspaceCapabilities'
 import { Field } from './Field'
 import {
   DEFAULT_TARGET_DOMAINS,
@@ -33,6 +34,7 @@ export function SenderForm() {
   const settings = useAppStore((s) => s.settings)
   const status = useAppStore((s) => s.status)
   const mode = useAppStore((s) => s.mode)
+  const workspaceMode = useAppStore((s) => s.workspaceMode)
   const patchSection = useAppStore((s) => s.patchSection)
   // 旧版 isCollabOnline() = token && connected; 新 store connection==='online' 即 token+WS 已连。
   const connection = useChatStore((s) => s.connection)
@@ -43,6 +45,8 @@ export function SenderForm() {
   const running = isSenderRunning(status)
   // 账号在线(已登录且 WS 在线)才允许开启代理, 对齐旧 btnStartSender 的 isCollabOnline 门禁。
   const online = connection === 'online'
+  const canStart = canStartWorkspaceProxy(workspaceMode, online)
+  const personalWorkspace = workspaceMode === 'personal'
 
   const form = useMemo<SenderSettings>(
     () => ({ ...EMPTY, ...(settings?.sender ?? {}) }),
@@ -69,12 +73,16 @@ export function SenderForm() {
 
   // 启动 / 保存时实际下发的发送端配置, 与旧版一致地把默认域名清单兜底写入。
   function buildPayload(): SenderSettings {
-    return { ...form, target_domains: resolvedTargetDomains }
+    return {
+      ...form,
+      proxy_mode: personalWorkspace ? 'unified' : form.proxy_mode,
+      target_domains: resolvedTargetDomains,
+    }
   }
 
   // 移植旧版启动前校验: 已填服务器时, 端口必须是数字, uuid 必填。
   function validate(): string | null {
-    if (form.proxy_mode === 'airport') {
+    if (!personalWorkspace && form.proxy_mode === 'airport') {
       // 机场模式: 用下发节点出站, 不需要统一梯子的 server/port/uuid。
       if (!form.airport_outbound) {
         return '当前没有可用的机场节点（管理员未下发），请改用「统一梯子」或联系管理员'
@@ -101,7 +109,7 @@ export function SenderForm() {
       return
     }
     // 对齐旧 btnStartSender: 字段校验通过后再确认账号在线(token+WS), 否则拒绝启动。
-    if (!online) {
+    if (!canStart) {
       toast.error('请先登录账号并保持在线')
       return
     }
@@ -140,7 +148,7 @@ export function SenderForm() {
         填写连接信息后，可开启代理，让需要的网站通过这台设备访问。
       </p>
 
-      {/* 代理方式 (可选): 统一梯子 (默认) 或 服务器下发的机场节点。运行中锁定, 需停止后切换。 */}
+      {/* 个人工作区只拥有本机配置；组织工作区可在本机配置和管理员下发节点之间选择。 */}
       <div className="grid gap-1.5">
         <Label className="cursor-default">代理方式</Label>
         <div className="flex flex-wrap gap-2">
@@ -150,38 +158,42 @@ export function SenderForm() {
             onClick={() => update({ proxy_mode: 'unified' })}
             className={cn(
               'flex-1 rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-60',
-              form.proxy_mode !== 'airport'
+              personalWorkspace || form.proxy_mode !== 'airport'
                 ? 'border-primary bg-primary/10'
                 : 'border-border hover:bg-accent/40',
             )}
           >
-            <div className="text-sm font-medium">统一梯子（默认）</div>
+            <div className="text-sm font-medium">
+              {personalWorkspace ? '个人代理' : '统一梯子（默认）'}
+            </div>
             <div className="truncate text-xs text-muted-foreground">
-              经统一服务器 {safeText(form.proxy_server) || '——'} 出网
+              {personalWorkspace ? '使用仅属于本机工作区的连接配置' : '使用当前账号的连接配置'}
             </div>
           </button>
-          <button
-            type="button"
-            disabled={locked || !form.airport_outbound}
-            onClick={() => update({ proxy_mode: 'airport' })}
-            className={cn(
-              'flex-1 rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-50',
-              form.proxy_mode === 'airport'
-                ? 'border-primary bg-primary/10'
-                : 'border-border hover:bg-accent/40',
-            )}
-          >
-            <div className="text-sm font-medium">机场节点</div>
-            <div className="truncate text-xs text-muted-foreground">
-              {form.airport_outbound
-                ? `当前：${safeText(form.airport_name) || '已下发节点'}`
-                : '管理员暂未下发节点'}
-            </div>
-          </button>
+          {!personalWorkspace && (
+            <button
+              type="button"
+              disabled={locked || !form.airport_outbound}
+              onClick={() => update({ proxy_mode: 'airport' })}
+              className={cn(
+                'flex-1 rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-50',
+                form.proxy_mode === 'airport'
+                  ? 'border-primary bg-primary/10'
+                  : 'border-border hover:bg-accent/40',
+              )}
+            >
+              <div className="text-sm font-medium">机场节点</div>
+              <div className="truncate text-xs text-muted-foreground">
+                {form.airport_outbound
+                  ? `当前：${safeText(form.airport_name) || '已下发节点'}`
+                  : '管理员暂未下发节点'}
+              </div>
+            </button>
+          )}
         </div>
 
         {/* 机场节点稳定性提醒: 可叉掉/不再提示 (持久化 ui.airport_notice_dismissed)。 */}
-        {!settings?.ui?.airport_notice_dismissed && (
+        {!personalWorkspace && !settings?.ui?.airport_notice_dismissed && (
           <div className="relative rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 pr-8 text-xs text-amber-700 dark:text-amber-300">
             <button
               type="button"
@@ -207,7 +219,7 @@ export function SenderForm() {
         )}
       </div>
 
-      {!running && !online ? (
+      {!running && !canStart ? (
         <div
           role="status"
           className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-muted-foreground"
@@ -324,7 +336,7 @@ export function SenderForm() {
             停止代理
           </Button>
         ) : (
-          <Button disabled={busy || !online} onClick={handleStart}>
+          <Button disabled={busy || !canStart} onClick={handleStart}>
             {busy ? <Loader2 className="animate-spin" /> : <Play />}
             开启代理
           </Button>

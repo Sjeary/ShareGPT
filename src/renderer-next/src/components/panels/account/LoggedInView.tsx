@@ -32,6 +32,7 @@ import {
   History,
   Star,
   Github,
+  Laptop,
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { compareVersions, checkGithubUpdate } from './bootstrap'
@@ -507,6 +508,7 @@ export function LoggedInView() {
   const profile = useAuthStore((s) => s.profile)
   const advancedAiAllowed = Boolean(profile?.isAdmin || profile?.advancedAiAllowed)
   const { logout } = useAuth()
+  const setWorkspaceMode = useAppStore((s) => s.setWorkspaceMode)
 
   const [loggingOut, setLoggingOut] = useState(false)
   const [savingKey, setSavingKey] = useState<string | null>(null)
@@ -523,6 +525,20 @@ export function LoggedInView() {
       toast.success('已退出登录')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '退出失败')
+    } finally {
+      setLoggingOut(false)
+    }
+  }
+
+  async function handleEnterPersonal() {
+    if (loggingOut) return
+    setLoggingOut(true)
+    try {
+      await logout()
+      setWorkspaceMode('personal')
+      toast.success('已进入个人工作区')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '切换个人工作区失败')
     } finally {
       setLoggingOut(false)
     }
@@ -587,6 +603,10 @@ export function LoggedInView() {
             <Button variant="outline" size="sm" onClick={handleEditProfile}>
               <UserCog />
               编辑个人资料
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleEnterPersonal} disabled={loggingOut}>
+              <Laptop />
+              个人工作区
             </Button>
             <Button variant="outline" size="sm" onClick={handleLogout} disabled={loggingOut}>
               <LogOut />

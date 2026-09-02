@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { Titlebar } from './Titlebar'
 import { Sidebar } from './Sidebar'
-import { PreviewBar } from './PreviewBar'
+import { WorkspaceBar } from './WorkspaceBar'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { privateConversationKey, useChatStore } from '@/store/useChatStore'
@@ -139,7 +139,7 @@ export function Shell() {
   return (
     <div className="flex h-full flex-col bg-background text-foreground">
       <Titlebar />
-      <PreviewBar />
+      <WorkspaceBar />
       <div
         className={
           'flex min-h-0 flex-1 ' + (sidebarSide === 'right' ? 'flex-row-reverse' : 'flex-row')
