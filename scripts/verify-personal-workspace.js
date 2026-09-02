@@ -14,7 +14,7 @@ async function dismissGuides(page) {
 }
 
 async function assertPersonalWorkspace(page) {
-  await page.getByText(/个人工作区 · 配置/).waitFor({ state: "visible" });
+  await page.locator('[data-tour="nav-service"]').waitFor({ state: "visible" });
   assert.equal(await page.locator('[data-tour="nav-service"]').count(), 1);
   assert.equal(await page.locator('[data-tour="nav-calendar"]').count(), 1);
   assert.equal(await page.locator('[data-tour="nav-notes"]').count(), 1);
@@ -27,6 +27,7 @@ async function assertPersonalWorkspace(page) {
 async function main() {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-personal-workspace-"));
   const screenshot = path.join(temporaryRoot, "personal-workspace.png");
+  const accountScreenshot = path.join(temporaryRoot, "personal-account.png");
   let electronApp;
 
   try {
@@ -45,7 +46,13 @@ async function main() {
 
     await page.locator('[data-tour="nav-service"]').click();
     assert.equal(await page.getByText(/请先登录账号并保持在线/).count(), 0);
-    assert.equal(await page.getByText("个人代理", { exact: true }).count(), 1);
+    assert.equal(await page.getByText("代理协议", { exact: true }).count(), 1);
+    assert.equal(await page.locator("#s_personal_proxy_host").count(), 1);
+    assert.equal(await page.locator("#s_personal_proxy_port").count(), 1);
+    assert.equal(await page.locator("#s_proxy_uuid").count(), 0);
+    assert.equal(await page.locator("#s_socks_listen_port").count(), 0);
+    assert.equal(await page.locator("#s_fallback_mode").count(), 0);
+    assert.equal(await page.locator("#s_target_domains").count(), 0);
     assert.equal(await page.getByText("机场节点", { exact: true }).count(), 0);
     assert.equal(await page.getByRole("button", { name: "开启代理" }).isEnabled(), true);
     await page.screenshot({ path: screenshot });
@@ -54,11 +61,20 @@ async function main() {
     await dismissGuides(page);
     await assertPersonalWorkspace(page);
 
-    await page.getByRole("button", { name: /登录组织工作区/ }).click();
-    await page.locator("#account-server").waitFor({ state: "visible" });
     assert.equal(await page.getByText(/个人工作区 · 配置/).count(), 0);
+    const serviceNav = page.locator('[data-tour="nav-service"]');
+    const accountNav = page.locator('[data-tour="nav-account"]');
+    await accountNav.click();
+    await page.locator("#account-server").waitFor({ state: "visible" });
+    assert.match(await accountNav.getAttribute("class"), /text-sidebar-accent-foreground/);
+    assert.doesNotMatch(await serviceNav.getAttribute("class"), /text-sidebar-accent-foreground/);
+    assert.equal(await page.getByText("当前：个人工作区", { exact: true }).count(), 1);
+    assert.equal(await page.getByText("登录组织工作区", { exact: true }).count(), 1);
+    await page.screenshot({ path: accountScreenshot });
 
-    process.stdout.write(`${JSON.stringify({ ok: true, principal, screenshot })}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ ok: true, principal, screenshot, accountScreenshot })}\n`,
+    );
   } finally {
     await electronApp?.close().catch(() => undefined);
   }

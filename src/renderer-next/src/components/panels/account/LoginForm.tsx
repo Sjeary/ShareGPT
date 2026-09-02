@@ -203,6 +203,18 @@ export function LoginForm() {
         <div className="flex w-full max-w-sm flex-col items-center gap-3">
           <LoginUpdateBanner />
 
+          {!showWorkspaceEntry && (
+            <div className="flex w-full items-start gap-3 rounded-md border border-border bg-muted/35 px-4 py-3">
+              <Laptop className="mt-0.5 size-4 shrink-0 text-primary" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium">当前：个人工作区</p>
+                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                  配置、AI 登录状态和翻译凭据仅保存在本机。登录组织后会切换到隔离的组织工作区。
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* 品牌头 (仅登录页): logo + 名称 + 友好欢迎语 + 一句话功能点, 让开局不再是一张冷冰冰的表单。 */}
           {showWorkspaceEntry && (
             <div className="flex w-full flex-col items-center gap-3 text-center">
@@ -234,8 +246,14 @@ export function LoginForm() {
 
           <Card className="w-full">
             <CardHeader className="text-center">
-              <CardTitle className="text-xl">登录协作服务</CardTitle>
-              <CardDescription>填写服务地址与账号即可登录</CardDescription>
+              <CardTitle className="text-xl">
+                {showWorkspaceEntry ? '登录协作服务' : '登录组织工作区'}
+              </CardTitle>
+              <CardDescription>
+                {showWorkspaceEntry
+                  ? '填写服务地址与账号即可登录'
+                  : '登录后切换到该账号的独立配置和网页会话'}
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <form className="grid gap-4" onSubmit={handleSubmit}>
