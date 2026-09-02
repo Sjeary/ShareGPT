@@ -116,6 +116,7 @@ export function LoginForm() {
     collab?.remember_password ? (collab?.saved_password ?? '') : '',
   )
   const [submitting, setSubmitting] = useState(false)
+  const [enteringPersonal, setEnteringPersonal] = useState(false)
   // 内联错误条 + 出错字段 (用于 aria-invalid 触发红边)。
   const [error, setError] = useState('')
   const [errorField, setErrorField] = useState<ErrorField | null>(null)
@@ -153,7 +154,7 @@ export function LoginForm() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
-    if (submitting) return
+    if (submitting || enteringPersonal) return
 
     // 提交前必填校验: 聚焦首个空字段并显示内联错误 (旧 collabLogin -> performCollabLogin 校验)。
     const trimmedServer = serverUrl.trim()
@@ -192,6 +193,22 @@ export function LoginForm() {
       focusField('password', true)
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleEnterPersonal() {
+    if (enteringPersonal) return
+    setEnteringPersonal(true)
+    setError('')
+    setErrorField(null)
+    try {
+      await enterPersonal()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '个人工作区初始化失败，请重试'
+      toast.error(message)
+      setError(message)
+    } finally {
+      setEnteringPersonal(false)
     }
   }
 
@@ -267,7 +284,7 @@ export function LoginForm() {
                     spellCheck={false}
                     value={serverUrl}
                     onChange={(e) => setServerUrl(e.target.value)}
-                    disabled={submitting}
+                    disabled={submitting || enteringPersonal}
                     aria-invalid={errorField === 'server' || undefined}
                   />
                 </div>
@@ -281,7 +298,7 @@ export function LoginForm() {
                     autoComplete="username"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    disabled={submitting}
+                    disabled={submitting || enteringPersonal}
                     aria-invalid={errorField === 'username' || undefined}
                   />
                 </div>
@@ -296,7 +313,7 @@ export function LoginForm() {
                     autoComplete="current-password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    disabled={submitting}
+                    disabled={submitting || enteringPersonal}
                     aria-invalid={errorField === 'password' || undefined}
                   />
                 </div>
@@ -309,7 +326,7 @@ export function LoginForm() {
                     id="account-remember"
                     checked={rememberPassword}
                     onCheckedChange={setRememberPassword}
-                    disabled={submitting}
+                    disabled={submitting || enteringPersonal}
                   />
                 </div>
 
@@ -322,7 +339,11 @@ export function LoginForm() {
                   </p>
                 )}
 
-                <Button type="submit" className="w-full" disabled={submitting}>
+                <Button
+                  type="submit"
+                  className="w-full"
+                  disabled={submitting || enteringPersonal}
+                >
                   {submitting ? (
                     <>
                       <Loader2 className="animate-spin" />
@@ -350,10 +371,11 @@ export function LoginForm() {
             <Button
               variant="ghost"
               className="w-full text-muted-foreground"
-              onClick={enterPersonal}
+              onClick={() => void handleEnterPersonal()}
+              disabled={enteringPersonal}
             >
-              <Laptop />
-              进入个人工作区
+              {enteringPersonal ? <Loader2 className="animate-spin" /> : <Laptop />}
+              {enteringPersonal ? '正在准备个人工作区…' : '进入个人工作区'}
             </Button>
           )}
         </div>

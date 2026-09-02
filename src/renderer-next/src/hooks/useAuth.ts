@@ -36,6 +36,43 @@ function assertCurrentLoginAttempt(attempt: number): void {
   loginAttempts.assertCurrent(attempt)
 }
 
+function applyPrincipalActivation(principal: PrincipalActivation) {
+  settingsPrincipalRuntime.invalidate()
+  useAiStore.getState().resetRuntime()
+  useNotesAiStore.getState().invalidatePrincipal()
+  const snapshot = settingsPrincipalRuntime.activate(principal.principalId, principal.generation)
+  const settings = principal.settings as unknown as AppSettings
+  useAppStore.setState({ settings })
+  useTranslationStore.getState().resetForPrincipal(principal.principalId, settings.translation)
+  useNotesAiStore.getState().resetForPrincipal(principal.principalId, settings.translation)
+  return snapshot
+}
+
+function isStalePrincipalTransition(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  return /STALE_PRINCIPAL|账号已切换|设置 principal(?: generation)? 已变化/i.test(message)
+}
+
+async function activateLocalPrincipal(): Promise<PrincipalActivation> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const current = requireSettingsPrincipalSnapshot(await api.getSettingsPrincipal())
+    try {
+      const local = requirePrincipalActivation(
+        await api.clearSettingsPrincipal({
+          expectedPrincipalId: current.principalId,
+          expectedPrincipalGeneration: current.generation,
+        }),
+      )
+      applyPrincipalActivation(local)
+      return local
+    } catch (error) {
+      if (attempt === 0 && isStalePrincipalTransition(error)) continue
+      throw error
+    }
+  }
+  throw new Error('无法激活本机账号身份')
+}
+
 export interface LoginParams {
   serverUrl: string
   username: string
@@ -182,7 +219,9 @@ export function useAuth() {
           // Principal 必须来自服务器确认的精确账号。先切换主进程设置所有权，
           // 再公开 token，避免 A 的配置短暂进入 B 的会话。
           // 任何上一工作区的 sender 都必须先停止，避免个人代理继续承载组织会话。
+          assertCurrentLoginAttempt(attempt)
           await api.stopSender()
+          assertCurrentLoginAttempt(attempt)
           settingsPrincipalRuntime.invalidate()
           useAiStore.getState().resetRuntime()
           useNotesAiStore.getState().invalidatePrincipal()
@@ -195,18 +234,7 @@ export function useAuth() {
           return activation
         },
         applyPrincipal: (principal) => {
-          principalSnapshot = settingsPrincipalRuntime.activate(
-            principal.principalId,
-            principal.generation,
-          )
-          const principalSettings = principal.settings as unknown as AppSettings
-          useAppStore.setState({ settings: principalSettings })
-          useTranslationStore
-            .getState()
-            .resetForPrincipal(principal.principalId, principalSettings.translation)
-          useNotesAiStore
-            .getState()
-            .resetForPrincipal(principal.principalId, principalSettings.translation)
+          principalSnapshot = applyPrincipalActivation(principal)
         },
         persistPrincipalSettings: async () => {
           // 与旧版 settings.json 字段 100% 兼容。
@@ -289,16 +317,7 @@ export function useAuth() {
           setAuthed(false)
           useChatStore.getState().setIdentity({ token: '' })
           useChatStore.getState().setConnection('idle')
-          settingsPrincipalRuntime.invalidate()
-          useAiStore.getState().resetRuntime()
-          useNotesAiStore.getState().invalidatePrincipal()
-          settingsPrincipalRuntime.activate(local.principalId, local.generation)
-          const localSettings = local.settings as unknown as AppSettings
-          useAppStore.setState({ settings: localSettings })
-          useTranslationStore
-            .getState()
-            .resetForPrincipal(local.principalId, localSettings.translation)
-          useNotesAiStore.getState().resetForPrincipal(local.principalId, localSettings.translation)
+          applyPrincipalActivation(local)
         },
         rollbackActivatedPrincipalIfOwned: async (activated) => {
           let local: PrincipalActivation
@@ -323,16 +342,7 @@ export function useAuth() {
           setAuthed(false)
           useChatStore.getState().setIdentity({ token: '' })
           useChatStore.getState().setConnection('idle')
-          settingsPrincipalRuntime.invalidate()
-          useAiStore.getState().resetRuntime()
-          useNotesAiStore.getState().invalidatePrincipal()
-          settingsPrincipalRuntime.activate(local.principalId, local.generation)
-          const localSettings = local.settings as unknown as AppSettings
-          useAppStore.setState({ settings: localSettings })
-          useTranslationStore
-            .getState()
-            .resetForPrincipal(local.principalId, localSettings.translation)
-          useNotesAiStore.getState().resetForPrincipal(local.principalId, localSettings.translation)
+          applyPrincipalActivation(local)
         },
         discardIssuedToken: () => discardCollabToken(cleanedServer, issuedToken),
       })
@@ -351,21 +361,7 @@ export function useAuth() {
       String(useAppStore.getState().settings?.collab?.server_url ?? '').trim(),
     )
 
-    const current = settingsPrincipalRuntime.snapshot()
-    const local = requirePrincipalActivation(
-      await api.clearSettingsPrincipal({
-        expectedPrincipalId: current.principalId,
-        expectedPrincipalGeneration: current.generation,
-      }),
-    )
-    settingsPrincipalRuntime.invalidate()
-    useAiStore.getState().resetRuntime()
-    useNotesAiStore.getState().invalidatePrincipal()
-    settingsPrincipalRuntime.activate(local.principalId, local.generation)
-    const localSettings = local.settings as unknown as AppSettings
-    useAppStore.setState({ settings: localSettings })
-    useTranslationStore.getState().resetForPrincipal(local.principalId, localSettings.translation)
-    useNotesAiStore.getState().resetForPrincipal(local.principalId, localSettings.translation)
+    await activateLocalPrincipal()
 
     // 通知服务器下线 (best-effort, 失败不阻塞已经完成的本地退出)。
     if (serverUrl && token) {
@@ -403,12 +399,18 @@ export function useAuth() {
     void profile
   }, [clearSession, setAuthed])
 
-  const enterPersonal = useCallback(() => {
+  const enterPersonal = useCallback(async () => {
     // 入口选择必须赢过尚未完成的自动登录。已进入 Principal 事务的旧尝试会按
     // completeCollabLoginTransaction 的 ownership guard 回滚，不能反向切回组织工作区。
     loginAttempts.invalidate()
+    await api.stopSender().catch(() => undefined)
+    clearSession()
+    setAuthed(false)
+    useChatStore.getState().setIdentity({ token: '' })
+    useChatStore.getState().setConnection('idle')
+    await activateLocalPrincipal()
     setWorkspaceMode('personal')
-  }, [setWorkspaceMode])
+  }, [clearSession, setAuthed, setWorkspaceMode])
 
   return { login, logout, enterPersonal }
 }

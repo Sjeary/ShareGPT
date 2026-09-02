@@ -43,6 +43,16 @@ async function main() {
 
     const principal = await page.evaluate(() => window.api.getSettingsPrincipal());
     assert.equal(principal.principalId, "local-device");
+    assert.ok(principal.generation >= 1, "personal workspace must activate a usable Principal");
+
+    const createdWorkspace = await page.evaluate(() =>
+      window.api.createAiView("gpt", { lastUrl: "https://chatgpt.com/" }),
+    );
+    assert.ok(createdWorkspace?.activeTabId, "personal Principal must create an AI workspace");
+    assert.ok(
+      createdWorkspace.tabs?.some((tab) => tab.id === createdWorkspace.activeTabId),
+      "created AI workspace must be present in the main-process tab registry",
+    );
 
     await page.locator('[data-tour="nav-service"]').click();
     assert.equal(await page.getByText(/请先登录账号并保持在线/).count(), 0);
@@ -64,6 +74,29 @@ async function main() {
     const senderStatus = await page.evaluate(() => window.api.getStatus());
     assert.equal(senderStatus.senderRunning, true);
     assert.notEqual(senderStatus.senderSocksPort, 1080);
+
+    const ensuredWorkspace = await page.evaluate(
+      async ({ tabId, port }) => {
+        await window.api.setActiveAiKind("gpt");
+        return window.api.ensureAiWorkspace({
+          kind: "gpt",
+          tabId,
+          environmentId: "",
+          host: "127.0.0.1",
+          port,
+          homeUrl: "https://chatgpt.com/auth/login",
+          lastUrl: "https://chatgpt.com/",
+          userAgent: window.navigator.userAgent,
+        });
+      },
+      { tabId: createdWorkspace.activeTabId, port: senderStatus.senderSocksPort },
+    );
+    assert.equal(ensuredWorkspace.tabId, createdWorkspace.activeTabId);
+    assert.equal(ensuredWorkspace.proxyMode, "sender");
+    assert.equal(ensuredWorkspace.rendererAlive, true);
+    assert.equal(await page.getByText("账号身份尚未准备好", { exact: true }).count(), 0);
+    await page.evaluate(() => window.api.setActiveAiKind(""));
+
     await page.getByRole("button", { name: "停止代理" }).click();
     await page.getByRole("button", { name: "开启代理" }).waitFor({ state: "visible" });
     await page.screenshot({ path: screenshot });
