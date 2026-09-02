@@ -55,9 +55,23 @@ async function main() {
     assert.equal(await page.locator("#s_target_domains").count(), 0);
     assert.equal(await page.getByText("机场节点", { exact: true }).count(), 0);
     assert.equal(await page.getByRole("button", { name: "开启代理" }).isEnabled(), true);
+    await page.locator("#s_personal_proxy_port").fill("1080");
+    await page.waitForFunction(
+      () => document.querySelector("#s_personal_proxy_port")?.value === "1080",
+    );
+    await page.getByRole("button", { name: "开启代理" }).click();
+    await page.getByRole("button", { name: "停止代理" }).waitFor({ state: "visible" });
+    const senderStatus = await page.evaluate(() => window.api.getStatus());
+    assert.equal(senderStatus.senderRunning, true);
+    assert.notEqual(senderStatus.senderSocksPort, 1080);
+    await page.getByRole("button", { name: "停止代理" }).click();
+    await page.getByRole("button", { name: "开启代理" }).waitFor({ state: "visible" });
     await page.screenshot({ path: screenshot });
 
     await page.reload();
+    await page.getByRole("button", { name: "进入个人工作区" }).waitFor({ state: "visible" });
+    assert.equal(await page.locator('[data-tour="nav-service"]').count(), 0);
+    await page.getByRole("button", { name: "进入个人工作区" }).click();
     await dismissGuides(page);
     await assertPersonalWorkspace(page);
 
@@ -71,6 +85,19 @@ async function main() {
     assert.equal(await page.getByText("当前：个人工作区", { exact: true }).count(), 1);
     assert.equal(await page.getByText("登录组织工作区", { exact: true }).count(), 1);
     await page.screenshot({ path: accountScreenshot });
+
+    await electronApp.close();
+    electronApp = undefined;
+    electronApp = await electron.launch({
+      args: [ROOT],
+      cwd: ROOT,
+      env: { ...process.env, SHAREGPT_USER_DATA: path.join(temporaryRoot, "user-data") },
+    });
+    const relaunchedPage = await electronApp.firstWindow();
+    await relaunchedPage
+      .getByRole("button", { name: "进入个人工作区" })
+      .waitFor({ state: "visible" });
+    assert.equal(await relaunchedPage.locator('[data-tour="nav-service"]').count(), 0);
 
     process.stdout.write(
       `${JSON.stringify({ ok: true, principal, screenshot, accountScreenshot })}\n`,

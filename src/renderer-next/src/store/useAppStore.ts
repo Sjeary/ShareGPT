@@ -164,24 +164,6 @@ const EMPTY_SETTINGS: AppSettings = {
 const appStoreInitialization = createSingleFlight<void>()
 let statusSubscriptionInstalled = false
 
-const WORKSPACE_MODE_STORAGE_KEY = 'sharegpt-workspace-mode'
-
-function loadWorkspaceMode(): WorkspaceMode {
-  try {
-    return localStorage.getItem(WORKSPACE_MODE_STORAGE_KEY) === 'personal' ? 'personal' : 'chooser'
-  } catch {
-    return 'chooser'
-  }
-}
-
-function persistWorkspaceMode(mode: WorkspaceMode): void {
-  try {
-    localStorage.setItem(WORKSPACE_MODE_STORAGE_KEY, mode)
-  } catch {
-    /* ignore */
-  }
-}
-
 export const useAppStore = create<AppState>((set, get) => ({
   active: 'service',
   setActive: (key) => {
@@ -405,13 +387,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   status: {},
   authed: false,
   setAuthed: (v) => {
-    if (v) persistWorkspaceMode('organization')
     set(v ? { authed: true, workspaceMode: 'organization' } : { authed: false })
   },
 
-  workspaceMode: loadWorkspaceMode(),
+  // 工作区是当前运行会话的选择，不是永久启动偏好。每次启动先回到入口；
+  // 已明确开启的组织自动登录仍由 LoginForm 单独恢复。
+  workspaceMode: 'chooser',
   setWorkspaceMode: (workspaceMode) => {
-    persistWorkspaceMode(workspaceMode)
     set((state) => ({
       workspaceMode,
       active: workspaceNavAvailable(workspaceMode, state.active)
