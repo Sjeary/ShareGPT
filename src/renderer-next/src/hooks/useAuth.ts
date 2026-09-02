@@ -73,6 +73,12 @@ async function activateLocalPrincipal(): Promise<PrincipalActivation> {
   throw new Error('无法激活本机账号身份')
 }
 
+async function stopSenderForPrincipalTransition(): Promise<void> {
+  const mode = await api.getMode().catch(() => '')
+  if (mode === 'receiver') return
+  await api.stopSender()
+}
+
 export interface LoginParams {
   serverUrl: string
   username: string
@@ -220,7 +226,7 @@ export function useAuth() {
           // 再公开 token，避免 A 的配置短暂进入 B 的会话。
           // 任何上一工作区的 sender 都必须先停止，避免个人代理继续承载组织会话。
           assertCurrentLoginAttempt(attempt)
-          await api.stopSender()
+          await stopSenderForPrincipalTransition()
           assertCurrentLoginAttempt(attempt)
           settingsPrincipalRuntime.invalidate()
           useAiStore.getState().resetRuntime()
@@ -385,7 +391,7 @@ export function useAuth() {
     // 账号下线后不再以本机转发: 停止发送服务 (best-effort, 失败不阻塞退出)。
     // 移植自旧 renderer.js collabLogout(~4273): await stopSenderBecauseAccountOffline。
     // 注意: 4002/4003/静默重登失败时的 stopSender 归 chat 域 (useChat.ts), 本域只管主动退出。
-    await api.stopSender().catch(() => {})
+    await stopSenderForPrincipalTransition().catch(() => {})
     clearSession()
     setAuthed(false)
 
@@ -403,7 +409,7 @@ export function useAuth() {
     // 入口选择必须赢过尚未完成的自动登录。已进入 Principal 事务的旧尝试会按
     // completeCollabLoginTransaction 的 ownership guard 回滚，不能反向切回组织工作区。
     loginAttempts.invalidate()
-    await api.stopSender().catch(() => undefined)
+    await stopSenderForPrincipalTransition().catch(() => undefined)
     clearSession()
     setAuthed(false)
     useChatStore.getState().setIdentity({ token: '' })
