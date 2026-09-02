@@ -33,6 +33,9 @@ export function useBrowserPrivacyAutoSync(): void {
       proxyMode: sender?.proxy_mode ?? 'unified',
       proxyServer: sender?.proxy_server ?? '',
       proxyPort: sender?.proxy_port ?? '',
+      personalProtocol: sender?.personal_proxy_protocol ?? 'socks5',
+      personalHost: sender?.personal_proxy_host ?? '',
+      personalPort: sender?.personal_proxy_port ?? '',
       airportName: sender?.airport_name ?? '',
       airport: sender?.airport_outbound ?? null,
     })

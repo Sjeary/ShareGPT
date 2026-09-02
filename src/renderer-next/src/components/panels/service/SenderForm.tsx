@@ -54,6 +54,10 @@ export function SenderForm() {
   )
 
   const directMode = form.fallback_mode === 'direct'
+  const personalProtocol = form.personal_proxy_protocol === 'http' ? 'http' : 'socks5'
+  const personalHost =
+    safeText(form.personal_proxy_host) || safeText(form.proxy_server) || '127.0.0.1'
+  const personalPort = safeText(form.personal_proxy_port) || safeText(form.proxy_port)
   // 运行中或正在启停时锁定表单。
   const locked = running || busy
 
@@ -73,16 +77,39 @@ export function SenderForm() {
 
   // 启动 / 保存时实际下发的发送端配置, 与旧版一致地把默认域名清单兜底写入。
   function buildPayload(): SenderSettings {
+    if (personalWorkspace) {
+      return {
+        ...form,
+        proxy_mode: 'personal',
+        personal_proxy_protocol: personalProtocol,
+        personal_proxy_host: personalHost,
+        personal_proxy_port: personalPort,
+        // 个人工作区只将内嵌 AI 所需域名转发给用户已有代理，其余流量直连。
+        fallback_mode: 'direct',
+        route_all: false,
+        target_domains: resolvedTargetDomains,
+      }
+    }
     return {
       ...form,
-      proxy_mode: personalWorkspace ? 'unified' : form.proxy_mode,
       target_domains: resolvedTargetDomains,
     }
   }
 
   // 移植旧版启动前校验: 已填服务器时, 端口必须是数字, uuid 必填。
   function validate(): string | null {
-    if (!personalWorkspace && form.proxy_mode === 'airport') {
+    if (personalWorkspace) {
+      if (!personalHost) return '请填写代理地址'
+      if (!isPortNumber(personalPort)) return '代理端口必须为数字'
+      if (
+        ['127.0.0.1', 'localhost'].includes(personalHost.toLowerCase()) &&
+        personalPort === safeText(form.socks_listen_port)
+      ) {
+        return '这个端口正由 ShareGPT 内部使用，请填写你的代理软件监听端口'
+      }
+      return null
+    }
+    if (form.proxy_mode === 'airport') {
       // 机场模式: 用下发节点出站, 不需要统一梯子的 server/port/uuid。
       if (!form.airport_outbound) {
         return '当前没有可用的机场节点（管理员未下发），请改用「统一梯子」或联系管理员'
@@ -118,8 +145,18 @@ export function SenderForm() {
       const payload = buildPayload()
       // 旧版 startSender 前先 saveSettings, 此处把回填后的默认域名清单一并持久化,
       // 与旧 getSenderForm(target_domains || DEFAULT_TARGET_DOMAINS) 落库行为一致。
-      if (payload.target_domains !== safeText(form.target_domains)) {
-        update({ target_domains: payload.target_domains })
+      if (personalWorkspace) {
+        await patchSection('sender', {
+          proxy_mode: 'personal',
+          personal_proxy_protocol: payload.personal_proxy_protocol,
+          personal_proxy_host: payload.personal_proxy_host,
+          personal_proxy_port: payload.personal_proxy_port,
+          fallback_mode: 'direct',
+          route_all: false,
+          target_domains: payload.target_domains,
+        })
+      } else if (payload.target_domains !== safeText(form.target_domains)) {
+        await patchSection('sender', { target_domains: payload.target_domains })
       }
       await api.startSender(payload)
       toast.success('代理已开启')
@@ -145,32 +182,30 @@ export function SenderForm() {
   return (
     <div className="flex flex-col gap-5">
       <p className="text-sm text-muted-foreground">
-        填写连接信息后，可开启代理，让需要的网站通过这台设备访问。
+        {personalWorkspace
+          ? '连接你已有的代理。ShareGPT 只会将内嵌 AI 所需的网站交给它，其余流量保持直连。'
+          : '填写连接信息后，可开启代理，让需要的网站通过这台设备访问。'}
       </p>
 
-      {/* 个人工作区只拥有本机配置；组织工作区可在本机配置和管理员下发节点之间选择。 */}
-      <div className="grid gap-1.5">
-        <Label className="cursor-default">代理方式</Label>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={locked}
-            onClick={() => update({ proxy_mode: 'unified' })}
-            className={cn(
-              'flex-1 rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-60',
-              personalWorkspace || form.proxy_mode !== 'airport'
-                ? 'border-primary bg-primary/10'
-                : 'border-border hover:bg-accent/40',
-            )}
-          >
-            <div className="text-sm font-medium">
-              {personalWorkspace ? '个人代理' : '统一梯子（默认）'}
-            </div>
-            <div className="truncate text-xs text-muted-foreground">
-              {personalWorkspace ? '使用仅属于本机工作区的连接配置' : '使用当前账号的连接配置'}
-            </div>
-          </button>
-          {!personalWorkspace && (
+      {/* 组织工作区可在账号线路和管理员下发节点之间选择；个人工作区没有这层切换。 */}
+      {!personalWorkspace && (
+        <div className="grid gap-1.5">
+          <Label className="cursor-default">代理方式</Label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={locked}
+              onClick={() => update({ proxy_mode: 'unified' })}
+              className={cn(
+                'flex-1 rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-60',
+                form.proxy_mode !== 'airport'
+                  ? 'border-primary bg-primary/10'
+                  : 'border-border hover:bg-accent/40',
+              )}
+            >
+              <div className="text-sm font-medium">统一梯子（默认）</div>
+              <div className="truncate text-xs text-muted-foreground">使用当前账号的连接配置</div>
+            </button>
             <button
               type="button"
               disabled={locked || !form.airport_outbound}
@@ -189,35 +224,35 @@ export function SenderForm() {
                   : '管理员暂未下发节点'}
               </div>
             </button>
+          </div>
+
+          {/* 机场节点稳定性提醒: 可叉掉/不再提示 (持久化 ui.airport_notice_dismissed)。 */}
+          {!settings?.ui?.airport_notice_dismissed && (
+            <div className="relative rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 pr-8 text-xs text-amber-700 dark:text-amber-300">
+              <button
+                type="button"
+                title="不再提示"
+                onClick={() => void patchSection('ui', { airport_notice_dismissed: true })}
+                className="absolute right-1.5 top-1.5 rounded p-0.5 text-amber-700/70 transition-colors hover:text-amber-700 dark:text-amber-300/70 dark:hover:text-amber-300"
+              >
+                <X className="size-3.5" />
+              </button>
+              <p className="font-medium">「机场节点」目前还不太稳定</p>
+              <p className="mt-0.5 leading-relaxed">
+                用机场节点访问 ChatGPT / Claude 时，可能卡在 Cloudflare 人机验证（白屏）。
+                建议先用上面的「统一梯子」；机场节点更适合其他用途。我们仍在继续优化。
+              </p>
+              <button
+                type="button"
+                onClick={() => void patchSection('ui', { airport_notice_dismissed: true })}
+                className="mt-1 underline-offset-2 hover:underline"
+              >
+                不再提示
+              </button>
+            </div>
           )}
         </div>
-
-        {/* 机场节点稳定性提醒: 可叉掉/不再提示 (持久化 ui.airport_notice_dismissed)。 */}
-        {!personalWorkspace && !settings?.ui?.airport_notice_dismissed && (
-          <div className="relative rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 pr-8 text-xs text-amber-700 dark:text-amber-300">
-            <button
-              type="button"
-              title="不再提示"
-              onClick={() => void patchSection('ui', { airport_notice_dismissed: true })}
-              className="absolute right-1.5 top-1.5 rounded p-0.5 text-amber-700/70 transition-colors hover:text-amber-700 dark:text-amber-300/70 dark:hover:text-amber-300"
-            >
-              <X className="size-3.5" />
-            </button>
-            <p className="font-medium">「机场节点」目前还不太稳定</p>
-            <p className="mt-0.5 leading-relaxed">
-              用机场节点访问 ChatGPT / Claude 时，可能卡在 Cloudflare 人机验证（白屏）。
-              建议先用上面的「统一梯子」；机场节点更适合其他用途。我们仍在继续优化。
-            </p>
-            <button
-              type="button"
-              onClick={() => void patchSection('ui', { airport_notice_dismissed: true })}
-              className="mt-1 underline-offset-2 hover:underline"
-            >
-              不再提示
-            </button>
-          </div>
-        )}
-      </div>
+      )}
 
       {!running && !canStart ? (
         <div
@@ -229,85 +264,134 @@ export function SenderForm() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field
-          id="s_proxy_server"
-          label="服务器地址"
-          value={form.proxy_server}
-          placeholder="例如 203.0.113.10 或 demo.example.com"
-          disabled={locked}
-          onChange={(v) => update({ proxy_server: v })}
-        />
-        <Field
-          id="s_proxy_port"
-          label="连接端口"
-          value={form.proxy_port}
-          placeholder="例如 443"
-          disabled={locked}
-          onChange={(v) => update({ proxy_port: v })}
-        />
-        <Field
-          id="s_proxy_uuid"
-          label="连接身份码"
-          value={form.proxy_uuid}
-          placeholder="请输入连接身份码"
-          disabled={locked}
-          onChange={(v) => update({ proxy_uuid: v })}
-        />
-        <Field
-          id="s_socks_listen_port"
-          label="本地代理端口"
-          value={form.socks_listen_port}
-          placeholder="例如 1080"
-          disabled={locked}
-          onChange={(v) => update({ socks_listen_port: v })}
-        />
-
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="s_fallback_mode" className="text-xs text-muted-foreground">
-            其他网站访问方式
-          </Label>
-          <select
-            id="s_fallback_mode"
-            value={form.fallback_mode || 'system_proxy'}
-            disabled={locked}
-            onChange={(e) => update({ fallback_mode: e.target.value })}
-            className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30"
-          >
-            {FALLBACK_MODES.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-          </select>
+      {personalWorkspace ? (
+        <div className="grid gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs text-muted-foreground">代理协议</Label>
+            <div className="grid grid-cols-2 rounded-md bg-muted p-1">
+              {(['socks5', 'http'] as const).map((protocol) => (
+                <button
+                  key={protocol}
+                  type="button"
+                  disabled={locked}
+                  onClick={() =>
+                    update({ proxy_mode: 'personal', personal_proxy_protocol: protocol })
+                  }
+                  className={cn(
+                    'h-8 rounded-sm text-sm font-medium transition-colors disabled:opacity-50',
+                    personalProtocol === protocol
+                      ? 'bg-background text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {protocol === 'socks5' ? 'SOCKS5' : 'HTTP'}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_10rem]">
+            <Field
+              id="s_personal_proxy_host"
+              label="代理地址"
+              value={personalHost}
+              placeholder="127.0.0.1"
+              disabled={locked}
+              onChange={(v) => update({ proxy_mode: 'personal', personal_proxy_host: v })}
+              hint="填写代理软件实际监听的地址；本机代理通常使用 127.0.0.1。"
+            />
+            <Field
+              id="s_personal_proxy_port"
+              label="代理端口"
+              value={personalPort}
+              placeholder="例如 7890"
+              disabled={locked}
+              onChange={(v) => update({ proxy_mode: 'personal', personal_proxy_port: v })}
+            />
+          </div>
         </div>
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              id="s_proxy_server"
+              label="服务器地址"
+              value={form.proxy_server}
+              placeholder="例如 203.0.113.10 或 demo.example.com"
+              disabled={locked}
+              onChange={(v) => update({ proxy_server: v })}
+            />
+            <Field
+              id="s_proxy_port"
+              label="连接端口"
+              value={form.proxy_port}
+              placeholder="例如 443"
+              disabled={locked}
+              onChange={(v) => update({ proxy_port: v })}
+            />
+            <Field
+              id="s_proxy_uuid"
+              label="连接身份码"
+              value={form.proxy_uuid}
+              placeholder="请输入连接身份码"
+              disabled={locked}
+              onChange={(v) => update({ proxy_uuid: v })}
+            />
+            <Field
+              id="s_socks_listen_port"
+              label="本地代理端口"
+              value={form.socks_listen_port}
+              placeholder="例如 1080"
+              disabled={locked}
+              onChange={(v) => update({ socks_listen_port: v })}
+            />
 
-        <Field
-          id="s_fallback_local_port"
-          label="本机已有代理端口"
-          value={form.fallback_local_port}
-          placeholder="例如 7890"
-          disabled={locked || directMode}
-          onChange={(v) => update({ fallback_local_port: v })}
-          className={directMode ? 'opacity-50' : undefined}
-        />
-      </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="s_fallback_mode" className="text-xs text-muted-foreground">
+                其他网站访问方式
+              </Label>
+              <select
+                id="s_fallback_mode"
+                value={form.fallback_mode || 'system_proxy'}
+                disabled={locked}
+                onChange={(e) => update({ fallback_mode: e.target.value })}
+                className="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30"
+              >
+                {FALLBACK_MODES.map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="s_target_domains" className="text-xs text-muted-foreground">
-          固定走连接的网站
-        </Label>
-        <textarea
-          id="s_target_domains"
-          rows={4}
-          readOnly
-          value={resolvedTargetDomains}
-          placeholder="开启后由系统自动维护"
-          className="resize-none rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground shadow-xs outline-none"
-        />
-      </div>
+            <Field
+              id="s_fallback_local_port"
+              label="本机已有代理端口"
+              value={form.fallback_local_port}
+              placeholder="例如 7890"
+              disabled={locked || directMode}
+              onChange={(v) => update({ fallback_local_port: v })}
+              className={directMode ? 'opacity-50' : undefined}
+            />
+          </div>
 
-      {isAdmin && (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="s_target_domains" className="text-xs text-muted-foreground">
+              固定走连接的网站
+            </Label>
+            <textarea
+              id="s_target_domains"
+              rows={4}
+              readOnly
+              value={resolvedTargetDomains}
+              placeholder="开启后由系统自动维护"
+              className="resize-none rounded-md border border-input bg-muted/40 px-3 py-2 text-xs text-muted-foreground shadow-xs outline-none"
+            />
+          </div>
+        </>
+      )}
+
+      {!personalWorkspace && isAdmin && (
         <div className="flex items-start justify-between gap-3 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2.5">
           <div className="min-w-0">
             <Label

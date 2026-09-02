@@ -111,6 +111,9 @@ const PUBLIC_DEFAULT_SETTINGS = {
     proxy_server: "",
     proxy_port: "",
     proxy_uuid: "",
+    personal_proxy_protocol: "socks5",
+    personal_proxy_host: "127.0.0.1",
+    personal_proxy_port: "",
     socks_listen_port: "1080",
     fallback_mode: "system_proxy",
     fallback_local_port: "",
@@ -2551,45 +2554,82 @@ class Backend {
 
   buildSenderConfig(sender) {
     const listenPort = toListenPort(sender.socks_listen_port, "本地SOCKS监听端口");
-    const fallbackMode = sender.fallback_mode === "direct" ? "direct" : "system_proxy";
+    const proxyMode = ["personal", "airport"].includes(sender.proxy_mode)
+      ? sender.proxy_mode
+      : "unified";
+    const fallbackMode =
+      proxyMode === "personal" || sender.fallback_mode === "direct" ? "direct" : "system_proxy";
     // 普通模式仍按 proxy_mode 选择默认出站；高级 AI 环境会通过同一 sing-box 的专用入站，
     // 分别固定到统一代理或管理员下发节点，避免再启动外部代理进程或暴露端口配置。
-    const proxyMode = sender.proxy_mode === "airport" ? "airport" : "unified";
     const hasUnified = hasCompleteUnifiedProxy(sender);
     const airportOutbound =
-      sender.airport_outbound && typeof sender.airport_outbound === "object"
+      proxyMode !== "personal" &&
+      sender.airport_outbound &&
+      typeof sender.airport_outbound === "object"
         ? sender.airport_outbound
         : null;
+    const personalProtocol = sender.personal_proxy_protocol === "http" ? "http" : "socks";
+    const personalHost = String(sender.personal_proxy_host || "").trim();
+    const personalPort = Number.parseInt(String(sender.personal_proxy_port || ""), 10);
+    const hasPersonal = Boolean(
+      personalHost && Number.isInteger(personalPort) && personalPort >= 1 && personalPort <= 65535,
+    );
+    if (proxyMode === "personal" && !hasPersonal) throw new Error("个人代理配置不完整");
+    if (
+      proxyMode === "personal" &&
+      ["127.0.0.1", "localhost", "::1"].includes(personalHost.toLowerCase()) &&
+      personalPort === listenPort
+    ) {
+      throw new Error("个人代理端口与应用内部监听端口冲突");
+    }
     if (proxyMode === "unified" && !hasUnified) throw new Error("统一代理配置不完整");
     if (proxyMode === "airport" && !airportOutbound) throw new Error("管理员尚未下发机场节点");
-    const selectedProxyTag = proxyMode === "airport" ? "proxy-airport" : "proxy-unified";
-    const aiProxyRoutes = internalAiProxyRoutes(sender);
+    const selectedProxyTag =
+      proxyMode === "personal"
+        ? "proxy-personal"
+        : proxyMode === "airport"
+          ? "proxy-airport"
+          : "proxy-unified";
+    // 个人工作区只加载用户明确填写的个人代理。即使旧设置里仍留有组织线路，
+    // 也不能把统一代理、机场或高级线路带进个人运行时。
+    const aiProxyRoutes = proxyMode === "personal" ? [] : internalAiProxyRoutes(sender);
     // 测试用「全部流量走代理」: 除私有 IP 直连外, 所有流量(含 DNS)都走 proxy(梯子),
     // 不再只走 target_domains 清单。用于抓取页面到底访问了哪些域名 (仅管理员可开)。
     const routeAll =
-      sender.route_all === true || sender.route_all === "1" || sender.route_all === "true";
+      proxyMode !== "personal" &&
+      (sender.route_all === true || sender.route_all === "1" || sender.route_all === "true");
 
     // 走代理的域名集合: 见 proxiedDomainSuffixes (基础清单 + 自动累积 auto_domains, 两模式都并入)。
     // domain(精确)与 domain_suffix(后缀)用同一套去点号后的清单, 路由与代理检测据此保持一致。
     const uniqueDomains = this.proxiedDomainSuffixes(sender);
     const domainSuffix = uniqueDomains;
 
-    const unifiedOutbound = hasUnified
-      ? {
-          type: "vmess",
-          tag: "proxy-unified",
-          server: String(sender.proxy_server || "").trim(),
-          server_port: toInt(sender.proxy_port, "公网端口"),
-          uuid: String(sender.proxy_uuid || "").trim(),
-          packet_encoding: "packetaddr",
-          transport: {
-            type: "ws",
-            path: "",
-            max_early_data: 2048,
-            early_data_header_name: "Sec-WebSocket-Protocol",
-          },
-        }
-      : null;
+    const personalOutbound =
+      proxyMode === "personal" && hasPersonal
+        ? {
+            type: personalProtocol,
+            tag: "proxy-personal",
+            server: personalHost,
+            server_port: personalPort,
+          }
+        : null;
+    const unifiedOutbound =
+      proxyMode !== "personal" && hasUnified
+        ? {
+            type: "vmess",
+            tag: "proxy-unified",
+            server: String(sender.proxy_server || "").trim(),
+            server_port: toInt(sender.proxy_port, "公网端口"),
+            uuid: String(sender.proxy_uuid || "").trim(),
+            packet_encoding: "packetaddr",
+            transport: {
+              type: "ws",
+              path: "",
+              max_early_data: 2048,
+              early_data_header_name: "Sec-WebSocket-Protocol",
+            },
+          }
+        : null;
     const managedOutbounds = aiProxyRoutes
       .filter((route) => route.outbound && route.outboundTag !== "proxy-unified")
       .map((route) => ({ ...route.outbound, tag: route.outboundTag }));
@@ -2598,6 +2638,7 @@ class Backend {
     }
 
     const outbounds = [
+      personalOutbound,
       unifiedOutbound,
       ...managedOutbounds,
       { type: "direct", tag: "direct" },
@@ -2614,15 +2655,19 @@ class Backend {
       });
     }
 
-    // 机场节点的 server 常是只在系统/本地 DNS 才能解析的特殊域名(如机场 GTM 域名),
-    // 公共 DoH(Aliyun/1.1.1.1)解析不了。这里强制用 dns_local(系统 DNS, 同 Clash 行为)解析它,
-    // 否则会出现 "DNS query loopback" 或解析失败导致整条机场链路连不上。
-    const managedServerDnsRules = managedOutbounds
+    // 代理出口地址必须先通过本机 DNS 解析，不能再经由尚未连通的代理 DNS；
+    // 机场 GTM 域名等地址也可能无法被公共 DoH 解析。
+    const outboundServerDnsRules = [personalOutbound, ...managedOutbounds]
+      .filter(Boolean)
       .map((outbound) => String(outbound.server || "").trim())
       .filter((server) => server && /[a-zA-Z]/.test(server) && !server.includes(":"))
       .map((server) => ({ domain: [server], server: "dns_local" }));
     const selectedDnsProxyTag =
-      selectedProxyTag === "proxy-airport" ? "dns_proxy_airport" : "dns_proxy_unified";
+      selectedProxyTag === "proxy-personal"
+        ? "dns_proxy_personal"
+        : selectedProxyTag === "proxy-airport"
+          ? "dns_proxy_airport"
+          : "dns_proxy_unified";
     const aiDnsRules = aiProxyRoutes.map((route) => ({
       inbound: [route.inboundTag],
       server: route.dnsTag,
@@ -2667,7 +2712,7 @@ class Backend {
         ],
         rules: [
           { outbound: "dns_resolver", server: "dns_resolver" },
-          ...managedServerDnsRules,
+          ...outboundServerDnsRules,
           ...aiDnsRules,
           { clash_mode: "direct", server: "dns_direct" },
           { clash_mode: "global", server: selectedDnsProxyTag },
@@ -2803,16 +2848,23 @@ class Backend {
     this.senderProcess = this.spawnProcess("sender", singboxPath, ["run", "-c", configPath]);
     // 记下本机 SOCKS 端口, 供"更新检查"经代理走出口 (github 已在路由清单里)。
     this.activeSocksPort = Number(settings.socks_listen_port) || null;
-    this.activeAiProxyRoutes = internalAiProxyRoutes(settings);
+    this.activeAiProxyRoutes =
+      settings.proxy_mode === "personal" ? [] : internalAiProxyRoutes(settings);
     // 记下「当前运行中的配置」实际走代理的域名后缀, 供代理检测按真实路由分类
     // (而非写死的内置清单), 加入域名并重启后检测才会从"回落"翻到"已走代理"。
     this.activeProxiedSuffixes = this.proxiedDomainSuffixes(settings);
     // 运行日志标明当前代理方式, 便于观察走的是统一梯子还是下发的机场节点。
+    const usePersonalLog = settings.proxy_mode === "personal";
     const useAirportLog =
       settings.proxy_mode === "airport" &&
       settings.airport_outbound &&
       typeof settings.airport_outbound === "object";
-    if (useAirportLog) {
+    if (usePersonalLog) {
+      this.log(
+        "sender",
+        `代理方式: 个人代理（${settings.personal_proxy_protocol === "http" ? "HTTP" : "SOCKS5"} ${settings.personal_proxy_host || ""}:${settings.personal_proxy_port || ""}）`,
+      );
+    } else if (useAirportLog) {
       const ob = settings.airport_outbound;
       this.log(
         "sender",

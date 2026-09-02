@@ -83,6 +83,112 @@ test("sender 配置在同一 sing-box 中固定两条高级 AI 出口", () => {
   );
 });
 
+test("个人 sender 只复用已有代理端点且不装载组织线路", () => {
+  const backend = Object.create(Backend.prototype);
+  backend.appMode = "sender";
+  const config = backend.buildSenderConfig({
+    proxy_mode: "personal",
+    personal_proxy_protocol: "socks5",
+    personal_proxy_host: "127.0.0.1",
+    personal_proxy_port: "7890",
+    socks_listen_port: "19870",
+    fallback_mode: "system_proxy",
+    fallback_local_port: "7891",
+    proxy_server: "organization.example.com",
+    proxy_port: "443",
+    proxy_uuid: "organization-credential",
+    airport_outbound: {
+      type: "socks",
+      server: "managed.example.com",
+      server_port: 1080,
+    },
+    managed_proxy_routes: [
+      {
+        id: "managed-route",
+        enabled: true,
+        outbound: { type: "socks", server: "managed-2.example.com", server_port: 1080 },
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    config.outbounds.find((outbound) => outbound.tag === "proxy-personal"),
+    {
+      type: "socks",
+      tag: "proxy-personal",
+      server: "127.0.0.1",
+      server_port: 7890,
+    },
+  );
+  assert.equal(
+    config.outbounds.some((outbound) => outbound.tag === "proxy-unified"),
+    false,
+  );
+  assert.equal(
+    config.outbounds.some((outbound) => outbound.tag === "proxy-airport"),
+    false,
+  );
+  assert.equal(
+    config.outbounds.some((outbound) => outbound.tag === "system_proxy"),
+    false,
+  );
+  assert.equal(
+    config.inbounds.some((inbound) => inbound.tag !== "socks"),
+    false,
+  );
+  assert.equal(config.route.final, "direct");
+  assert.equal(config.dns.final, "dns_local");
+});
+
+test("个人 HTTP 代理复用同一 sender runtime 并拒绝内部端口回环", () => {
+  const backend = Object.create(Backend.prototype);
+  backend.appMode = "sender";
+  const config = backend.buildSenderConfig({
+    proxy_mode: "personal",
+    personal_proxy_protocol: "http",
+    personal_proxy_host: "proxy.example.com",
+    personal_proxy_port: "8080",
+    socks_listen_port: "19871",
+  });
+  assert.equal(
+    config.outbounds.find((outbound) => outbound.tag === "proxy-personal")?.type,
+    "http",
+  );
+  assert.throws(
+    () =>
+      backend.buildSenderConfig({
+        proxy_mode: "personal",
+        personal_proxy_host: "127.0.0.1",
+        personal_proxy_port: "19871",
+        socks_listen_port: "19871",
+      }),
+    /端口冲突/,
+  );
+});
+
+test("bundled sing-box 接受个人代理候选配置", (t) => {
+  const binary = path.resolve(__dirname, "../../../build/bin/sing-box");
+  if (!fs.existsSync(binary)) {
+    t.skip("当前平台未提供 bundled sing-box");
+    return;
+  }
+  const backend = Object.create(Backend.prototype);
+  backend.appMode = "sender";
+  backend.log = () => {};
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-personal-proxy-"));
+  const configPath = path.join(temporaryRoot, "candidate.json");
+  t.after(() => fs.rmSync(temporaryRoot, { recursive: true, force: true }));
+  const config = backend.buildSenderConfig({
+    proxy_mode: "personal",
+    personal_proxy_protocol: "http",
+    personal_proxy_host: "proxy.example.com",
+    personal_proxy_port: "8080",
+    socks_listen_port: "19872",
+  });
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf8");
+  assert.doesNotThrow(() => backend.checkSingboxConfig(binary, configPath, "personal test"));
+});
+
 test("bundled sing-box 接受多线路候选配置", (t) => {
   const binary = path.resolve(__dirname, "../../../build/bin/sing-box");
   if (!fs.existsSync(binary)) {

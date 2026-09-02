@@ -443,13 +443,16 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   // 当前代理方式标识: 统一梯子 / 机场节点(下发)。
   const airportMode =
     settings?.sender?.proxy_mode === 'airport' && Boolean(settings?.sender?.airport_outbound)
+  const personalMode = settings?.sender?.proxy_mode === 'personal'
   const proxyModeLabel = advancedMode
     ? activeEnvironment
       ? activeRoute?.name || '无可用内置线路'
       : '未选择环境'
-    : airportMode
-      ? `机场${settings?.sender?.airport_name ? ' · ' + safeText(settings.sender.airport_name) : ''}`
-      : '统一代理'
+    : personalMode
+      ? '个人代理'
+      : airportMode
+        ? `机场${settings?.sender?.airport_name ? ' · ' + safeText(settings.sender.airport_name) : ''}`
+        : '统一代理'
 
   // 视图运行态 (供遮罩/导航按钮判断)。
   const view = {
