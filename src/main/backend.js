@@ -245,6 +245,11 @@ function principalDefaultPartitions(principalId) {
   );
 }
 
+function normalizePrincipalSender(value, fallback = PUBLIC_DEFAULT_SETTINGS.sender) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return { ...structuredClone(fallback), ...structuredClone(source) };
+}
+
 function legacyPartitionsFromSettings(settings) {
   return Object.fromEntries(
     ["gpt", "gemini", "claude"].map((kind) => [
@@ -1113,6 +1118,10 @@ class Backend {
         const legacyUnowned = state.unowned.legacyUnowned;
         if (!state.byPrincipal[LOCAL_PRINCIPAL_ID]) {
           state.byPrincipal[LOCAL_PRINCIPAL_ID] = {
+            sender: normalizePrincipalSender(
+              legacyUnowned.sender,
+              stored?.sender || PUBLIC_DEFAULT_SETTINGS.sender,
+            ),
             partitions: normalizePrincipalPartitions(
               legacyUnowned.partitions,
               legacyPartitionsFromSettings(stored),
@@ -1152,6 +1161,10 @@ class Backend {
           state.byPrincipal[principalId] = {
             ownerServer: requestedServer,
             ownerUsername: requestedUsername,
+            sender: normalizePrincipalSender(
+              legacyRoot.settings?.sender,
+              stored?.sender || PUBLIC_DEFAULT_SETTINGS.sender,
+            ),
             partitions: normalizePrincipalPartitions(
               legacyRoot.settings?.partitions,
               legacyPartitionsFromSettings(stored),
@@ -1197,6 +1210,7 @@ class Backend {
     }
 
     const legacy = {
+      sender: normalizePrincipalSender(stored?.sender),
       partitions: legacyPartitionsFromSettings(stored),
       lastUrls: legacyLastUrlsFromSettings(stored),
       advancedAi: structuredClone(stored?.advancedAi || PUBLIC_DEFAULT_SETTINGS.advancedAi),
@@ -1272,8 +1286,18 @@ class Backend {
         ? legacyLastUrlsFromSettings(stored)
         : principalDefaultLastUrls();
     const lastUrls = normalizePrincipalLastUrls(scoped?.lastUrls, lastUrlFallback);
+    const ownsLegacyRoot =
+      principalId &&
+      principalId === normalizePrincipalId(state.legacyPartitionOwnerId, { allowLocal: true });
+    const sender = normalizePrincipalSender(
+      scoped?.sender,
+      ownsLegacyRoot
+        ? stored?.sender || PUBLIC_DEFAULT_SETTINGS.sender
+        : PUBLIC_DEFAULT_SETTINGS.sender,
+    );
     const result = {
       ...stored,
+      sender,
       gpt: { ...stored.gpt, partition: partitions.gpt, last_url: lastUrls.gpt },
       gemini: { ...stored.gemini, partition: partitions.gemini, last_url: lastUrls.gemini },
       claude: { ...stored.claude, partition: partitions.claude, last_url: lastUrls.claude },
@@ -1417,11 +1441,14 @@ class Backend {
         gemini: merged.gemini?.last_url,
         claude: merged.claude?.last_url,
       }),
+      sender: normalizePrincipalSender(merged.sender),
       advancedAi: structuredClone(merged.advancedAi),
       translation: structuredClone(merged.translation),
     };
     const persisted = {
       ...merged,
+      // 根级 sender 只归既定 legacy owner，用于旧客户端与迁移归档；有效配置来自 Principal。
+      sender: stored.sender || PUBLIC_DEFAULT_SETTINGS.sender,
       gpt: {
         ...merged.gpt,
         partition: stored.gpt?.partition || PUBLIC_DEFAULT_SETTINGS.gpt.partition,

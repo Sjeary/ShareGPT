@@ -144,6 +144,61 @@ test("A/B/A keeps each account's environments and translation configuration", (t
   assert.equal(aliceAgain.translation.managed.profileId, "alice-team-profile");
 });
 
+test("organization and local-device keep independent sender configuration", (t) => {
+  const backend = createBackend(t);
+  const alice = backend.activatePrincipal("https://collab.example/root", "Alice");
+  patchSettings(
+    backend,
+    "sender",
+    { proxy_server: "alice-proxy.example", proxy_port: "443", proxy_uuid: "alice-route" },
+    alice.settings.settingsRevision,
+    alice.principalId,
+  );
+
+  const localSettings = backend.clearPrincipal();
+  assert.equal(localSettings.sender.proxy_server, "");
+  const local = backend.getPrincipalContext();
+  patchSettings(
+    backend,
+    "sender",
+    { proxy_server: "personal-proxy.example", proxy_port: "8443", proxy_uuid: "personal-route" },
+    localSettings.settingsRevision,
+    local.principalId,
+    local.generation,
+  );
+
+  const bob = backend.activatePrincipal("https://collab.example/root", "Bob");
+  assert.equal(bob.settings.sender.proxy_server, "");
+  const aliceAgain = backend.activatePrincipal("https://collab.example/root", "Alice");
+  assert.equal(aliceAgain.settings.sender.proxy_server, "alice-proxy.example");
+  assert.equal(aliceAgain.settings.sender.proxy_uuid, "alice-route");
+
+  backend.clearPrincipal();
+  assert.equal(backend.loadSettings().sender.proxy_server, "personal-proxy.example");
+  assert.equal(backend.loadSettings().sender.proxy_uuid, "personal-route");
+});
+
+test("legacy sender configuration is claimed only by its exact owner", (t) => {
+  const backend = createBackend(t);
+  fs.writeFileSync(
+    backend.settingsFile,
+    JSON.stringify({
+      collab: { server_url: "https://collab.example/team", last_username: "Alice" },
+      sender: {
+        proxy_server: "legacy-proxy.example",
+        proxy_port: "443",
+        proxy_uuid: "legacy-route",
+      },
+    }),
+  );
+
+  const bob = backend.activatePrincipal("https://collab.example/team", "Bob");
+  assert.equal(bob.settings.sender.proxy_server, "");
+  const alice = backend.activatePrincipal("https://collab.example/team", "Alice");
+  assert.equal(alice.settings.sender.proxy_server, "legacy-proxy.example");
+  assert.equal(alice.settings.sender.proxy_uuid, "legacy-route");
+});
+
 test("ordinary AI partitions are isolated while the exact 1.0.8 owner keeps legacy data", (t) => {
   const backend = createBackend(t);
   fs.writeFileSync(
