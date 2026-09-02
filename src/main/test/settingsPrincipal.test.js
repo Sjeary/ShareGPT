@@ -658,11 +658,16 @@ test("an import preserves current partitions and rejects an A/B/A stale generati
   assert.equal(fs.readFileSync(backend.settingsFile, "utf8"), before);
 });
 
-test("local-device claims a v1.0.8 partition when no collaboration identity exists", (t) => {
+test("personal workspace preserves local configuration without reusing v1.0.8 browser sessions", (t) => {
   const backend = createBackend(t);
   fs.writeFileSync(
     backend.settingsFile,
     JSON.stringify({
+      sender: {
+        proxy_server: "personal-proxy.example",
+        proxy_port: "443",
+        proxy_uuid: "personal-route",
+      },
       gpt: {
         partition: "persist:gpt-chat-v1.0.8",
         last_url: "https://chatgpt.com/c/local-session",
@@ -675,15 +680,75 @@ test("local-device claims a v1.0.8 partition when no collaboration identity exis
     }),
   );
 
-  assert.equal(backend.loadSettings().gpt.partition, "persist:gpt-chat-v1.0.8");
-  assert.equal(backend.loadSettings().gpt.last_url, "https://chatgpt.com/c/local-session");
+  assert.equal(
+    backend.loadSettings().gpt.partition,
+    "persist:sharegpt-ai-local-device-gpt-default",
+  );
+  assert.equal(backend.loadSettings().gpt.last_url, "https://chatgpt.com/auth/login");
+  assert.equal(backend.loadSettings().sender.proxy_server, "personal-proxy.example");
   assert.equal(backend.loadSettings().advancedAi.environments[0].id, "local-env");
-  assert.equal(backend.getPrincipalContext().legacyPartitionOwnerId, "local-device");
+  assert.equal(backend.getPrincipalContext().legacyPartitionOwnerId, "");
 
   const alice = backend.activatePrincipal("https://collab.example", "Alice");
   assert.notEqual(alice.settings.gpt.partition, "persist:gpt-chat-v1.0.8");
   backend.clearPrincipal();
-  assert.equal(backend.loadSettings().gpt.partition, "persist:gpt-chat-v1.0.8");
+  assert.equal(
+    backend.loadSettings().gpt.partition,
+    "persist:sharegpt-ai-local-device-gpt-default",
+  );
+  const stored = JSON.parse(fs.readFileSync(backend.settingsFile, "utf8"));
+  assert.equal(stored.gpt.partition, "persist:gpt-chat-v1.0.8");
+  assert.equal(
+    stored.principalSettings.unowned.legacyUnowned.partitions.gpt,
+    "persist:gpt-chat-v1.0.8",
+  );
+});
+
+test("a candidate local legacy owner migrates once to the isolated personal namespace", (t) => {
+  const backend = createBackend(t);
+  fs.writeFileSync(
+    backend.settingsFile,
+    JSON.stringify({
+      gpt: {
+        partition: "persist:gpt-chat-v1.0.8",
+        last_url: "https://chatgpt.com/c/local-session",
+      },
+      principalSettings: {
+        version: 2,
+        byPrincipal: {
+          "local-device": {
+            sender: {
+              proxy_server: "personal-proxy.example",
+              proxy_port: "443",
+              proxy_uuid: "personal-route",
+            },
+            partitions: { gpt: "persist:gpt-chat-v1.0.8" },
+            lastUrls: { gpt: "https://chatgpt.com/c/local-session" },
+          },
+        },
+        unowned: { legacyRoot: null, legacyByPrincipal: {}, legacyUnowned: null },
+        legacyPartitionOwnerId: "local-device",
+      },
+    }),
+  );
+
+  const local = backend.loadSettings();
+  assert.equal(local.gpt.partition, "persist:sharegpt-ai-local-device-gpt-default");
+  assert.equal(local.gpt.last_url, "https://chatgpt.com/auth/login");
+  assert.equal(local.sender.proxy_server, "personal-proxy.example");
+  assert.equal(backend.getPrincipalContext().legacyPartitionOwnerId, "");
+
+  patchSettings(backend, "sender", { proxy_port: "8443" }, local.settingsRevision, "local-device");
+  const stored = JSON.parse(fs.readFileSync(backend.settingsFile, "utf8"));
+  assert.equal(stored.principalSettings.legacyPartitionOwnerId, "");
+  assert.equal(
+    stored.principalSettings.byPrincipal["local-device"].partitions.gpt,
+    "persist:sharegpt-ai-local-device-gpt-default",
+  );
+  assert.equal(
+    stored.principalSettings.unowned.legacyUnowned.partitions.gpt,
+    "persist:gpt-chat-v1.0.8",
+  );
 });
 
 test("legacy sharegpt-safe values decrypt in memory and failures never replace the file", (t) => {

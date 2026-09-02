@@ -1111,6 +1111,22 @@ class Backend {
       };
       const legacyRoot = state.unowned?.legacyRoot;
       let migrated = false;
+      const legacyPartitionOwnerId = normalizePrincipalId(state.legacyPartitionOwnerId, {
+        allowLocal: true,
+      });
+      if (legacyPartitionOwnerId === LOCAL_PRINCIPAL_ID) {
+        const previousLocal = state.byPrincipal[LOCAL_PRINCIPAL_ID] || null;
+        if (previousLocal) {
+          state.unowned.legacyUnowned ||= structuredClone(previousLocal);
+          state.byPrincipal[LOCAL_PRINCIPAL_ID] = {
+            ...previousLocal,
+            partitions: principalDefaultPartitions(LOCAL_PRINCIPAL_ID),
+            lastUrls: principalDefaultLastUrls(),
+          };
+        }
+        state.legacyPartitionOwnerId = "";
+        migrated = true;
+      }
       if (
         state.unowned.legacyUnowned &&
         !normalizePrincipalId(state.legacyPartitionOwnerId, { allowLocal: true })
@@ -1125,23 +1141,15 @@ class Backend {
             browserPrivacy: normalizeBrowserPrivacySettings(
               legacyUnowned.browserPrivacy || stored?.browserPrivacy,
             ),
-            partitions: normalizePrincipalPartitions(
-              legacyUnowned.partitions,
-              legacyPartitionsFromSettings(stored),
-            ),
-            lastUrls: normalizePrincipalLastUrls(
-              legacyUnowned.lastUrls,
-              legacyLastUrlsFromSettings(stored),
-            ),
+            partitions: principalDefaultPartitions(LOCAL_PRINCIPAL_ID),
+            lastUrls: principalDefaultLastUrls(),
             advancedAi: structuredClone(
               legacyUnowned.advancedAi || PUBLIC_DEFAULT_SETTINGS.advancedAi,
             ),
             translation: structuredClone(legacyUnowned.translation || DEFAULT_TRANSLATION_SETTINGS),
           };
+          migrated = true;
         }
-        state.unowned.legacyUnowned = null;
-        state.legacyPartitionOwnerId = LOCAL_PRINCIPAL_ID;
-        migrated = true;
       }
       if (legacyRoot?.settings && !legacyRoot.settings.partitions) {
         legacyRoot.settings.partitions = legacyPartitionsFromSettings(stored);
@@ -1231,12 +1239,18 @@ class Backend {
       legacyOwnerServer === requestedServer &&
       legacyOwnerUsername === requestedUsername,
     );
-    const localOwnsLegacy = !legacyOwnerServer && !legacyOwnerUsername;
-    const ownerId = ownerMatches
-      ? principalIdFor(requestedServer, requestedUsername)
-      : localOwnsLegacy
-        ? LOCAL_PRINCIPAL_ID
-        : "";
+    const ownerId = ownerMatches ? principalIdFor(requestedServer, requestedUsername) : "";
+    const localSettings =
+      !legacyOwnerServer && !legacyOwnerUsername
+        ? {
+            sender: normalizePrincipalSender(legacy.sender),
+            browserPrivacy: normalizeBrowserPrivacySettings(legacy.browserPrivacy),
+            partitions: principalDefaultPartitions(LOCAL_PRINCIPAL_ID),
+            lastUrls: principalDefaultLastUrls(),
+            advancedAi: structuredClone(legacy.advancedAi),
+            translation: structuredClone(legacy.translation),
+          }
+        : null;
     return {
       migrated: true,
       state: {
@@ -1244,14 +1258,15 @@ class Backend {
         byPrincipal: ownerId
           ? {
               [ownerId]: {
-                ...(ownerId === LOCAL_PRINCIPAL_ID
-                  ? {}
-                  : { ownerServer: requestedServer, ownerUsername: requestedUsername }),
+                ownerServer: requestedServer,
+                ownerUsername: requestedUsername,
                 partitions: legacyPartitionsFromSettings(stored),
                 ...legacy,
               },
             }
-          : {},
+          : localSettings
+            ? { [LOCAL_PRINCIPAL_ID]: localSettings }
+            : {},
         unowned: {
           legacyRoot:
             !ownerId && legacyOwnerServer && legacyOwnerUsername
