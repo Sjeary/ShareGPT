@@ -223,6 +223,7 @@ export type ServiceState = 'stopped' | 'starting' | 'running' | 'error'
 
 export interface StatusPayload {
   sender?: ServiceState | string
+  senderSocksPort?: number | null
   receiver?: ServiceState | string
   aiProxyRoutes?: Array<{ id: string; label: string }>
   [k: string]: unknown

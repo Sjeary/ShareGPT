@@ -464,7 +464,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   }
 
   const proxyHost = GPT_PROXY_HOST
-  const proxyPort = resolveProxyPort(settings?.sender?.socks_listen_port)
+  const proxyPort = resolveProxyPort(status.senderSocksPort ?? settings?.sender?.socks_listen_port)
 
   // 宿主可见 = 代理运行中 (面板已激活由 Shell 的条件渲染保证)。
   const hostVisible = networkReady && !translationReplacingHost

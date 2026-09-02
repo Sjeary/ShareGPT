@@ -101,12 +101,6 @@ export function SenderForm() {
     if (personalWorkspace) {
       if (!personalHost) return '请填写代理地址'
       if (!isPortNumber(personalPort)) return '代理端口必须为数字'
-      if (
-        ['127.0.0.1', 'localhost'].includes(personalHost.toLowerCase()) &&
-        personalPort === safeText(form.socks_listen_port)
-      ) {
-        return '这个端口正由 ShareGPT 内部使用，请填写你的代理软件监听端口'
-      }
       return null
     }
     if (form.proxy_mode === 'airport') {
@@ -158,7 +152,11 @@ export function SenderForm() {
       } else if (payload.target_domains !== safeText(form.target_domains)) {
         await patchSection('sender', { target_domains: payload.target_domains })
       }
-      await api.startSender(payload)
+      const started = (await api.startSender(payload)) as { socksPort?: unknown } | null
+      const runtimePort = safeText(started?.socksPort)
+      if (personalWorkspace && isPortNumber(runtimePort)) {
+        await patchSection('sender', { socks_listen_port: runtimePort })
+      }
       toast.success('代理已开启')
     } catch (e) {
       toast.error((e as Error)?.message || '开启代理失败')

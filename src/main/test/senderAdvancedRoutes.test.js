@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { Backend } = require("../backend");
+const { Backend, resolvePersonalSenderListenPort } = require("../backend");
 
 test("高级 AI 线路查找失败时禁止静默换线", () => {
   const backend = Object.create(Backend.prototype);
@@ -164,6 +164,29 @@ test("个人 HTTP 代理复用同一 sender runtime 并拒绝内部端口回环"
       }),
     /端口冲突/,
   );
+});
+
+test("个人代理端口冲突时由 main 自动分配内部端口", async () => {
+  const port = await resolvePersonalSenderListenPort({
+    personal_proxy_host: "127.0.0.1",
+    personal_proxy_port: "1080",
+    socks_listen_port: "1080",
+  });
+  assert.ok(Number.isInteger(port));
+  assert.ok(port >= 1024 && port <= 65535);
+  assert.notEqual(port, 1080);
+});
+
+test("个人代理运行中重启会复用自己持有的内部端口", async () => {
+  const port = await resolvePersonalSenderListenPort(
+    {
+      personal_proxy_host: "127.0.0.1",
+      personal_proxy_port: "7890",
+      socks_listen_port: "19870",
+    },
+    19870,
+  );
+  assert.equal(port, 19870);
 });
 
 test("bundled sing-box 接受个人代理候选配置", (t) => {

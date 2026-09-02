@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
+const net = require("node:net");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const os = require("node:os");
@@ -500,6 +501,58 @@ function toListenPort(value, name) {
     throw new Error(`${name} 必须是 1024~65535 的整数，避免在 macOS 或 Windows 上要求管理员权限`);
   }
   return n;
+}
+
+function isLoopbackProxyHost(value) {
+  const host = String(value || "")
+    .trim()
+    .replace(/^\[|\]$/g, "")
+    .toLowerCase();
+  return host === "localhost" || host === "::1" || /^127(?:\.\d{1,3}){3}$/.test(host);
+}
+
+function findAvailableLoopbackPort(preferredPort = 0) {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen(
+      {
+        host: "127.0.0.1",
+        port: preferredPort,
+        exclusive: true,
+      },
+      () => {
+        const address = server.address();
+        const port = address && typeof address === "object" ? address.port : 0;
+        server.close((error) => {
+          if (error) reject(error);
+          else resolve(toListenPort(port, "应用内部 SOCKS 端口"));
+        });
+      },
+    );
+  });
+}
+
+async function resolvePersonalSenderListenPort(sender, ownedPort = null) {
+  const upstreamPort = toInt(sender.personal_proxy_port, "个人代理端口");
+  const upstreamIsLoopback = isLoopbackProxyHost(sender.personal_proxy_host);
+  let preferredPort;
+  try {
+    preferredPort = toListenPort(sender.socks_listen_port, "应用内部 SOCKS 端口");
+  } catch {
+    preferredPort = 0;
+  }
+
+  if (preferredPort && !(upstreamIsLoopback && preferredPort === upstreamPort)) {
+    if (Number(ownedPort) === preferredPort) return preferredPort;
+    try {
+      return await findAvailableLoopbackPort(preferredPort);
+    } catch (error) {
+      if (!["EADDRINUSE", "EACCES"].includes(error?.code)) throw error;
+    }
+  }
+  return findAvailableLoopbackPort(0);
 }
 
 function clampPositiveInt(value, fallback) {
@@ -2376,6 +2429,7 @@ class Backend {
   getStatus() {
     return {
       senderRunning: !!this.senderProcess,
+      senderSocksPort: this.activeSocksPort,
       aiProxyRoutes: this.activeAiProxyRoutes.map(({ id, label }) => ({ id, label })),
       receiverFrpcRunning: !!this.receiverFrpc,
       receiverSingboxRunning: !!this.receiverSingbox,
@@ -2831,7 +2885,13 @@ class Backend {
       );
     }
 
-    const config = this.buildSenderConfig(settings);
+    const runtimeSettings = { ...settings };
+    if (runtimeSettings.proxy_mode === "personal") {
+      runtimeSettings.socks_listen_port = String(
+        await resolvePersonalSenderListenPort(runtimeSettings, this.activeSocksPort),
+      );
+    }
+    const config = this.buildSenderConfig(runtimeSettings);
     const configPath = path.join(this.runtimeDir, "sender.runtime.json");
     const candidatePath = path.join(this.runtimeDir, "sender.runtime.candidate.json");
     fs.mkdirSync(this.runtimeDir, { recursive: true });
@@ -2847,12 +2907,12 @@ class Backend {
 
     this.senderProcess = this.spawnProcess("sender", singboxPath, ["run", "-c", configPath]);
     // 记下本机 SOCKS 端口, 供"更新检查"经代理走出口 (github 已在路由清单里)。
-    this.activeSocksPort = Number(settings.socks_listen_port) || null;
+    this.activeSocksPort = Number(runtimeSettings.socks_listen_port) || null;
     this.activeAiProxyRoutes =
-      settings.proxy_mode === "personal" ? [] : internalAiProxyRoutes(settings);
+      runtimeSettings.proxy_mode === "personal" ? [] : internalAiProxyRoutes(runtimeSettings);
     // 记下「当前运行中的配置」实际走代理的域名后缀, 供代理检测按真实路由分类
     // (而非写死的内置清单), 加入域名并重启后检测才会从"回落"翻到"已走代理"。
-    this.activeProxiedSuffixes = this.proxiedDomainSuffixes(settings);
+    this.activeProxiedSuffixes = this.proxiedDomainSuffixes(runtimeSettings);
     // 运行日志标明当前代理方式, 便于观察走的是统一梯子还是下发的机场节点。
     const usePersonalLog = settings.proxy_mode === "personal";
     const useAirportLog =
@@ -2879,7 +2939,7 @@ class Backend {
     this.log("sender", `使用配置: ${configPath}`);
     this.emitStatus();
 
-    return { configPath, binary: singboxPath };
+    return { configPath, binary: singboxPath, socksPort: this.activeSocksPort };
   }
 
   startReceiver(settings) {
@@ -2932,5 +2992,6 @@ module.exports = {
   DEFAULT_SETTINGS: PUBLIC_DEFAULT_SETTINGS,
   PUBLIC_DEFAULT_SETTINGS,
   DEFAULT_TARGET_DOMAINS,
+  resolvePersonalSenderListenPort,
   prepareImportedSettings,
 };
