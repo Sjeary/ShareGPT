@@ -159,8 +159,7 @@ function createNotesAi({
 
     const payload = {
       model,
-      instructions:
-        req?.mode === "translate" ? TRANSLATION_SYS : (req && req.instructions) || SYS,
+      instructions: req?.mode === "translate" ? TRANSLATION_SYS : (req && req.instructions) || SYS,
       input: buildPrompt(req.mode, req.text || "", req.ctx),
       stream: true,
       store: false,
