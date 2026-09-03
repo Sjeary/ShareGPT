@@ -22,7 +22,11 @@ process.on("unhandledRejection", (err) => {
     // 控制台不可写时只能忽略，避免异常处理器再次抛错。
   }
 });
-const HOST = process.env.HOST || "0.0.0.0";
+function resolveHost(env = process.env) {
+  return env.HOST || "127.0.0.1";
+}
+
+const HOST = resolveHost();
 const PORT = Number.parseInt(process.env.PORT || "8088", 10);
 const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, "data", "users.json");
 const GPT_USAGE_FILE = process.env.GPT_USAGE_FILE || path.join(__dirname, "data", "gpt_usage.json");
@@ -4045,6 +4049,7 @@ module.exports = {
   saveProxyRouteCatalog,
   proxyRoutesForUser,
   resolveAiRoutingForRoutes,
+  resolveHost,
   sameManagedSenderConfig,
   sameManagedClientConfig,
   getUserStoreEntry,

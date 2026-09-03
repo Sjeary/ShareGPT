@@ -10,13 +10,33 @@ WorkingDirectory=/opt/sharegpt-collab
 Environment=NODE_ENV=production
 EnvironmentFile=-/etc/sharegpt-collab.env
 Environment=PORT=8088
-Environment=HOST=0.0.0.0
-Environment=USERS_FILE=/opt/sharegpt-collab/data/users.json
+Environment=HOST=127.0.0.1
+Environment=USERS_FILE=/var/lib/sharegpt-collab/users.json
+Environment=GPT_USAGE_FILE=/var/lib/sharegpt-collab/gpt_usage.json
+Environment=CHAT_HISTORY_FILE=/var/lib/sharegpt-collab/chat_history.json
+Environment=CLIENT_BOOTSTRAP_FILE=/var/lib/sharegpt-collab/client_bootstrap.json
+Environment=CALENDARS_FILE=/var/lib/sharegpt-collab/calendars.json
+Environment=USER_STORES_FILE=/var/lib/sharegpt-collab/user_stores.json
+Environment=FOCUS_FILE=/var/lib/sharegpt-collab/focus_stats.json
+Environment=AIRPORT_FILE=/var/lib/sharegpt-collab/airport.json
+Environment=PROXY_ROUTES_FILE=/var/lib/sharegpt-collab/proxy_routes.json
+Environment=PROXY_ROUTE_HEALTH_FILE=/var/lib/sharegpt-collab/proxy_route_health.json
+Environment=TRANSLATION_PROFILES_FILE=/var/lib/sharegpt-collab/translation_profiles.json
+Environment=TRANSLATION_USAGE_FILE=/var/lib/sharegpt-collab/translation_usage.json
+Environment=RELEASES_DIR=/var/lib/sharegpt-collab/releases
+Environment=RELEASE_STORE=/var/lib/sharegpt-collab/release_shared
+Environment=SHARED_RELEASE_FILE=/var/lib/sharegpt-collab/release_shared/release.json
 Environment=SESSION_TTL_MS=86400000
 Environment=HISTORY_MAX=200
 ExecStart=/usr/bin/env node server.js
 Restart=always
 RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/sharegpt-collab
 
 [Install]
 WantedBy=multi-user.target

@@ -35,6 +35,11 @@ process.env.LOGIN_LOCK_MS = "10000";
 const srv = require("../server.js");
 const proxyRoutesBackupFile = `${process.env.PROXY_ROUTES_FILE}.backup`;
 
+test("协作服务默认只监听回环地址，显式 HOST 仍可覆盖", () => {
+  assert.strictEqual(srv.resolveHost({}), "127.0.0.1");
+  assert.strictEqual(srv.resolveHost({ HOST: "0.0.0.0" }), "0.0.0.0");
+});
+
 function snapshotFile(file) {
   return fs.existsSync(file) ? fs.readFileSync(file) : null;
 }
