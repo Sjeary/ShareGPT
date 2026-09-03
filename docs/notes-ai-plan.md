@@ -1,49 +1,62 @@
-# 知识库 AI 助手 · 调研与方案（待确认后实施）
+# Notes AI 早期方案（历史归档）
 
-> 你的选择：用 **Codex 的 API**；**先调研参考实现 + 出方案确认**再写；功能 = 写作辅助 + AI 双链建议 + RAG 问答 + 自动标签/摘要。
-> 2026-06-23。
+> 本文保留 Notes AI 的设计来源和当前边界，不再是“待确认后实施”的任务单。功能已进入 1.0.9 候选；模型可用性、弃用状态和价格以供应商当前官方文档为准。
 
-## 1. 调研结论
+## 当前实现
 
-### Codex 怎么调用（关键）
+### 用户功能
 
-- **GPT-5-Codex 只在 Responses API（`/v1/responses`）提供**；**`chat/completions` 已在 2026-02 对 Codex 弃用/移除**。
-  → 不能用旧的 chat/completions 形态，必须用 **Responses API**：请求体大致 `{ model, instructions, input, stream: true }`；流式是 SSE 事件（`response.output_text.delta` 增量、`response.completed` 收尾）。
-- 鉴权：`Authorization: Bearer <API key>`（CODEX_API_KEY / OpenAI key）；自定义供应商可指定 `base_url`。
-- **我需要你提供**：① base URL（默认 `https://api.openai.com/v1`，若你用中转/自建填它）② API key ③ 模型名（如 `gpt-5-codex`）。给我后我按 Responses API 实现并走发送代理出网。
-- 来源：[OpenAI Responses API / Codex models](https://developers.openai.com/codex/models)、[Codex 认证](https://developers.openai.com/codex/auth)、[弃用 chat/completions 讨论](https://github.com/openai/codex/discussions/7782)。
+- **写作辅助**：总结、续写、扩写、润色、起标题和翻译当前笔记；
+- **内联编辑**：对选中文本或光标位置给出指令，流式生成后查看 diff，再选择保留、插入、放弃或重试；
+- **双链建议**：结合当前笔记和库内标题推荐已有笔记，用户确认后插入 `[[双链]]`；
+- **知识库问答**：使用现有本地词法索引查找相关片段，再把有限上下文交给模型回答；
+- **标签**：生成候选标签，用户确认后合并到当前笔记 frontmatter。
 
-### 参考实现（借鉴交互，不照搬代码）
+当前 RAG 是轻量词法检索，不包含 embeddings、远端向量库或自动上传整个知识库。未来如增加语义检索，必须单独定义索引存储、上传范围、删除和隐私合同。
 
-- **Obsidian Copilot**：Vault QA = RAG（**词法检索 + 语义向量(Orama)** 取相关片段 → 喂给模型 → **带来源引用**指回具体笔记）。
-- **Text Generator**：**模板化 prompt**，`{{context}}` = 选中文本；模板管理器。
-- 借鉴点：① 选中文本作上下文 ② 回答附**来源引用** ③ prompt 模板化 ④ RAG 先词法后语义。
-- 来源：[obsidian-copilot](https://github.com/logancyang/obsidian-copilot)、[Vault QA 文档](https://www.obsidiancopilot.com/en/docs/vault-qa)、[text-generator](https://github.com/nhaouari/obsidian-textgenerator-plugin)。
+### 实现 owner
 
-## 2. 方案
+- `src/renderer-next/src/components/panels/notes/AiAssistant.tsx`：右栏快捷动作、问答、结果应用与停止；
+- `src/renderer-next/src/components/panels/notes/InlineAiEdit.tsx`：选区入口、指令、diff 和写回；
+- `src/renderer-next/src/lib/notes/aiClient.ts`：按 stream ID 与 Principal generation 过滤流式事件；
+- `src/renderer-next/src/store/useNotesAiStore.ts`：Principal 作用域内的 provider 配置；
+- `src/main/notesAi.js`：Responses 兼容请求、SSE 解析、有限重试、取消与终态收口。
 
-### 接入
+Notes AI 与翻译中的 AI provider 复用同一个 `settings.translation.ai` 配置，避免两份 base URL、API Key、model 和 reasoning effort 漂移。设置写入带 revision、Principal ID 和 generation；账号或工作区切换会取消旧请求，迟到事件不能更新当前界面。
 
-- 主进程 `notesAi`：调 **Responses API**（`/v1/responses`，`stream:true`），SSE 解析 `response.output_text.delta`；经发送代理（SOCKS）出网；provider 配置（baseUrl/apiKey/model）由渲染层从本地设置读出后传入，**密钥仅存本机 settings，不上传**。
-- 渲染层 `ai.complete({mode, text, ctx, provider})` → 流式事件 `notes-ai:event`（delta/done/error）。
+## API 合同
 
-### 功能（你选的四项）
+- 主进程向配置的 `/v1/responses` 端点发送 `model`、`instructions`、`input`、`stream: true` 和 `store: false`。
+- 流式解析 `response.output_text.delta`，以 `response.completed` 收口；失败、取消和上游繁忙各有单一终态。
+- 只有在尚未输出内容且错误属于限流或临时服务故障时才有限重试，避免重复半段回答。
+- renderer 只接收与当前 stream、Principal ID 和 generation 匹配的事件。
+- API Key 保存在当前 Principal 的本地设置作用域中，不上传协作服务端；切换个人/组织工作区不会复用另一侧配置。
 
-1. **写作辅助**：选中文字浮起工具条 + 右栏「AI」助手；扩写/续写/总结/润色/改写/起标题/翻译；流式输出；结果可**替换/插入/追加/丢弃**。
-2. **AI 双链建议**：读当前笔记 + 全库标题 → 推荐应建双链的已有笔记 → 一键插入 `[[ ]]` 或跳转（回填图谱）。
-3. **RAG 问答**：对整库提问 → 用**已有的 MiniSearch 词法检索** top-K 笔记片段 → 拼进 Responses `input` → 流式回答 + **来源引用**（可点开）。MVP 用词法检索（轻、零额外依赖）；后续可选加 embeddings 语义检索。
-4. **自动标签/摘要**：一键为当前笔记生成 frontmatter `tags` + 摘要并写回文件头。
+模型 ID 不是产品常量。OpenAI 的 [模型目录](https://developers.openai.com/api/docs/models) 会持续演进；早期调研使用过的 [GPT-5-Codex 模型页](https://developers.openai.com/api/docs/models/gpt-5-codex) 说明该别名使用 Responses API，且当前已标记为 deprecated。代码和文档不应把它当作永久推荐，也不应凭历史快照推断当前价格或可用性。
 
-### UI/UX
+## 安全与隐私边界
 
-- 右栏新增「AI」tab（与 反链/大纲/属性 并列）：助手对话 + RAG 问答 + 快捷动作按钮。
-- 编辑器选中文本 → 浮起迷你工具条（扩写/润色/翻译/…）。
-- 设置区：AI 接入（baseUrl/key/model + 测试连接）。
-- 流式打字动画、可中断、来源引用卡片。
+- Notes AI 只发送用户主动触发操作所需的文本和有限上下文，不在后台自动上传整个知识库。
+- 用户在应用结果前可以查看输出；内联编辑提供 diff，写回后仍可使用编辑器撤销。
+- API URL 只能使用 HTTP(S)，并经过与其它 AI 请求一致的端点解析和危险地址保护。远程 HTTP 会暴露明文内容和密钥，只应在用户理解警告后使用。
+- 切换 Principal、退出登录、权限变化、组件卸载或用户点击停止时，旧请求必须取消并静默丢弃迟到事件。
+- Notes AI 配置和运行状态属于当前 Principal；清理或切换浏览器分区不会删除笔记或 Notes AI 设置。
 
-## 3. 待你确认（实施前）
+## 设计来源
 
-1. **接入**：按 **Responses API** + 你提供 base URL / API key / 模型名 —— ✅?
-2. **优先级**：先做「写作辅助 + AI 双链建议」，再「RAG 问答」，最后「自动标签/摘要」—— ✅? 还是调整顺序?
-3. **RAG 深度**：MVP 先用**词法检索**（轻）；语义向量（embeddings，重）以后再加 —— ✅?
-4. 密钥存本机 settings、走梯子出网 —— ✅?
+早期交互参考了以下开源项目的产品思路，但没有复制其代码或插件运行时：
+
+- [Obsidian Copilot](https://github.com/logancyang/obsidian-copilot)：知识库问答和来源上下文；
+- [Text Generator](https://github.com/nhaouari/obsidian-textgenerator-plugin)：选中文本与模板化写作动作。
+
+ShareGPT 复用自己的 MiniSearch 索引、笔记写回、Principal 生命周期和受限 preload API，不引入第二套插件状态或持久化 owner。
+
+## 维护验证
+
+Notes AI 改动至少覆盖：
+
+- SSE delta/done/error、取消、有限重试和单一终态；
+- Principal A/B/A 配置恢复、generation 切换和迟到事件隔离；
+- 空配置、HTTP/HTTPS、危险地址和错误响应；
+- 选区 diff、插入/替换/放弃、标签合并、双链建议和词法 RAG 上下文上限；
+- 知识库内容不会在用户未触发时发送。

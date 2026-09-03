@@ -1,97 +1,80 @@
-# 内置翻译插件 — 调研报告（仅调研，未实现）
+# 内置翻译早期调研（历史归档）
 
-> 历史说明（1.0.9）：本文记录早期调研背景。任意 `ai:execute-javascript` IPC 已删除；当前实现只允许主进程生成、固定 isolated world 执行且绑定 Principal/workspace/document 的操作脚本。后续方案不得恢复通用脚本执行通道。
+> 本文最初用于比较 Electron 扩展、网页脚本和原生翻译工作流。1.0.9 已经采用受限的主进程桥接与独立翻译工作台，因此本文不再是实现计划、价格指南或现行 API 规范。
 
-> 目标：在内嵌 AI 网页（ChatGPT/Gemini/Claude）里加一个“好用的翻译”，并且**分情况过代理**
-> （翻译接口该走梯子的走梯子，不该走的直连）。本报告对比可选方案、代理路由做法，并给出推荐。
-> 结论部分可直接作为后续开发任务的输入。
+## 已采用的方向
 
-## 1. 现状与约束（来自代码探查）
+ShareGPT 没有加载第三方浏览器翻译扩展，也没有向 renderer 暴露任意 JavaScript 执行能力。当前生产 owner 是：
 
-- 内嵌网页是原生 **`WebContentsView`**（`src/main/appFactory.js:1038`），每个 AI 种类一个持久化
-  分区（`persist:gpt-chat` 等），**没有注入任何 preload / content script**。
-- 网页流量通过 `session.setProxy({ proxyRules: 'socks5://127.0.0.1:<port>' })`
-  全量走本机 sing-box 的 SOCKS5（`appFactory.js:1410` 一带）。端口 = sender 的 `socks_listen_port`（默认 1080）。
-- 填入和发送必须使用 operation-scoped composer API；渲染层不能向内嵌网页传任意脚本。
-- 右键菜单本次已加（`popupAiContextMenu`，`appFactory.js`），翻译项可挂在这里。
-- **根 `package.json` 已依赖 `socks-proxy-agent` 和 `https-proxy-agent`** → 主进程做“分情况过代理的 fetch”几乎零成本。
-- Electron 版本 **31.7.7**。
+- `src/renderer-next/src/components/panels/ai/TranslationPanel.tsx`：阅读翻译、写入 AI、配置、停止操作和用户反馈；
+- `src/renderer-next/src/store/useTranslationStore.ts`：Principal 作用域内的翻译配置与操作状态；
+- `src/main/translation.js`：兼容翻译 API 和本地离线端点的受控 HTTP 请求；
+- `src/main/appFactory.js`：页面读取、composer target/write/confirmation 和请求取消 IPC；
+- `collab_server2/server.js`：团队托管翻译、授权、取消、用量与服务端密钥使用；
+- `admin_console/ui/src/components/panels/TranslationPanel.tsx`：管理员配置托管服务、用户授权和用量查看。
 
-## 2. 三种实现路径对比
+## 当前用户工作流
 
-### 方案 A：右键“翻译选中/划词翻译” → 调翻译 API（主进程代理 fetch）✅ 推荐
+### 阅读翻译
 
-- 流程：右键菜单（或划词气泡）拿到 `params.selectionText` → IPC 到主进程 → 主进程用
-  `fetch`/`https` + `socks-proxy-agent` 调翻译 API → 结果回渲染层，以气泡/浮层展示。
-- **分情况过代理**天然好做：按 provider 配置“走代理 / 直连”，主进程按需给 agent 套不套 SOCKS。
-- 轻量、可控、不依赖 Electron 扩展生态；与现有右键菜单及受限 composer operation 衔接。
-- 缺点：整页“沉浸式双语对照”需要自己注入脚本（见方案 C），划词翻译则很简单。
+- 可以手动输入，也可以读取当前网页选区或当前页面文本。
+- 原文和译文保留在翻译面板，不会自动写入 ChatGPT、Gemini 或 Claude 的输入框。
+- 面板在空间足够时与网页并排，宽度可在 320–720 px 之间调整；窄窗口改为独立替换视图，保证网页与翻译区都可用。
 
-### 方案 B：`session.loadExtension` 加载现成翻译扩展（如沉浸式翻译）⚠️ 不推荐（近期）
+### 写入 AI
 
-- Electron 原生扩展支持**有限**：只实现了一小部分 `chrome.*` API，**MV3 尚未原生支持**，
-  `loadExtension` 仅能用于持久化分区且**每次启动都要重新 load**。
-- 现代翻译扩展（含沉浸式翻译新版）多为 MV3 + 大量 `chrome.*` / background service worker，
-  直接 load 大概率跑不起来或功能残缺。
-- 第三方 `electron-chrome-extensions`（samuelmaddock/electron-browser-shell）能补齐不少能力，
-  但**同样还不支持 MV3**，且引入较重、维护风险高。
-- 结论：兼容性不确定、调试成本高，不适合作为首发。
+- 用户先编辑原文，再选择“仅译文”或“原文 + 译文”预览。
+- 写入前重新获取与当前 kind、tab、environment、document、generation 绑定的 composer target。
+- AI 网页存在旧草稿时不会静默覆盖；用户必须明确选择追加或替换。
+- 写入只填充输入框，不代表发送。可选 Enter 确认默认关闭，使用时也必须经过当前网页确认。
 
-### 方案 C：自注入 content script 做“整页沉浸式翻译”（方案 A 的进阶）
+### 翻译来源
 
-- 如实现整页翻译，必须由主进程提供固定、版本化的 isolated-world 脚本：遍历段落 → 调主进程翻译 API（同样走方案 A 的代理 fetch）
-  → 在原文下方插入译文（双语对照）。等价于自己实现一个迷你“沉浸式翻译”。
-- 可作为方案 A 之后的增量；先做划词，再做整页。
+- **团队配置**：组织用户选择管理员授权的 profile。API Key 只在服务端解密和使用，不进入 profile 列表或客户端设置；服务端按成功用量记录字符、token 或费用字段。
+- **AI**：使用 Principal 作用域内配置的 OpenAI Responses 兼容接口，支持流式结果。
+- **翻译 API**：调用返回常见 `translatedText` / `translation` / `translations[0].text` 结构的兼容 HTTP API。
+- **本地离线**：只允许 loopback 主机，默认面向本机 LibreTranslate 兼容服务。
 
-## 3. “分情况过代理”的路由做法
+个人工作区不显示团队托管 profile，使用自己的本地配置；切换到组织 Principal 后恢复该组织账号自己的设置。两侧配置不会互相覆盖。
 
-两种等价手段，推荐前者：
+## 取消与生命周期
 
-1. **主进程 fetch + 按 provider 选 agent**（推荐）
-   - 走代理：`new SocksProxyAgent('socks://127.0.0.1:<socks_listen_port>')` 套到请求上。
-   - 直连：不挂 agent。
-   - provider→是否过代理 做成一张小配置表，例如：
-     - Google 翻译 / DeepL：墙内不可达 → **过代理**。
-     - 微软翻译（`api.cognitive.microsofttranslator.com`）：多数地区可直连，也可配过代理。
-     - 国内服务（如自建 LibreTranslate / 内网）：**直连**。
-   - 端口从 settings 的 `sender.socks_listen_port` 读取，与内嵌网页同一个 sing-box 出口。
+- 每次翻译都有独立 request ID 和取消句柄。用户点击“停止翻译”会中止本地请求；团队模式还会通知服务端取消对应上游工作。
+- 切换阅读/写入模式、AI 标签、环境、Principal 或关闭面板时，旧 generation 失效。迟到的 delta、done 或 error 不能更新当前界面。
+- 如果停止前已有一份完成的写入预览，停止新请求会恢复那份预览；未完成内容不会被当作可写入结果。
 
-2. **专用分区 + `session.setProxy`**：给翻译请求建一个 `persist:translate` 分区单独设代理，
-   用 `session.fetch` 发请求。可行但比方案 1 重，且不如直接挂 agent 灵活。
+## 网络与安全边界
 
-## 4. 翻译后端候选对比（价格/额度需以官网为准，下列为调研快照）
+- 公网翻译和 AI 端点支持 HTTPS 与明确配置的 HTTP。HTTP 会在界面显示内容和密钥可能明文传输的警告。
+- URL 只接受 HTTP(S)。DNS 解析后会固定已验证地址并保留 Host/SNI，拒绝混合公网/私网解析、metadata、loopback 和其它危险目标。
+- 本地离线模式是单独的 loopback 例外，不能借此访问任意内网。
+- composer 桥只支持预定义的读取、目标确认和写入操作；不得恢复 `executeAiJavaScript` 或任何通用脚本 IPC。
 
-| 后端                               | 免费额度             | 付费价                | 质量           | 墙内可达   | 备注                                  |
-| ---------------------------------- | -------------------- | --------------------- | -------------- | ---------- | ------------------------------------- |
-| **微软翻译 (Azure Translator)**    | ~**2M 字符/月**免费  | ~$10 / 百万字符       | 好             | 多数可直连 | 免费额度最大，首选                    |
-| Google Cloud Translate             | 有限免费             | ~$20 / 百万字符       | 好             | 需过代理   | 质量稳，价偏高                        |
-| DeepL API                          | **500k 字符/月**免费 | $25 / 百万字符（Pro） | 很好（中英佳） | 需过代理   | 质量最佳，价最高                      |
-| LibreTranslate（自建）             | 自建无限             | 仅服务器成本          | 一般           | 可内网直连 | 开源、可离线、隐私好                  |
-| 免费网页端点（Google/MS 公开端点） | 不稳定               | 0                     | 好             | 视端点     | 易被限频，仅原型用                    |
-| LLM（OpenAI/Azure/SiliconFlow 等） | 视厂商               | 按 token              | 很好           | 视厂商     | 可复用内嵌 AI 账户思路，质量高但贵/慢 |
+## 未采用的历史方案
 
-## 5. 推荐方案
+### 直接加载浏览器扩展
 
-1. **首发做方案 A（划词/选中翻译，主进程代理 fetch）**：
-   - 右键菜单加“翻译选中文字”（已预留菜单位）+ 可选划词气泡。
-   - 后端首选**微软翻译免费层**（额度大、质量好、多数可直连），DeepL/Google 作为可选高质量项（默认过代理）。
-   - 代理路由用**主进程 `fetch` + `socks-proxy-agent`**，provider 级“走代理/直连”开关，端口取 `sender.socks_listen_port`。
-2. **二期做方案 C（整页沉浸式双语）**：复用同一套主进程翻译 + 代理路由，并为该能力设计固定、可审计的 isolated-world 协议。
-3. **方案 B（加载现成扩展）暂缓**：等 Electron 原生 MV3 支持成熟，或确有必须的扩展再评估。
+Electron 对 Chrome Extension API 的支持范围与 Chrome 不同，第三方扩展还会引入自己的权限、更新和数据边界。ShareGPT 当前不依赖该路径。
 
-## 6. 落地时的具体接入点（备忘）
+### 通用 content script 注入
 
-- 右键菜单翻译项：`popupAiContextMenu`（`src/main/appFactory.js`）。
-- 新 IPC：`plugin:translate`（主进程实现代理 fetch）+ preload 暴露 + 渲染层气泡组件。
-- 代理端口/开关：读 `settings.sender.socks_listen_port` 与新增 provider 配置（可放 `settings.ui` 或新 `settings.plugins`）。
-- 整页注入：新增专用、固定脚本协议；禁止恢复通用 JavaScript IPC。
+通用注入难以同时保证网页版本适配、文档身份、取消和最小权限。当前实现只允许主进程生成的固定 isolated-world 操作，并由 workspace/document/generation 合同约束。
 
-## 来源
+## 维护验证
 
-- [Chrome Extension Support | Electron](https://www.electronjs.org/docs/latest/api/extensions)
-- [Support for Manifest V3 Chrome Extensions · electron/electron#49984](https://github.com/electron/electron/issues/49984)
-- [electron-chrome-extensions (samuelmaddock/electron-browser-shell)](https://github.com/samuelmaddock/electron-browser-shell/blob/master/packages/electron-chrome-extensions/README.md)
-- [LibreTranslate（开源自建翻译 API）](https://github.com/LibreTranslate/LibreTranslate)
-- [Immersive Translate — 自定义翻译服务接口](https://immersivetranslate.com/docs/services/)
-- [DeepL pricing 2026 (eesel)](https://www.eesel.ai/blog/deepl-pricing)
-- [DeepL vs Google vs Microsoft Translator (Taia)](https://taia.io/resources/blog/deepl-vs-google-translate-vs-microsoft-translator/)
+翻译改动至少覆盖：
+
+- provider 配置与 Principal A/B/A 隔离；
+- HTTP/HTTPS、DNS 固定、危险地址和本地离线例外；
+- 阅读/写入分离、停止与迟到事件；
+- 窄窗口替换模式、拖拽宽度和最大/最小边界；
+- composer 旧草稿冲突、SPA 导航、document/generation 变化；
+- 团队 profile 不泄露密钥、授权拒绝、成功用量和服务端幂等。
+
+## 参考资料
+
+- [Electron Chrome Extension Support](https://www.electronjs.org/docs/latest/api/extensions)
+- [Manifest V3 support tracking · electron/electron#49984](https://github.com/electron/electron/issues/49984)
+- [LibreTranslate](https://github.com/LibreTranslate/LibreTranslate)
+
+第三方价格、免费额度、模型名称和 Electron 扩展兼容状态都可能变化，维护文档不固定快照；需要评估时应查阅供应商和 Electron 的当前官方资料。
