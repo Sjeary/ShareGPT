@@ -40,6 +40,22 @@ test("协作服务默认只监听回环地址，显式 HOST 仍可覆盖", () =>
   assert.strictEqual(srv.resolveHost({ HOST: "0.0.0.0" }), "0.0.0.0");
 });
 
+test("公开部署入口保持回环监听且不会自动开放防火墙", () => {
+  const serviceTemplate = fs.readFileSync(
+    path.join(__dirname, "..", "sharegpt-collab.service.template"),
+    "utf8",
+  );
+  const deployScript = fs.readFileSync(path.join(__dirname, "..", "deploy_ubuntu.sh"), "utf8");
+
+  assert.match(serviceTemplate, /^Environment=HOST=127\.0\.0\.1$/m);
+  assert.doesNotMatch(serviceTemplate, /^Environment=HOST=0\.0\.0\.0$/m);
+  assert.match(serviceTemplate, /^Environment=USERS_FILE=\/var\/lib\/sharegpt-collab\//m);
+  assert.match(deployScript, /^HOST="\$\{HOST:-127\.0\.0\.1\}"$/m);
+  assert.doesNotMatch(deployScript, /ufw\s+allow/i);
+  assert.match(deployScript, /--exclude(?:=|\s+)data/);
+  assert.match(deployScript, /--exclude(?:=|\s+)release_shared/);
+});
+
 function snapshotFile(file) {
   return fs.existsSync(file) ? fs.readFileSync(file) : null;
 }
