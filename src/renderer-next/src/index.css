@@ -44,6 +44,53 @@
   --sidebar-ring: #d6850c;
 }
 
+@keyframes workspace-entry-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes workspace-entry-mark-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes workspace-entry-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.workspace-entry-step {
+  animation: workspace-entry-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.workspace-entry-mark {
+  animation: workspace-entry-mark-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-entry-step,
+  .workspace-entry-mark {
+    animation-name: workspace-entry-fade-in;
+    animation-duration: 160ms;
+  }
+}
+
 .dark {
   /* elevation: bg(0) < sidebar(1) < card(2) < popover(3), 越高越亮以区分层级 */
   /* Telegram 桌面端蓝灰分层 (官方: 主#17212b/次级#232e3c/更暗层#0e1621/次级文字#708499), 取偏暗作底 */

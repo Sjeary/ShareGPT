@@ -12,6 +12,9 @@ import {
   HardDrive,
   ShieldCheck,
   ArrowRight,
+  ArrowLeft,
+  Users,
+  Settings2,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -95,12 +98,14 @@ function LoginUpdateBanner() {
 }
 
 type ErrorField = 'server' | 'username' | 'password'
+type WorkspaceEntryView = 'welcome' | 'choice' | 'organization' | 'personal'
 
 // 未登录态: 居中登录表单。预填 store.settings.collab。
 export function LoginForm() {
   const collab = useAppStore((s) => s.settings?.collab)
   const meta = useAppStore((s) => s.meta)
   const workspaceMode = useAppStore((s) => s.workspaceMode)
+  const patchSection = useAppStore((s) => s.patchSection)
   const { login, enterPersonal } = useAuth()
 
   // 品牌名: 取 app 元信息 productName, 去掉「Sender/Receiver」后缀, 回退 ShareGPT。
@@ -110,6 +115,10 @@ export function LoginForm() {
   )
   // 本表单既用于工作区入口，也用于个人工作区内登录组织账号。
   const showWorkspaceEntry = workspaceMode !== 'personal'
+  const hasSeenWorkspaceIntro = Boolean(
+    useAppStore.getState().settings?.ui?.workspace_entry_intro_done ||
+    useAppStore.getState().settings?.ui?.onboarding_done,
+  )
 
   const [serverUrl, setServerUrl] = useState(collab?.server_url ?? '')
   const [username, setUsername] = useState(collab?.last_username ?? '')
@@ -120,6 +129,9 @@ export function LoginForm() {
   const [submitting, setSubmitting] = useState(false)
   const [enteringPersonal, setEnteringPersonal] = useState(false)
   const [showOrganizationLogin, setShowOrganizationLogin] = useState(false)
+  const [entryView, setEntryView] = useState<WorkspaceEntryView>(() =>
+    hasSeenWorkspaceIntro ? 'organization' : 'welcome',
+  )
   // 内联错误条 + 出错字段 (用于 aria-invalid 触发红边)。
   const [error, setError] = useState('')
   const [errorField, setErrorField] = useState<ErrorField | null>(null)
@@ -185,6 +197,9 @@ export function LoginForm() {
     setErrorField(null)
     setSubmitting(true)
     try {
+      if (!hasSeenWorkspaceIntro) {
+        await patchSection('ui', { workspace_entry_intro_done: true }).catch(() => undefined)
+      }
       const profile = await login({ serverUrl, username, password, rememberPassword })
       toast.success(`登录成功，欢迎 ${profile.displayName}`)
     } catch (err) {
@@ -205,6 +220,9 @@ export function LoginForm() {
     setError('')
     setErrorField(null)
     try {
+      if (!hasSeenWorkspaceIntro) {
+        await patchSection('ui', { workspace_entry_intro_done: true }).catch(() => undefined)
+      }
       await enterPersonal()
     } catch (err) {
       const message = err instanceof Error ? err.message : '个人工作区初始化失败，请重试'
@@ -215,6 +233,192 @@ export function LoginForm() {
     }
   }
 
+  function chooseEntry(view: Extract<WorkspaceEntryView, 'organization' | 'personal'>) {
+    setEntryView(view)
+  }
+
+  const showOrganizationEntry = showWorkspaceEntry && entryView === 'organization'
+
+  if (showWorkspaceEntry && entryView === 'welcome') {
+    return (
+      <div className="h-full overflow-y-auto">
+        <div className="grid min-h-full place-items-center p-6">
+          <main
+            className="workspace-entry-step mx-auto flex w-full max-w-lg flex-col items-center text-center"
+            aria-labelledby="workspace-welcome-title"
+          >
+            <div className="workspace-entry-mark grid size-16 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
+              <Cable className="size-8" />
+            </div>
+            <p className="mt-6 text-sm font-medium text-primary">首次设置</p>
+            <h1 id="workspace-welcome-title" className="mt-2 text-3xl font-semibold">
+              欢迎来到 {brandName}
+            </h1>
+            <p className="mt-3 max-w-md text-sm leading-6 text-muted-foreground">
+              你可以连接团队一起协作，也可以只在这台电脑上独立使用。接下来选择本次启动要进入的工作区。
+            </p>
+            <Button size="lg" className="mt-8 min-w-40" onClick={() => setEntryView('choice')}>
+              开始设置
+              <ArrowRight />
+            </Button>
+            <p className="mt-4 text-xs text-muted-foreground">稍后仍可切换，选择不会删除已有数据</p>
+          </main>
+        </div>
+      </div>
+    )
+  }
+
+  if (showWorkspaceEntry && entryView === 'choice') {
+    return (
+      <div className="h-full overflow-y-auto">
+        <div className="grid min-h-full place-items-center p-6">
+          <main
+            className="workspace-entry-step mx-auto w-full max-w-xl"
+            aria-labelledby="workspace-choice-title"
+          >
+            <div className="text-center">
+              <p className="text-sm font-medium text-primary">选择使用方式</p>
+              <h1 id="workspace-choice-title" className="mt-2 text-2xl font-semibold">
+                这次要进入哪个工作区？
+              </h1>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                两种方式可以随时切换，配置、账号和 AI 网页会话分别持久保存。
+              </p>
+            </div>
+
+            <div className="mt-7 grid gap-3">
+              <button
+                type="button"
+                className="group flex w-full items-start gap-4 rounded-lg border border-border bg-card p-5 text-left shadow-xs transition-[border-color,background-color,box-shadow] hover:border-primary/50 hover:bg-accent/35 hover:shadow-sm focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                onClick={() => chooseEntry('organization')}
+              >
+                <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+                  <Users className="size-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center justify-between gap-3">
+                    <span className="font-medium">连接团队</span>
+                    <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none" />
+                  </span>
+                  <span className="mt-1 block text-sm leading-6 text-muted-foreground">
+                    登录团队服务器，使用协作聊天、在线成员、管理员分配的线路与组织用量服务。
+                  </span>
+                </span>
+              </button>
+
+              <button
+                type="button"
+                className="group flex w-full items-start gap-4 rounded-lg border border-border bg-card p-5 text-left shadow-xs transition-[border-color,background-color,box-shadow] hover:border-primary/50 hover:bg-accent/35 hover:shadow-sm focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                onClick={() => chooseEntry('personal')}
+              >
+                <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-muted text-foreground">
+                  <Laptop className="size-5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center justify-between gap-3">
+                    <span className="font-medium">仅在本机使用</span>
+                    <ArrowRight className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 motion-reduce:transform-none" />
+                  </span>
+                  <span className="mt-1 block text-sm leading-6 text-muted-foreground">
+                    无需团队账号。自行配置个人代理和翻译服务，不显示聊天、成员和团队管理功能。
+                  </span>
+                </span>
+              </button>
+            </div>
+
+            <p className="mt-5 flex items-start justify-center gap-2 text-xs leading-5 text-muted-foreground">
+              <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />
+              个人与团队数据互相隔离；切换不会迁移、覆盖或清除另一侧内容。
+            </p>
+          </main>
+        </div>
+      </div>
+    )
+  }
+
+  if (showWorkspaceEntry && entryView === 'personal') {
+    return (
+      <div className="h-full overflow-y-auto">
+        <div className="grid min-h-full place-items-center p-6">
+          <main
+            className="workspace-entry-step mx-auto w-full max-w-lg"
+            aria-labelledby="personal-entry-title"
+          >
+            <Button
+              variant="ghost"
+              size="sm"
+              className="-ml-2"
+              onClick={() => setEntryView('choice')}
+            >
+              <ArrowLeft />
+              返回选择使用方式
+            </Button>
+            <div className="mt-5">
+              <div className="grid size-12 place-items-center rounded-xl bg-primary/10 text-primary">
+                <Laptop className="size-6" />
+              </div>
+              <h1 id="personal-entry-title" className="mt-5 text-2xl font-semibold">
+                在本机独立使用
+              </h1>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                适合不需要团队协作、希望自行管理代理和翻译服务的使用场景。
+              </p>
+            </div>
+
+            <div className="mt-6 divide-y divide-border rounded-lg border border-border bg-card px-4">
+              <div className="flex gap-3 py-4">
+                <Settings2 className="mt-0.5 size-4 shrink-0 text-primary" />
+                <div>
+                  <p className="text-sm font-medium">配置由你管理</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    个人代理、翻译接口和相关偏好只归当前本机工作区使用。
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 py-4">
+                <HardDrive className="mt-0.5 size-4 shrink-0 text-primary" />
+                <div>
+                  <p className="text-sm font-medium">网页会话独立保存</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    ChatGPT、Claude 和 Gemini
+                    使用个人专属分区，不读取任何团队账号的登录状态或历史会话。
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-3 py-4">
+                <Users className="mt-0.5 size-4 shrink-0 text-primary" />
+                <div>
+                  <p className="text-sm font-medium">以后仍可连接团队</p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    进入后打开侧栏底部的“账户”，选择“登录组织工作区”即可切换；两侧数据都会继续保留。
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <Button
+              size="lg"
+              className="mt-6 w-full"
+              onClick={() => void handleEnterPersonal()}
+              disabled={enteringPersonal}
+            >
+              {enteringPersonal ? <Loader2 className="animate-spin" /> : <Laptop />}
+              {enteringPersonal ? '正在准备个人工作区…' : '进入个人工作区'}
+            </Button>
+            {error && (
+              <p
+                role="alert"
+                className="mt-3 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+              >
+                {error}
+              </p>
+            )}
+          </main>
+        </div>
+      </div>
+    )
+  }
+
   return (
     // 外层只负责竖向滚动(窗口矮时), 内层 grid 居中一列 max-w-sm 内容,
     // 避免 flex + overflow 同时作用时出现的横向偏移。
@@ -223,7 +427,7 @@ export function LoginForm() {
         className={`grid min-h-full p-6 ${showWorkspaceEntry ? 'place-items-center' : 'items-start'}`}
       >
         <div
-          className={`mx-auto flex w-full flex-col items-center gap-3 ${showWorkspaceEntry ? 'max-w-4xl' : 'max-w-xl'}`}
+          className={`mx-auto flex w-full flex-col items-center gap-3 ${showWorkspaceEntry ? 'max-w-sm' : 'max-w-xl'}`}
         >
           <LoginUpdateBanner />
 
@@ -240,40 +444,29 @@ export function LoginForm() {
             </div>
           )}
 
-          {/* 品牌头 (仅登录页): logo + 名称 + 友好欢迎语 + 一句话功能点, 让开局不再是一张冷冰冰的表单。 */}
           {showWorkspaceEntry && (
-            <div className="flex w-full flex-col items-center gap-3 text-center">
-              <div className="grid size-14 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
-                <Cable className="size-7" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-semibold tracking-tight">欢迎使用 {brandName}</h1>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  个人使用与组织协作拥有彼此隔离的配置和网页会话
-                </p>
-              </div>
-              <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                <ShieldCheck className="size-3.5 text-primary" />
-                切换工作区不会删除另一侧已保存的数据
-              </p>
-            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="self-start"
+              onClick={() => setEntryView('choice')}
+            >
+              <ArrowLeft />
+              返回选择使用方式
+            </Button>
           )}
 
-          <div
-            className={
-              showWorkspaceEntry ? 'grid w-full items-start gap-4 md:grid-cols-2' : 'w-full'
-            }
-          >
-            {showWorkspaceEntry || showOrganizationLogin ? (
+          <div className="w-full">
+            {showOrganizationEntry || showOrganizationLogin ? (
               <Card className="w-full">
                 <CardHeader className="text-center">
                   <CardTitle className="flex items-center justify-center gap-2 text-xl">
                     <Building2 className="size-5 text-primary" />
-                    {showWorkspaceEntry ? '组织工作区' : '登录组织工作区'}
+                    {showWorkspaceEntry ? '连接团队' : '登录组织工作区'}
                   </CardTitle>
                   <CardDescription>
                     {showWorkspaceEntry
-                      ? '登录协作服务器，使用协作聊天、在线成员、管理员线路与组织用量。'
+                      ? '使用团队提供的服务地址和账号登录'
                       : '登录后切换到该账号的独立配置和网页会话'}
                   </CardDescription>
                 </CardHeader>
@@ -394,42 +587,6 @@ export function LoginForm() {
                     <LogIn />
                     登录组织工作区
                     <ArrowRight className="ml-auto" />
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
-
-            {showWorkspaceEntry && (
-              <Card className="w-full border-primary/30 bg-muted/20">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Laptop className="size-5 text-primary" />
-                    个人工作区
-                  </CardTitle>
-                  <CardDescription className="leading-relaxed">
-                    无需登录协作服务器。进入后不显示协作聊天、在线成员、团队管理和组织用量。
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="grid gap-3">
-                  <div className="grid gap-2 text-xs leading-relaxed text-muted-foreground">
-                    <p className="flex items-start gap-2">
-                      <HardDrive className="mt-0.5 size-3.5 shrink-0 text-primary" />
-                      个人代理、翻译配置和 ChatGPT、Claude、Gemini 网页会话保存在独立本机分区。
-                    </p>
-                    <p className="flex items-start gap-2">
-                      <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />
-                      不会复用或覆盖组织账号的对应配置与网页登录状态；已记住的组织登录信息仍会保留。
-                    </p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => void handleEnterPersonal()}
-                    disabled={enteringPersonal}
-                  >
-                    {enteringPersonal ? <Loader2 className="animate-spin" /> : <Laptop />}
-                    {enteringPersonal ? '正在准备个人工作区…' : '在本机独立使用'}
-                    {!enteringPersonal && <ArrowRight className="ml-auto" />}
                   </Button>
                 </CardContent>
               </Card>

@@ -187,6 +187,7 @@ const PUBLIC_DEFAULT_SETTINGS = {
   ui: {
     setup_guide_dismissed: false,
     theme: "dark",
+    workspace_entry_intro_done: false,
   },
 };
 

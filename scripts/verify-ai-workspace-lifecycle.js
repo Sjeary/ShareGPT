@@ -307,6 +307,19 @@ async function api(page, method, ...args) {
 }
 
 async function loginThroughForm(page, baseUrl) {
+  const startSetup = page.getByRole("button", { name: "开始设置", exact: true });
+  if ((await page.locator("#account-server").count()) === 0) {
+    await Promise.race([
+      startSetup.waitFor({ state: "visible", timeout: 8000 }),
+      page.locator("#account-server").waitFor({ state: "visible", timeout: 8000 }),
+    ]).catch(() => undefined);
+  }
+  if (await startSetup.isVisible().catch(() => false)) await startSetup.click();
+  if ((await page.locator("#account-server").count()) === 0) {
+    const chooseTeam = page.getByRole("button", { name: /连接团队/ });
+    await chooseTeam.waitFor({ state: "visible", timeout: 8000 });
+    await chooseTeam.click();
+  }
   await page.locator("#account-server").waitFor({ state: "visible" });
   await page.locator("#account-server").fill(baseUrl);
   await page.locator("#account-username").fill("lifecycle-fixture");

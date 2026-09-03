@@ -152,6 +152,19 @@ async function main() {
     const window = await electronApp.firstWindow();
     const pageErrors = [];
     window.on("pageerror", (error) => pageErrors.push(error.message));
+    const startSetup = window.getByRole("button", { name: "开始设置", exact: true });
+    if ((await window.locator("#account-server").count()) === 0) {
+      await Promise.race([
+        startSetup.waitFor({ state: "visible", timeout: 8000 }),
+        window.locator("#account-server").waitFor({ state: "visible", timeout: 8000 }),
+      ]).catch(() => undefined);
+    }
+    if (await startSetup.isVisible().catch(() => false)) await startSetup.click();
+    if ((await window.locator("#account-server").count()) === 0) {
+      const chooseTeam = window.getByRole("button", { name: /连接团队/ });
+      await chooseTeam.waitFor({ state: "visible", timeout: 8000 });
+      await chooseTeam.click();
+    }
     await window.locator("#account-server").waitFor({ state: "visible" });
     await window.locator("#account-server").fill(baseUrl);
     await window.locator("#account-username").fill(USERNAME);
