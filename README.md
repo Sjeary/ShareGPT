@@ -2,14 +2,14 @@
 
 # ShareGPT 桌面客户端
 
-**把 ChatGPT / Claude / Gemini「装进一个客户端」，由管理员统一配置网络、面向团队/小组协作使用的跨平台桌面应用。**
+**把 ChatGPT、Claude、Gemini、翻译与协作放进一个客户端；既可独立在本机使用，也可连接自托管团队。**
 
-_A cross-platform desktop app that embeds ChatGPT / Claude / Gemini, routes them through an admin-managed proxy, and adds team chat._
+_A cross-platform desktop workspace for embedded AI pages, translation, personal networking, and self-hosted team collaboration._
 
 [![CI](https://github.com/Sjeary/ShareGPT/actions/workflows/ci.yml/badge.svg)](https://github.com/Sjeary/ShareGPT/actions/workflows/ci.yml)
 [![version](https://img.shields.io/github/v/release/Sjeary/ShareGPT)](https://github.com/Sjeary/ShareGPT/releases)
 ![platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-blue)
-![electron](https://img.shields.io/badge/Electron-31-47848F)
+![electron](https://img.shields.io/badge/Electron-43.1.0-47848F)
 ![react](https://img.shields.io/badge/React-19-61DAFB)
 [![license](https://img.shields.io/github/license/Sjeary/ShareGPT)](LICENSE)
 
@@ -32,42 +32,39 @@ _A cross-platform desktop app that embeds ChatGPT / Claude / Gemini, routes them
 
 ## 简介
 
-团队里常常很多人都要用 ChatGPT / Claude / Gemini，但**共用账号**时，大家来自各不相同的网络出口，**IP 不统一很容易被服务商风控、导致回答质量下降（俗称"降智"）**；再加上各自配置网络门槛高、又难以统一管理。
-
-ShareGPT 把这些一次性收拢：**装上、登录、即用**——网络与配置由管理员集中下发，所有成员的 AI 流量可从**同一个出口 IP** 出网，既省去各自配置，也让共用账号更稳定可信；同时内置团队协作聊天、用量统计与统一的管理后台。
+ShareGPT 提供两种彼此隔离的使用方式：个人工作区无需团队账号，代理、翻译接口和 AI 网页登录状态只保存在本机；团队工作区连接你或组织自托管的协作服务器，由管理员统一下发网络与翻译配置，并提供聊天、权限和用量管理。两种工作区可以随时切换，但不会互相读取或覆盖 ChatGPT、Claude、Gemini 的 Cookie、历史会话和本地设置。
 
 整套由三部分组成：
 
-- **客户端**：内嵌三家 AI 网页（多标签、各自独立会话、登录态持久化），把 AI 站点流量按域名清单走代理；内置协作聊天与用量统计。
-- **协作服务端**（`collab_server2/`）：纯 Node.js 的 http + WebSocket，负责账号、聊天、配置下发、版本分发。零外部依赖、可多实例（多群）。
-- **管理控制台**（`admin_console/`）：管理员用来管用户、下发代理配置、查看反馈、发布版本。
+- **桌面客户端**：内嵌三家 AI 网页，提供持久化多环境、翻译工作台、个人网络配置和可选的团队协作。
+- **协作服务端**（`collab_server2/`）：Node.js `http` + `ws` 服务，负责账号、聊天、权限、配置和用量数据；可按团队运行独立实例。
+- **管理控制台**（`admin_console/`）：管理用户、代理线路、各 AI 默认线路、托管翻译、授权和用量统计。
 
 ## ✨ 功能特性
 
-- **AI 工作区**：内嵌 ChatGPT / Claude / Gemini（可在设置里开关入口），多标签同构，明暗主题跟随，沉浸/全屏（F11）。
+- **个人与团队工作区**：首次启动会引导选择使用方式；个人和团队的网络、翻译设置及 AI 网页数据分别持久化，切换时不会迁移或清除另一侧数据。
+- **AI 工作区**：内嵌 ChatGPT / Claude / Gemini（可在设置里开关入口），支持多标签、多环境、明暗主题和全屏显示。
+- **翻译工作台**：区分“阅读翻译”和“写给 AI”；支持读取选区或页面、可编辑发送预览、草稿保护、停止任务、拖动调宽，以及个人或团队托管的翻译接口。
 - **网络 / 代理（基于 [sing-box](https://sing-box.sagernet.org/)）**：
-  - 管理员统一下发连接配置，成员**首登自动拉取**，无需手配。
+  - 个人工作区可使用自己的 HTTP 或 SOCKS5 代理；团队普通成员自动同步管理员配置，无需查看连接凭据和内部端口。
+  - 管理员可分别为 ChatGPT、Gemini 和 Claude 推荐默认线路；高级用户可在自己获授权的线路中调整多个 AI 环境。
   - 只对 AI 站点**按内置域名清单**走代理，其余直连/走本机代理。
-  - **代理检测**：实时显示页面流量是否全部走代理；发现"会用到却没走代理"的域名时**自动加入本机清单并上报管理员**，一键重启即时生效。
-  - **可选「机场订阅」模式**：管理员粘贴 Clash 订阅、选一个节点下发，客户端可选择走机场节点（与统一代理并存，默认统一）。
+  - **代理检测**：检查 AI 页面是否绑定到预期线路；线路或出口校验失败时停止导航，不静默切换出口。
 - **协作聊天**：私聊 / 房间消息、图片与文件、撤回 / 已读 / 回复 / 转发、离线补同步、可自定义提醒；管理员可禁止某人使用聊天。
-- **使用统计**：按 ChatGPT / Gemini / Claude 维度统计每人查询量与排行。
-- **管理控制台**：用户增删改、客户端代理默认配置下发、机场节点下发、用户反馈查看、"漏走代理域名"汇总、版本发布。
+- **使用统计**：AI 网页只记录已确认成功发送的消息；托管翻译按用户和配置统计请求、字符、token 与估算费用，不保存原文或译文。
+- **管理控制台**：用户与权限、团队网络、多线路授权、各 AI 默认线路、加密托管翻译配置、用量和版本信息集中维护。
 - **应用内更新**：以 **GitHub Releases** 为更新源（参考 [cc-switch](https://github.com/farion1231/cc-switch)，**不经过任何自建服务器**）。**Windows 原地无感更新**——后台下载、自动安装并重启，快捷方式与安装位置不变，账号/聊天记录/网页登录态全部保留；macOS 暂为下载安装包方式。
 - **网页隐私与环境**：可分别重置 ChatGPT / Gemini / Claude 的网页登录数据（密码二次确认）；支持美国/代理出口一致的语言、时区和可选粗略位置，并阻止 WebRTC 非代理 UDP 泄漏。环境策略可跨设备同步，Cookie 和网页登录态不上传。
 - **跨平台**：Windows 与 macOS（Apple Silicon）。
 
 ## 🚀 快速开始（普通用户）
 
-1. 到 [Releases](../../releases) 下载对应平台安装包（Windows `.exe` / macOS `.dmg`）。
-2. 打开应用，**登录**管理员给你的账号；或在登录页「导入配置」导入管理员发的配置文件。
-3. 首次登录会自动拉取代理配置。进入「网络 / 代理」，点击**开启代理**。
-4. 左侧导航打开 **ChatGPT / Claude**，即可使用；用「协作聊天」与同组成员沟通。
+1. 到 [Releases](../../releases) 下载对应平台的正式安装包（Windows `.exe` / macOS `.dmg`）。
+2. 首次启动选择“仅在本机使用”或“连接团队”。选错后可以返回，也可以稍后从账户页切换。
+3. 个人使用时填写自己的代理和翻译接口；连接团队时使用管理员提供的 HTTPS 服务地址、用户名和密码，普通成员会自动同步团队网络配置。
+4. 打开 ChatGPT、Claude 或 Gemini，并分别完成对应网站登录。网站账号与 ShareGPT 团队账号不是同一套身份。
 
-> **Windows 提示**：安装包未做代码签名，首次运行 Defender SmartScreen 会提示「发布者未知」——点**「更多信息（More info）」→「仍要运行（Run anyway）」**即可。从管理员处拿到的包可放心运行。
-
-> **macOS 提示**：安装包未做苹果签名，首次打开请**右键 →「打开」**，或在终端执行
-> `xattr -dr com.apple.quarantine "/Applications/ShareGPT.app"`。
+> 正式 GitHub Release 应带有有效的 Windows Authenticode 或 macOS Developer ID 签名与公证。若系统显示未知发布者、签名无效或来源不明，请先停止安装并核对 Release 页面、文件名和发布者；不要通过关闭安全检查或移除隔离属性来绕过警告。
 
 ## 🛠️ 部署指南（管理员 / 自建）
 
@@ -79,27 +76,31 @@ ShareGPT 把这些一次性收拢：**装上、登录、即用**——网络与�
 
 ### 1. 协作服务端
 
-源码在 [`collab_server2/`](collab_server2/)，零外部依赖（http + ws）。`node server.js` 即可，用**环境变量**配置：
+源码在 [`collab_server2/`](collab_server2/)，使用 Node.js 内置 `http` 与 `ws`。默认只监听 `127.0.0.1:8088`，生产环境应由 Caddy/Nginx 提供 HTTPS 与 WebSocket 反向代理。
 
-| 环境变量                         | 说明                                                                                                                             | 默认                               |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| `PORT`                           | 监听端口                                                                                                                         | `8088`                             |
-| `USERS_FILE`                     | 用户库 JSON 路径                                                                                                                 | `data/users.json`                  |
-| `CHAT_HISTORY_FILE`              | 聊天记录路径                                                                                                                     | `data/chat_history.json`           |
-| `GPT_USAGE_FILE`                 | 使用统计存储（同目录还会放 `gemini_usage.json` / `claude_usage.json` / `feedback.json` / `proxy_missing.json` / `airport.json`） | `data/gpt_usage.json`              |
-| `CLIENT_BOOTSTRAP_FILE`          | 下发给客户端的默认配置（代理 / 更新 / 机场节点）                                                                                 | `data/client_bootstrap.json`       |
-| `RELEASES_DIR` / `RELEASE_STORE` | 版本安装包目录                                                                                                                   | `data/releases` / `release_shared` |
-| `DEV_TOKEN`                      | 开发者全局发布密钥（留空则关闭该入口）                                                                                           | —                                  |
+| 环境变量                          | 说明                                                                                                                             | 默认                               |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| `HOST`                            | 监听地址；生产默认只允许本机反向代理访问                                                                                         | `127.0.0.1`                        |
+| `PORT`                            | 监听端口                                                                                                                         | `8088`                             |
+| `USERS_FILE`                      | 用户库 JSON 路径                                                                                                                 | `data/users.json`                  |
+| `CHAT_HISTORY_FILE`               | 聊天记录路径                                                                                                                     | `data/chat_history.json`           |
+| `GPT_USAGE_FILE`                  | 使用统计存储（同目录还会放 `gemini_usage.json` / `claude_usage.json` / `feedback.json` / `proxy_missing.json` / `airport.json`） | `data/gpt_usage.json`              |
+| `CLIENT_BOOTSTRAP_FILE`           | 下发给客户端的默认配置（代理 / 更新 / 机场节点）                                                                                 | `data/client_bootstrap.json`       |
+| `RELEASES_DIR` / `RELEASE_STORE`  | 版本安装包目录                                                                                                                   | `data/releases` / `release_shared` |
+| `SHAREGPT_TRANSLATION_MASTER_KEY` | 加密团队翻译 API Key 的 32 字节主密钥；必须独立备份                                                                              | —                                  |
+| `TRANSLATION_PROFILES_FILE`       | 团队翻译配置密文                                                                                                                 | `data/translation_profiles.json`   |
+| `TRANSLATION_USAGE_FILE`          | 翻译用量元数据，不保存原文或译文                                                                                                 | `data/translation_usage.json`      |
+| `DEV_TOKEN`                       | 开发者全局发布密钥（留空则关闭该入口）                                                                                           | —                                  |
 
 > 做"多群"只需为每个实例指定**不同的数据目录**和 `PORT`，可用 systemd 等托管。**请使用你自己的密钥/账号，切勿使用任何示例值。**
 
 ### 2. 管理控制台
 
-[`admin_console/`](admin_console/) 是独立 Electron 管理端。构建：`npm run dist:admin:win`。登录后可：用户管理、客户端代理默认配置下发、（可选）粘贴 Clash 订阅下发机场节点、查看反馈/漏走代理域名、发布版本。
+[`admin_console/`](admin_console/) 是独立 Electron 管理端。构建：`npm run dist:admin:win`。登录后可管理用户和高级 AI 权限、导入及授权多条代理线路、分别设置三种 AI 的默认线路、配置加密托管翻译服务并查看用量，以及维护版本信息。
 
 ### 3. 集中代理出口（统一出口 IP，可选）
 
-让团队所有成员的 AI 流量从**同一个出口 IP** 出网——共用账号时大家 IP 一致，可明显降低被风控、"降智"的概率，成员也无需各自配置网络。两种部署形态做的是同一件事：
+团队可以让 AI 流量使用统一出口，也可以为 ChatGPT、Gemini、Claude 分别推荐不同线路。管理员集中维护线路和授权，普通成员无需接触节点凭据或自行选择出口。两种自建出口形态做的是同一件事：
 
 - **Linux 服务器（推荐）**：公网服务器可直接作为出口，或只运行 FRP 入口、把流量转到树莓派/家中小主机上的 mihomo。完整命令见 [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)。
 - **有桌面的机器**：装「出口」GUI 版（`npm run dist:win:receiver`），界面里填同样参数、点开启即可。
@@ -112,7 +113,7 @@ ShareGPT 把这些一次性收拢：**装上、登录、即用**——网络与�
 
 ## 👩‍💻 从源码构建 / 开发
 
-**环境**：Node.js 18+、npm。
+**环境**：Node.js 22.12+、npm。
 
 ```bash
 # 安装依赖（主程序 + 渲染层 + 管理端）
@@ -127,11 +128,11 @@ npm run dist:mac:sender     # macOS 客户端（自动先编译渲染层）
 npm run dist:admin:win      # 管理控制台
 ```
 
-**发布新版本 / 自建更新源**（维护者 / fork）：应用以 **GitHub Releases** 为自动更新源（参考 [cc-switch](https://github.com/farion1231/cc-switch)，不经过任何自建服务器；Windows 用 NSIS + [electron-updater](https://www.electron.build/auto-update) 原地无感更新）。
+**发布新版本 / 自建更新源**（维护者 / fork）：应用以 **GitHub Releases** 为自动更新源，不经过协作服务器。完整的签名、构建、资产和发布门禁见 [docs/RELEASING.md](docs/RELEASING.md)。
 
 1. 改 `package.json` 版本号 → 完整桌面版执行 `npm run dist:win:installer`（NSIS）和 `npm run dist:mac`；拆分发送端才使用 `dist:win:sender` / `dist:mac:sender`。
-2. Windows 构建后必须执行 `npm run verify:release-win`；在自己的 GitHub 仓库建 Release（tag `v<版本号>`），上传 NSIS `.exe`、`latest.yml`、对应的 `.exe.blockmap` 和 `.dmg`。portable 只用于本地自测，不作为更新包。
-3. 更新源由 `package.json` 的 `homepage` / `repository` 决定——fork 后改成你自己的仓库即可。macOS 未做 Apple 签名时为下载安装包方式。
+2. Windows 正式包必须通过 Authenticode 签名与时间戳校验；macOS 正式包必须通过 Developer ID、hardened runtime、公证和 staple 校验。本地未签名或 ad-hoc 候选不得上传 Release。
+3. 在自己的 GitHub 仓库创建 `v<版本号>` Release，并上传工作流要求的完整资产。portable 只用于本地自测，不作为更新包。
 
 **目录结构**
 
@@ -143,7 +144,7 @@ scripts/              构建前二进制准备脚本
 build/                打包资源（图标、bin/ 放第三方二进制）
 ```
 
-**技术栈**：Electron 31（Chromium 126）· electron-vite · React 19 · TypeScript · Tailwind v4 · shadcn/ui · Zustand；代理基于 sing-box；服务端为纯 Node http/ws。
+**技术栈**：Electron 43.1.0（Chromium 150）· Vite · React 19 · TypeScript · Tailwind v4 · shadcn/ui · Zustand；代理基于 sing-box；协作服务端基于 Node.js `http` 与 `ws`。
 
 > 架构图与端间协议详见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
