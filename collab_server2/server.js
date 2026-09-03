@@ -459,6 +459,13 @@ function saveClientBootstrap(payload) {
   return normalized;
 }
 
+function sameManagedSenderConfig(left, right) {
+  return (
+    JSON.stringify(normalizeBootstrapPayload({ sender: left }).sender) ===
+    JSON.stringify(normalizeBootstrapPayload({ sender: right }).sender)
+  );
+}
+
 function ensureReleasesDir() {
   fs.mkdirSync(RELEASES_DIR, { recursive: true });
 }
@@ -2659,7 +2666,11 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readBody(req, 512 * 1024);
       const payload = safeParseJson(body) || {};
+      const previous = loadClientBootstrap(req);
       const saved = saveClientBootstrap(payload);
+      if (!sameManagedSenderConfig(previous.sender, saved.sender)) {
+        invalidateAllProxyAuthorizations("client_config_updated");
+      }
       sendJson(res, 200, {
         ok: true,
         bootstrap: saved,
@@ -3974,6 +3985,7 @@ module.exports = {
   loadProxyRouteCatalog,
   saveProxyRouteCatalog,
   proxyRoutesForUser,
+  sameManagedSenderConfig,
   getUserStoreEntry,
   putUserStore,
   revokeUserSessions,

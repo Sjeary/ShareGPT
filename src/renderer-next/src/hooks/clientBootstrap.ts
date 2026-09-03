@@ -17,12 +17,14 @@ import {
   type BootstrapSender,
 } from '@/components/panels/account/bootstrap'
 import type { SenderSettings } from '@/types/settings'
+import { shouldApplyManagedProxy } from '@/lib/managedProxyPolicy'
 
 const BOOTSTRAP_TIMEOUT_MS = 10000
 const DISCARD_TOKEN_TIMEOUT_MS = 3000
 
 interface ClientBootstrapOptions {
   allowLegacyAdminConfig?: boolean
+  managedConfigEditable?: boolean
   principalSnapshot?: SettingsPrincipalSnapshot
 }
 
@@ -77,7 +79,9 @@ async function applySenderBootstrapConfig(
   if (!hasCompleteSenderBootstrap(serverSender)) return false
 
   const current = (useAppStore.getState().settings?.sender ?? {}) as Partial<SenderSettings>
-  if (hasCompleteSenderBootstrap(current)) return false
+  if (!shouldApplyManagedProxy(current, serverSender, options.managedConfigEditable === true)) {
+    return false
+  }
 
   await patchSenderForBootstrap(
     {

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Play, Square, Loader2, TriangleAlert, X } from 'lucide-react'
+import { Play, Square, Loader2, TriangleAlert, X, LockKeyhole } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -11,6 +11,7 @@ import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import type { SenderSettings } from '@/types/settings'
 import { canStartWorkspaceProxy } from '@/lib/workspaceCapabilities'
+import { canEditManagedProxy } from '@/lib/managedProxyPolicy'
 import { Field } from './Field'
 import {
   DEFAULT_TARGET_DOMAINS,
@@ -40,6 +41,7 @@ export function SenderForm() {
   const connection = useChatStore((s) => s.connection)
   // 仅管理员可见的「全部流量走代理」测试开关 (isAdmin 由服务端 /api/login 下发)。
   const isAdmin = useAuthStore((s) => Boolean(s.profile?.isAdmin))
+  const canEditTeamConfig = useAuthStore((s) => canEditManagedProxy(s.profile))
   const [busy, setBusy] = useState(false)
 
   const running = isSenderRunning(status)
@@ -182,11 +184,13 @@ export function SenderForm() {
       <p className="text-sm text-muted-foreground">
         {personalWorkspace
           ? '连接你已有的代理。ShareGPT 只会将内嵌 AI 所需的网站交给它，其余流量保持直连。'
-          : '填写连接信息后，可开启代理，让需要的网站通过这台设备访问。'}
+          : canEditTeamConfig
+            ? '你可以调整当前账号的代理设置；修改后需要重新开启代理。'
+            : '团队网络由管理员统一配置。设置更新后会自动同步，你只需开启或停止代理。'}
       </p>
 
       {/* 组织工作区可在账号线路和管理员下发节点之间选择；个人工作区没有这层切换。 */}
-      {!personalWorkspace && (
+      {!personalWorkspace && canEditTeamConfig && (
         <div className="grid gap-1.5">
           <Label className="cursor-default">代理方式</Label>
           <div className="flex flex-wrap gap-2">
@@ -307,7 +311,7 @@ export function SenderForm() {
             />
           </div>
         </div>
-      ) : (
+      ) : canEditTeamConfig ? (
         <>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field
@@ -387,6 +391,17 @@ export function SenderForm() {
             />
           </div>
         </>
+      ) : (
+        <div className="flex items-start gap-3 rounded-md border border-border bg-muted/35 px-4 py-3">
+          <LockKeyhole className="mt-0.5 size-4 shrink-0 text-primary" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium">团队托管配置</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              服务器、身份码、端口和网站规则由管理员维护，不会在普通成员界面展示或修改。
+              管理员更新后，本机会自动获取新配置并停止旧线路，避免继续使用过期设置。
+            </p>
+          </div>
+        </div>
       )}
 
       {!personalWorkspace && isAdmin && (

@@ -120,6 +120,23 @@ test("writeJsonAtomic: 写出合法 JSON, 可覆盖, 不留临时文件", () => 
   assert.strictEqual(leftovers.length, 0, "不应残留 .tmp 文件");
 });
 
+test("团队 Sender 配置比较只关注权威网络字段", () => {
+  const sender = {
+    proxy_server: "proxy.example.com",
+    proxy_port: "443",
+    proxy_uuid: "managed-id",
+    socks_listen_port: "1080",
+    fallback_mode: "direct",
+    fallback_local_port: "",
+    target_domains: "chatgpt.com",
+  };
+  assert.equal(srv.sameManagedSenderConfig(sender, { ...sender }), true);
+  assert.equal(
+    srv.sameManagedSenderConfig(sender, { ...sender, proxy_server: "new.example.com" }),
+    false,
+  );
+});
+
 test("normalizeIp: IPv6 映射与回环归一", () => {
   assert.strictEqual(srv.normalizeIp("::ffff:1.2.3.4"), "1.2.3.4");
   assert.strictEqual(srv.normalizeIp("::1"), "127.0.0.1");

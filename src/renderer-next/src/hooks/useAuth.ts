@@ -266,6 +266,7 @@ export function useAuth() {
           if (!principalSnapshot) throw new Error('线路授权缺少账号上下文')
           return refreshAuthoritativeClientBootstrap(cleanedServer, issuedToken, {
             allowLegacyAdminConfig: profile.isAdmin,
+            managedConfigEditable: Boolean(profile.isAdmin || profile.advancedAiAllowed),
             principalSnapshot,
           }).then(() => undefined)
         },

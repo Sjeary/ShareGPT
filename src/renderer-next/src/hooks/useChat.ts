@@ -538,6 +538,9 @@ export function useChat() {
         try {
           await fetchAndApplyAuthoritativeClientBootstrap(serverUrl, issuedToken, {
             allowLegacyAdminConfig: Boolean(payload.profile?.isAdmin),
+            managedConfigEditable: Boolean(
+              payload.profile?.isAdmin || payload.profile?.advancedAiAllowed,
+            ),
             principalSnapshot,
           })
         } catch (error) {
@@ -748,6 +751,13 @@ export function useChat() {
           return
         }
         if (event?.code === 4002) {
+          const reason = String(event.reason || '')
+          if (reason === 'client_config_updated' || reason === 'proxy_catalog_updated') {
+            showNotificationToast(
+              '团队网络配置已更新',
+              '正在同步管理员的新设置；原线路已安全停止，请稍后重新开启代理。',
+            )
+          }
           stopSenderForAccountOffline()
           if (hasResume) scheduleReconnect('relogin')
           else {
