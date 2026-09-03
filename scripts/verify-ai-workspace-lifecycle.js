@@ -327,7 +327,8 @@ async function loginThroughForm(page, baseUrl) {
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByRole("button", { name: /账户/ }).waitFor({ state: "visible" });
   const skipTour = page.getByRole("button", { name: "跳过", exact: true });
-  if (await skipTour.isVisible().catch(() => false)) await skipTour.click();
+  await skipTour.waitFor({ state: "visible", timeout: 8000 });
+  await skipTour.click();
   const closeGuide = page.getByRole("button", { name: "关闭引导", exact: true });
   if (await closeGuide.isVisible().catch(() => false)) await closeGuide.click();
 }
