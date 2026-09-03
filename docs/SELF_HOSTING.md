@@ -1,6 +1,6 @@
 # ShareGPT 自托管完整教程：协作后端、统一出口、FRP 树莓派出口与节点分发
 
-> 适用版本：ShareGPT `1.0.6` 及兼容版本。本文面向服务器管理员，不面向普通客户端用户。
+> 适用版本：ShareGPT `1.0.8` 及当前源码。本文面向服务器管理员，不面向普通客户端用户。`1.0.9` 尚未发布，部署候选源码时必须锁定经过你验证的完整提交 SHA。
 >
 > 文中的域名、IP、端口、UUID、Token、密码和订阅地址全部是占位符。请替换为你自己的值，不要把真实凭据提交到 Git、Issue、截图或聊天记录中。
 
@@ -20,7 +20,7 @@
 - 只搭协作后端：完成第 1–11 节。
 - 公网服务器直接提供统一出口：再完成第 12–15、20–22 节。
 - 公网服务器 + 树莓派 + FRP：再完成第 12–13、16–22 节。
-- 只把一个机场节点下发给成员：完成第 1–11、23–25 节。
+- 按成员授权并下发机场线路：完成第 1–11、23–25 节。
 - 已经部署但出现故障：直接查看第 26–36 节。
 
 ---
@@ -54,7 +54,7 @@ ShareGPT 协作服务器负责：
 | 统一梯子 | 客户端 → VMess/WebSocket 统一入口 → 出口机 → mihomo/直连 | 客户端只拿统一入口地址、端口和 UUID | 推荐；需要统一运维、固定入口、集中换节点   |
 | 机场节点 | 客户端直接连接管理员下发的 SS/VMess/Trojan/VLESS 节点    | 是；节点出站配置会同步给本群客户端  | 搭建最快；能够接受节点配置出现在成员设备上 |
 
-ShareGPT `1.0.6` 的统一梯子协议是固定的 **VMess + WebSocket**。服务端入站必须与客户端生成的配置保持一致。
+当前 1.0.x 客户端的统一梯子协议是固定的 **VMess + WebSocket**。服务端入站必须与客户端生成的配置保持一致。
 
 ---
 
@@ -66,7 +66,7 @@ flowchart TD
   Public -->|能| Direct["方案 A：公网服务器部署\n统一 VMess 入口 + mihomo/直连"]
   Public -->|不能或不希望| Home{"是否有稳定运行的树莓派/家中小主机？"}
   Home -->|有| Frp["方案 B：公网服务器跑 frps\n树莓派跑 mihomo + sing-box + frpc"]
-  Home -->|没有| Airport["方案 C：管理端下发一个机场节点\n客户端直接连接该节点"]
+  Home -->|没有| Airport["方案 C：管理端导入并授权机场线路\n客户端直接连接获授权节点"]
 ```
 
 推荐顺序：
@@ -96,7 +96,7 @@ flowchart TD
 
 建议协作服务和代理入口使用不同子域名。它们可以在同一台公网服务器上，但不是同一项服务。
 
-在方案 A/B 中，把 `edge.example.com` 的 DNS A/AAAA 记录指向提供统一入口的公网服务器。这个域名只用于 TCP 连接定位；当前 `1.0.6` 统一梯子没有配置 TLS，因此不需要给 `edge.example.com` 配置 Caddy 站点或 HTTPS 证书。若 DNS 托管在 Cloudflare 等 CDN，必须使用“仅 DNS/DNS only”，普通 CDN 代理不会转发任意 `18443` TCP 流量。
+在方案 A/B 中，把 `edge.example.com` 的 DNS A/AAAA 记录指向提供统一入口的公网服务器。这个域名只用于 TCP 连接定位；当前 1.0.x 统一梯子没有配置 TLS，因此不需要给 `edge.example.com` 配置 Caddy 站点或 HTTPS 证书。若 DNS 托管在 Cloudflare 等 CDN，必须使用“仅 DNS/DNS only”，普通 CDN 代理不会转发任意 `18443` TCP 流量。
 
 生成密钥：
 
@@ -129,7 +129,7 @@ openssl rand -hex 32
 - 1 核 CPU、1 GB 内存可供小组试用；
 - 一个已解析到服务器公网 IP 的域名 `collab.example.com`；
 - 能使用 `sudo` 的普通用户；
-- Node.js 20 或更高版本。
+- Node.js 22.12 或更高版本。
 
 先更新系统并安装基础工具：
 
@@ -144,7 +144,7 @@ sudo apt install -y ca-certificates curl git jq rsync ufw
 node -v
 ```
 
-若没有 Node.js，或版本低于 20，可安装 Node.js 22：
+若没有 Node.js，或版本低于 22.12，可安装 Node.js 22：
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
@@ -169,13 +169,12 @@ sudo chmod 750 /var/lib/sharegpt-collab /etc/sharegpt-collab
 
 ```bash
 sudo -u sharegpt git clone https://github.com/Sjeary/ShareGPT.git /opt/sharegpt/source
-sudo -u sharegpt git -C /opt/sharegpt/source checkout de1e286
+sudo -u sharegpt git -C /opt/sharegpt/source checkout --detach v1.0.8
 sudo -u sharegpt npm --prefix /opt/sharegpt/source/collab_server2 ci --omit=dev
 ```
 
 部署时必须先切到你验证过的不可变 tag 或提交，再安装该版本的依赖，不能永远跟随 `main`。
-`de1e286` 是当前 1.0.6 代码基线；截至 2026-07-31，仓库还没有 `v1.0.6` tag，因此不要执行
-`checkout v1.0.6`。维护者补建并核验 tag 后，可以把上面的提交替换为该 tag。
+上面的 `v1.0.8` 是本文更新时最新的正式 Release。`1.0.9` 仍处于候选阶段，因此不要使用不存在的 `v1.0.9` tag；若需要验证候选能力，请把 `v1.0.8` 替换为经过审核的完整 40 位提交 SHA，并在正式发布后切换到真实 tag。
 
 正式暴露服务前执行生产依赖审计：
 
@@ -183,7 +182,7 @@ sudo -u sharegpt npm --prefix /opt/sharegpt/source/collab_server2 ci --omit=dev
 sudo -u sharegpt npm --prefix /opt/sharegpt/source/collab_server2 audit --omit=dev
 ```
 
-若出现 high/critical，不要忽略后直接上线；应选择包含修复的 release/提交，重新执行 `npm ci`、服务端测试和兼容验证。`de1e286` 是本文对应的 1.0.6 代码基线，不代表其依赖会永久保持无漏洞。
+若出现 high/critical，不要忽略后直接上线；应选择包含修复的 Release/提交，重新执行 `npm ci`、服务端测试和兼容验证。本文记录的版本不代表依赖会永久保持无漏洞。
 
 ## 6. 创建后端环境文件
 
@@ -208,6 +207,12 @@ CALENDARS_FILE=/var/lib/sharegpt-collab/calendars.json
 USER_STORES_FILE=/var/lib/sharegpt-collab/user_stores.json
 FOCUS_FILE=/var/lib/sharegpt-collab/focus_stats.json
 AIRPORT_FILE=/var/lib/sharegpt-collab/airport.json
+PROXY_ROUTES_FILE=/var/lib/sharegpt-collab/proxy_routes.json
+PROXY_ROUTE_HEALTH_FILE=/var/lib/sharegpt-collab/proxy_route_health.json
+
+TRANSLATION_PROFILES_FILE=/var/lib/sharegpt-collab/translation_profiles.json
+TRANSLATION_USAGE_FILE=/var/lib/sharegpt-collab/translation_usage.json
+SHAREGPT_TRANSLATION_MASTER_KEY=<32_BYTE_HEX_OR_BASE64_KEY>
 
 RELEASES_DIR=/var/lib/sharegpt-collab/releases
 RELEASE_STORE=/var/lib/sharegpt-collab/release_shared
@@ -224,7 +229,9 @@ CORS_ORIGIN=*
 
 不要在生产环境把 `HOST` 改回 `0.0.0.0`。Caddy 与 Node 在同一台机器时，只让 Node 监听回环地址即可。
 
-ShareGPT `1.0.6` 的桌面客户端和管理端从 Electron 本地页面发起请求，来源可能表现为 `file://`/`null`；当前服务端只支持一个固定的 `Access-Control-Allow-Origin` 字符串，不能同时维护多来源白名单。因此这里保留 `*`，但所有业务接口仍使用 Bearer Token/管理员会话鉴权，且 Node 端口只监听回环地址。CORS 不是身份认证，也不能替代 HTTPS、Token 和防火墙。未来服务端支持来源列表后再收紧。
+当前桌面客户端和管理端从 Electron 本地页面发起请求，来源可能表现为 `file://`/`null`；服务端只支持一个固定的 `Access-Control-Allow-Origin` 字符串，不能同时维护多来源白名单。因此这里保留 `*`，但所有业务接口仍使用 Bearer Token/管理员会话鉴权，且 Node 端口只监听回环地址。CORS 不是身份认证，也不能替代 HTTPS、Token 和防火墙。
+
+使用 `openssl rand -base64 32` 生成翻译主密钥，替换占位符后再启动服务。该密钥用于 AES-256-GCM 加密管理员保存的翻译 API Key，不能提交到 Git、发送给客户端或与数据备份放在同一未加密位置；密钥丢失后现有翻译配置无法解密。
 
 保护环境文件：
 
@@ -253,6 +260,7 @@ ExecStart=/usr/bin/node /opt/sharegpt/source/collab_server2/server.js
 Restart=always
 RestartSec=3
 TimeoutStopSec=20
+UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
@@ -648,9 +656,9 @@ flowchart LR
 }
 ```
 
-这里的 transport 字段必须与 ShareGPT `1.0.6` 客户端保持一致。`path` 不要自行改成 `/sharegpt`，否则当前客户端无法连接。
+这里的 transport 字段必须与当前 1.0.x 客户端保持一致。`path` 不要自行改成 `/sharegpt`，否则当前客户端无法连接。
 
-> 当前客户端的统一梯子出站没有配置 TLS，`18443` 只是示例高位端口，并不表示这是 HTTPS。不要把这个端口直接放到 Caddy 的 HTTPS 站点后面，也不要自行给服务端入站增加 `tls`，否则 `1.0.6` 客户端会不兼容。若后续客户端增加 TLS/server name 支持，应再统一升级两端配置。
+> 当前客户端的统一梯子出站没有配置 TLS，`18443` 只是示例高位端口，并不表示这是 HTTPS。不要把这个端口直接放到 Caddy 的 HTTPS 站点后面，也不要自行给服务端入站增加 `tls`，否则现有 1.0.x 客户端会不兼容。若后续客户端增加 TLS/server name 支持，应再统一升级两端配置。
 
 保护并检查配置：
 
@@ -981,7 +989,7 @@ remotePort = 18443
 transport.useCompression = true
 ```
 
-FRP `0.52.0+` 推荐 TOML；旧 INI 格式已被官方标为弃用。ShareGPT `1.0.6` 的桌面 Receiver 模式仍会生成旧 INI，但手工 Linux/树莓派部署建议使用 TOML。
+FRP `0.52.0+` 推荐 TOML；旧 INI 格式已被官方标为弃用。当前桌面 Receiver 模式仍会生成旧 INI，但手工 Linux/树莓派部署建议使用 TOML。
 
 保护并验证：
 
@@ -1135,21 +1143,42 @@ curl --connect-timeout 10 --max-time 30 \
 - `连接身份码` 必须与出口机 sing-box 的 UUID 完全一致；
 - `本地 SOCKS 端口` 是每台成员电脑自己的回环端口，通常保持 `1080`。
 
+### 21.1 配置多线路、授权和各 AI 默认线路
+
+在“代理线路”中导入并启用团队维护的线路，为每条线路设置稳定 ID、名称及可选的预期出口信息。然后在用户管理中分别勾选账号可使用的线路：
+
+- 管理员始终可管理所有已启用线路；
+- “高级 AI”只控制是否能创建多个环境，不自动授予线路；
+- 普通成员不需要也不能编辑团队连接参数，只会收到自己已获授权的线路结果。
+
+回到“客户端默认配置”，分别设置 ChatGPT、Gemini 和 Claude 的推荐线路。推荐线路会按用户授权解析；某成员未获授权时，服务端只会返回其可用线路中的安全回落，不会下发被拒绝线路的配置。
+
+保存团队网络或线路目录后，1.0.9 客户端会收到配置更新通知，停止旧线路并自动重新拉取；1.0.8 及更早客户端需要退出账号后重新登录。
+
+### 21.2 配置团队翻译
+
+团队托管翻译需要 1.0.9 或更高版本的协作服务和客户端。在管理端“翻译服务”中可以创建 AI 兼容或通用翻译 API 配置、选择默认项、授权全部成员或指定账号，并填写 token/请求单价用于估算费用。
+
+- API Key 只在协作服务器使用主密钥加密保存，不会下发到客户端；
+- 成员只能看到自己获授权的配置名称和 ID；
+- 用量保存账号、配置、时间、字符、token 和估算费用，不保存原文或译文；
+- 估算费用不替代上游服务商账单；没有返回 token usage 的接口只能统计请求和字符数。
+
+保存第一项启用配置前，确认服务端已设置 `SHAREGPT_TRANSLATION_MASTER_KEY`。更新程序时必须同时备份环境文件、`translation_profiles.json` 和 `translation_usage.json`；主密钥与密文缺少任一项都不能完整恢复。
+
 ## 22. 客户端启用统一梯子
 
-1. 客户端退出账号再登录，让它重新拉取 `/api/client/bootstrap`。
-2. 打开“网络 / 代理”或“发送端设置”。
-3. 选择“统一梯子（默认）”。
-4. 检查服务器、端口、身份码已经自动填入。
-5. 点击“开启代理”。
-6. 打开 ChatGPT/Claude/Gemini 页面。
-7. 查看网页可见信息表盘，确认出口 IP、国家、时区、语言和 WebRTC 状态。
+1. 1.0.9 客户端保存后会自动同步；1.0.8 及更早客户端退出账号再登录以重新拉取 `/api/client/bootstrap`。
+2. 普通成员在“网络 / 代理”确认显示“团队托管配置”；管理员和高级用户可查看自己有权编辑的设置。
+3. 点击“开启代理”。
+4. 打开 ChatGPT/Claude/Gemini 页面。
+5. 查看网页可见信息表盘，确认出口 IP、国家、时区、语言和 WebRTC 状态。
 
 客户端只把内置域名清单中的 AI/认证相关域名送进统一出口；其余网站按“其他网站访问方式”直连或走本机代理。管理员的“全部流量走代理”仅用于诊断，不建议长期打开。
 
 ---
 
-# 第七部分：方案 C——把一个机场节点分发给所有成员
+# 第七部分：方案 C——向成员分配机场线路
 
 ## 23. 什么时候使用机场节点分发
 
@@ -1157,17 +1186,18 @@ curl --connect-timeout 10 --max-time 30 \
 
 ```mermaid
 flowchart LR
-  Admin["管理员"] -->|"Clash YAML 中选择一个节点"| Collab["ShareGPT 协作服务器"]
-  Collab -->|"下发 sing-box outbound"| C1["成员客户端 1"]
-  Collab -->|"下发 sing-box outbound"| C2["成员客户端 2"]
-  C1 --> Node["同一个机场节点"]
-  C2 --> Node
-  Node --> AI["AI 网站"]
+  Admin["管理员"] -->|"从 Clash YAML 导入并授权线路"| Collab["ShareGPT 协作服务器"]
+  Collab -->|"只下发账号获授权的 outbound"| C1["成员客户端 1"]
+  Collab -->|"只下发账号获授权的 outbound"| C2["成员客户端 2"]
+  C1 --> N1["线路 A"]
+  C2 --> N2["线路 B"]
+  N1 --> AI["AI 网站"]
+  N2 --> AI
 ```
 
 适合：
 
-- 已有允许多设备使用的节点；
+- 已有允许相应设备数量使用的节点；
 - 不想维护公网入口和 FRP；
 - 能接受节点连接参数保存在每个成员客户端本机。
 
@@ -1177,17 +1207,17 @@ flowchart LR
 - 节点凭据不能暴露给普通成员；
 - 需要由管理员在出口机上集中切换、隐藏上游节点信息。
 
-## 24. 管理员下发节点
+## 24. 管理员导入并授权线路
 
 1. 在本地安全环境中取得你有权使用的 Clash 配置 YAML。
 2. 打开 ShareGPT Admin →“机场代理”。
 3. 粘贴包含 `proxies:` 列表的 YAML。
 4. 点击“解析节点”。
-5. 选择一个显示为受支持的节点。
-6. 检查转换后的 sing-box 出站预览。
-7. 点击“保存并下发给本群”。
+5. 选择显示为受支持的节点，检查转换后的 sing-box 出站预览，并保存为具有稳定 ID 的线路。
+6. 在用户管理中为各账号勾选允许使用的线路。
+7. 在客户端默认配置中为 ChatGPT、Gemini、Claude 分别选择推荐线路。
 
-ShareGPT `1.0.6` 当前支持从 Clash 转换：
+当前 ShareGPT 1.0.x 支持从 Clash 转换：
 
 - Shadowsocks (`ss`/`shadowsocks`)
 - VMess
@@ -1197,19 +1227,16 @@ ShareGPT `1.0.6` 当前支持从 Clash 转换：
 
 Hysteria/Hysteria2、TUIC、WireGuard、Reality 的复杂组合和某些插件参数目前不会被完整转换。管理端标记“不支持”的节点不要强行下发。
 
-## 25. 成员启用机场节点
+## 25. 成员使用获授权线路
 
-1. 管理员下发后，客户端重新登录以重新获取 bootstrap；`1.0.6` 不会实时推送机场节点变更。
-2. 打开“网络 / 代理”。
-3. 先停止正在运行的统一梯子。
-4. 选择“机场节点”。
-5. 点击“开启代理”。
-
-服务器只更新可用节点，不会强制修改成员的 `proxy_mode`；成员仍需手动选择机场模式。
+1. 管理员保存后，1.0.9 客户端会自动重新获取 bootstrap；1.0.8 及更早客户端需要重新登录。
+2. 普通成员直接跟随管理员为各 AI 推荐的线路，不显示节点凭据或线路选择器。
+3. 高级用户可以在管理员授权的线路范围内，为自己的多个 AI 环境选择不同出口。
+4. 打开 AI 页面并检查网页可见信息，确认实际出口与预期线路一致。
 
 风险与限制：
 
-- 节点出站对象会同步到本群已认证客户端；把它视为“成员可读取的配置”。
+- 节点出站对象会同步到获授权的客户端；把它视为“获授权成员可读取的配置”，不要导入不允许成员取得的凭据。
 - 所有客户端直接连接机场节点，不经过你的 FRP 公网服务器。
 - 节点切换、并发限制和 IP 信誉会直接影响全部成员。
 - 当前 UI 已提示机场模式可能在 ChatGPT/Claude 的 Cloudflare 验证处白屏；优先把统一梯子作为稳定主链路。
@@ -1225,6 +1252,7 @@ Hysteria/Hysteria2、TUIC、WireGuard、Reality 的复杂组合和某些插件�
 ```bash
 sudo systemctl stop sharegpt-collab
 sudo tar -C /var/lib -czf "/root/sharegpt-collab-$(date +%F-%H%M).tar.gz" sharegpt-collab
+sudo install -m 600 /etc/sharegpt-collab/server.env "/root/sharegpt-collab-server.env.backup"
 sudo systemctl start sharegpt-collab
 curl -fsS https://collab.example.com/api/health | jq
 ```
@@ -1236,10 +1264,12 @@ sudo systemctl stop sharegpt-collab
 sudo mv /var/lib/sharegpt-collab "/var/lib/sharegpt-collab.before-restore-$(date +%s)"
 sudo tar -C /var/lib -xzf /root/sharegpt-collab-YYYY-MM-DD-HHMM.tar.gz
 sudo chown -R sharegpt:sharegpt /var/lib/sharegpt-collab
+sudo install -m 640 -o root -g sharegpt /root/sharegpt-collab-server.env.backup /etc/sharegpt-collab/server.env
 sudo systemctl start sharegpt-collab
 ```
 
 至少每周自动备份，并把副本同步到另一台机器或加密对象存储。只在同一块硬盘保存备份不算灾备。
+环境文件包含翻译主密钥，数据目录包含对应密文；两者必须都能恢复，但异地副本应分别加密保存并限制访问。
 
 ## 27. 安全更新协作服务
 
@@ -1443,7 +1473,7 @@ network-online → mihomo → sharegpt-relay(sing-box) → frpc
 - 独立端口；
 - 独立数据目录；
 - 独立域名；
-- 明确且一致的 CORS 策略；1.0.6 Electron 客户端按第 6 节保留 `CORS_ORIGIN=*`，不能填写
+- 明确且一致的 CORS 策略；当前 Electron 客户端按第 6 节保留 `CORS_ORIGIN=*`，不能填写
   各实例自己的公网 HTTPS URL；
 - 最好使用独立管理员账号和 VMess UUID。
 
@@ -1471,7 +1501,7 @@ c.example.com {
 }
 ```
 
-不要让三个实例共用 `users.json`、`chat_history.json`、`user_stores.json` 或 `airport.json`。仅仅改变端口但继续共用数据目录不算隔离。
+不要让实例共用 `users.json`、`chat_history.json`、`user_stores.json`、`airport.json`、`proxy_routes.json`、翻译配置或用量文件。每个实例还应使用独立的翻译主密钥。仅仅改变端口但继续共用数据目录不算隔离。
 
 ---
 
@@ -1484,7 +1514,8 @@ c.example.com {
 - [ ] Caddy 证书有效，WebSocket 能保持在线。
 - [ ] 管理员和普通用户账号已分开。
 - [ ] `/var/lib/sharegpt-collab` 已备份并做过一次恢复演练。
-- [ ] 已理解 `1.0.6` 为兼容 Electron 本地来源仍使用 `CORS_ORIGIN=*`；Node 端口没有暴露公网，所有业务接口均经过 HTTPS 和 Token 鉴权。
+- [ ] 翻译主密钥与 `translation_profiles.json`、`translation_usage.json` 均已纳入加密备份，且未进入 Git。
+- [ ] 已理解为兼容 Electron 本地来源仍使用 `CORS_ORIGIN=*`；Node 端口没有暴露公网，所有业务接口均经过 HTTPS 和 Token 鉴权。
 
 ## 35. 统一出口
 
