@@ -1,21 +1,22 @@
 # 贡献指南
 
-感谢你愿意为 ShareGPT 贡献代码或想法！本项目由三端组成：**客户端**（Electron 主进程 `src/main/` + 渲染层 `src/renderer-next/`）、**协作服务端** `collab_server2/`、**管理控制台** `admin_console/`。请先阅读 [README](README.md) 了解整体架构与定位。
+感谢你愿意为 ShareGPT 贡献代码或想法！本项目由三端组成：**客户端**（Electron 主进程 `src/main/` + 渲染层 `src/renderer-next/`）、**协作服务端** `collab_server2/`、**管理控制台** `admin_console/`。请先阅读 [README](../README.md) 了解整体架构与定位。
 
 > 本项目涉及网络代理，属安全敏感项目。安全漏洞**不要**走普通 issue，请按 [SECURITY.md](SECURITY.md) 私密上报。
 
 ## 环境要求
 
-- Node.js 18+、npm。
+- Node.js 22.12+、npm。
 - 第三方二进制（sing-box，必要时 frpc）按 `build/bin/README.md` 放好——**不要把二进制提交进仓库**。
 
 ## 本地跑起来
 
 ```bash
-# 1. 安装依赖（主程序 + 渲染层 + 管理端 UI）
-npm install
-npm --prefix src/renderer-next install
-npm --prefix admin_console/ui install
+# 1. 按锁文件安装全部 CI 依赖
+npm ci
+npm --prefix src/renderer-next ci
+npm --prefix admin_console/ui ci
+npm --prefix collab_server2 ci
 ```
 
 各端开发脚本（详见 `package.json` 的 `scripts`）：
@@ -27,8 +28,8 @@ npm run dev:sender
 # 管理控制台
 npm run dev:admin
 
-# 协作服务端（纯 Node，零外部依赖）
-cd collab_server2 && node server.js
+# 协作服务端（Node http + ws，默认仅监听 127.0.0.1）
+npm --prefix collab_server2 start
 ```
 
 打包构建（如需验证产物）：
@@ -59,13 +60,21 @@ docs(readme): 补充部署指南
 
 ## 提交前必过的检查
 
-请在改动相关的端分别执行，确保通过后再提 PR：
+至少运行与改动相关的检查。准备 PR 时应对照 [CI 工作流](workflows/ci.yml) 执行完整门禁：
 
-- **渲染层**：`npx tsc -b`（在 `src/renderer-next/` 下）
-- **管理控制台 UI**：`npx tsc -b`（在 `admin_console/ui/` 下）
-- **主进程 / 服务端（纯 JS）**：对改动的文件跑 `node --check`，例如
-  `node --check src/main/main.js`、`node --check collab_server2/server.js`
-- **测试**：若涉及范围存在测试，请补充并跑通对应测试。
+```bash
+npm test
+npm run typecheck:main
+npm run lint
+npm run format:check
+npm run verify:signing-boundaries
+npm run verify:release-contract
+npm run test:release
+npm --prefix src/renderer-next run build
+npm --prefix admin_console/ui run build
+```
+
+涉及 Electron 生命周期、登录兼容、隐私清理、composer 或发布包时，还要运行对应的 `verify:*` 行为验收；Windows 正式安装包必须在 Windows 构建机执行 `verify:release-win`。不要用源码字符串或单一平台结果替代真实行为验证。
 
 ## PR 流程
 
