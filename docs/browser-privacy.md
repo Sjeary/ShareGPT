@@ -1,11 +1,13 @@
-# 网页隐私、可见信息表盘与资料环境（v1.0.6）
+# 网页隐私、可见信息表盘与资料环境
 
 ## 产品边界
 
-- ChatGPT、Gemini、Claude 使用三个独立持久化分区；只能逐个清理，不提供“全部清除”。
-- 清理前由主进程调用协作服务器复核当前账号密码。密码只用于这次 HTTPS/HTTP 请求，不写入设置或日志。
+- ChatGPT、Gemini、Claude 使用独立持久化分区；只能逐个清理，不提供“全部清除”。开启高级多环境后，每个环境也使用自己的持久化分区，并从对应 AI 页单独删除。
+- 组织工作区清理前由主进程调用当前协作服务器复核账号密码。密码只用于这次 HTTPS/HTTP 请求，不写入设置或日志。
+- 个人工作区不依赖协作服务器，也不要求团队账号密码；用户输入目标服务名确认后，主进程还会校验当前 `local-device` Principal 与 generation，防止切换工作区后的旧请求误清理数据。
 - 清理的是本机 Chromium 网站数据，不能删除服务商已经保存在服务器上的账号或风控记录。
-- 跨设备只同步环境策略和可选的指纹标准化策略；Cookie、密码、网页登录态、出口 IP、节点派生的时区/位置、本机资料 ID、网页审计快照、清理时间和代理凭据不上传。
+- 个人工作区与每个组织 Principal 使用不同的持久化分区和设置作用域。切换工作区只卸载并恢复对应作用域，绝不迁移、复用或清除另一侧的 Cookie、LocalStorage、IndexedDB、缓存、网页登录态、会话或历史。
+- 组织工作区跨设备只同步环境策略和可选的指纹标准化策略；个人工作区的环境配置和清理记录只保存在本机。Cookie、密码、网页登录态、出口 IP、节点派生的时区/位置、本机资料 ID、网页审计快照、清理时间和代理凭据不上传。
 - 防泄漏使用 Electron 原生 WebRTC 策略和权限控制；指纹标准化默认关闭，启用后使用按本机资料 ID 稳定的值，不在每次加载时随机变化。
 - 本功能用于检查并减少明显矛盾，不承诺隐藏代理、绕过服务商风控或让不同物理设备绝对不可区分。
 
@@ -15,7 +17,7 @@
 2. 关闭该 Session 的在途连接。
 3. 清除 Cookie、Filesystem、IndexedDB、LocalStorage、Shader Cache、WebSQL、Service Worker、Cache Storage 和临时配额。
 4. 清除 HTTP 认证、网络、代码和 DNS 缓存，再 flush。
-5. 只重置目标服务的 `last_url`；其它 AI 分区与 ShareGPT 业务数据不动。
+5. 只重置当前 Principal 下目标服务的 `last_url`；其它 AI 分区、另一工作区和 ShareGPT 业务数据不动。
 
 “重建资料环境”在完成上述清理后，还会为目标服务生成新的本机资料 ID，并切换到新的持久化分区。旧分区不再挂载，但其它 AI 服务仍保持原分区和登录状态。
 
@@ -51,6 +53,13 @@
 - 同一资料 ID 会生成稳定的 Canvas/Audio 微小扰动；执行“重建资料环境”后资料 ID 和持久化分区都会轮换。
 - 标准化不是完整浏览器虚拟机：TLS/网络栈、Electron/Chromium 行为、真实出口信誉及网站服务端历史仍可能关联设备或账号。
 
+## 工作区切换与本地清理
+
+- 新安装用户可以选择个人工作区或组织工作区；个人工作区始终可从账号页进入，不会被团队登录表单遮挡。
+- 个人工作区的“网页隐私与环境”页面提供 ChatGPT、Gemini、Claude 各自的清除与资料环境重建操作，不要求先登录团队。
+- 从个人工作区登录组织，或从组织工作区返回个人工作区，只切换当前 Principal。两侧的代理配置、网页分区、清理时间和登录状态各自持久保存。
+- 清除保留当前分区标识并删除其中的网站数据；重建会生成新的本机资料 ID 和分区标识。两种操作都只影响确认的一个 AI 服务。
+
 ## 用户提示与开发信息
 
 - 用户界面展示清理范围、不可恢复提示、密码错误、出口地区、时区、同步状态、网页可见摘要和可行动的环境矛盾。
@@ -64,6 +73,8 @@ npm test
 npx electron src/main/test/browserFingerprint.electron.js
 npm run verify:browser-privacy
 npm run verify:browser-privacy-ui
+npm run verify:personal-workspace
+npm run verify:collab-login-compatibility
 npm run format:check
 npm run lint
 npm run typecheck:main
@@ -79,6 +90,8 @@ npm --prefix src/renderer-next run build
 - 清理一个分区后，另一个模拟 AI 分区保持不变。
 
 `verify:browser-privacy-ui` 会构建界面，再启动临时协作服务器和隔离的 Electron 用户目录；它验证三个独立清除/资料重建入口、无“清除全部”、错误密码拒绝、正确密码按服务清除与重建、表盘可见，以及同步载荷包含标准化策略但不包含本机资料 ID/审计快照。测试将非本地请求全部阻断，也不会创建 AI 网页标签。
+
+`verify:personal-workspace` 验证个人工作区不需要团队登录、账号页仍可访问三个网页数据清理入口、缺少本地确认时主进程拒绝操作，以及清理一个服务后其分区保持不变。`verify:collab-login-compatibility` 进一步验证个人与组织 Principal 的配置和 AI 分区互不复用，A/B/A 切换能恢复各自的代理配置、清理时间和网页分区。
 
 `src/main/test/browserFingerprint.electron.js` 使用隔离的隐藏 Electron 页面验证标准化后的 UA/平台、CPU、内存、屏幕、媒体设备以及 Canvas/Audio 摘要，不访问任何 AI 网站。
 
