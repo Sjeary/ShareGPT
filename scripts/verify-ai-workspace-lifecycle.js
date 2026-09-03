@@ -356,46 +356,56 @@ async function verifyTranslationWorkbench({
     "[verify] translation panel resizes and replaces the native host when narrow\n",
   );
   const separator = page.getByRole("separator", { name: "调整翻译栏宽度" });
-  await separator.waitFor({ state: "visible" });
   const nativeHost = page.getByTestId("ai-workspace-host-gpt");
-  const panelBeforeResize = await panel.boundingBox();
-  const hostBeforeResize = await nativeHost.boundingBox();
-  assert.ok(panelBeforeResize && hostBeforeResize);
+  const initialLayout = await panel.getAttribute("data-layout");
+  assert.ok(initialLayout === "split" || initialLayout === "replace");
   assert.equal(
     await page.evaluate(() => localStorage.getItem("sharegpt.translationPanelWidth")),
     null,
   );
-  assert.ok(Math.abs(panelBeforeResize.width - 400) < 1);
-  await separator.press("ArrowLeft");
-  await waitUntil(async () => {
-    const resized = await panel.boundingBox();
-    return resized && resized.width >= panelBeforeResize.width + 15;
-  }, "translation panel keyboard resize");
-  await waitUntil(async () => {
-    const resized = await nativeHost.boundingBox();
-    return resized && resized.width <= hostBeforeResize.width - 15;
-  }, "native host element resize after translation panel resize");
-  assert.equal(
-    await page.evaluate(() => Number(localStorage.getItem("sharegpt.translationPanelWidth"))),
-    Math.round((await panel.boundingBox()).width),
-  );
-
   const originalWindowSize = await electronApp.evaluate(({ BrowserWindow }) => {
     const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
     return window.getSize();
   });
-  const attachedHostBounds = await nativeHost.boundingBox();
-  assert.ok(attachedHostBounds);
-  await api(page, "syncAiViewHost", {
-    kind: "gpt",
-    tabId,
-    visible: true,
-    bounds: attachedHostBounds,
-  });
-  await waitUntil(
-    async () => visibleFixture(await appSnapshot(electronApp)).length === 1,
-    "fixture native host attach before narrow layout",
-  );
+  if (initialLayout === "split") {
+    await separator.waitFor({ state: "visible" });
+    const panelBeforeResize = await panel.boundingBox();
+    const hostBeforeResize = await nativeHost.boundingBox();
+    assert.ok(panelBeforeResize && hostBeforeResize);
+    assert.ok(Math.abs(panelBeforeResize.width - 400) < 1);
+    await separator.press("ArrowLeft");
+    await waitUntil(async () => {
+      const resized = await panel.boundingBox();
+      return resized && resized.width >= panelBeforeResize.width + 15;
+    }, "translation panel keyboard resize");
+    await waitUntil(async () => {
+      const resized = await nativeHost.boundingBox();
+      return resized && resized.width <= hostBeforeResize.width - 15;
+    }, "native host element resize after translation panel resize");
+    assert.equal(
+      await page.evaluate(() => Number(localStorage.getItem("sharegpt.translationPanelWidth"))),
+      Math.round((await panel.boundingBox()).width),
+    );
+    const attachedHostBounds = await nativeHost.boundingBox();
+    assert.ok(attachedHostBounds);
+    await api(page, "syncAiViewHost", {
+      kind: "gpt",
+      tabId,
+      visible: true,
+      bounds: attachedHostBounds,
+    });
+    await waitUntil(
+      async () => visibleFixture(await appSnapshot(electronApp)).length === 1,
+      "fixture native host attach before narrow layout",
+    );
+  } else {
+    assert.equal(await separator.count(), 0);
+    assert.equal(await nativeHost.boundingBox(), null);
+    await waitUntil(
+      async () => visibleFixture(await appSnapshot(electronApp)).length === 0,
+      "fixture native host detach in initial narrow layout",
+    );
+  }
   await electronApp.evaluate(({ BrowserWindow }) => {
     const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
     window.setSize(860, Math.max(620, window.getSize()[1]));
@@ -421,19 +431,23 @@ async function verifyTranslationWorkbench({
     const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
     window.setSize(size[0], size[1]);
   }, originalWindowSize);
-  await panel.locator("xpath=self::*[@data-layout='split']").waitFor({ state: "visible" });
-  const restoredHostBounds = await nativeHost.boundingBox();
-  assert.ok(restoredHostBounds && restoredHostBounds.width > 1 && restoredHostBounds.height > 1);
-  await api(page, "syncAiViewHost", {
-    kind: "gpt",
-    tabId,
-    visible: true,
-    bounds: restoredHostBounds,
-  });
-  await waitUntil(
-    async () => visibleFixture(await appSnapshot(electronApp)).length === 1,
-    "native host reattach after restoring translation split layout",
-  );
+  await panel
+    .locator(`xpath=self::*[@data-layout='${initialLayout}']`)
+    .waitFor({ state: "visible" });
+  if (initialLayout === "split") {
+    const restoredHostBounds = await nativeHost.boundingBox();
+    assert.ok(restoredHostBounds && restoredHostBounds.width > 1 && restoredHostBounds.height > 1);
+    await api(page, "syncAiViewHost", {
+      kind: "gpt",
+      tabId,
+      visible: true,
+      bounds: restoredHostBounds,
+    });
+    await waitUntil(
+      async () => visibleFixture(await appSnapshot(electronApp)).length === 1,
+      "native host reattach after restoring translation split layout",
+    );
+  }
   await panel.getByLabel("翻译服务").selectOption("offline");
   await page.waitForTimeout(150);
   await panel.getByLabel("本地翻译服务地址").fill(translationBaseUrl);
