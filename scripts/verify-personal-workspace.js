@@ -42,10 +42,7 @@ async function main() {
     await page.getByRole("button", { name: "在本机独立使用" }).waitFor({ state: "visible" });
     assert.equal(await page.getByText("组织工作区", { exact: true }).count(), 1);
     assert.equal(await page.getByText("个人工作区", { exact: true }).count(), 1);
-    assert.equal(
-      await page.getByText(/不显示协作聊天、在线成员、团队管理和组织用量/).count(),
-      1,
-    );
+    assert.equal(await page.getByText(/不显示协作聊天、在线成员、团队管理和组织用量/).count(), 1);
     assert.equal(await page.getByText(/不会复用或覆盖组织账号/).count(), 1);
     await page.screenshot({ path: entryScreenshot });
 
@@ -151,12 +148,73 @@ async function main() {
     const serviceNav = page.locator('[data-tour="nav-service"]');
     const accountNav = page.locator('[data-tour="nav-account"]');
     await accountNav.click();
-    await page.locator("#account-server").waitFor({ state: "visible" });
+    await page.getByText("网页隐私与环境", { exact: true }).waitFor({ state: "visible" });
     assert.match(await accountNav.getAttribute("class"), /text-sidebar-accent-foreground/);
     assert.doesNotMatch(await serviceNav.getAttribute("class"), /text-sidebar-accent-foreground/);
     assert.equal(await page.getByText("当前：个人工作区", { exact: true }).count(), 1);
-    assert.equal(await page.getByText("登录组织工作区", { exact: true }).count(), 1);
+    assert.equal(await page.locator("#account-server").count(), 0);
+    assert.equal(await page.getByRole("button", { name: "清除", exact: true }).count(), 3);
+    assert.equal(await page.getByRole("button", { name: "重建资料环境", exact: true }).count(), 3);
+    assert.equal(await page.locator("#browser-privacy-sync").count(), 0);
+    assert.equal(
+      await page.getByText(/个人工作区的环境配置、清理记录和网页分区只保存在本机/).count(),
+      1,
+    );
+
+    const rejectedWithoutConfirmation = await page.evaluate(async () => {
+      try {
+        await window.api.clearAiBrowserData("claude", {});
+        return "";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+    assert.match(rejectedWithoutConfirmation, /确认当前个人工作区/);
+
+    const beforeClear = await page.evaluate(async () => {
+      const activePrincipal = await window.api.getSettingsPrincipal();
+      const settings = await window.api.loadSettings({
+        expectedPrincipalId: activePrincipal.principalId,
+        expectedPrincipalGeneration: activePrincipal.generation,
+      });
+      return {
+        partition: settings.claude?.partition || "",
+        clearedAt: settings.browserPrivacy?.lastClearedAt?.claude || "",
+      };
+    });
+    const claudeRow = page
+      .getByText("只清除 Claude 网页分区", { exact: false })
+      .locator("..")
+      .locator("..");
+    await claudeRow.getByRole("button", { name: "清除", exact: true }).click();
+    const clearDialog = page.getByRole("dialog");
+    await clearDialog.getByText("清除 Claude 网页数据", { exact: true }).waitFor();
+    assert.equal(await clearDialog.locator("#browser-clear-password").count(), 0);
+    const confirmButton = clearDialog.getByRole("button", { name: "确认并清除", exact: true });
+    assert.equal(await confirmButton.isDisabled(), true);
+    await clearDialog.locator("#browser-clear-confirmation").fill("Claude");
+    await confirmButton.click();
+    await page.getByText(/Claude 的 Cookie、登录状态和本地网页记录已清除/).waitFor();
+    await clearDialog.waitFor({ state: "hidden" });
+    const afterClear = await page.evaluate(async () => {
+      const activePrincipal = await window.api.getSettingsPrincipal();
+      const settings = await window.api.loadSettings({
+        expectedPrincipalId: activePrincipal.principalId,
+        expectedPrincipalGeneration: activePrincipal.generation,
+      });
+      return {
+        principalId: activePrincipal.principalId,
+        partition: settings.claude?.partition || "",
+        clearedAt: settings.browserPrivacy?.lastClearedAt?.claude || "",
+      };
+    });
+    assert.equal(afterClear.principalId, "local-device");
+    assert.equal(afterClear.partition, beforeClear.partition);
+    assert.notEqual(afterClear.clearedAt, beforeClear.clearedAt);
     await page.screenshot({ path: accountScreenshot });
+
+    await page.getByRole("button", { name: "登录组织工作区", exact: true }).click();
+    await page.locator("#account-server").waitFor({ state: "visible" });
 
     await electronApp.close();
     electronApp = undefined;

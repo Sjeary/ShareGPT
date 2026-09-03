@@ -796,6 +796,18 @@ function createElectronApp(baseMode = "all") {
   }
 
   async function verifyBrowserDestructiveAction(payload) {
+    const principal = backend.getPrincipalContext();
+    if (principal.principalId === "local-device") {
+      if (safeText(payload?.localConfirmation) !== safeText(payload?.kind)) {
+        throw new Error("请确认当前个人工作区和目标网页后重试");
+      }
+      backend.assertSettingsPrincipalSnapshot({
+        principalId: payload?.expectedPrincipalId,
+        generation: payload?.expectedPrincipalGeneration,
+      });
+      return;
+    }
+
     const password = String(payload?.password || "");
     const token = safeText(payload?.token);
     const requestedServerUrl = safeText(payload?.serverUrl).replace(/\/+$/, "");
@@ -2913,7 +2925,8 @@ function createElectronApp(baseMode = "all") {
       return { ...getAiStatePayload(workspace), intentRevision: reconcile.revision };
     });
 
-    // 只允许按单个 AI 服务清理；UI 必须先经协作账号密码复核，主进程不提供“全部清理”。
+    // 只允许按单个 AI 服务清理；组织工作区复核账号密码，个人工作区复核 local-device Principal。
+    // 主进程不提供“全部清理”，避免一次误操作删除所有网页会话。
     ipcMain.handle("ai:data-clear", async (_event, payload) => {
       const epoch = aiRuntimeEpoch;
       const kind = safeText(payload?.kind);

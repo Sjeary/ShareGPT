@@ -160,6 +160,9 @@ async function main() {
     await window.getByRole("button", { name: /账户/ }).waitFor({ state: "visible" });
     const skipTour = window.getByRole("button", { name: "跳过", exact: true });
     if (await skipTour.isVisible().catch(() => false)) await skipTour.click();
+    const closeGuide = window.getByRole("button", { name: "关闭引导", exact: true });
+    await closeGuide.waitFor({ state: "visible", timeout: 3000 }).catch(() => undefined);
+    if (await closeGuide.isVisible().catch(() => false)) await closeGuide.click();
     await window.getByRole("button", { name: /账户/ }).click();
     await window.getByText("网页隐私与环境", { exact: true }).waitFor({ state: "visible" });
 
@@ -197,7 +200,7 @@ async function main() {
     await claudeRow.getByRole("button", { name: "清除", exact: true }).click();
     const dialog = window.getByRole("dialog");
     await dialog.getByText("清除 Claude 网页数据", { exact: true }).waitFor();
-    await dialog.locator("#browser-clear-password").fill("wrong-password");
+    await dialog.locator("#browser-clear-confirmation").fill("wrong-password");
     await dialog.getByRole("button", { name: "验证密码并清除", exact: true }).click();
     await window.waitForTimeout(1000);
     const wrongPasswordToasts = await window.locator("[data-sonner-toast]").allTextContents();
@@ -207,7 +210,7 @@ async function main() {
     );
     assert.match((await claudeRow.textContent()) || "", /从未清除/);
 
-    await dialog.locator("#browser-clear-password").fill(PASSWORD);
+    await dialog.locator("#browser-clear-confirmation").fill(PASSWORD);
     await dialog.getByRole("button", { name: "验证密码并清除", exact: true }).click();
     await window.getByText(/Claude 的 Cookie、登录状态和本地网页记录已清除/).waitFor();
     await dialog.waitFor({ state: "hidden" });
@@ -215,7 +218,7 @@ async function main() {
 
     await claudeRow.getByRole("button", { name: "重建资料环境", exact: true }).click();
     await dialog.getByText("重建 Claude 浏览器资料环境", { exact: true }).waitFor();
-    await dialog.locator("#browser-clear-password").fill(PASSWORD);
+    await dialog.locator("#browser-clear-confirmation").fill(PASSWORD);
     await dialog.getByRole("button", { name: "验证密码并重建", exact: true }).click();
     await window.getByText(/Claude 已切换到全新的浏览器资料环境/).waitFor();
     await dialog.waitFor({ state: "hidden" });

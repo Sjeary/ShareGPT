@@ -217,6 +217,14 @@ export interface NotesAiApi {
   invalidatePrincipal: (principalId: string) => Promise<{ ok: boolean; count: number }>
 }
 
+export type BrowserDestructiveConfirmation =
+  | { password: string; serverUrl: string; token: string }
+  | {
+      localConfirmation: 'gpt' | 'gemini' | 'claude'
+      expectedPrincipalId: string
+      expectedPrincipalGeneration: number
+    }
+
 export interface ShareGptApi {
   platform: NodeJS.Platform | string
 
@@ -352,7 +360,7 @@ export interface ShareGptApi {
   checkAiProxy: (kind: 'gpt' | 'gemini' | 'claude', tabId?: string) => Promise<AiProxyReport>
   clearAiBrowserData: (
     kind: 'gpt' | 'gemini' | 'claude',
-    confirmation: { password: string; serverUrl: string; token: string },
+    confirmation: BrowserDestructiveConfirmation,
   ) => Promise<{
     ok: boolean
     kind: 'gpt' | 'gemini' | 'claude'
@@ -362,7 +370,7 @@ export interface ShareGptApi {
   }>
   rebuildAiBrowserProfile: (
     kind: 'gpt' | 'gemini' | 'claude',
-    confirmation: { password: string; serverUrl: string; token: string },
+    confirmation: BrowserDestructiveConfirmation,
   ) => Promise<{
     ok: boolean
     kind: 'gpt' | 'gemini' | 'claude'

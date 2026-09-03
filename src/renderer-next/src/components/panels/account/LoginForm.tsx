@@ -24,6 +24,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
 import { autoLoginParams } from '@/lib/autoLogin'
 import { ImportActions } from './ImportActions'
+import { BrowserPrivacySection } from './BrowserPrivacySection'
 import { compareVersions, checkGithubUpdate, type BootstrapUpdate } from './bootstrap'
 
 // 登录页「发现新版本」提醒。自动更新源 = GitHub Releases (参考 cc-switch), 不再查询任何自建服务器,
@@ -118,6 +119,7 @@ export function LoginForm() {
   )
   const [submitting, setSubmitting] = useState(false)
   const [enteringPersonal, setEnteringPersonal] = useState(false)
+  const [showOrganizationLogin, setShowOrganizationLogin] = useState(false)
   // 内联错误条 + 出错字段 (用于 aria-invalid 触发红边)。
   const [error, setError] = useState('')
   const [errorField, setErrorField] = useState<ErrorField | null>(null)
@@ -217,9 +219,11 @@ export function LoginForm() {
     // 外层只负责竖向滚动(窗口矮时), 内层 grid 居中一列 max-w-sm 内容,
     // 避免 flex + overflow 同时作用时出现的横向偏移。
     <div className="h-full overflow-y-auto">
-      <div className="grid min-h-full place-items-center p-6">
+      <div
+        className={`grid min-h-full p-6 ${showWorkspaceEntry ? 'place-items-center' : 'items-start'}`}
+      >
         <div
-          className={`flex w-full flex-col items-center gap-3 ${showWorkspaceEntry ? 'max-w-4xl' : 'max-w-sm'}`}
+          className={`mx-auto flex w-full flex-col items-center gap-3 ${showWorkspaceEntry ? 'max-w-4xl' : 'max-w-xl'}`}
         >
           <LoginUpdateBanner />
 
@@ -229,7 +233,8 @@ export function LoginForm() {
               <div className="min-w-0">
                 <p className="text-sm font-medium">当前：个人工作区</p>
                 <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                  个人代理、翻译配置和 AI 网页会话使用独立本机分区。登录组织后会切换到该账号自己的配置与网页会话。
+                  个人代理、翻译配置和 AI
+                  网页会话使用独立本机分区。登录组织后会切换到该账号自己的配置与网页会话。
                 </p>
               </div>
             </div>
@@ -259,115 +264,140 @@ export function LoginForm() {
               showWorkspaceEntry ? 'grid w-full items-start gap-4 md:grid-cols-2' : 'w-full'
             }
           >
-            <Card className="w-full">
-              <CardHeader className="text-center">
-                <CardTitle className="flex items-center justify-center gap-2 text-xl">
-                  <Building2 className="size-5 text-primary" />
-                  {showWorkspaceEntry ? '组织工作区' : '登录组织工作区'}
-                </CardTitle>
-                <CardDescription>
-                  {showWorkspaceEntry
-                    ? '登录协作服务器，使用协作聊天、在线成员、管理员线路与组织用量。'
-                    : '登录后切换到该账号的独立配置和网页会话'}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <form className="grid gap-4" onSubmit={handleSubmit}>
-                  <div className="grid gap-2">
-                    <Label htmlFor="account-server">服务地址</Label>
-                    <Input
-                      ref={serverRef}
-                      id="account-server"
-                      placeholder="http://example.com:8088"
-                      autoComplete="off"
-                      spellCheck={false}
-                      value={serverUrl}
-                      onChange={(e) => setServerUrl(e.target.value)}
-                      disabled={submitting || enteringPersonal}
-                      aria-invalid={errorField === 'server' || undefined}
-                    />
-                  </div>
+            {showWorkspaceEntry || showOrganizationLogin ? (
+              <Card className="w-full">
+                <CardHeader className="text-center">
+                  <CardTitle className="flex items-center justify-center gap-2 text-xl">
+                    <Building2 className="size-5 text-primary" />
+                    {showWorkspaceEntry ? '组织工作区' : '登录组织工作区'}
+                  </CardTitle>
+                  <CardDescription>
+                    {showWorkspaceEntry
+                      ? '登录协作服务器，使用协作聊天、在线成员、管理员线路与组织用量。'
+                      : '登录后切换到该账号的独立配置和网页会话'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form className="grid gap-4" onSubmit={handleSubmit}>
+                    <div className="grid gap-2">
+                      <Label htmlFor="account-server">服务地址</Label>
+                      <Input
+                        ref={serverRef}
+                        id="account-server"
+                        placeholder="http://example.com:8088"
+                        autoComplete="off"
+                        spellCheck={false}
+                        value={serverUrl}
+                        onChange={(e) => setServerUrl(e.target.value)}
+                        disabled={submitting || enteringPersonal}
+                        aria-invalid={errorField === 'server' || undefined}
+                      />
+                    </div>
 
-                  <div className="grid gap-2">
-                    <Label htmlFor="account-username">账号</Label>
-                    <Input
-                      ref={usernameRef}
-                      id="account-username"
-                      placeholder="用户名"
-                      autoComplete="username"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      disabled={submitting || enteringPersonal}
-                      aria-invalid={errorField === 'username' || undefined}
-                    />
-                  </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="account-username">账号</Label>
+                      <Input
+                        ref={usernameRef}
+                        id="account-username"
+                        placeholder="用户名"
+                        autoComplete="username"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        disabled={submitting || enteringPersonal}
+                        aria-invalid={errorField === 'username' || undefined}
+                      />
+                    </div>
 
-                  <div className="grid gap-2">
-                    <Label htmlFor="account-password">密码</Label>
-                    <Input
-                      ref={passwordRef}
-                      id="account-password"
-                      type="password"
-                      placeholder="密码"
-                      autoComplete="current-password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      disabled={submitting || enteringPersonal}
-                      aria-invalid={errorField === 'password' || undefined}
-                    />
-                  </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="account-password">密码</Label>
+                      <Input
+                        ref={passwordRef}
+                        id="account-password"
+                        type="password"
+                        placeholder="密码"
+                        autoComplete="current-password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        disabled={submitting || enteringPersonal}
+                        aria-invalid={errorField === 'password' || undefined}
+                      />
+                    </div>
 
-                  <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-                    <Label
-                      htmlFor="account-remember"
-                      className="cursor-pointer text-sm font-normal"
-                    >
-                      记住密码
-                    </Label>
-                    <Switch
-                      id="account-remember"
-                      checked={rememberPassword}
-                      onCheckedChange={setRememberPassword}
-                      disabled={submitting || enteringPersonal}
-                    />
-                  </div>
+                    <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+                      <Label
+                        htmlFor="account-remember"
+                        className="cursor-pointer text-sm font-normal"
+                      >
+                        记住密码
+                      </Label>
+                      <Switch
+                        id="account-remember"
+                        checked={rememberPassword}
+                        onCheckedChange={setRememberPassword}
+                        disabled={submitting || enteringPersonal}
+                      />
+                    </div>
 
-                  {error && (
-                    <p
-                      role="alert"
-                      className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                    >
-                      {error}
-                    </p>
-                  )}
-
-                  <Button
-                    type="submit"
-                    className="w-full"
-                    disabled={submitting || enteringPersonal}
-                  >
-                    {submitting ? (
-                      <>
-                        <Loader2 className="animate-spin" />
-                        登录中…
-                      </>
-                    ) : (
-                      <>
-                        <LogIn />
-                        登录
-                      </>
+                    {error && (
+                      <p
+                        role="alert"
+                        className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                      >
+                        {error}
+                      </p>
                     )}
+
+                    <Button
+                      type="submit"
+                      className="w-full"
+                      disabled={submitting || enteringPersonal}
+                    >
+                      {submitting ? (
+                        <>
+                          <Loader2 className="animate-spin" />
+                          登录中…
+                        </>
+                      ) : (
+                        <>
+                          <LogIn />
+                          登录
+                        </>
+                      )}
+                    </Button>
+                  </form>
+
+                  <Separator className="my-4" />
+
+                  <div className="grid gap-2">
+                    <p className="text-xs text-muted-foreground">从备份文件恢复本机配置或资料包</p>
+                    <ImportActions />
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <Card className="w-full">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Building2 className="size-4 text-primary" />
+                    组织协作（可选）
+                  </CardTitle>
+                  <CardDescription>
+                    需要协作聊天、在线成员、管理员线路或组织用量时，再登录组织工作区。
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setShowOrganizationLogin(true)}
+                  >
+                    <LogIn />
+                    登录组织工作区
+                    <ArrowRight className="ml-auto" />
                   </Button>
-                </form>
-
-                <Separator className="my-4" />
-
-                <div className="grid gap-2">
-                  <p className="text-xs text-muted-foreground">从备份文件恢复本机配置或资料包</p>
-                  <ImportActions />
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            )}
 
             {showWorkspaceEntry && (
               <Card className="w-full border-primary/30 bg-muted/20">
@@ -405,6 +435,8 @@ export function LoginForm() {
               </Card>
             )}
           </div>
+
+          {!showWorkspaceEntry && <BrowserPrivacySection />}
         </div>
       </div>
     </div>

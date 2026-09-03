@@ -402,6 +402,10 @@ async function readAuthorizationFailureMetrics(electronApp) {
 }
 
 async function loginThroughForm(window, baseUrl, username, password = PASSWORD) {
+  if ((await window.locator("#account-server").count()) === 0) {
+    const revealLogin = window.getByRole("button", { name: "登录组织工作区", exact: true });
+    if (await revealLogin.isVisible().catch(() => false)) await revealLogin.click();
+  }
   await window.locator("#account-server").waitFor({ state: "visible" });
   await window.locator("#account-server").fill(baseUrl);
   await window.locator("#account-username").fill(username);
@@ -422,6 +426,8 @@ async function readWorkspaceScope(window) {
       senderHost: settings.sender?.proxy_server || "",
       personalProxyHost: settings.sender?.personal_proxy_host || "",
       gptPartition: settings.gpt?.partition || "",
+      claudePartition: settings.claude?.partition || "",
+      claudeClearedAt: settings.browserPrivacy?.lastClearedAt?.claude || "",
     };
   });
 }
@@ -611,13 +617,32 @@ async function verifyPersonalOrganizationIsolation(fixture) {
       assert.equal(await window.locator('[data-tour="nav-chat"]').count(), 0);
       assert.equal(await window.locator('[data-tour="nav-team"]').count(), 0);
       assert.equal(await window.locator('[data-tour="nav-stats"]').count(), 0);
-      assert.equal(await window.locator("#account-server").inputValue(), fixture.baseUrl);
-      assert.equal(await window.locator("#account-username").inputValue(), username);
+      assert.equal(await window.locator("#account-server").count(), 0);
+      await window.getByText("网页隐私与环境", { exact: true }).waitFor({ state: "visible" });
 
       const personalBeforeWrite = await readWorkspaceScope(window);
       assert.equal(personalBeforeWrite.principal.principalId, "local-device");
       assert.notEqual(personalBeforeWrite.senderHost, organizationMarker.senderHost);
       assert.notEqual(personalBeforeWrite.gptPartition, organization.gptPartition);
+      assert.notEqual(personalBeforeWrite.claudePartition, organization.claudePartition);
+
+      const claudeRow = window
+        .getByText("只清除 Claude 网页分区", { exact: false })
+        .locator("..")
+        .locator("..");
+      await claudeRow.getByRole("button", { name: "清除", exact: true }).click();
+      const clearDialog = window.getByRole("dialog");
+      await clearDialog.locator("#browser-clear-confirmation").fill("Claude");
+      await clearDialog.getByRole("button", { name: "确认并清除", exact: true }).click();
+      await clearDialog.waitFor({ state: "hidden" });
+      const personalAfterClear = await readWorkspaceScope(window);
+      assert.notEqual(personalAfterClear.claudeClearedAt, personalBeforeWrite.claudeClearedAt);
+      assert.equal(personalAfterClear.claudePartition, personalBeforeWrite.claudePartition);
+
+      await window.getByRole("button", { name: "登录组织工作区", exact: true }).click();
+      await window.locator("#account-server").waitFor({ state: "visible" });
+      assert.equal(await window.locator("#account-server").inputValue(), fixture.baseUrl);
+      assert.equal(await window.locator("#account-username").inputValue(), username);
 
       await window.locator('[data-tour="nav-service"]').click();
       await window.locator("#s_personal_proxy_host").fill(personalMarker.personalProxyHost);
@@ -629,6 +654,8 @@ async function verifyPersonalOrganizationIsolation(fixture) {
       assert.equal(organizationAgain.principal.principalId, organization.principal.principalId);
       assert.equal(organizationAgain.senderHost, organizationMarker.senderHost);
       assert.equal(organizationAgain.gptPartition, organization.gptPartition);
+      assert.equal(organizationAgain.claudePartition, organization.claudePartition);
+      assert.equal(organizationAgain.claudeClearedAt, organization.claudeClearedAt);
       assert.notEqual(organizationAgain.personalProxyHost, personalMarker.personalProxyHost);
 
       await window.locator('[data-tour="nav-account"]').click();
@@ -638,6 +665,8 @@ async function verifyPersonalOrganizationIsolation(fixture) {
       assert.equal(personalAgain.principal.principalId, "local-device");
       assert.equal(personalAgain.personalProxyHost, personalMarker.personalProxyHost);
       assert.equal(personalAgain.gptPartition, personal.gptPartition);
+      assert.equal(personalAgain.claudePartition, personal.claudePartition);
+      assert.equal(personalAgain.claudeClearedAt, personalAfterClear.claudeClearedAt);
 
       await loginThroughForm(window, fixture.baseUrl, username);
       return {

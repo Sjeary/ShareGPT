@@ -65,6 +65,8 @@ function trimServerUrl(value: string): string {
 
 export function BrowserPrivacySection() {
   const privacy = useAppStore((state) => state.settings?.browserPrivacy)
+  const workspaceMode = useAppStore((state) => state.workspaceMode)
+  const personalWorkspace = workspaceMode === 'personal'
   const advancedAiConfigured = useAppStore((state) => state.settings?.advancedAi?.enabled === true)
   const advancedAiAllowed = useAuthStore((state) =>
     Boolean(state.profile?.isAdmin || state.profile?.advancedAiAllowed),
@@ -201,24 +203,31 @@ export function BrowserPrivacySection() {
     }
   }
 
-  async function verifyPassword(): Promise<void> {
-    if (!destructiveAction || !password || clearing) return
-    const serverUrl = trimServerUrl(identity.serverUrl)
-    const activeToken = token || identity.token
-    if (!serverUrl || !activeToken) {
-      toast.error('协作账号登录已失效，请重新登录后再执行此操作')
-      return
-    }
-
+  async function confirmDestructiveAction(): Promise<void> {
+    if (!destructiveAction || clearing) return
+    const { kind: target, mode } = destructiveAction
+    const label = PROVIDERS.find((item) => item.kind === target)?.label || target
+    if (personalWorkspace ? password.trim() !== label : !password) return
     setClearing(true)
     try {
-      const { kind: target, mode } = destructiveAction
-      const confirmation = { password, serverUrl, token: activeToken }
+      const confirmation = personalWorkspace
+        ? await api.getSettingsPrincipal().then((principal) => ({
+            localConfirmation: target,
+            expectedPrincipalId: principal.principalId,
+            expectedPrincipalGeneration: principal.generation,
+          }))
+        : (() => {
+            const serverUrl = trimServerUrl(identity.serverUrl)
+            const activeToken = token || identity.token
+            if (!serverUrl || !activeToken) {
+              throw new Error('协作账号登录已失效，请重新登录后再执行此操作')
+            }
+            return { password, serverUrl, token: activeToken }
+          })()
       if (mode === 'rebuild') await api.rebuildAiBrowserProfile(target, confirmation)
       else await api.clearAiBrowserData(target, confirmation)
       useAiStore.getState().setFeedback(target, '')
       await useAppStore.getState().reloadSettings()
-      const label = PROVIDERS.find((item) => item.kind === target)?.label || target
       toast.success(
         mode === 'rebuild'
           ? `${label} 已切换到全新的浏览器资料环境`
@@ -237,6 +246,11 @@ export function BrowserPrivacySection() {
   const locationLabel = [environment.city, environment.region, environment.country]
     .filter(Boolean)
     .join(' · ')
+  const destructiveLabel =
+    PROVIDERS.find((item) => item.kind === destructiveAction?.kind)?.label || ''
+  const confirmationReady = personalWorkspace
+    ? password.trim() === destructiveLabel
+    : password.length > 0
 
   return (
     <>
@@ -447,22 +461,28 @@ export function BrowserPrivacySection() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <Label htmlFor="browser-privacy-sync">跨设备同步环境配置</Label>
-                <p className="text-xs text-muted-foreground">
-                  只同步语言、美国预设时区、位置策略和指纹标准化参数；每台设备单独检测当前代理节点。不上传
-                  Cookie、密码、网页登录态、出口 IP、资料环境 ID、可见信息快照或清理记录。
-                </p>
+            {personalWorkspace ? (
+              <div className="rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                个人工作区的环境配置、清理记录和网页分区只保存在本机，不会上传到协作服务器。
               </div>
-              <Switch
-                id="browser-privacy-sync"
-                checked={privacy.syncEnabled}
-                onCheckedChange={(checked) =>
-                  void savePrivacy({ ...privacy, syncEnabled: checked }, false)
-                }
-              />
-            </div>
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <Label htmlFor="browser-privacy-sync">跨设备同步环境配置</Label>
+                  <p className="text-xs text-muted-foreground">
+                    只同步语言、美国预设时区、位置策略和指纹标准化参数；每台设备单独检测当前代理节点。不上传
+                    Cookie、密码、网页登录态、出口 IP、资料环境 ID、可见信息快照或清理记录。
+                  </p>
+                </div>
+                <Switch
+                  id="browser-privacy-sync"
+                  checked={privacy.syncEnabled}
+                  onCheckedChange={(checked) =>
+                    void savePrivacy({ ...privacy, syncEnabled: checked }, false)
+                  }
+                />
+              </div>
+            )}
 
             <div className="flex items-start gap-2 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
               {environment.geolocationMode === 'disabled' ? (
@@ -501,20 +521,24 @@ export function BrowserPrivacySection() {
               {destructiveAction?.mode === 'rebuild'
                 ? '该服务会关闭全部网页标签、清除现有登录数据，并切换到新的持久化分区和本机资料 ID。'
                 : '该服务的网页标签会关闭，Cookie、登录状态和本地网页记录将永久删除。'}
-              请输入当前协作账号密码确认。
+              {personalWorkspace
+                ? ` 请输入“${destructiveLabel}”确认只处理当前个人工作区。`
+                : ' 请输入当前协作账号密码确认。'}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
-            <Label htmlFor="browser-clear-password">当前协作账号密码</Label>
+            <Label htmlFor="browser-clear-confirmation">
+              {personalWorkspace ? `输入 ${destructiveLabel}` : '当前协作账号密码'}
+            </Label>
             <Input
-              id="browser-clear-password"
-              type="password"
+              id="browser-clear-confirmation"
+              type={personalWorkspace ? 'text' : 'password'}
               autoComplete="off"
               value={password}
               disabled={clearing}
               onChange={(event) => setPassword(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === 'Enter') void verifyPassword()
+                if (event.key === 'Enter') void confirmDestructiveAction()
               }}
             />
           </div>
@@ -533,8 +557,8 @@ export function BrowserPrivacySection() {
             <Button
               type="button"
               variant="destructive"
-              disabled={!password || clearing}
-              onClick={() => void verifyPassword()}
+              disabled={!confirmationReady || clearing}
+              onClick={() => void confirmDestructiveAction()}
             >
               {clearing ? (
                 <Loader2 className="animate-spin" />
@@ -545,11 +569,19 @@ export function BrowserPrivacySection() {
               )}
               {clearing
                 ? destructiveAction?.mode === 'rebuild'
-                  ? '验证并重建中…'
-                  : '验证并清除中…'
+                  ? personalWorkspace
+                    ? '重建中…'
+                    : '验证并重建中…'
+                  : personalWorkspace
+                    ? '清除中…'
+                    : '验证并清除中…'
                 : destructiveAction?.mode === 'rebuild'
-                  ? '验证密码并重建'
-                  : '验证密码并清除'}
+                  ? personalWorkspace
+                    ? '确认并重建'
+                    : '验证密码并重建'
+                  : personalWorkspace
+                    ? '确认并清除'
+                    : '验证密码并清除'}
             </Button>
           </DialogFooter>
         </DialogContent>
