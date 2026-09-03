@@ -95,6 +95,7 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm --prefix src/renderer-next ci --no-audit --no-fund
+          npm --prefix collab_server2 ci --no-audit --no-fund
 
       - name: AI workspace 生命周期验收
         run: npm run verify:ai-workspace-lifecycle
