@@ -157,6 +157,7 @@ async function createFixtureServer() {
             "legacy-admin",
             "silent-relogin-legacy-admin",
             "authorization-persist-failure",
+            "workspace-isolation",
           ].includes(body.username),
         },
         history: [],
