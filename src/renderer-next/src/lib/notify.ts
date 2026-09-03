@@ -1,4 +1,10 @@
 import { api } from '@/lib/api'
+import { useAppStore } from '@/store/useAppStore'
+import { useChatStore } from '@/store/useChatStore'
+import {
+  resolveChatNotificationDestination,
+  type ChatNotificationRoute,
+} from '@/lib/chatNotificationRoute'
 import { toast } from 'sonner'
 
 // 协作聊天通知助手 (移植自旧 renderer.js):
@@ -7,22 +13,44 @@ import { toast } from 'sonner'
 //  - showSystemNotification ~2152 (系统通知, 走主进程 api.showSystemNotification)
 // 这些函数本身不读开关; 是否触发由调用方 (useChat) 依据 settings.collab.notify_* 决定。
 
-export interface SystemNotificationRoute {
-  scope?: string
-  targetUsername?: string
-  roomScope?: string
-  messageId?: string
+export function openChatNotificationRoute(route: ChatNotificationRoute = {}): void {
+  const destination = resolveChatNotificationDestination(route)
+
+  useAppStore.getState().setActive('chat')
+  useChatStore.getState().setActiveKey(destination.activeKey)
+
+  if (!destination.messageId) return
+  window.setTimeout(() => {
+    const escape = window.CSS?.escape ?? ((value: string) => value)
+    const row = document.querySelector<HTMLElement>(
+      `[data-message-id="${escape(destination.messageId)}"]`,
+    )
+    if (!row) return
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    row.classList.add('chat-jump-target')
+    window.setTimeout(() => row.classList.remove('chat-jump-target'), 1600)
+  }, 120)
 }
 
 // 弹窗 toast (旧 showToast: 标题加粗 + 正文)。
-// 仅「消息通知」放左上角并可手动关闭; 其它操作/状态提示仍走默认右下角 (见 Toaster)。
-export function showNotificationToast(title: string, message: string): void {
+// 仅「消息通知」放右上角并可手动关闭; 其它操作/状态提示仍走默认右下角 (见 Toaster)。
+export function showNotificationToast(
+  title: string,
+  message: string,
+  route?: ChatNotificationRoute,
+): void {
   const heading = (title || '').trim() || '提醒'
   const body = (message || '').trim()
   toast(heading, {
     description: body || undefined,
-    position: 'top-left',
+    position: 'top-right',
     closeButton: true,
+    action: route
+      ? {
+          label: '查看',
+          onClick: () => openChatNotificationRoute(route),
+        }
+      : undefined,
   })
 }
 
@@ -57,7 +85,7 @@ export function playNotificationTone(): void {
 export async function showSystemNotification(
   title: string,
   message: string,
-  route: SystemNotificationRoute = {},
+  route: ChatNotificationRoute = {},
 ): Promise<void> {
   try {
     const sender = (title || '').trim() || '新消息'

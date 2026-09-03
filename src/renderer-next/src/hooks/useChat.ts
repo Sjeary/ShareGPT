@@ -288,15 +288,16 @@ export function useChat() {
 
     const title = message.displayName || message.username
     const preview = messagePreview(message)
+    const route = {
+      scope: message.scope,
+      targetUsername: message.scope === 'private' ? message.from : '',
+      roomScope: message.scope === 'subnet' ? message.subnetLabel || message.subnetKey : '',
+      messageId: message.id,
+    }
 
-    if (cfg.notify_message_popup) showNotificationToast(title, preview)
+    if (cfg.notify_message_popup) showNotificationToast(title, preview, route)
     if (cfg.notify_system_notification) {
-      void showSystemNotification(title, preview, {
-        scope: message.scope,
-        targetUsername: message.scope === 'private' ? message.from : '',
-        roomScope: message.scope === 'subnet' ? message.subnetLabel || message.subnetKey : '',
-        messageId: message.id,
-      })
+      void showSystemNotification(title, preview, route)
     }
     if (cfg.notify_sound_play) playNotificationTone()
   }, [])
