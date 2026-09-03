@@ -28,8 +28,7 @@ NEED_INSTALL_NODE="0"
 if ! command -v node >/dev/null 2>&1; then
   NEED_INSTALL_NODE="1"
 else
-  NODE_MAJOR="$(node -v | sed -E 's/^v([0-9]+).*/\1/')"
-  if [[ "${NODE_MAJOR}" -lt 22 ]]; then
+  if ! node -e 'const [major, minor] = process.versions.node.split(".").map(Number); process.exit(major > 22 || (major === 22 && minor >= 12) ? 0 : 1)'; then
     NEED_INSTALL_NODE="1"
   fi
 fi
