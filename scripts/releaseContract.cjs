@@ -129,6 +129,10 @@ function releaseContractFailures({
   requireEqual("public macOS hardened runtime", senderBuild?.mac?.hardenedRuntime, true);
   requireEqual("public macOS notarization", senderBuild?.mac?.notarize, true);
   requireEqual("Windows executable signing", packageJson?.build?.win?.signAndEditExecutable, true);
+  const windowsInstallerCommand = String(packageJson?.scripts?.["dist:win:installer"] || "");
+  if (!windowsInstallerCommand.includes("--publish never")) {
+    failures.push("Windows verification build: must disable implicit publishing");
+  }
   const publicMacCommand = String(packageJson?.scripts?.["dist:mac"] || "");
   const localMacCommand = String(packageJson?.scripts?.["dist:mac:sender:local"] || "");
   if (!publicMacCommand.includes("build.sender.json") || publicMacCommand.includes("sign-local")) {

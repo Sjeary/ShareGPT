@@ -15,6 +15,7 @@ function validContract() {
     packageJson: {
       version: "1.0.9",
       scripts: {
+        "dist:win:installer": "electron-builder --win nsis --publish never",
         "dist:mac": "electron-builder --mac --config build.sender.json",
         "dist:mac:sender:local":
           "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --config build.sender.json -c.mac.notarize=false -c.mac.hardenedRuntime=false && bash scripts/sign-local-macos.sh app",
@@ -68,6 +69,11 @@ const invalidContracts = [
   ["public notarization", (c) => (c.senderBuild.mac.notarize = false), "notarization"],
   ["hardened runtime", (c) => (c.senderBuild.mac.hardenedRuntime = false), "hardened"],
   ["Windows signing", (c) => (c.packageJson.build.win.signAndEditExecutable = false), "signing"],
+  [
+    "Windows verification publishing",
+    (c) => (c.packageJson.scripts["dist:win:installer"] = "electron-builder --win nsis"),
+    "implicit publishing",
+  ],
   ["update provider", (c) => (c.packageJson.build.publish[0].provider = "generic"), "provider"],
   ["update owner", (c) => (c.packageJson.build.publish[0].owner = "other"), "owner"],
   ["update repository", (c) => (c.packageJson.build.publish[0].repo = "Other"), "repository"],
