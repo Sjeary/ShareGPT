@@ -73,6 +73,13 @@ export interface BootstrapPayload {
   airport: BootstrapAirport | null
   proxyRoutes: BootstrapProxyRoute[]
   proxyRoutesAuthoritative: boolean
+  aiRouting: BootstrapAiRouting
+}
+
+export interface BootstrapAiRouting {
+  version: 1
+  defaultRouteByKind: Record<'gpt' | 'gemini' | 'claude', string>
+  updatedAt: string
 }
 
 export interface BootstrapProxyRoute {
@@ -115,6 +122,14 @@ export function normalizeBootstrapPayload(
     airportRaw && airportRaw.outbound && typeof airportRaw.outbound === 'object'
       ? (airportRaw.outbound as Record<string, unknown>)
       : null
+  const aiRoutingRaw =
+    payload.aiRouting && typeof payload.aiRouting === 'object'
+      ? (payload.aiRouting as Record<string, unknown>)
+      : {}
+  const routeDefaultsRaw =
+    aiRoutingRaw.defaultRouteByKind && typeof aiRoutingRaw.defaultRouteByKind === 'object'
+      ? (aiRoutingRaw.defaultRouteByKind as Record<string, unknown>)
+      : {}
   const legacyAdminConfig =
     options.allowLegacyAdminConfig === true && hasLegacyAdminProxyBootstrap(payload)
   const proxyRoutesAuthoritative = hasAuthoritativeProxyBootstrap(payload) || legacyAdminConfig
@@ -171,6 +186,15 @@ export function normalizeBootstrapPayload(
   return {
     proxyRoutes,
     proxyRoutesAuthoritative,
+    aiRouting: {
+      version: 1,
+      defaultRouteByKind: {
+        gpt: safeText(routeDefaultsRaw.gpt).toLowerCase(),
+        gemini: safeText(routeDefaultsRaw.gemini).toLowerCase(),
+        claude: safeText(routeDefaultsRaw.claude).toLowerCase(),
+      },
+      updatedAt: safeText(aiRoutingRaw.updatedAt),
+    },
     airport: airportOutbound
       ? { name: safeText(airportRaw?.name), outbound: airportOutbound }
       : null,

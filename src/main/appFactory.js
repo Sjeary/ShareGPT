@@ -64,6 +64,7 @@ const {
 const {
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
+  managedDefaultRouteId,
   partitionForAiEnvironment,
   resolvedProxyMatchesRoute,
   scaleAiHostBounds,
@@ -715,6 +716,12 @@ function createElectronApp(baseMode = "all") {
   function getWorkspaceProxyRoute(kind, environmentId, sender) {
     const targetEnvironmentId = normalizeAiEnvironmentId(environmentId);
     if (!targetEnvironmentId) {
+      const routeId = managedDefaultRouteId(backend?.loadSettings()?.sender, kind);
+      if (routeId) {
+        const route = backend.getAiProxyRoute(routeId);
+        if (!route) throw new Error("管理员推荐线路未启动，已阻止自动换线");
+        return route;
+      }
       const port = Number.parseInt(String(sender?.port || ""), 10);
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
         throw new Error("内嵌页面代理端口不合法");
@@ -2836,7 +2843,7 @@ function createElectronApp(baseMode = "all") {
       };
       const route = getWorkspaceProxyRoute(kind, environmentId, sender);
       const routeFingerprint = routeBindingFingerprint(route);
-      if (environmentId && shouldValidateRouteBinding(workspace, routeFingerprint)) {
+      if (route.mode === "singbox" && shouldValidateRouteBinding(workspace, routeFingerprint)) {
         const health = await checkAiRouteHealth(route);
         assertCurrent();
         if (!health.ok) {

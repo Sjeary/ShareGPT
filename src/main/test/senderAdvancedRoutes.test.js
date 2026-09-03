@@ -4,6 +4,20 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { Backend, resolvePersonalSenderListenPort } = require("../backend");
+const { managedDefaultRouteId } = require("../aiEnvironments");
+
+test("基础 AI 工作区只接受合法的管理员默认线路", () => {
+  const sender = {
+    managed_default_route_by_kind: {
+      gpt: "Route-US",
+      claude: "../invalid",
+    },
+  };
+  assert.equal(managedDefaultRouteId(sender, "gpt"), "route-us");
+  assert.equal(managedDefaultRouteId(sender, "claude"), "");
+  assert.equal(managedDefaultRouteId(sender, "unknown"), "");
+  assert.equal(managedDefaultRouteId({ ...sender, proxy_mode: "personal" }, "gpt"), "");
+});
 
 test("高级 AI 线路查找失败时禁止静默换线", () => {
   const backend = Object.create(Backend.prototype);

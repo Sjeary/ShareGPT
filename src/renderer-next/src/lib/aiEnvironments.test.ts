@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { availableAiRoutes } from './aiEnvironments.ts'
+import { availableAiRoutes, managedDefaultRouteForKind } from './aiEnvironments.ts'
 
 const completeSender = {
   proxy_server: 'proxy.example.com',
@@ -38,5 +38,36 @@ test('legacy settings without an authorization field retain valid enabled routes
   assert.deepEqual(
     availableAiRoutes(completeSender).map((route) => route.id),
     ['internal-unified', 'route-us', 'internal-airport'],
+  )
+})
+
+test('a managed default resolves only from the already-authorized route set', () => {
+  const routes = availableAiRoutes({
+    ...completeSender,
+    authorized_proxy_route_ids: ['internal-unified', 'route-us'],
+  })
+  assert.equal(
+    managedDefaultRouteForKind(
+      routes,
+      { managed_default_route_by_kind: { gpt: 'route-us' } },
+      'gpt',
+    )?.id,
+    'route-us',
+  )
+  assert.equal(
+    managedDefaultRouteForKind(
+      routes,
+      { managed_default_route_by_kind: { claude: 'internal-airport' } },
+      'claude',
+    ),
+    null,
+  )
+  assert.equal(
+    managedDefaultRouteForKind(
+      routes,
+      { proxy_mode: 'personal', managed_default_route_by_kind: { gpt: 'route-us' } },
+      'gpt',
+    ),
+    null,
   )
 })

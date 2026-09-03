@@ -347,17 +347,16 @@ function EditUserCard({
             onCheckedChange={setAdvancedAiAllowed}
           />
         </div>
-        {(isAdmin || advancedAiAllowed) && (
-          <RouteAuthorization
-            isAdmin={isAdmin}
-            routes={[
-              { id: 'internal-unified', name: '内置统一代理' },
-              ...proxyRoutes.map((route) => ({ id: route.id, name: route.name })),
-            ]}
-            selected={allowedProxyRouteIds}
-            onChange={setAllowedProxyRouteIds}
-          />
-        )}
+        <RouteAuthorization
+          isAdmin={isAdmin}
+          advancedAiAllowed={advancedAiAllowed}
+          routes={[
+            { id: 'internal-unified', name: '内置统一代理' },
+            ...proxyRoutes.map((route) => ({ id: route.id, name: route.name })),
+          ]}
+          selected={allowedProxyRouteIds}
+          onChange={setAllowedProxyRouteIds}
+        />
         <div className="flex items-center justify-between">
           <Label className="cursor-default">禁用账号</Label>
           <Switch checked={disabled} onCheckedChange={setDisabled} />
@@ -488,17 +487,16 @@ function CreateUserCard({
             onCheckedChange={setAdvancedAiAllowed}
           />
         </div>
-        {(isAdmin || advancedAiAllowed) && (
-          <RouteAuthorization
-            isAdmin={isAdmin}
-            routes={[
-              { id: 'internal-unified', name: '内置统一代理' },
-              ...proxyRoutes.map((route) => ({ id: route.id, name: route.name })),
-            ]}
-            selected={allowedProxyRouteIds}
-            onChange={setAllowedProxyRouteIds}
-          />
-        )}
+        <RouteAuthorization
+          isAdmin={isAdmin}
+          advancedAiAllowed={advancedAiAllowed}
+          routes={[
+            { id: 'internal-unified', name: '内置统一代理' },
+            ...proxyRoutes.map((route) => ({ id: route.id, name: route.name })),
+          ]}
+          selected={allowedProxyRouteIds}
+          onChange={setAllowedProxyRouteIds}
+        />
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
             <Label className="cursor-default">禁止协作聊天</Label>
@@ -517,11 +515,13 @@ function CreateUserCard({
 
 function RouteAuthorization({
   isAdmin,
+  advancedAiAllowed,
   routes,
   selected,
   onChange,
 }: {
   isAdmin: boolean
+  advancedAiAllowed: boolean
   routes: { id: string; name: string }[]
   selected: string[]
   onChange: (ids: string[]) => void
@@ -531,7 +531,11 @@ function RouteAuthorization({
       <div>
         <Label className="cursor-default">授权内置线路</Label>
         <p className="text-xs text-muted-foreground">
-          {isAdmin ? '管理员自动拥有全部启用线路' : '用户只能在勾选的线路之间分配环境'}
+          {isAdmin
+            ? '管理员自动拥有全部启用线路'
+            : advancedAiAllowed
+              ? '高级用户只能在勾选的线路之间分配环境'
+              : '普通成员按管理员默认线路使用；这里只决定可使用哪些线路'}
         </p>
       </div>
       {routes.map((route) => {

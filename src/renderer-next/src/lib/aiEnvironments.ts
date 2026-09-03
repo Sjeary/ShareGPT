@@ -104,3 +104,14 @@ export function routeForEnvironment(
   if (!routes.length || !environment) return null
   return routes.find((route) => route.id === environment.routeId) || null
 }
+
+export function managedDefaultRouteForKind(
+  routes: AdvancedAiRoute[],
+  sender: Partial<SenderSettings> | undefined,
+  kind: AiKind,
+): AdvancedAiRoute | null {
+  if (sender?.proxy_mode === 'personal') return null
+  const routeId = text(sender?.managed_default_route_by_kind?.[kind], 64).toLowerCase()
+  if (!routeId) return null
+  return routes.find((route) => route.id === routeId) || null
+}

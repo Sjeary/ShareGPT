@@ -33,6 +33,12 @@ function normalizeAiRouteId(value) {
   return /^[a-z0-9][a-z0-9-]{0,63}$/.test(id) ? id : "";
 }
 
+function managedDefaultRouteId(sender, kind) {
+  const targetKind = safeText(kind, 16).toLowerCase();
+  if (!AI_KINDS.has(targetKind) || sender?.proxy_mode === "personal") return "";
+  return normalizeAiRouteId(sender?.managed_default_route_by_kind?.[targetKind]);
+}
+
 function resolvedProxyMatchesRoute(value, route) {
   const expectedHost = safeText(route?.host, 255)
     .replace(/^\[|\]$/g, "")
@@ -214,6 +220,7 @@ module.exports = {
   validateAiRouteIsolation,
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
+  managedDefaultRouteId,
   partitionForAiEnvironment,
   resolvedProxyMatchesRoute,
   scaleAiHostBounds,

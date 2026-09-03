@@ -38,6 +38,11 @@ export function ExtrasPanel() {
       const next: Bootstrap = {
         sender: bootstrap?.sender || {},
         update: bootstrap?.update || {},
+        aiRouting: bootstrap?.aiRouting || {
+          version: 1,
+          defaultRouteByKind: { gpt: '', gemini: '', claude: '' },
+          updatedAt: '',
+        },
         extra: parsed,
       }
       await saveBootstrap(next)

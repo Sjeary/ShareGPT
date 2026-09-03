@@ -20,12 +20,18 @@ const EMPTY_SENDER = {
   target_domains: '',
 }
 
+const EMPTY_ROUTE_DEFAULTS = { gpt: '', gemini: '', claude: '' }
+const AI_LABELS = { gpt: 'ChatGPT', gemini: 'Gemini', claude: 'Claude' } as const
+
 export function BootstrapPanel() {
   const bootstrap = useAdminStore((s) => s.bootstrap)
   const loadBootstrap = useAdminStore((s) => s.loadBootstrap)
   const saveBootstrap = useAdminStore((s) => s.saveBootstrap)
+  const proxyRoutes = useAdminStore((s) => s.proxyRoutes)
+  const loadProxyRoutes = useAdminStore((s) => s.loadProxyRoutes)
 
   const [form, setForm] = useState({ ...EMPTY_SENDER })
+  const [routeDefaults, setRouteDefaults] = useState({ ...EMPTY_ROUTE_DEFAULTS })
   const [busy, setBusy] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -41,6 +47,11 @@ export function BootstrapPanel() {
       fallback_local_port: String(sender.fallback_local_port || ''),
       target_domains: String(sender.target_domains || ''),
     })
+    setRouteDefaults({
+      gpt: String(bootstrap?.aiRouting?.defaultRouteByKind?.gpt || ''),
+      gemini: String(bootstrap?.aiRouting?.defaultRouteByKind?.gemini || ''),
+      claude: String(bootstrap?.aiRouting?.defaultRouteByKind?.claude || ''),
+    })
   }, [bootstrap])
 
   function patch(p: Partial<typeof form>) {
@@ -50,7 +61,7 @@ export function BootstrapPanel() {
   async function reload() {
     setLoading(true)
     try {
-      await loadBootstrap()
+      await Promise.all([loadBootstrap(), loadProxyRoutes()])
       toast.success('已读取服务器端 Sender 默认配置。')
     } finally {
       setLoading(false)
@@ -63,6 +74,11 @@ export function BootstrapPanel() {
       const next: Bootstrap = {
         sender: { ...form },
         update: bootstrap?.update || {},
+        aiRouting: {
+          version: 1,
+          defaultRouteByKind: routeDefaults,
+          updatedAt: bootstrap?.aiRouting?.updatedAt || '',
+        },
         extra: bootstrap?.extra || {},
       }
       await saveBootstrap(next)
@@ -73,6 +89,15 @@ export function BootstrapPanel() {
       setBusy(false)
     }
   }
+
+  const routeOptions = [
+    ...(form.proxy_server.trim() && form.proxy_port.trim() && form.proxy_uuid.trim()
+      ? [{ id: 'internal-unified', name: '内置统一代理' }]
+      : []),
+    ...proxyRoutes
+      .filter((route) => route.enabled)
+      .map((route) => ({ id: route.id, name: route.name })),
+  ]
 
   return (
     <PanelScaffold
@@ -146,6 +171,45 @@ export function BootstrapPanel() {
                 onChange={(e) => patch({ fallback_local_port: e.target.value })}
               />
             </Field>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">各 AI 默认线路</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-3">
+            {(Object.keys(AI_LABELS) as Array<keyof typeof AI_LABELS>).map((kind) => (
+              <Field key={kind} label={AI_LABELS[kind]}>
+                <select
+                  value={routeDefaults[kind]}
+                  onChange={(event) =>
+                    setRouteDefaults((current) => ({
+                      ...current,
+                      [kind]: event.target.value,
+                    }))
+                  }
+                  className="h-9 rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                >
+                  <option value="">沿用当前默认代理</option>
+                  {!routeOptions.some((route) => route.id === routeDefaults[kind]) &&
+                    routeDefaults[kind] && (
+                      <option value={routeDefaults[kind]} disabled>
+                        原线路不可用
+                      </option>
+                    )}
+                  {routeOptions.map((route) => (
+                    <option key={route.id} value={route.id}>
+                      {route.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ))}
+            <p className="text-xs leading-relaxed text-muted-foreground sm:col-span-3">
+              普通成员会直接跟随这里的线路；管理员和高级用户创建独立环境时优先采用该推荐，
+              仍可在本人获授权的线路中调整。
+            </p>
           </CardContent>
         </Card>
 

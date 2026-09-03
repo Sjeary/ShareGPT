@@ -27,6 +27,8 @@ export interface SenderSettings {
   managed_proxy_routes?: ManagedProxyRoute[]
   // 登录服务器明确下发的高级环境线路授权。undefined 仅用于兼容旧服务器；空数组表示全部撤销。
   authorized_proxy_route_ids?: string[] | null
+  // 管理员为基础 GPT / Gemini / Claude 工作区推荐的线路；普通成员直接跟随，高级环境可覆盖。
+  managed_default_route_by_kind?: Partial<Record<'gpt' | 'gemini' | 'claude', string>>
 }
 
 export interface ManagedProxyRoute {

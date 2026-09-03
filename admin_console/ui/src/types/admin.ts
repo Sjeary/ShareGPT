@@ -53,9 +53,16 @@ export interface BootstrapUpdate {
   macos: BootstrapReleaseAsset
 }
 
+export interface BootstrapAiRouting {
+  version: 1
+  defaultRouteByKind: Record<'gpt' | 'gemini' | 'claude', string>
+  updatedAt: string
+}
+
 export interface Bootstrap {
   sender: Partial<BootstrapSender>
   update: Partial<BootstrapUpdate>
+  aiRouting: BootstrapAiRouting
   extra: Record<string, unknown>
 }
 

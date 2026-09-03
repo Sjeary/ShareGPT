@@ -24,11 +24,19 @@ interface Props {
   kind: AiKind
   settings: AdvancedAiSettings
   routes: AdvancedAiRoute[]
+  preferredRouteId?: string
   onChange: (settings: AdvancedAiSettings) => Promise<void>
   onClose: () => void
 }
 
-export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }: Props) {
+export function AiEnvironmentPanel({
+  kind,
+  settings,
+  routes,
+  preferredRouteId,
+  onChange,
+  onClose,
+}: Props) {
   const serverUrl = useAppStore((state) => state.settings?.collab?.server_url || '')
   const token = useAuthStore((state) => state.token)
   const [environmentName, setEnvironmentName] = useState('')
@@ -39,7 +47,9 @@ export function AiEnvironmentPanel({ kind, settings, routes, onChange, onClose }
   const environments = settings.environments.filter((environment) => environment.kind === kind)
   const selectedNewRouteId = routes.some((route) => route.id === newRouteId)
     ? newRouteId
-    : routes[0]?.id || ''
+    : routes.some((route) => route.id === preferredRouteId)
+      ? preferredRouteId || ''
+      : routes[0]?.id || ''
 
   async function addEnvironment() {
     const routeId = selectedNewRouteId

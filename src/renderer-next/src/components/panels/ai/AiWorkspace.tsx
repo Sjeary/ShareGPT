@@ -59,6 +59,7 @@ import { AiEnvironmentPanel } from './AiEnvironmentPanel'
 import { TranslationPanel } from './TranslationPanel'
 import {
   availableAiRoutes,
+  managedDefaultRouteForKind,
   normalizeAdvancedAiSettings,
   routeForEnvironment,
 } from '@/lib/aiEnvironments'
@@ -132,6 +133,14 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   )
   const advancedMode = advancedAiAllowed && advancedAi.enabled
   const availableRoutes = useMemo(() => availableAiRoutes(settings?.sender), [settings?.sender])
+  const managedDefaultRoute = useMemo(
+    () => managedDefaultRouteForKind(availableRoutes, settings?.sender, kind),
+    [availableRoutes, kind, settings?.sender],
+  )
+  const managedDefaultRouteId =
+    workspaceMode === 'organization'
+      ? safeText(settings?.sender?.managed_default_route_by_kind?.[kind])
+      : ''
   const environments = advancedAi.environments.filter((environment) => environment.kind === kind)
   const activeEnvironment = advancedMode
     ? environments.find((environment) => environment.id === advancedAi.activeByKind[kind]) || null
@@ -144,7 +153,11 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const networkReady = advancedMode
     ? Boolean(activeEnvironment && activeRoute && activeRouteIds.has(activeRoute.id)) &&
       senderRunning
-    : senderRunning
+    : Boolean(
+        senderRunning &&
+        (!managedDefaultRouteId ||
+          (managedDefaultRoute && activeRouteIds.has(managedDefaultRoute.id))),
+      )
   const [environmentPanelOpen, setEnvironmentPanelOpen] = useState(false)
 
   const saveAdvancedAi = useCallback(async (next: AdvancedAiSettings) => {
@@ -448,11 +461,13 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     ? activeEnvironment
       ? activeRoute?.name || '无可用内置线路'
       : '未选择环境'
-    : personalMode
-      ? '个人代理'
-      : airportMode
-        ? `机场${settings?.sender?.airport_name ? ' · ' + safeText(settings.sender.airport_name) : ''}`
-        : '统一代理'
+    : managedDefaultRouteId
+      ? managedDefaultRoute?.name || '等待管理员线路'
+      : personalMode
+        ? '个人代理'
+        : airportMode
+          ? `机场${settings?.sender?.airport_name ? ' · ' + safeText(settings.sender.airport_name) : ''}`
+          : '统一代理'
 
   // 视图运行态 (供遮罩/导航按钮判断)。
   const view = {
@@ -512,7 +527,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   // 面板激活 / 代理就绪时: 拉取标签列表并 ensure 工作区。
   const environmentRuntimeKey = advancedMode
     ? `${environmentId}:${activeRoute?.id || 'unavailable'}`
-    : 'legacy'
+    : `base:${managedDefaultRouteId || 'legacy'}`
 
   useEffect(() => {
     let cancelled = false
@@ -912,6 +927,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
             kind={kind}
             settings={advancedAi}
             routes={availableRoutes}
+            preferredRouteId={managedDefaultRoute?.id}
             onChange={saveAdvancedAi}
             onClose={() => setEnvironmentPanelOpen(false)}
           />

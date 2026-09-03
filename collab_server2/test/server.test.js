@@ -137,6 +137,58 @@ test("团队 Sender 配置比较只关注权威网络字段", () => {
   );
 });
 
+test("各 AI 默认线路只解析到用户获授权的线路", () => {
+  const routes = [{ id: "internal-unified" }, { id: "route-us" }];
+  assert.deepStrictEqual(
+    srv.resolveAiRoutingForRoutes(
+      {
+        defaultRouteByKind: {
+          gpt: "route-us",
+          gemini: "route-denied",
+          claude: "",
+        },
+      },
+      routes,
+    ).defaultRouteByKind,
+    {
+      gpt: "route-us",
+      gemini: "internal-unified",
+      claude: "",
+    },
+  );
+});
+
+test("团队配置比较包含各 AI 默认线路但忽略更新时间", () => {
+  const base = {
+    sender: {
+      proxy_server: "proxy.example.com",
+      proxy_port: "443",
+      proxy_uuid: "managed-id",
+    },
+    aiRouting: {
+      defaultRouteByKind: { gpt: "route-us", gemini: "", claude: "" },
+      updatedAt: "2026-09-01T00:00:00.000Z",
+    },
+  };
+  assert.equal(
+    srv.sameManagedClientConfig(base, {
+      ...base,
+      aiRouting: { ...base.aiRouting, updatedAt: "2026-09-02T00:00:00.000Z" },
+    }),
+    true,
+  );
+  assert.equal(
+    srv.sameManagedClientConfig(base, {
+      ...base,
+      aiRouting: {
+        ...base.aiRouting,
+        defaultRouteByKind: { ...base.aiRouting.defaultRouteByKind, claude: "route-us" },
+      },
+    }),
+    false,
+  );
+});
+
 test("normalizeIp: IPv6 映射与回环归一", () => {
   assert.strictEqual(srv.normalizeIp("::ffff:1.2.3.4"), "1.2.3.4");
   assert.strictEqual(srv.normalizeIp("::1"), "127.0.0.1");
@@ -519,6 +571,14 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
         socks_listen_port: "19872",
       },
       update: {},
+      aiRouting: {
+        version: 1,
+        defaultRouteByKind: {
+          gpt: "internal-airport",
+          gemini: "internal-unified",
+          claude: "",
+        },
+      },
     }),
     "utf8",
   );
@@ -620,6 +680,11 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   assert.strictEqual(bootstrapBody.sender.proxy_server, "");
   assert.strictEqual(bootstrapBody.sender.proxy_port, "");
   assert.strictEqual(bootstrapBody.sender.proxy_uuid, "");
+  assert.deepStrictEqual(bootstrapBody.aiRouting.defaultRouteByKind, {
+    gpt: "internal-airport",
+    gemini: "internal-airport",
+    claude: "",
+  });
 
   const adminClientLogin = await fetch(`${baseUrl}/api/login`, {
     method: "POST",

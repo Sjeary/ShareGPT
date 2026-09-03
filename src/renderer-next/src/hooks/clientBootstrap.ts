@@ -85,6 +85,7 @@ async function applySenderBootstrapConfig(
 
   await patchSenderForBootstrap(
     {
+      ...(options.managedConfigEditable === true ? {} : { proxy_mode: 'unified' as const }),
       proxy_server: serverSender.proxy_server || current.proxy_server || '',
       proxy_port: serverSender.proxy_port || current.proxy_port || '',
       proxy_uuid: serverSender.proxy_uuid || current.proxy_uuid || '',
@@ -117,6 +118,7 @@ async function applyClientBootstrap(
           expected: route.expected,
         })),
       authorized_proxy_route_ids: payload.proxyRoutes.map((route) => route.id),
+      managed_default_route_by_kind: payload.aiRouting.defaultRouteByKind,
       airport_outbound:
         payload.proxyRoutes.find((route) => route.id === 'internal-airport')?.outbound ||
         payload.airport?.outbound ||

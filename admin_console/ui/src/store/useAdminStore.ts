@@ -129,7 +129,16 @@ function applyTheme(dark: boolean) {
   }
 }
 
-const EMPTY_BOOTSTRAP: Bootstrap = { sender: {}, update: {}, extra: {} }
+const EMPTY_BOOTSTRAP: Bootstrap = {
+  sender: {},
+  update: {},
+  aiRouting: {
+    version: 1,
+    defaultRouteByKind: { gpt: '', gemini: '', claude: '' },
+    updatedAt: '',
+  },
+  extra: {},
+}
 
 export const useAdminStore = create<AdminState>((set, get) => {
   // 统一请求封装: 注入 serverUrl/token; 鉴权失效自动登出回登录页。

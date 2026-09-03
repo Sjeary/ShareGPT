@@ -347,6 +347,11 @@ function ensureClientBootstrapFile() {
               fileName: "",
             },
           },
+          aiRouting: {
+            version: 1,
+            defaultRouteByKind: { gpt: "", gemini: "", claude: "" },
+            updatedAt: "",
+          },
           extra: {},
         },
         null,
@@ -355,6 +360,23 @@ function ensureClientBootstrapFile() {
       "utf-8",
     );
   }
+}
+
+function normalizeAiRouting(raw) {
+  const input = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const defaults =
+    input.defaultRouteByKind && typeof input.defaultRouteByKind === "object"
+      ? input.defaultRouteByKind
+      : {};
+  return {
+    version: 1,
+    defaultRouteByKind: {
+      gpt: normalizeProxyRouteId(defaults.gpt),
+      gemini: normalizeProxyRouteId(defaults.gemini),
+      claude: normalizeProxyRouteId(defaults.claude),
+    },
+    updatedAt: safeText(input.updatedAt),
+  };
 }
 
 function normalizeBootstrapPayload(raw) {
@@ -386,6 +408,7 @@ function normalizeBootstrapPayload(raw) {
         fileName: safeText(macos.fileName),
       },
     },
+    aiRouting: normalizeAiRouting(raw?.aiRouting),
     extra: raw?.extra && typeof raw.extra === "object" ? raw.extra : {},
   };
 }
@@ -454,7 +477,14 @@ function loadClientBootstrap(req = null) {
 }
 
 function saveClientBootstrap(payload) {
+  const previous = loadClientBootstrap();
   const normalized = normalizeBootstrapPayload(payload);
+  const routingChanged =
+    JSON.stringify(previous.aiRouting.defaultRouteByKind) !==
+    JSON.stringify(normalized.aiRouting.defaultRouteByKind);
+  normalized.aiRouting.updatedAt = routingChanged
+    ? nowIso()
+    : previous.aiRouting.updatedAt || normalized.aiRouting.updatedAt;
   fs.writeFileSync(CLIENT_BOOTSTRAP_FILE, JSON.stringify(normalized, null, 2), "utf-8");
   return normalized;
 }
@@ -463,6 +493,16 @@ function sameManagedSenderConfig(left, right) {
   return (
     JSON.stringify(normalizeBootstrapPayload({ sender: left }).sender) ===
     JSON.stringify(normalizeBootstrapPayload({ sender: right }).sender)
+  );
+}
+
+function sameManagedClientConfig(left, right) {
+  const leftNormalized = normalizeBootstrapPayload(left);
+  const rightNormalized = normalizeBootstrapPayload(right);
+  return (
+    sameManagedSenderConfig(leftNormalized.sender, rightNormalized.sender) &&
+    JSON.stringify(leftNormalized.aiRouting.defaultRouteByKind) ===
+      JSON.stringify(rightNormalized.aiRouting.defaultRouteByKind)
   );
 }
 
@@ -1154,6 +1194,23 @@ function proxyRoutesForUser(username, bootstrap = null, catalog = null) {
     if (route.enabled && canUse(route.id)) routes.push({ ...route, kind: "managed" });
   }
   return routes;
+}
+
+function resolveAiRoutingForRoutes(aiRouting, routes) {
+  const normalized = normalizeAiRouting(aiRouting);
+  const availableRoutes = Array.isArray(routes) ? routes : [];
+  const available = new Set(availableRoutes.map((route) => route.id));
+  const firstAvailable = availableRoutes.find((route) => available.has(route.id));
+  const defaultRouteByKind = {};
+  for (const kind of ["gpt", "gemini", "claude"]) {
+    const requested = normalized.defaultRouteByKind[kind];
+    defaultRouteByKind[kind] = requested
+      ? available.has(requested)
+        ? requested
+        : firstAvailable?.id || ""
+      : "";
+  }
+  return { ...normalized, defaultRouteByKind };
 }
 
 function loadProxyRouteHealth() {
@@ -2668,7 +2725,7 @@ const server = http.createServer(async (req, res) => {
       const payload = safeParseJson(body) || {};
       const previous = loadClientBootstrap(req);
       const saved = saveClientBootstrap(payload);
-      if (!sameManagedSenderConfig(previous.sender, saved.sender)) {
+      if (!sameManagedClientConfig(previous, saved)) {
         invalidateAllProxyAuthorizations("client_config_updated");
       }
       sendJson(res, 200, {
@@ -2894,6 +2951,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const proxyRoutes = proxyRoutesForUser(session.username, bootstrap, routeCatalogStatus.catalog);
+    const aiRouting = resolveAiRoutingForRoutes(bootstrap.aiRouting, proxyRoutes);
     const legacyAirport = proxyRoutes.find((route) => route.id === "internal-airport");
     const unifiedAllowed = proxyRoutes.some((route) => route.id === "internal-unified");
     const clientBootstrap = unifiedAllowed
@@ -2921,6 +2979,7 @@ const server = http.createServer(async (req, res) => {
         advancedAiAllowed: Boolean(user?.isAdmin || user?.advancedAiAllowed),
         allowedProxyRouteIds: proxyRoutes.map((route) => route.id),
       },
+      aiRouting,
       update: sharedReleaseUpdateForClient(req),
       airport: legacyAirport
         ? { name: legacyAirport.name, outbound: legacyAirport.outbound }
@@ -3985,7 +4044,9 @@ module.exports = {
   loadProxyRouteCatalog,
   saveProxyRouteCatalog,
   proxyRoutesForUser,
+  resolveAiRoutingForRoutes,
   sameManagedSenderConfig,
+  sameManagedClientConfig,
   getUserStoreEntry,
   putUserStore,
   revokeUserSessions,
