@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { Backend, resolvePersonalSenderListenPort } = require("../backend");
-const { managedDefaultRouteId } = require("../aiEnvironments");
+const { activeAiRouteIds, managedDefaultRouteId } = require("../aiEnvironments");
 
 test("基础 AI 工作区只接受合法的管理员默认线路", () => {
   const sender = {
@@ -17,6 +17,39 @@ test("基础 AI 工作区只接受合法的管理员默认线路", () => {
   assert.equal(managedDefaultRouteId(sender, "claude"), "");
   assert.equal(managedDefaultRouteId(sender, "unknown"), "");
   assert.equal(managedDefaultRouteId({ ...sender, proxy_mode: "personal" }, "gpt"), "");
+});
+
+test("线路预热只收集当前使用和管理员推荐的 AI 线路", () => {
+  const sender = {
+    managed_default_route_by_kind: {
+      gpt: "route-us",
+      claude: "route-eu",
+    },
+  };
+  const advancedAi = {
+    enabled: true,
+    activeByKind: {
+      gpt: "env-gpt",
+      claude: "env-claude",
+      gemini: "missing-environment",
+    },
+    environments: [
+      { id: "env-gpt", kind: "gpt", routeId: "route-us" },
+      { id: "env-claude", kind: "claude", routeId: "route-ap" },
+      { id: "inactive", kind: "gemini", routeId: "route-unused" },
+    ],
+  };
+
+  assert.deepEqual(activeAiRouteIds(sender, advancedAi).sort(), [
+    "route-ap",
+    "route-eu",
+    "route-us",
+  ]);
+  assert.deepEqual(activeAiRouteIds({ ...sender, proxy_mode: "personal" }, advancedAi).sort(), []);
+  assert.deepEqual(activeAiRouteIds(sender, { ...advancedAi, enabled: false }).sort(), [
+    "route-eu",
+    "route-us",
+  ]);
 });
 
 test("高级 AI 线路查找失败时禁止静默换线", () => {

@@ -39,6 +39,29 @@ function managedDefaultRouteId(sender, kind) {
   return normalizeAiRouteId(sender?.managed_default_route_by_kind?.[targetKind]);
 }
 
+function activeAiRouteIds(sender, advancedAi) {
+  if (sender?.proxy_mode === "personal") return [];
+  const routeIds = new Set();
+  for (const kind of AI_KINDS) {
+    const defaultRouteId = managedDefaultRouteId(sender, kind);
+    if (defaultRouteId) routeIds.add(defaultRouteId);
+
+    if (advancedAi?.enabled !== true) continue;
+    const environmentId = normalizeAiEnvironmentId(advancedAi?.activeByKind?.[kind]);
+    if (!environmentId) continue;
+    const environment = Array.isArray(advancedAi?.environments)
+      ? advancedAi.environments.find(
+          (record) =>
+            safeText(record?.kind, 16).toLowerCase() === kind &&
+            normalizeAiEnvironmentId(record?.id) === environmentId,
+        )
+      : null;
+    const environmentRouteId = normalizeAiRouteId(environment?.routeId);
+    if (environmentRouteId) routeIds.add(environmentRouteId);
+  }
+  return [...routeIds];
+}
+
 function resolvedProxyMatchesRoute(value, route) {
   const expectedHost = safeText(route?.host, 255)
     .replace(/^\[|\]$/g, "")
@@ -215,6 +238,7 @@ function validateAiRouteIsolation(config, routes) {
 }
 
 module.exports = {
+  activeAiRouteIds,
   hasCompleteUnifiedProxy,
   internalAiProxyRoutes,
   validateAiRouteIsolation,

@@ -62,6 +62,7 @@ const {
   parseSendAttemptMessage,
 } = require("./aiUsageAcceptance");
 const {
+  activeAiRouteIds,
   normalizeAiEnvironmentId,
   normalizeAiRouteId,
   managedDefaultRouteId,
@@ -72,6 +73,7 @@ const {
 const {
   advanceWorkspaceDocument,
   createDurableWorkspaceRegistry,
+  createExpiringAsyncResultCache,
   createLastIntentReconciler,
   invalidateWorkspaceDocumentState,
   isWorkspaceViewUsable,
@@ -98,8 +100,8 @@ const { assertManualUpdateRequest } = require("./updateRelease");
 // 记录每个 AI 会话(按 partition)实际访问过的主机名, 供「代理检测」展示页面流量去向。
 // 在 configureAiSession 内通过 webRequest 被动收集 (每个 partition 仅装一次)。
 const aiContactedHostsByPartition = new Map();
-const aiRouteHealthCache = new Map();
 const AI_ROUTE_HEALTH_TTL_MS = 5 * 60 * 1000;
+const aiRouteHealthCache = createExpiringAsyncResultCache({ ttlMs: AI_ROUTE_HEALTH_TTL_MS });
 
 const GPT_ALLOWED_HOSTS = [
   "chatgpt.com",
@@ -746,37 +748,54 @@ function createElectronApp(baseMode = "all") {
     const routeId = normalizeAiRouteId(route?.id);
     if (!routeId || route?.mode !== "singbox") throw new Error("只能检测内置 sing-box 线路");
     const cacheKey = routeBindingFingerprint(route);
-    const cached = aiRouteHealthCache.get(cacheKey);
-    if (!options.force && cached && Date.now() - cached.cachedAt < AI_ROUTE_HEALTH_TTL_MS) {
-      return cached.report;
+    return aiRouteHealthCache.run(
+      cacheKey,
+      async () => {
+        const detected = await detectProxyEnvironment(route.port);
+        const expected = route.expected && typeof route.expected === "object" ? route.expected : {};
+        const expectedIp = safeText(expected.ip).toLowerCase();
+        const expectedCountry = safeText(expected.countryCode).toUpperCase();
+        const expectedAsn = safeText(expected.asn).toUpperCase().replace(/^AS/, "");
+        const actualAsn = safeText(detected.asn).toUpperCase().replace(/^AS/, "");
+        const checks = {
+          httpCrossCheck: Boolean(detected.ip),
+          expectedIp: !expectedIp || safeText(detected.ip).toLowerCase() === expectedIp,
+          expectedCountry:
+            !expectedCountry || safeText(detected.countryCode).toUpperCase() === expectedCountry,
+          expectedAsn: !expectedAsn || actualAsn === expectedAsn,
+          dnsSameRoute: Boolean(route.dnsTag && route.outboundTag),
+          ipv6Contained: Boolean(detected.ip && !String(detected.ip).includes(":")),
+          webRtcProtected: true,
+        };
+        const ok = Object.values(checks).every(Boolean);
+        return {
+          ok,
+          routeId,
+          route: route.label,
+          expected,
+          checks,
+          ...detected,
+        };
+      },
+      options,
+    );
+  }
+
+  function warmActiveAiRouteHealth(senderSettings) {
+    const settings = backend?.loadSettings?.() || {};
+    for (const routeId of activeAiRouteIds(
+      senderSettings || settings.sender,
+      settings.advancedAi,
+    )) {
+      const route = backend?.getAiProxyRoute?.(routeId);
+      if (!route || route.mode !== "singbox") continue;
+      void checkAiRouteHealth(route).catch((error) => {
+        mainLog.warn("AI route preflight warmup failed", {
+          routeId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     }
-    const detected = await detectProxyEnvironment(route.port);
-    const expected = route.expected && typeof route.expected === "object" ? route.expected : {};
-    const expectedIp = safeText(expected.ip).toLowerCase();
-    const expectedCountry = safeText(expected.countryCode).toUpperCase();
-    const expectedAsn = safeText(expected.asn).toUpperCase().replace(/^AS/, "");
-    const actualAsn = safeText(detected.asn).toUpperCase().replace(/^AS/, "");
-    const checks = {
-      httpCrossCheck: Boolean(detected.ip),
-      expectedIp: !expectedIp || safeText(detected.ip).toLowerCase() === expectedIp,
-      expectedCountry:
-        !expectedCountry || safeText(detected.countryCode).toUpperCase() === expectedCountry,
-      expectedAsn: !expectedAsn || actualAsn === expectedAsn,
-      dnsSameRoute: Boolean(route.dnsTag && route.outboundTag),
-      ipv6Contained: Boolean(detected.ip && !String(detected.ip).includes(":")),
-      webRtcProtected: true,
-    };
-    const ok = Object.values(checks).every(Boolean);
-    const report = {
-      ok,
-      routeId,
-      route: route.label,
-      expected,
-      checks,
-      ...detected,
-    };
-    aiRouteHealthCache.set(cacheKey, { cachedAt: Date.now(), report });
-    return report;
   }
 
   function getAiStoragePartitions() {
@@ -3285,12 +3304,16 @@ function createElectronApp(baseMode = "all") {
       return next;
     });
 
-    ipcMain.handle("sender:start", (_event, senderSettings) => {
+    ipcMain.handle("sender:start", async (_event, senderSettings) => {
       assertMode("sender");
-      return backend.startSender(senderSettings);
+      aiRouteHealthCache.clear();
+      const result = await backend.startSender(senderSettings);
+      warmActiveAiRouteHealth(senderSettings);
+      return result;
     });
     ipcMain.handle("sender:stop", () => {
       assertMode("sender");
+      aiRouteHealthCache.clear();
       backend.stopSender();
       return backend.getStatus();
     });

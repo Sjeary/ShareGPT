@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   advanceWorkspaceDocument,
   createDurableWorkspaceRegistry,
+  createExpiringAsyncResultCache,
   createLastIntentReconciler,
   invalidateWorkspaceDocumentState,
   isWorkspaceViewUsable,
@@ -183,6 +184,63 @@ test("route preflight runs only for a first or changed binding", () => {
   target.verifiedRouteBinding = first;
   assert.equal(shouldValidateRouteBinding(target, first), false);
   assert.equal(shouldValidateRouteBinding(target, changed), true);
+});
+
+test("route preflight cache coalesces concurrent checks and expires completed results", async () => {
+  let currentTime = 1_000;
+  let calls = 0;
+  let release = () => {};
+  const blocked = new Promise((resolve) => {
+    release = () => resolve();
+  });
+  const cache = createExpiringAsyncResultCache({ ttlMs: 300, now: () => currentTime });
+  const load = async () => {
+    calls += 1;
+    await blocked;
+    return { ok: true, calls };
+  };
+
+  const first = cache.run("route-a", load);
+  const second = cache.run("route-a", load);
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  release();
+  assert.deepEqual(await Promise.all([first, second]), [
+    { ok: true, calls: 1 },
+    { ok: true, calls: 1 },
+  ]);
+
+  assert.deepEqual(await cache.run("route-a", load), { ok: true, calls: 1 });
+  currentTime += 301;
+  assert.deepEqual(await cache.run("route-a", load), { ok: true, calls: 2 });
+});
+
+test("failed and cleared route preflights cannot seed a reusable result", async () => {
+  let calls = 0;
+  let release = () => {};
+  const blocked = new Promise((resolve) => {
+    release = () => resolve();
+  });
+  const cache = createExpiringAsyncResultCache({ ttlMs: 300, now: () => 1_000 });
+  const old = cache.run("route-a", async () => {
+    calls += 1;
+    await blocked;
+    return "old";
+  });
+  await Promise.resolve();
+  cache.clear();
+  release();
+  assert.equal(await old, "old");
+  assert.equal(await cache.run("route-a", async () => ++calls), 2);
+
+  await assert.rejects(
+    cache.run("route-b", async () => {
+      calls += 1;
+      throw new Error("offline");
+    }),
+    /offline/,
+  );
+  assert.equal(await cache.run("route-b", async () => ++calls), 4);
 });
 
 test("resume-style repeated reconcile is idempotent for the same fixed target", async () => {

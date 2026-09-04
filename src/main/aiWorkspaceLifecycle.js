@@ -48,6 +48,54 @@ function shouldValidateRouteBinding(workspace, fingerprint) {
   return Boolean(next && safeText(workspace?.verifiedRouteBinding) !== next);
 }
 
+function createExpiringAsyncResultCache(options = {}) {
+  const ttlMs = Math.max(0, Number(options.ttlMs) || 0);
+  const now = typeof options.now === "function" ? options.now : Date.now;
+  const results = new Map();
+  const inFlight = new Map();
+  let generation = 0;
+
+  async function run(key, load, runOptions = {}) {
+    const cacheKey = safeText(key);
+    if (!cacheKey || typeof load !== "function") {
+      throw new TypeError("异步缓存需要有效的 key 和 loader");
+    }
+    const cached = results.get(cacheKey);
+    if (
+      runOptions.force !== true &&
+      cached &&
+      now() - cached.cachedAt >= 0 &&
+      now() - cached.cachedAt < ttlMs
+    ) {
+      return cached.value;
+    }
+
+    const existing = inFlight.get(cacheKey);
+    if (existing) return existing;
+
+    const startedGeneration = generation;
+    const pending = Promise.resolve().then(load);
+    inFlight.set(cacheKey, pending);
+    try {
+      const value = await pending;
+      if (generation === startedGeneration) {
+        results.set(cacheKey, { cachedAt: now(), value });
+      }
+      return value;
+    } finally {
+      if (inFlight.get(cacheKey) === pending) inFlight.delete(cacheKey);
+    }
+  }
+
+  function clear() {
+    generation += 1;
+    results.clear();
+    inFlight.clear();
+  }
+
+  return { clear, run };
+}
+
 function workspaceTargetEquals(left, right) {
   return Boolean(
     left &&
@@ -353,6 +401,7 @@ function createLastIntentReconciler(reconcile, onError = () => {}) {
 module.exports = {
   advanceWorkspaceDocument,
   createDurableWorkspaceRegistry,
+  createExpiringAsyncResultCache,
   createLastIntentReconciler,
   invalidateWorkspaceDocumentState,
   isWorkspaceViewUsable,

@@ -38,6 +38,7 @@ import { isSenderRunning } from '@/components/panels/service/helpers'
 import { api } from '@/lib/api'
 import { canUseAdvancedAi, canUseTranslation } from '@/lib/aiAccess'
 import { userFacingAiWorkspaceError } from '@/lib/aiWorkspaceError'
+import { coalesceInFlight } from '@/lib/inFlightRequest'
 import { toast } from 'sonner'
 import { useAiHostSync } from '@/hooks/useAiWorkspace'
 import { useAiEvents, applyAiTabsPayload } from './useAiEvents'
@@ -114,6 +115,7 @@ const META: Record<AiKind, AiMeta> = {
 // 真正的 WebContentsView 在主进程, 这里只渲染宿主 div 并同步其矩形定位。
 export function AiWorkspace({ kind }: { kind: AiKind }) {
   const meta = META[kind]
+  const ensureInFlightRef = useRef(new Map<string, Promise<void>>())
   const status = useAppStore((s) => s.status)
   const settings = useAppStore((s) => s.settings)
   const sidebarHidden = useAppStore((s) => s.sidebarHidden)
@@ -499,27 +501,42 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       const lastUrl = tab.allowExternalBrowsing
         ? normalizeHttpUrl(tab.url)
         : normalizeUrlFor(kind, tab.url || homeUrlFor(kind))
-      const payload = (await api.ensureAiWorkspace({
+      const requestKey = JSON.stringify([
         kind,
-        tabId: tab.id,
-        partition: advancedMode ? undefined : partitionFor(kind),
+        tab.id,
         environmentId,
-        host: proxyHost,
-        port: proxyPort,
-        homeUrl: homeUrlFor(kind),
+        proxyHost,
+        proxyPort,
         lastUrl,
         userAgent,
         forceReload,
-        allowExternalBrowsing: tab.allowExternalBrowsing,
-      })) as AiEventPayload | null
-      if (payload && safeText(payload.tabId)) {
-        useAiStore.getState().patchTab(kind, safeText(payload.tabId), {
-          webviewInitialized:
-            typeof payload.initialized === 'boolean' ? payload.initialized : tab.webviewInitialized,
-          webviewLoading:
-            typeof payload.loading === 'boolean' ? payload.loading : tab.webviewLoading,
-        })
-      }
+        tab.allowExternalBrowsing,
+      ])
+      return coalesceInFlight(ensureInFlightRef.current, requestKey, async () => {
+        const payload = (await api.ensureAiWorkspace({
+          kind,
+          tabId: tab.id,
+          partition: advancedMode ? undefined : partitionFor(kind),
+          environmentId,
+          host: proxyHost,
+          port: proxyPort,
+          homeUrl: homeUrlFor(kind),
+          lastUrl,
+          userAgent,
+          forceReload,
+          allowExternalBrowsing: tab.allowExternalBrowsing,
+        })) as AiEventPayload | null
+        if (payload && safeText(payload.tabId)) {
+          useAiStore.getState().patchTab(kind, safeText(payload.tabId), {
+            webviewInitialized:
+              typeof payload.initialized === 'boolean'
+                ? payload.initialized
+                : tab.webviewInitialized,
+            webviewLoading:
+              typeof payload.loading === 'boolean' ? payload.loading : tab.webviewLoading,
+          })
+        }
+      })
     },
     [kind, networkReady, proxyHost, proxyPort, advancedMode, environmentId],
   )
