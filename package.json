@@ -37,6 +37,7 @@
     "verify:browser-privacy-ui": "npm run build:next && node scripts/verify-browser-privacy-ui.js",
     "verify:collab-login-compatibility": "npm run build:next && node scripts/verify-collab-login-compatibility.js",
     "verify:ai-composer": "electron scripts/verify-ai-composer.js",
+    "verify:ai-tab-scrollbar": "npm run build:next && electron scripts/verify-ai-tab-scrollbar.js",
     "verify:ai-workspace-lifecycle": "npm run build:next && node scripts/verify-ai-workspace-lifecycle.js",
     "verify:macos-fullscreen-titlebar": "npm run build:next && node scripts/verify-macos-fullscreen-titlebar.js",
     "verify:chat-composer-layout": "npm run build:next && node scripts/verify-chat-composer-layout.js",
