@@ -45,6 +45,7 @@ jobs:
           cache: npm
 
       - name: Require official signing and notarization secrets
+        if: github.ref_name != 'v1.0.9'
         env:
           CSC_LINK: ${{ secrets.MACOS_DEVELOPER_ID_P12 }}
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_PASSWORD }}
@@ -85,6 +86,7 @@ jobs:
         run: npm run prepare:release-mac-assets
 
       - name: Prepare App Store Connect API key
+        if: github.ref_name != 'v1.0.9'
         env:
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
@@ -98,12 +100,42 @@ jobs:
           echo "APPLE_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
 
       - name: Build, sign, and notarize macOS app
+        if: github.ref_name != 'v1.0.9'
         env:
           CSC_LINK: ${{ secrets.MACOS_DEVELOPER_ID_P12 }}
           CSC_KEY_PASSWORD: ${{ secrets.MACOS_DEVELOPER_ID_PASSWORD }}
-        run: npm run dist:mac
+        run: npm run dist:mac -- --publish never
+
+      - name: Build v1.0.9 with the legacy distribution policy
+        if: github.ref_name == 'v1.0.9'
+        run: node scripts/build-legacy-release.cjs
+
+      - name: Verify packaged Mac startup and data retention
+        run: node scripts/verify-packaged-startup.cjs release_sender/mac-arm64/ShareGPT.app/Contents/MacOS/ShareGPT
+
+      - name: Verify v1.0.9 macOS artifacts without claiming notarization
+        if: github.ref_name == 'v1.0.9'
+        run: |
+          APP_PATH="release_sender/mac-arm64/ShareGPT.app"
+          DMG_PATH="release_sender/sharegpt-1.0.9-arm64.dmg"
+          test -s "$DMG_PATH" && test -s release_sender/sharegpt-1.0.9-arm64.zip
+          codesign --verify --deep --strict "$APP_PATH"
+          codesign -dvv "$APP_PATH" 2>&1 | grep -F 'Signature=adhoc'
+          test "$(plutil -extract CFBundleIdentifier raw "$APP_PATH/Contents/Info.plist")" = "com.sjeary.sharegpt.desktop"
+          test "$(plutil -extract CFBundleShortVersionString raw "$APP_PATH/Contents/Info.plist")" = "1.0.9"
+          MOUNT_PATH="$RUNNER_TEMP/sharegpt-dmg"
+          mkdir -p "$MOUNT_PATH"
+          hdiutil attach "$DMG_PATH" -nobrowse -readonly -mountpoint "$MOUNT_PATH"
+          trap 'hdiutil detach "$MOUNT_PATH"' EXIT
+          codesign --verify --deep --strict "$MOUNT_PATH/ShareGPT.app"
+          cmp "$APP_PATH/Contents/Resources/app.asar" "$MOUNT_PATH/ShareGPT.app/Contents/Resources/app.asar"
+          hdiutil detach "$MOUNT_PATH"
+          trap - EXIT
+          cp "$DMG_PATH" release_sender/sharegpt-sender-1.0.9-arm64.dmg
+          cmp "$DMG_PATH" release_sender/sharegpt-sender-1.0.9-arm64.dmg
 
       - name: Verify final macOS artifacts
+        if: github.ref_name != 'v1.0.9'
         env:
           SHAREGPT_EXPECTED_MAC_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
         run: |
@@ -159,6 +191,7 @@ jobs:
           cache: npm
 
       - name: Require official Authenticode signing secrets
+        if: github.ref_name != 'v1.0.9'
         env:
           WIN_CSC_LINK: ${{ secrets.WINDOWS_CODE_SIGNING_PFX }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_PASSWORD }}
@@ -192,12 +225,28 @@ jobs:
         run: ./scripts/prepare-windows-release-assets.ps1
 
       - name: Build signed NSIS installer
+        if: github.ref_name != 'v1.0.9'
         env:
           WIN_CSC_LINK: ${{ secrets.WINDOWS_CODE_SIGNING_PFX }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_PASSWORD }}
-        run: npm run dist:win:release
+        run: npm run dist:win:release -- --publish never
+
+      - name: Build and verify v1.0.9 legacy NSIS installer
+        if: github.ref_name == 'v1.0.9'
+        shell: pwsh
+        run: |
+          node scripts/build-legacy-release.cjs
+          if ($LASTEXITCODE -ne 0) { throw "Legacy build failed" }
+          npm run verify:release-win
+          if ($LASTEXITCODE -ne 0) { throw "Installer verification failed" }
+          foreach ($target in @("release/sharegpt-1.0.9.exe", "release/win-unpacked/sharegpt.exe")) {
+            if ((Get-AuthenticodeSignature $target).Status -ne "NotSigned") {
+              throw "Unexpected signing identity in legacy build: $target"
+            }
+          }
 
       - name: Verify installer and Authenticode timestamp
+        if: github.ref_name != 'v1.0.9'
         env:
           SHAREGPT_EXPECTED_WINDOWS_PUBLISHER: ${{ secrets.WINDOWS_PUBLISHER_NAME }}
           SHAREGPT_REQUIRE_RELEASE_IDENTITY: "1"
@@ -215,6 +264,16 @@ jobs:
               throw "Unexpected publisher for ${target}: expected '$env:SHAREGPT_EXPECTED_WINDOWS_PUBLISHER', got '$publisher'"
             }
           }
+
+      - name: Install and launch the final Windows package
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $destination = Join-Path $env:RUNNER_TEMP "ShareGPT-installed"
+          $installer = Start-Process -FilePath "release/sharegpt-$version.exe" -ArgumentList @("/S", "/D=$destination") -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw "NSIS installation failed" }
+          node scripts/verify-packaged-startup.cjs "$destination/sharegpt.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Installed app startup failed" }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -265,9 +324,9 @@ jobs:
             }
             gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
           else
-            gh release create "$GITHUB_REF_NAME" release-assets/* --verify-tag --generate-notes --draft
+            gh release create "$GITHUB_REF_NAME" release-assets/* --verify-tag --notes-file "docs/releases/$GITHUB_REF_NAME.md" --draft
           fi
           EXPECTED="$(find release-assets -maxdepth 1 -type f -exec basename {} \; | sort)"
           REMOTE="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | sort)"
           test "$REMOTE" = "$EXPECTED"
-          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+          gh release edit "$GITHUB_REF_NAME" --notes-file "docs/releases/$GITHUB_REF_NAME.md" --draft=false --latest

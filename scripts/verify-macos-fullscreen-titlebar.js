@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { _electron: electron } = require("playwright");
+const { _electron: electron, expect } = require("playwright/test");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -23,12 +23,23 @@ async function titlebarSnapshot(page) {
   const header = page.locator("header").first();
   const brand = header.getByText("ShareGPT", { exact: true });
   await brand.waitFor({ state: "visible" });
-  return {
-    paddingLeft: await header.evaluate((node) =>
-      Number.parseFloat(getComputedStyle(node).paddingLeft),
-    ),
-    brand: await brand.boundingBox(),
-  };
+  let snapshot;
+  // Initialization can replace the loading titlebar between locator calls.
+  await expect
+    .poll(async () => {
+      snapshot = await brand.evaluate((node) => {
+        const header = node.closest("header");
+        if (!header?.isConnected || !node.isConnected) return null;
+        const rect = node.getBoundingClientRect();
+        return {
+          paddingLeft: Number.parseFloat(getComputedStyle(header).paddingLeft),
+          brand: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        };
+      });
+      return Boolean(snapshot && Number.isFinite(snapshot.paddingLeft) && snapshot.brand.width > 0);
+    })
+    .toBe(true);
+  return snapshot;
 }
 
 async function waitForFullScreenEvent(page, expected) {
@@ -62,6 +73,7 @@ async function main() {
     });
     const page = await electronApp.firstWindow();
     await page.waitForFunction(() => Boolean(window.api?.toggleWindowFullScreen));
+    await page.getByText("欢迎来到 ShareGPT", { exact: true }).waitFor({ state: "visible" });
     await page.evaluate(() => {
       window.__shareGptFullScreenEvents = [];
       window.api.onAppEvent((payload) => {
