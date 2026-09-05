@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const path = require("node:path");
 const { _electron: electron } = require("playwright");
 
@@ -36,13 +37,8 @@ async function run() {
       (await page.evaluate(() => window.api.getSettingsPrincipal())).principalId,
       "local-device",
     );
-    const sentinel = "packaged-startup-sentinel.txt";
-    await app.evaluate(({ app }, name) => {
-      require("node:fs").writeFileSync(
-        require("node:path").join(app.getPath("userData"), name),
-        "preserve",
-      );
-    }, sentinel);
+    const sentinel = path.join(identity.data, "packaged-startup-sentinel.txt");
+    fs.writeFileSync(sentinel, "preserve");
     await app.close();
     app = await electron.launch({ executablePath, timeout: 60000 });
     const reopened = await app.firstWindow();
@@ -51,15 +47,8 @@ async function run() {
       (await reopened.evaluate(() => window.api.getSettingsPrincipal())).principalId,
       "local-device",
     );
-    const retained = await app.evaluate(
-      ({ app }, name) =>
-        require("node:fs").readFileSync(
-          require("node:path").join(app.getPath("userData"), name),
-          "utf8",
-        ),
-      sentinel,
-    );
-    assert.equal(retained, "preserve");
+    assert.equal(await app.evaluate(({ app }) => app.getPath("userData")), identity.data);
+    assert.equal(fs.readFileSync(sentinel, "utf8"), "preserve");
     assert.deepEqual(errors, []);
     console.log(
       "Packaged startup passed: real entry/preload, onboarding, personal Principal, restart and data retention.",
