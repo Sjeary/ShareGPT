@@ -16,6 +16,7 @@ const {
   shell,
 } = require("electron");
 const { Backend, DEFAULT_TARGET_DOMAINS } = require("./backend");
+const { buildAiRouteHealth } = require("./aiRouteHealth");
 const { loadRendererEntry, resolveRendererEntry } = require("./rendererEntry");
 const appLog = require("./logger");
 const updateLog = appLog.scoped("update");
@@ -752,30 +753,7 @@ function createElectronApp(baseMode = "all") {
       cacheKey,
       async () => {
         const detected = await detectProxyEnvironment(route.port);
-        const expected = route.expected && typeof route.expected === "object" ? route.expected : {};
-        const expectedIp = safeText(expected.ip).toLowerCase();
-        const expectedCountry = safeText(expected.countryCode).toUpperCase();
-        const expectedAsn = safeText(expected.asn).toUpperCase().replace(/^AS/, "");
-        const actualAsn = safeText(detected.asn).toUpperCase().replace(/^AS/, "");
-        const checks = {
-          httpCrossCheck: Boolean(detected.ip),
-          expectedIp: !expectedIp || safeText(detected.ip).toLowerCase() === expectedIp,
-          expectedCountry:
-            !expectedCountry || safeText(detected.countryCode).toUpperCase() === expectedCountry,
-          expectedAsn: !expectedAsn || actualAsn === expectedAsn,
-          dnsSameRoute: Boolean(route.dnsTag && route.outboundTag),
-          ipv6Contained: Boolean(detected.ip && !String(detected.ip).includes(":")),
-          webRtcProtected: true,
-        };
-        const ok = Object.values(checks).every(Boolean);
-        return {
-          ok,
-          routeId,
-          route: route.label,
-          expected,
-          checks,
-          ...detected,
-        };
+        return buildAiRouteHealth(route, detected);
       },
       options,
     );
@@ -2866,7 +2844,9 @@ function createElectronApp(baseMode = "all") {
         const health = await checkAiRouteHealth(route);
         assertCurrent();
         if (!health.ok) {
-          throw new Error(`线路 ${route.label} 未通过出口、DNS 或防泄漏预检，已阻止页面访问`);
+          throw new Error(
+            `线路 ${route.label} 未通过出口预期、IPv4 出口或 DNS 线路标记预检，已阻止页面访问`,
+          );
         }
         workspace.verifiedRouteBinding = routeFingerprint;
       }

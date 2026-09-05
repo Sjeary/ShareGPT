@@ -18,6 +18,7 @@ type RouteHealth = {
   countryCode?: string
   asn?: string
   checks?: Record<string, boolean>
+  expected?: { ip?: string; countryCode?: string; asn?: string }
 }
 
 interface Props {
@@ -116,7 +117,7 @@ export function AiEnvironmentPanel({
         }).catch(() => undefined)
       }
       if (result.ok) toast.success([result.route, result.ip].filter(Boolean).join(' · '))
-      else toast.error('出口预期或防泄漏校验不一致，已阻止使用该线路')
+      else toast.error('出口预期、IPv4 出口或 DNS 线路标记不符合要求，已阻止使用该线路')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '线路检测失败')
     } finally {
@@ -267,12 +268,19 @@ export function AiEnvironmentPanel({
 
 function RouteHealthRow({ health }: { health: RouteHealth }) {
   const checks = health.checks || {}
+  const hasExpected = Object.values(health.expected || {}).some((value) => value?.trim())
   const items = [
-    ['HTTP 双源', checks.httpCrossCheck],
-    ['出口预期', checks.expectedIp && checks.expectedCountry && checks.expectedAsn],
-    ['DNS 同线路', checks.dnsSameRoute],
-    ['IPv6 隔离', checks.ipv6Contained],
-    ['WebRTC 防泄漏', checks.webRtcProtected],
+    ['出口双源实测', checks.httpCrossCheck],
+    ...(hasExpected
+      ? [
+          [
+            '出口预期匹配',
+            checks.expectedIp && checks.expectedCountry && checks.expectedAsn,
+          ] as const,
+        ]
+      : []),
+    ['DNS 线路标记配置', checks.dnsRouteTagsPresent],
+    ['本次出口为 IPv4', checks.detectedIpv4],
   ] as const
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border/50 px-1 pt-1.5 text-[11px] text-muted-foreground">
@@ -286,6 +294,10 @@ function RouteHealthRow({ health }: { health: RouteHealth }) {
           {ok ? '通过' : '失败'} · {label}
         </span>
       ))}
+      {!hasExpected && <span>出口预期：未配置</span>}
+      <span className="basis-full">
+        本次仅检测代理出口及线路标记，不验证当前网页会话的 DNS、IPv6 或 WebRTC 泄漏。
+      </span>
     </div>
   )
 }

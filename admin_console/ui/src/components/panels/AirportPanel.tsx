@@ -180,7 +180,10 @@ export function AirportPanel() {
                 </span>
               </div>
               <div className="grid gap-1 border-t border-border/60 pt-2">
-                <span className="text-xs font-medium">最近客户端巡检</span>
+                <span className="text-xs font-medium">最近客户端线路预检</span>
+                <span className="text-xs text-muted-foreground">
+                  客户端上报的出口预检结果，不代表服务器已验证网页会话无泄漏。
+                </span>
                 {!health.some((report) => report.routeId === route.id) && (
                   <span className="text-xs text-muted-foreground">暂无上报</span>
                 )}
