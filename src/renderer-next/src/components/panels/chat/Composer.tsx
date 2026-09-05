@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   CornerUpLeft,
   Paperclip,
@@ -9,11 +9,11 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { Theme, EmojiStyle, type EmojiClickData } from 'emoji-picker-react'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { useAppStore } from '@/store/useAppStore'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { ChatEmojiPicker } from './ChatEmojiPicker'
 import type {
   ChatAttachment,
   ChatEditDraft,
@@ -21,9 +21,6 @@ import type {
   ChatReplyTarget,
 } from '@/store/useChatStore'
 import { formatBytes } from './format'
-
-// 表情选择器较大, 懒加载 (与 MessageBubble 的回应选择器同款, NATIVE unicode)。
-const EmojiPicker = lazy(() => import('emoji-picker-react'))
 
 const MAX_BYTES = 30 * 1024 * 1024 // 30MB, 与旧版 CHAT_ATTACHMENT_MAX_BYTES 及服务器约束一致
 const MAX_COMPOSER_HEIGHT = 140
@@ -142,22 +139,8 @@ export function Composer({
   const dragDepth = useRef(0)
   const fileRef = useRef<HTMLInputElement>(null)
   const textRef = useRef<HTMLTextAreaElement>(null)
-  const emojiWrapRef = useRef<HTMLDivElement>(null)
-  const dark = useAppStore((s) => s.dark)
 
   const inEdit = Boolean(edit?.id)
-
-  // 表情面板: 点外部关闭。
-  useEffect(() => {
-    if (!emojiOpen) return
-    const onDown = (e: MouseEvent) => {
-      if (emojiWrapRef.current && !emojiWrapRef.current.contains(e.target as Node)) {
-        setEmojiOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [emojiOpen])
 
   // 在光标处插入表情 (NATIVE unicode, 直接进入消息正文)。
   function insertEmoji(emoji: string) {
@@ -364,41 +347,29 @@ export function Composer({
           <Paperclip className="size-5" />
         </Button>
 
-        <div ref={emojiWrapRef} className="relative shrink-0">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            disabled={disabled}
-            onClick={() => setEmojiOpen((v) => !v)}
-            title="插入表情"
+        <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
+          <PopoverTrigger asChild>
+            <Button type="button" variant="ghost" size="icon" disabled={disabled} title="插入表情">
+              <SmilePlus className="size-5" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent
+            aria-label="插入表情"
+            side="top"
+            align="start"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault()
+              textRef.current?.focus({ preventScroll: true })
+            }}
           >
-            <SmilePlus className="size-5" />
-          </Button>
-          {emojiOpen && (
-            <div className="absolute bottom-12 left-0 z-30">
-              <Suspense
-                fallback={
-                  <div className="rounded-lg border border-border bg-popover p-4 text-xs text-muted-foreground shadow-md">
-                    加载表情…
-                  </div>
-                }
-              >
-                <EmojiPicker
-                  onEmojiClick={(e: EmojiClickData) => {
-                    insertEmoji(e.emoji)
-                    setEmojiOpen(false)
-                  }}
-                  theme={dark ? Theme.DARK : Theme.LIGHT}
-                  emojiStyle={EmojiStyle.NATIVE}
-                  lazyLoadEmojis
-                  width={300}
-                  height={380}
-                />
-              </Suspense>
-            </div>
-          )}
-        </div>
+            <ChatEmojiPicker
+              onEmojiClick={(e) => {
+                insertEmoji(e.emoji)
+                setEmojiOpen(false)
+              }}
+            />
+          </PopoverContent>
+        </Popover>
 
         <textarea
           ref={textRef}

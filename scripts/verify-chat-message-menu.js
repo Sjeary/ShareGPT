@@ -12,6 +12,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { MessageBubble } from '/src/components/panels/chat/MessageBubble.tsx';
+import { Composer } from '/src/components/panels/chat/Composer.tsx';
 import '/src/index.css';
 const message = {
   id: 'menu-fixture', type: 'chat', scope: 'subnet', from: 'self', to: '',
@@ -23,15 +24,18 @@ const message = {
 const actions = Object.fromEntries(['Reply', 'Forward', 'Edit', 'Recall', 'React', 'OpenImage', 'JumpToMessage']
   .map(name => ['on' + name, () => { document.querySelector('output').textContent = name; }]));
 const root = createRoot(document.getElementById('root'));
-window.renderMenuFixture = ({ mine = true, top = false, height = 240, dark = false } = {}) => {
+window.renderMenuFixture = ({ mine = true, top = false, height = 240, dark = false, readers = false, composer = false } = {}) => {
   document.documentElement.classList.toggle('dark', dark);
   flushSync(() => root.render(<main className="bg-background text-foreground" style={{ padding: 24 }}>
     <div data-chat-scroll-viewport style={{ height, overflow: 'auto', position: 'relative', padding: 16 }}>
       {!top && <div style={{ height: height - 85 }} />}
-      <MessageBubble key={String(mine) + top + height + dark} message={message} mine={mine}
+      <MessageBubble key={String(mine) + top + height + dark + readers} message={{...message,
+        readBy: readers ? Array.from({ length: 30 }, (_, i) => ({username: 'reader-' + i, displayName: 'Reader ' + i, readAt: ''})) : []}} mine={mine}
         showAvatar={!mine} selfUsername="self" actions={actions} />
       {top && <div style={{ height }} />}
     </div>
+    {composer && <Composer disabled={false} placeholder="Message" reply={null} edit={null} forward={null}
+      onSend={() => true} onEditSubmit={() => true} onCancelDraft={() => {}} />}
     <button id="outside">Outside</button><output />
   </main>));
 };
@@ -89,6 +93,24 @@ async function run() {
     await page.waitForFunction(() => typeof window.renderMenuFixture === "function");
     const trigger = page.getByRole("button", { name: "消息操作", exact: true });
     const menu = page.getByRole("menu");
+    async function clickVisibleEmoji(picker) {
+      // The picker virtualizes categories and may retain offscreen duplicates of common emoji.
+      const buttons = picker.locator("button.epr-emoji");
+      const index = await buttons.evaluateAll((nodes) =>
+        nodes.findIndex((node) => {
+          const r = node.getBoundingClientRect();
+          return (
+            r.height > 0 &&
+            node.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2))
+          );
+        }),
+      );
+      assert.ok(
+        index >= 0,
+        "at least one emoji must be immediately clickable without scrolling history",
+      );
+      await buttons.nth(index).click();
+    }
     async function checkBounds() {
       await page.locator('[role="menu"], div.absolute.top-7.z-20').evaluate(async (node) => {
         await Promise.all(
@@ -169,6 +191,85 @@ async function run() {
     await trigger.click();
     await checkBounds();
     await page.screenshot({ path: path.join(directory, "narrow-dark.png") });
+    await page.keyboard.press("Escape");
+    await electronApp.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setSize(640, 640),
+    );
+    for (const mine of [true, false]) {
+      await page.evaluate(
+        (mine) => window.renderMenuFixture({ mine, height: 540, dark: true }),
+        mine,
+      );
+      const viewport = page.locator("[data-chat-scroll-viewport]");
+      const before = await viewport.evaluate((node) => ({
+        top: node.scrollTop,
+        height: node.scrollHeight,
+      }));
+      await page.getByRole("button", { name: "表情回应", exact: true }).click();
+      const picker = page.locator(".EmojiPickerReact");
+      await picker.waitFor();
+      const bounds = await picker.boundingBox();
+      const area = await viewport.boundingBox();
+      assert.ok(
+        bounds.y >= area.y && bounds.y + bounds.height <= area.y + area.height,
+        `emoji picker escapes chat viewport: ${JSON.stringify({ bounds, area })}`,
+      );
+      assert.deepEqual(
+        await viewport.evaluate((node) => ({ top: node.scrollTop, height: node.scrollHeight })),
+        before,
+        "opening reactions must not scroll or enlarge message history",
+      );
+      await page.screenshot({ path: path.join(directory, `reaction-${mine}.png`) });
+      await page.keyboard.press("Escape");
+      await picker.waitFor({ state: "hidden" });
+    }
+    for (const width of [360, 640]) {
+      await electronApp.evaluate(
+        ({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0].setSize(width, 480),
+        width,
+      );
+      await page.evaluate(() =>
+        window.renderMenuFixture({ height: 260, readers: true, composer: true }),
+      );
+      const viewport = page.locator("[data-chat-scroll-viewport]");
+      await page.getByRole("button", { name: "表情回应", exact: true }).click();
+      const picker = page.locator(".EmojiPickerReact");
+      await picker.waitFor();
+      const area = await viewport.boundingBox();
+      const box = await picker.boundingBox();
+      assert.ok(box.x >= area.x && box.x + box.width <= area.x + area.width + 1);
+      assert.ok(box.y >= area.y && box.y + box.height <= area.y + area.height + 1);
+      await page.screenshot({ path: path.join(directory, `reaction-narrow-${width}.png`) });
+      process.stdout.write(`${JSON.stringify({ directory, width, box, area })}\n`);
+      await clickVisibleEmoji(picker);
+      await picker.waitFor({ state: "hidden" });
+      assert.equal(await page.locator("output").textContent(), "React");
+      await page.getByRole("button", { name: "30 人已读", exact: true }).click();
+      const readers = page.getByRole("dialog", { name: "已读成员" });
+      await readers.waitFor();
+      const readerBox = await readers.boundingBox();
+      assert.ok(
+        readerBox.y >= area.y && readerBox.y + readerBox.height <= area.y + area.height + 1,
+      );
+      await readers.getByText("Reader 29", { exact: true }).scrollIntoViewIfNeeded();
+      await page.keyboard.press("Escape");
+      await readers.waitFor({ state: "hidden" });
+      await page.getByTitle("插入表情", { exact: true }).click();
+      await picker.waitFor();
+      const composerBox = await picker.boundingBox();
+      const windowSize = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+      assert.ok(composerBox.x >= 0 && composerBox.x + composerBox.width <= windowSize.width);
+      assert.ok(composerBox.y >= 0 && composerBox.y + composerBox.height <= windowSize.height);
+      await picker.getByPlaceholder("搜索表情").fill("grinning face");
+      await page.waitForFunction(() =>
+        document.querySelector(".EmojiPickerReact")?.classList.contains("epr-search-active"),
+      );
+      await page.screenshot({ path: path.join(directory, `composer-picker-${width}.png`) });
+      await clickVisibleEmoji(picker);
+      await picker.waitFor({ state: "hidden" });
+      assert.ok((await page.locator("textarea").inputValue()).length > 0);
+      await page.waitForFunction(() => document.activeElement?.tagName === "TEXTAREA");
+    }
     process.stdout.write(`${JSON.stringify({ ok: true, screenshots: directory })}\n`);
   } finally {
     await electronApp?.close();
