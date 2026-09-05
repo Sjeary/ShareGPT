@@ -10,7 +10,7 @@ function text(value: unknown): string {
 }
 
 export function canEditManagedProxy(profile: ProxyEditorProfile | null | undefined): boolean {
-  return Boolean(profile?.isAdmin || profile?.advancedAiAllowed)
+  return Boolean(profile?.isAdmin)
 }
 
 export function hasCompleteManagedProxy(sender: Partial<SenderSettings> = {}): boolean {

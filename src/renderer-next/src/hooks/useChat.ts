@@ -4,6 +4,7 @@ import { wsBus } from '@/lib/wsBus'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import {
+  chatViewKey,
   privateConversationKey,
   roomConversationKey,
   storeKeyForActive,
@@ -31,6 +32,7 @@ import {
 } from '@/hooks/clientBootstrap'
 import { requireConfirmedLoginResponse } from '@/lib/collabLoginTransaction'
 import { createSingleFlight } from '@/lib/singleFlight'
+import { canEditManagedProxy } from '@/lib/managedProxyPolicy'
 import {
   settingsPrincipalRuntime,
   type SettingsPrincipalSnapshot,
@@ -155,6 +157,10 @@ export function useChat() {
   const setSession = useAuthStore((s) => s.setSession)
 
   const wsRef = useRef<WebSocket | null>(null)
+  const readReceipts = useRef<{
+    socket: WebSocket | null
+    byConversation: Map<string, Set<string>>
+  }>({ socket: null, byConversation: new Map() })
   const persistTimer = useRef<number | null>(null)
   // 重连/重登状态 (移植自旧 state.collab.reconnect* / silentReloginInFlight)。
   const reconnectTimer = useRef<number | null>(null)
@@ -302,48 +308,6 @@ export function useChat() {
     if (cfg.notify_sound_play) playNotificationTone()
   }, [])
 
-  // 已读回执: 当前会话可见时, 对收到的未读对端消息回 chat_read
-  // (移植自旧 sendPrivateReadReceipt/sendRoomReadReceipt ~1992)。
-  const sendReadReceipt = useCallback((message: ChatMessage) => {
-    if (message.system || !message.id) return
-    const state = useChatStore.getState()
-    const self = state.identity.username
-    if (!message.from || message.from === self) return
-
-    const appActive = useAppStore.getState().active
-    const focused =
-      typeof document === 'undefined'
-        ? true
-        : document.hasFocus() && document.visibilityState !== 'hidden'
-    const key = incomingConversationKey(message, self, state.roomScope)
-    const activeStoreKey = storeKeyForActive(state.activeKey, state.roomScope)
-    if (!(appActive === 'chat' && key === activeStoreKey && focused)) return
-
-    const ws = wsRef.current
-    if (!ws || ws.readyState !== WebSocket.OPEN) return
-    try {
-      if (message.scope === 'private') {
-        ws.send(
-          JSON.stringify({
-            type: 'chat_read',
-            with: message.from,
-            messageIds: [message.id],
-          }),
-        )
-      } else {
-        ws.send(
-          JSON.stringify({
-            type: 'chat_read',
-            scope: 'subnet',
-            messageIds: [message.id],
-          }),
-        )
-      }
-    } catch {
-      /* ignore */
-    }
-  }, [])
-
   // 未读计数 (旧 increaseUnreadCount): 仅对「实时」入站消息生效, 且会话不可见时才 +1。
   // 历史加载走 mergeMessages 不经此处, 故重新登录不会把已读历史重新标未读。
   const trackUnread = useCallback((message: ChatMessage) => {
@@ -359,9 +323,15 @@ export function useChat() {
         : document.hasFocus() && document.visibilityState !== 'hidden'
     const key = incomingConversationKey(message, self, state.roomScope)
     const activeStoreKey = storeKeyForActive(state.activeKey, state.roomScope)
-    const visible = appActive === 'chat' && key === activeStoreKey && focused
+    const viewKey = chatViewKey(settingsPrincipalRuntime.current().principalId, key)
+    const visible =
+      appActive === 'chat' &&
+      key === activeStoreKey &&
+      focused &&
+      state.readingActiveView === viewKey &&
+      state.readingPositions[viewKey]?.atBottom
     if (visible) return
-    state.incrementUnread(key)
+    state.incrementUnread(key, message.id)
   }, [])
 
   // 对端 typing (移植自旧 chat_typing 分支 ~4427 + setConversationTyping ~488)。
@@ -538,9 +508,7 @@ export function useChat() {
         try {
           await fetchAndApplyAuthoritativeClientBootstrap(serverUrl, issuedToken, {
             allowLegacyAdminConfig: Boolean(payload.profile?.isAdmin),
-            managedConfigEditable: Boolean(
-              payload.profile?.isAdmin || payload.profile?.advancedAiAllowed,
-            ),
+            managedConfigEditable: canEditManagedProxy(payload.profile),
             principalSnapshot,
           })
         } catch (error) {
@@ -670,6 +638,18 @@ export function useChat() {
           }
           case 'chat': {
             const message = normalizeChatMessage(payload)
+            const current = useChatStore.getState()
+            const conversationKey = incomingConversationKey(
+              message,
+              current.identity.username,
+              current.roomScope,
+            )
+            const alreadyReceived = Boolean(
+              message.id &&
+              current.messagesByConversation[conversationKey]?.some(
+                (item) => item.id === message.id,
+              ),
+            )
             // 收到对端消息: 清除其 typing 提示 (旧 ~3735)。
             if (message.from && message.from !== useChatStore.getState().identity.username) {
               const key =
@@ -684,9 +664,10 @@ export function useChat() {
               clearTyping(key)
             }
             upsertMessage(message)
-            maybeNotifyIncoming(message)
-            sendReadReceipt(message)
-            trackUnread(message)
+            if (!alreadyReceived) {
+              maybeNotifyIncoming(message)
+              trackUnread(message)
+            }
             break
           }
           case 'chat_typing': {
@@ -811,7 +792,6 @@ export function useChat() {
     maybeNotifyIncoming,
     mergeMessages,
     refreshDirectory,
-    sendReadReceipt,
     setConnection,
     setIdentity,
     setRoomScope,
@@ -842,7 +822,7 @@ export function useChat() {
     if (!text && !attachments.length) return false
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      throw new Error('消息服务尚未连接，请先登录账户。')
+      throw new Error('消息服务连接已断开，草稿已保留，请连接后重试。')
     }
     ws.send(
       JSON.stringify({
@@ -865,6 +845,10 @@ export function useChat() {
       const ws = wsRef.current
       if (!ws || ws.readyState !== WebSocket.OPEN) return
       const self = useChatStore.getState().identity.username
+      if (readReceipts.current.socket !== ws)
+        readReceipts.current = { socket: ws, byConversation: new Map() }
+      const conversation = JSON.stringify([scope, partner, useChatStore.getState().roomScope])
+      const previous = readReceipts.current.byConversation.get(conversation) ?? new Set<string>()
       const ids = [
         ...new Set(
           messages
@@ -872,7 +856,8 @@ export function useChat() {
               (m) =>
                 !m.system && !m.recalled && m.id && m.from && m.from !== self && m.scope === scope,
             )
-            .map((m) => m.id),
+            .map((m) => m.id)
+            .filter((id) => !previous.has(id)),
         ),
       ]
       if (!ids.length) return
@@ -883,6 +868,9 @@ export function useChat() {
         } else {
           ws.send(JSON.stringify({ type: 'chat_read', scope: 'subnet', messageIds: ids }))
         }
+        const retained = new Set(messages.filter((m) => previous.has(m.id)).map((m) => m.id))
+        for (const id of ids) retained.add(id)
+        readReceipts.current.byConversation.set(conversation, retained)
       } catch {
         /* ignore */
       }
@@ -910,7 +898,7 @@ export function useChat() {
   function requireOpenSocket(): WebSocket {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      throw new Error('当前未连接消息服务，请先登录账户。')
+      throw new Error('当前未连接消息服务，请连接后重试。')
     }
     return ws
   }

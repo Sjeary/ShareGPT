@@ -1,11 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquare } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowDown, CornerDownLeft, MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAppStore } from '@/store/useAppStore'
-import { privateConversationKey, storeKeyForActive, useChatStore } from '@/store/useChatStore'
-import type { ChatAttachment, ChatForwardDraft, ChatMessage } from '@/store/useChatStore'
+import {
+  chatViewKey,
+  EMPTY_COMPOSER_DRAFT,
+  privateConversationKey,
+  storeKeyForActive,
+  useChatStore,
+} from '@/store/useChatStore'
+import type {
+  ChatAttachment,
+  ChatComposerDraft,
+  ChatForwardDraft,
+  ChatMessage,
+} from '@/store/useChatStore'
+import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
 import type { CollabSettings } from '@/types/settings'
 import { useChat } from '@/hooks/useChat'
+import { useChatReading } from '@/hooks/useChatReading'
+import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { ConversationList } from './chat/ConversationList'
@@ -72,16 +86,31 @@ export function ChatPanel() {
   const filter = useChatStore((s) => s.filter)
   const setFilter = useChatStore((s) => s.setFilter)
   const typingByConversation = useChatStore((s) => s.typingByConversation)
-  const replyDraft = useChatStore((s) => s.replyDraft)
-  const editDraft = useChatStore((s) => s.editDraft)
-  const forwardDraft = useChatStore((s) => s.forwardDraft)
-  const setReplyDraft = useChatStore((s) => s.setReplyDraft)
-  const setEditDraft = useChatStore((s) => s.setEditDraft)
-  const setForwardDraft = useChatStore((s) => s.setForwardDraft)
-  const clearDrafts = useChatStore((s) => s.clearDrafts)
+  const principal = settingsPrincipalRuntime.current()
+  const viewKey = chatViewKey(principal.principalId, storeKeyForActive(activeKey, roomScope))
+  const draft = useChatStore((s) => s.composerDrafts[viewKey] ?? EMPTY_COMPOSER_DRAFT)
+  const { reply: replyDraft, edit: editDraft, forward: forwardDraft } = draft
+  function patchDraft(patch: Partial<ChatComposerDraft>) {
+    try {
+      settingsPrincipalRuntime.assertCurrent(principal)
+      useChatStore.getState().patchComposerDraft(viewKey, patch)
+    } catch {
+      /* A completed file read from an old Principal cannot write a draft. */
+    }
+  }
+  const setReplyDraft = (reply: ChatComposerDraft['reply']) =>
+    patchDraft({ reply, edit: null, forward: null })
+  const setEditDraft = (edit: ChatComposerDraft['edit']) =>
+    patchDraft({ edit, reply: null, forward: null })
+  const setForwardDraft = (forward: ChatComposerDraft['forward']) =>
+    patchDraft({ forward, reply: null, edit: null })
+  const clearDrafts = () => patchDraft({ reply: null, edit: null, forward: null })
   // 未读计数改由 store 维护 (仅实时入站累加, 历史加载不计), 见 useChat.trackUnread。
   const unreadByKey = useChatStore((s) => s.unreadByKey)
   const clearUnread = useChatStore((s) => s.clearUnread)
+  const activeStoreKey = storeKeyForActive(activeKey, roomScope)
+  const firstUnreadId = useChatStore((s) => s.firstUnreadByKey[activeStoreKey] ?? '')
+  const appActive = useAppStore((s) => s.active)
 
   const collab = (settings?.collab ?? {}) as Partial<CollabSettings>
   const pinned = useMemo(() => new Set(collab.pinned_users ?? []), [collab.pinned_users])
@@ -123,72 +152,57 @@ export function ChatPanel() {
     [messagesByConversation, activeKey, roomScope],
   )
 
-  // 自动滚动到底部。
-  // 旧实现仅在 useEffect 里同步设一次 scrollTop, 打开会话时面板可能尚未完成布局/可见
-  // (高度为 0), 设置无效, 结果停在最顶部最旧消息。改为:
-  //  - 切换会话时用双 rAF 等布局完成后强制贴底;
-  //  - 新消息仅在用户「已贴底」时跟随, 向上翻看历史时不打断。
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const stickToBottomRef = useRef(true)
-
-  // 跟踪用户是否贴在底部 (距底 < 80px 视为贴底)。
-  useEffect(() => {
-    const node = scrollRef.current
-    if (!node) return
-    const onScroll = () => {
-      const gap = node.scrollHeight - node.scrollTop - node.clientHeight
-      stickToBottomRef.current = gap < 80
-    }
-    node.addEventListener('scroll', onScroll, { passive: true })
-    return () => node.removeEventListener('scroll', onScroll)
-  }, [])
-
-  // 打开 / 切换会话: 强制定位到最新消息 (双 rAF 处理初次可见与异步布局)。
-  useEffect(() => {
-    stickToBottomRef.current = true
-    const node = scrollRef.current
-    if (!node) return
-    let raf2 = 0
-    const raf1 = requestAnimationFrame(() => {
-      node.scrollTop = node.scrollHeight
-      raf2 = requestAnimationFrame(() => {
-        node.scrollTop = node.scrollHeight
-      })
-    })
-    return () => {
-      cancelAnimationFrame(raf1)
-      cancelAnimationFrame(raf2)
-    }
-  }, [activeKey])
-
-  // 新消息到达: 仅当用户已贴底时跟随到底, 否则保持当前阅读位置。
-  useEffect(() => {
-    if (!stickToBottomRef.current) return
-    const node = scrollRef.current
-    if (node) node.scrollTop = node.scrollHeight
-  }, [messages])
+  const {
+    scrollRef,
+    contentRef,
+    atBottom,
+    focused,
+    unreadMarkerId,
+    canReturn,
+    toLatest,
+    returnToReading,
+    jumpToMessage: jumpToLoadedMessage,
+  } = useChatReading(viewKey, messages, appActive === 'chat', firstUnreadId)
 
   const online = connection === 'online'
   const scope: 'subnet' | 'private' = activeConversation?.kind === 'private' ? 'private' : 'subnet'
 
-  // 切换会话时清空草稿 (旧逻辑: 切换联系人会重置输入意图)。
+  // Only an active, focused conversation at its latest messages advances read receipts.
   useEffect(() => {
-    clearDrafts()
-  }, [activeKey, clearDrafts])
-
-  // 会话可见时批量已读 (旧 markVisible*ConversationRead, 打开会话 / 收到历史后触发)。
-  const appActive = useAppStore((s) => s.active)
-  useEffect(() => {
-    if (appActive !== 'chat' || connection !== 'online' || !activeConversation) return
+    if (
+      appActive !== 'chat' ||
+      !focused ||
+      connection !== 'online' ||
+      !activeConversation ||
+      !useChatStore.getState().readingPositions[viewKey]?.atBottom
+    )
+      return
     chat.markConversationRead(messages, scope, activeConversation.username)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appActive, connection, activeKey, messages])
+  }, [appActive, connection, activeKey, messages, atBottom, focused, viewKey])
 
-  // 打开/查看会话即清除其未读标记 (旧 clearUnreadCount on open); 离线也清, 与旧版一致。
+  // Keep offscreen arrivals unread while the user is reviewing history.
   useEffect(() => {
-    if (appActive !== 'chat' || !activeConversation) return
+    if (
+      appActive !== 'chat' ||
+      !focused ||
+      !activeConversation ||
+      !useChatStore.getState().readingPositions[viewKey]?.atBottom
+    )
+      return
     clearUnread(storeKeyForActive(activeKey, roomScope))
-  }, [appActive, activeKey, roomScope, messages, activeConversation, clearUnread])
+  }, [
+    appActive,
+    activeKey,
+    roomScope,
+    messages,
+    activeConversation,
+    clearUnread,
+    atBottom,
+    focused,
+    viewKey,
+    unreadByKey,
+  ])
 
   // 对端「正在输入…」(旧 conversationTypingSummary ~510): 房间多人时汇总。
   const typingText = useMemo(() => {
@@ -249,33 +263,32 @@ export function ChatPanel() {
   }
 
   function handleSend(text: string, attachments: ChatAttachment[]) {
-    if (!activeConversation) return
-    try {
-      if (forwardDraft) {
-        chat.sendForward(forwardDraft, scope, activeConversation.username)
-      }
-      if (text || attachments.length) {
-        chat.sendMessage({
-          text,
-          scope,
-          to: activeConversation.username,
-          replyTo: replyDraft,
-          attachments,
-        })
-      }
-      clearDrafts()
-    } catch (err) {
-      reportSendError(err)
+    settingsPrincipalRuntime.assertCurrent(principal)
+    if (!activeConversation) return false
+    if (forwardDraft) {
+      chat.sendForward(forwardDraft, scope, activeConversation.username)
+      // If the following comment fails, retry only the comment, not the already queued forward.
+      patchDraft({ forward: null })
     }
+    if (text || attachments.length) {
+      const queued = chat.sendMessage({
+        text,
+        scope,
+        to: activeConversation.username,
+        replyTo: replyDraft,
+        attachments,
+      })
+      if (!queued) return false
+    }
+    clearDrafts()
+    return true
   }
 
   function handleEditSubmit(id: string, text: string) {
-    try {
-      chat.sendEdit(id, text)
-      clearDrafts()
-    } catch (err) {
-      reportSendError(err)
-    }
+    settingsPrincipalRuntime.assertCurrent(principal)
+    chat.sendEdit(id, text)
+    clearDrafts()
+    return true
   }
 
   // 从在线联系人开启私聊 (旧 pickPrivateTarget ~3445)。
@@ -286,15 +299,7 @@ export function ChatPanel() {
 
   // 跳转到被回复的原消息并临时高亮 (旧 focusMessageById ~4871)。
   function jumpToMessage(id: string) {
-    if (!id) return
-    const root = scrollRef.current
-    const node = root?.querySelector<HTMLElement>(
-      `[data-message-id="${(window.CSS?.escape ?? ((v: string) => v))(id)}"]`,
-    )
-    if (!node) return
-    node.scrollIntoView({ block: 'center', behavior: 'smooth' })
-    node.classList.add('chat-jump-target')
-    window.setTimeout(() => node.classList.remove('chat-jump-target'), 1600)
+    if (!jumpToLoadedMessage(id)) toast.info('原消息不在当前已加载的记录中。')
   }
 
   const messageActions: MessageActions = {
@@ -404,61 +409,115 @@ export function ChatPanel() {
         </div>
 
         {/* 消息滚动区 */}
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4">
-          {messages.length === 0 ? (
-            <div className="grid h-full place-items-center text-center text-sm text-muted-foreground">
-              <div className="flex flex-col items-center gap-2">
-                <MessageSquare className="size-8 opacity-40" />
-                {activeConversation?.kind === 'private'
-                  ? '这里还没有私聊记录。'
-                  : '这个房间还没有消息记录。'}
-              </div>
-            </div>
-          ) : (
-            <div className="selectable flex flex-col gap-1.5">
-              {messages.map((message, i) => {
-                const prev = i > 0 ? messages[i - 1] : null
-                const showDate = !prev || !isSameDay(prev.timestamp, message.timestamp)
-                const mine = !message.system && message.from === selfUsername
-                const showAvatar =
-                  !mine && (!prev || prev.system || prev.from !== message.from || showDate)
-                return (
-                  <div key={message.id || `${message.timestamp}-${i}`}>
-                    {showDate && (
-                      <div className="my-2 flex justify-center">
-                        <span className="rounded-full bg-secondary px-3 py-0.5 text-xs text-muted-foreground">
-                          {formatDateLabel(message.timestamp)}
-                        </span>
-                      </div>
-                    )}
-                    <MessageBubble
-                      message={message}
-                      mine={mine}
-                      showAvatar={showAvatar}
-                      selfUsername={selfUsername}
-                      actions={messageActions}
-                    />
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div
+            ref={scrollRef}
+            data-chat-scroll-viewport
+            className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 [overflow-anchor:none]"
+          >
+            <div ref={contentRef} className="flex min-h-full flex-col">
+              {messages.length === 0 ? (
+                <div className="grid flex-1 place-items-center text-center text-sm text-muted-foreground">
+                  <div className="flex flex-col items-center gap-2">
+                    <MessageSquare className="size-8 opacity-40" />
+                    {activeConversation?.kind === 'private'
+                      ? '这里还没有私聊记录。'
+                      : '这个房间还没有消息记录。'}
                   </div>
-                )
-              })}
+                </div>
+              ) : (
+                <div className="selectable flex flex-col gap-1.5">
+                  {messages.map((message, i) => {
+                    const prev = i > 0 ? messages[i - 1] : null
+                    const showDate = !prev || !isSameDay(prev.timestamp, message.timestamp)
+                    const mine = !message.system && message.from === selfUsername
+                    const showAvatar =
+                      !mine && (!prev || prev.system || prev.from !== message.from || showDate)
+                    return (
+                      <div key={message.id || `${message.timestamp}-${i}`}>
+                        {message.id === unreadMarkerId && (
+                          <div
+                            className="my-3 flex items-center gap-3 text-xs text-primary"
+                            role="separator"
+                            aria-label="未读消息"
+                          >
+                            <span className="h-px flex-1 bg-primary/30" />
+                            未读消息
+                            <span className="h-px flex-1 bg-primary/30" />
+                          </div>
+                        )}
+                        {showDate && (
+                          <div className="my-2 flex justify-center">
+                            <span className="rounded-full bg-secondary px-3 py-0.5 text-xs text-muted-foreground">
+                              {formatDateLabel(message.timestamp)}
+                            </span>
+                          </div>
+                        )}
+                        <MessageBubble
+                          message={message}
+                          mine={mine}
+                          showAvatar={showAvatar}
+                          selfUsername={selfUsername}
+                          actions={messageActions}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+          {(!atBottom || canReturn) && (
+            <div className="pointer-events-none absolute bottom-3 right-4 flex gap-2">
+              {canReturn && (
+                <Button
+                  className="pointer-events-auto shadow-sm"
+                  size="sm"
+                  variant="secondary"
+                  onClick={returnToReading}
+                >
+                  <CornerDownLeft className="size-4" />
+                  返回原位置
+                </Button>
+              )}
+              {!atBottom && (
+                <Button
+                  className="pointer-events-auto shadow-sm"
+                  size="sm"
+                  variant="secondary"
+                  onClick={toLatest}
+                  aria-label={
+                    unreadByKey[activeStoreKey]
+                      ? `${unreadByKey[activeStoreKey]} 条新消息`
+                      : '回到最新'
+                  }
+                >
+                  <ArrowDown className="size-4" />
+                  {unreadByKey[activeStoreKey]
+                    ? `${unreadByKey[activeStoreKey]} 条新消息`
+                    : '回到最新'}
+                </Button>
+              )}
             </div>
           )}
         </div>
 
-        {/* 输入区 (编辑态用 key 重挂载以 seed 原文) */}
+        {/* Recreate operation-local input state when identity, conversation or edit target changes. */}
         <Composer
-          key={editDraft ? `edit:${editDraft.id}` : `compose:${activeKey}`}
-          disabled={!online || !activeConversation}
+          key={`${viewKey}:${principal.generation}:${editDraft?.id ?? 'compose'}`}
+          disabled={!activeConversation || !principal.principalId}
+          sendDisabled={!online}
           placeholder={
             online
               ? activeConversation?.kind === 'private'
                 ? `发消息给 ${activeConversation.title}…`
                 : '发送到房间…'
-              : '登录账户后即可发送消息'
+              : connection === 'idle'
+                ? '登录后可发送，当前可编辑草稿…'
+                : '连接已断开，可继续编辑草稿…'
           }
-          reply={replyDraft}
-          edit={editDraft}
-          forward={forwardDraft}
+          draft={draft}
+          onDraftChange={patchDraft}
           onSend={handleSend}
           onEditSubmit={handleEditSubmit}
           onCancelDraft={clearDrafts}

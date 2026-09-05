@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { useCallback, useState } from 'react'
 import {
   CornerUpLeft,
   FileText,
@@ -8,16 +8,20 @@ import {
   SmilePlus,
   Trash2,
 } from 'lucide-react'
-import { Theme, EmojiStyle, type EmojiClickData } from 'emoji-picker-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { emojiClusters, JUMBO_MAX } from '@/lib/chat/emoji'
-import { useAppStore } from '@/store/useAppStore'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import type { ChatAttachment, ChatMessage } from '@/store/useChatStore'
 import { JumboEmoji } from './JumboEmoji'
 
-// 表情选择器较重, 懒加载; 用 NATIVE(unicode) 风格, 离线也能显示。
-const EmojiPicker = lazy(() => import('emoji-picker-react'))
+import { ChatEmojiPicker } from './ChatEmojiPicker'
 import { avatarMark, formatBytes, formatMessageTime, formatSmartTime } from './format'
 import {
   buildMessageLinkPreview,
@@ -91,33 +95,10 @@ export function MessageBubble({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [confirmRecall, setConfirmRecall] = useState(false)
   const [readersOpen, setReadersOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const readersRef = useRef<HTMLDivElement>(null)
-  const dark = useAppStore((s) => s.dark)
-
-  useEffect(() => {
-    if (!menuOpen && !pickerOpen) return
-    const onDown = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false)
-        setPickerOpen(false)
-        setConfirmRecall(false)
-      }
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [menuOpen, pickerOpen])
-
-  useEffect(() => {
-    if (!readersOpen) return
-    const onDown = (e: MouseEvent) => {
-      if (readersRef.current && !readersRef.current.contains(e.target as Node)) {
-        setReadersOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [readersOpen])
+  const [menuBoundary, setMenuBoundary] = useState<HTMLElement | null>(null)
+  const setMenuElement = useCallback((element: HTMLDivElement | null) => {
+    setMenuBoundary(element?.closest<HTMLElement>('[data-chat-scroll-viewport]') ?? null)
+  }, [])
 
   if (message.system) {
     return (
@@ -169,6 +150,8 @@ export function MessageBubble({
   function openContextMenu(e: React.MouseEvent) {
     if (!menuItems.length) return
     e.preventDefault()
+    setPickerOpen(false)
+    setConfirmRecall(false)
     setMenuOpen(true)
   }
 
@@ -302,91 +285,89 @@ export function MessageBubble({
 
           {menuItems.length > 0 && (
             <div
-              ref={menuRef}
+              ref={setMenuElement}
               className={cn(
                 'absolute top-0 z-10 flex gap-0.5',
                 mine ? 'left-0 -translate-x-full pr-1' : 'right-0 translate-x-full pl-1',
               )}
             >
-              <button
-                type="button"
-                aria-label="表情回应"
-                onClick={() => {
-                  setPickerOpen((v) => !v)
-                  setMenuOpen(false)
-                }}
-                className={cn(
-                  'grid size-6 place-items-center rounded-full bg-secondary text-muted-foreground opacity-0 outline-none transition-opacity hover:text-foreground',
-                  'group-hover/bubble:opacity-100 group-focus-within/bubble:opacity-100',
-                  'focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring',
-                  pickerOpen && 'opacity-100',
-                )}
-              >
-                <SmilePlus className="size-4" />
-              </button>
-              {pickerOpen && (
-                // 朝「内侧」展开 (我的消息工具条在右 → 向左展开; 对方在左 → 向右展开),
-                // 避免 300px 面板越过视口边缘把整页撑出横向滚动。
-                <div className={cn('absolute top-7 z-30', mine ? 'right-0' : 'left-0')}>
-                  <Suspense
-                    fallback={
-                      <div className="rounded-lg border border-border bg-popover p-4 text-xs text-muted-foreground shadow-md">
-                        加载表情…
-                      </div>
-                    }
+              <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="表情回应"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      setReadersOpen(false)
+                    }}
+                    className={cn(
+                      'grid size-6 place-items-center rounded-full bg-secondary text-muted-foreground opacity-0 outline-none transition-opacity hover:text-foreground',
+                      'group-hover/bubble:opacity-100 group-focus-within/bubble:opacity-100',
+                      'focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring',
+                      pickerOpen && 'opacity-100',
+                    )}
                   >
-                    <EmojiPicker
-                      onEmojiClick={(e: EmojiClickData) => {
-                        actions.onReact(message, e.emoji)
-                        setPickerOpen(false)
-                      }}
-                      theme={dark ? Theme.DARK : Theme.LIGHT}
-                      emojiStyle={EmojiStyle.NATIVE}
-                      lazyLoadEmojis
-                      width={300}
-                      height={380}
-                    />
-                  </Suspense>
-                </div>
-              )}
-              <button
-                type="button"
-                aria-label="消息操作"
-                onClick={() => {
-                  setMenuOpen((v) => !v)
-                  setPickerOpen(false)
-                  setConfirmRecall(false)
+                    <SmilePlus className="size-4" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  aria-label="表情回应"
+                  side="top"
+                  align={mine ? 'end' : 'start'}
+                  collisionBoundary={menuBoundary}
+                >
+                  <ChatEmojiPicker
+                    onEmojiClick={(e) => {
+                      actions.onReact(message, e.emoji)
+                      setPickerOpen(false)
+                    }}
+                  />
+                </PopoverContent>
+              </Popover>
+              <DropdownMenu
+                modal={false}
+                open={menuOpen}
+                onOpenChange={(open) => {
+                  setMenuOpen(open)
+                  if (!open) setConfirmRecall(false)
                 }}
-                className={cn(
-                  'grid size-6 place-items-center rounded-full bg-secondary text-muted-foreground opacity-0 outline-none transition-opacity hover:text-foreground',
-                  'group-hover/bubble:opacity-100 group-focus-within/bubble:opacity-100',
-                  'focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring',
-                  menuOpen && 'opacity-100',
-                )}
               >
-                <MoreHorizontal className="size-4" />
-              </button>
-              {menuOpen && (
-                <div
-                  className={cn(
-                    'absolute top-7 z-20 min-w-32 origin-top overflow-hidden rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-md',
-                    'animate-in fade-in zoom-in-95',
-                    mine ? 'left-0' : 'right-0',
-                  )}
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="消息操作"
+                    onClick={() => {
+                      setPickerOpen(false)
+                      setConfirmRecall(false)
+                    }}
+                    className={cn(
+                      'grid size-6 place-items-center rounded-full bg-secondary text-muted-foreground opacity-0 outline-none transition-opacity hover:text-foreground',
+                      'group-hover/bubble:opacity-100 group-focus-within/bubble:opacity-100',
+                      'focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring',
+                      menuOpen && 'opacity-100',
+                    )}
+                  >
+                    <MoreHorizontal className="size-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  side="bottom"
+                  align={mine ? 'start' : 'end'}
+                  collisionBoundary={menuBoundary}
+                  collisionPadding={8}
+                  hideWhenDetached
                 >
                   {menuItems.map((item) => {
                     const needsConfirm = item.danger && !confirmRecall
                     return (
-                      <button
+                      <DropdownMenuItem
                         key={item.label}
-                        type="button"
-                        onClick={() => {
+                        onSelect={(event) => {
                           if (needsConfirm) {
+                            event.preventDefault()
                             setConfirmRecall(true)
                             return
                           }
-                          setMenuOpen(false)
-                          setConfirmRecall(false)
                           item.run()
                         }}
                         className={cn(
@@ -401,11 +382,11 @@ export function MessageBubble({
                           )}
                         />
                         {item.danger && confirmRecall ? '确认撤回？' : item.label}
-                      </button>
+                      </DropdownMenuItem>
                     )
                   })}
-                </div>
-              )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           )}
         </div>
@@ -449,43 +430,42 @@ export function MessageBubble({
             </span>
           )}
           {mine && readByOthers.length > 0 && (
-            <span ref={readersRef} className="relative inline-flex">
-              <button
-                type="button"
-                onClick={() => setReadersOpen((v) => !v)}
-                className="text-primary outline-none hover:underline focus-visible:underline"
-              >
-                {readByOthers.length} 人已读
-              </button>
-              {readersOpen && (
-                <div
-                  className={cn(
-                    'no-scrollbar absolute bottom-full z-30 mb-1 max-h-56 w-48 overflow-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-md',
-                    'animate-in fade-in zoom-in-95',
-                    mine ? 'right-0' : 'left-0',
-                  )}
+            <Popover open={readersOpen} onOpenChange={setReadersOpen}>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="text-primary outline-none hover:underline focus-visible:underline"
                 >
-                  <div className="px-2 py-1 text-[11px] font-medium text-muted-foreground">
-                    已读 · {readByOthers.length} 人
-                  </div>
-                  {readByOthers.map((r) => (
-                    <div key={r.username} className="flex items-center gap-2 rounded-md px-2 py-1">
-                      <span className="grid size-5 shrink-0 place-items-center rounded-full bg-secondary text-[10px] text-muted-foreground">
-                        {avatarMark('', r.displayName || r.username)}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate text-xs text-foreground">
-                        {r.displayName || r.username}
-                      </span>
-                      {r.readAt && (
-                        <span className="shrink-0 text-[10px] text-muted-foreground">
-                          {formatSmartTime(r.readAt)}
-                        </span>
-                      )}
-                    </div>
-                  ))}
+                  {readByOthers.length} 人已读
+                </button>
+              </PopoverTrigger>
+              <PopoverContent
+                aria-label="已读成员"
+                side="top"
+                align="end"
+                collisionBoundary={menuBoundary}
+                className="w-48 p-1"
+              >
+                <div className="px-2 py-1 text-[11px] font-medium text-muted-foreground">
+                  已读 · {readByOthers.length} 人
                 </div>
-              )}
-            </span>
+                {readByOthers.map((r) => (
+                  <div key={r.username} className="flex items-center gap-2 rounded-md px-2 py-1">
+                    <span className="grid size-5 shrink-0 place-items-center rounded-full bg-secondary text-[10px] text-muted-foreground">
+                      {avatarMark('', r.displayName || r.username)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-xs text-foreground">
+                      {r.displayName || r.username}
+                    </span>
+                    {r.readAt && (
+                      <span className="shrink-0 text-[10px] text-muted-foreground">
+                        {formatSmartTime(r.readAt)}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </PopoverContent>
+            </Popover>
           )}
         </span>
       </div>

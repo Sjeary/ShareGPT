@@ -42,6 +42,10 @@ export function SenderForm() {
   // 仅管理员可见的「全部流量走代理」测试开关 (isAdmin 由服务端 /api/login 下发)。
   const isAdmin = useAuthStore((s) => Boolean(s.profile?.isAdmin))
   const canEditTeamConfig = useAuthStore((s) => canEditManagedProxy(s.profile))
+  // Preserve existing visibility; advanced AI access no longer grants configuration editing.
+  const showTeamConfig = useAuthStore((s) =>
+    Boolean(s.profile?.isAdmin || s.profile?.advancedAiAllowed),
+  )
   const [busy, setBusy] = useState(false)
 
   const running = isSenderRunning(status)
@@ -60,8 +64,8 @@ export function SenderForm() {
   const personalHost =
     safeText(form.personal_proxy_host) || safeText(form.proxy_server) || '127.0.0.1'
   const personalPort = safeText(form.personal_proxy_port) || safeText(form.proxy_port)
-  // 运行中或正在启停时锁定表单。
-  const locked = running || busy
+  // 团队配置仅管理员可编辑；个人工作区不受团队角色限制。
+  const locked = running || busy || (!personalWorkspace && !canEditTeamConfig)
 
   // 对齐旧 getSenderForm(~2408): target_domains 为空时回填默认域名清单,
   // 既用于只读展示, 也用于随设置保存 / 启动发送时下发。
@@ -74,6 +78,7 @@ export function SenderForm() {
       : safeText(form.target_domains) || DEFAULT_TARGET_DOMAINS
 
   function update(patch: Partial<SenderSettings>) {
+    if (locked) return
     void patchSection('sender', patch)
   }
 
@@ -190,7 +195,7 @@ export function SenderForm() {
       </p>
 
       {/* 组织工作区可在账号线路和管理员下发节点之间选择；个人工作区没有这层切换。 */}
-      {!personalWorkspace && canEditTeamConfig && (
+      {!personalWorkspace && showTeamConfig && (
         <div className="grid gap-1.5">
           <Label className="cursor-default">代理方式</Label>
           <div className="flex flex-wrap gap-2">
@@ -311,7 +316,7 @@ export function SenderForm() {
             />
           </div>
         </div>
-      ) : canEditTeamConfig ? (
+      ) : showTeamConfig ? (
         <>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field

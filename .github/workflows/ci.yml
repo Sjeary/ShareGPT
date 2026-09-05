@@ -109,6 +109,15 @@ jobs:
       - name: Composer 与成功发送统计验收
         run: npm run verify:ai-composer
 
+      - name: 聊天消息菜单边界与键盘验收
+        run: npm run verify:chat-message-menu
+      - name: Verify chat drafts and reading continuity
+        run: npm run verify:chat-interactions
+      - name: Verify profile editor layout and saving
+        run: npm run verify:profile-editor
+      - name: Verify managed proxy editing permissions
+        run: npm run verify:managed-proxy-readonly
+
       - name: 协作登录与客户端/服务端兼容验收
         run: npm run verify:collab-login-compatibility
 

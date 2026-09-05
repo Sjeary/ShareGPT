@@ -58,7 +58,13 @@ function CtlButton({
   )
 }
 
-export function Titlebar() {
+export function Titlebar({
+  title = 'ShareGPT',
+  auxiliary = false,
+}: {
+  title?: string
+  auxiliary?: boolean
+}) {
   const mode = useAppStore((s) => s.mode)
   const dark = useAppStore((s) => s.dark)
   const toggleTheme = useAppStore((s) => s.toggleTheme)
@@ -143,24 +149,26 @@ export function Titlebar() {
         <div className="grid size-6 place-items-center rounded-md bg-primary text-primary-foreground">
           <Cable className="size-3.5" />
         </div>
-        <span className="text-sm font-semibold tracking-tight">ShareGPT</span>
+        <span className="text-sm font-semibold">{title}</span>
         {/* 客户端(sender)/dev(all) 不显示模式标; 仅接收端 GUI 显示「出口」以区分。 */}
-        {mode === 'receiver' && (
+        {!auxiliary && mode === 'receiver' && (
           <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
             出口
           </span>
         )}
       </div>
       <div className="app-no-drag flex items-center gap-1">
-        <FocusChip />
-        {inShell && (
+        {!auxiliary && <FocusChip />}
+        {!auxiliary && inShell && (
           <CtlButton onClick={() => setTourOpen(true)} label="新手引导">
             <HelpCircle className="size-4" />
           </CtlButton>
         )}
-        <CtlButton onClick={toggleTheme} label="切换主题">
-          {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-        </CtlButton>
+        {!auxiliary && (
+          <CtlButton onClick={toggleTheme} label="切换主题">
+            {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+          </CtlButton>
+        )}
         {/* 仅 Windows 自绘窗口控制; macOS 用系统红绿灯。 */}
         {!isMac && (
           <>

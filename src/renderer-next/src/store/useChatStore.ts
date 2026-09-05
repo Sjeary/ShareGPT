@@ -55,6 +55,35 @@ export interface ChatForwardDraft {
   attachments: ChatAttachment[]
 }
 
+export interface ChatComposerDraft {
+  text: string
+  attachment: ChatAttachment | null
+  reply: ChatReplyTarget | null
+  edit: ChatEditDraft | null
+  forward: ChatForwardDraft | null
+}
+
+export const EMPTY_COMPOSER_DRAFT: ChatComposerDraft = {
+  text: '',
+  attachment: null,
+  reply: null,
+  edit: null,
+  forward: null,
+}
+
+// Principal IDs come from main; never infer identity from a display name or token.
+export function chatViewKey(principalId: string, conversationKey: string): string {
+  return principalId ? JSON.stringify([principalId, conversationKey]) : ''
+}
+
+export interface ChatReadingPosition {
+  anchorId: string
+  offset: number
+  scrollTop: number
+  atBottom: boolean
+  unreadMarkerId: string
+}
+
 // 对端输入中状态 (旧 state.collab.typingByConversation ~488)。
 export interface TypingMeta {
   from: string
@@ -128,10 +157,11 @@ interface ChatState {
   knownOnlineUsers: string[]
   presenceReady: boolean
 
-  // 输入区草稿 (回复/编辑/转发) (旧 replyDraft/editDraft/forwardDraft)
-  replyDraft: ChatReplyTarget | null
-  editDraft: ChatEditDraft | null
-  forwardDraft: ChatForwardDraft | null
+  // Session-only drafts survive navigation and account switches, isolated by Principal + conversation.
+  composerDrafts: Record<string, ChatComposerDraft>
+  readingPositions: Record<string, ChatReadingPosition>
+  readingActiveView: string
+  saveReadingPosition: (key: string, position: ChatReadingPosition) => void
 
   // UI
   activeKey: string // "" = 房间(默认), 或 "user:xxx"
@@ -139,6 +169,7 @@ interface ChatState {
 
   // 未读计数 (旧 unreadByConversation): 仅实时入站消息累加, 历史加载不计。
   unreadByKey: Record<string, number>
+  firstUnreadByKey: Record<string, string>
 
   // 动作
   setIdentity: (identity: Partial<ChatIdentity>) => void
@@ -149,7 +180,7 @@ interface ChatState {
   setFilter: (filter: string) => void
 
   // 未读 (旧 increaseUnreadCount/clearUnreadCount)
-  incrementUnread: (key: string) => void
+  incrementUnread: (key: string, messageId?: string) => void
   clearUnread: (key: string) => void
 
   // 对端输入中
@@ -159,10 +190,7 @@ interface ChatState {
   advancePresence: (online: string[]) => { newlyOnline: string[]; ready: boolean }
 
   // 草稿
-  setReplyDraft: (draft: ChatReplyTarget | null) => void
-  setEditDraft: (draft: ChatEditDraft | null) => void
-  setForwardDraft: (draft: ChatForwardDraft | null) => void
-  clearDrafts: () => void
+  patchComposerDraft: (key: string, patch: Partial<ChatComposerDraft>) => void
 
   // 历史 (本地持久化反序列化)
   hydrate: (conversations: Record<string, ChatMessage[]>) => void
@@ -173,8 +201,7 @@ interface ChatState {
   // 更新某条消息的表情回应 (收到 chat_reaction)。
   applyReaction: (messageId: string, reactions: Record<string, string[]>) => void
 
-  // 切换「群」(不同协作服务器)时清空与该群绑定的本地缓存: 消息/成员目录/未读/输入态/草稿/房间标签,
-  // 但保留 identity/connection (由登录流程管理)。配合本地按群缓存, 实现登录即切换。
+  // Reset the active group's runtime cache; scoped drafts and reading positions remain isolated and retained.
   clearGroupCaches: () => void
 
   reset: () => void
@@ -237,12 +264,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
   typingByConversation: {},
   knownOnlineUsers: [],
   presenceReady: false,
-  replyDraft: null,
-  editDraft: null,
-  forwardDraft: null,
+  composerDrafts: {},
+  readingPositions: {},
+  readingActiveView: '',
+  saveReadingPosition: (key, position) =>
+    set((state) => {
+      if (!key) return state
+      const old = state.readingPositions[key]
+      if (
+        old &&
+        Object.keys(position).every(
+          (k) => old[k as keyof ChatReadingPosition] === position[k as keyof ChatReadingPosition],
+        )
+      )
+        return state
+      return { readingPositions: { ...state.readingPositions, [key]: position } }
+    }),
   activeKey: '', // 默认房间
   filter: '',
   unreadByKey: {},
+  firstUnreadByKey: {},
 
   setIdentity: (identity) => set((s) => ({ identity: { ...s.identity, ...identity } })),
   setConnection: (connection) => set({ connection }),
@@ -251,17 +292,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setActiveKey: (activeKey) => set({ activeKey }),
   setFilter: (filter) => set({ filter }),
 
-  incrementUnread: (key) =>
+  incrementUnread: (key, messageId) =>
     set((s) => {
       if (!key) return s
-      return { unreadByKey: { ...s.unreadByKey, [key]: (s.unreadByKey[key] ?? 0) + 1 } }
+      return {
+        unreadByKey: { ...s.unreadByKey, [key]: (s.unreadByKey[key] ?? 0) + 1 },
+        firstUnreadByKey:
+          messageId && !s.firstUnreadByKey[key]
+            ? { ...s.firstUnreadByKey, [key]: messageId }
+            : s.firstUnreadByKey,
+      }
     }),
   clearUnread: (key) =>
     set((s) => {
       if (!key || !s.unreadByKey[key]) return s
       const next = { ...s.unreadByKey }
       delete next[key]
-      return { unreadByKey: next }
+      const firstUnreadByKey = { ...s.firstUnreadByKey }
+      delete firstUnreadByKey[key]
+      return { unreadByKey: next, firstUnreadByKey }
     }),
 
   setTyping: (key, meta) =>
@@ -285,10 +334,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     return { newlyOnline, ready }
   },
 
-  setReplyDraft: (replyDraft) => set({ replyDraft, editDraft: null, forwardDraft: null }),
-  setEditDraft: (editDraft) => set({ editDraft, replyDraft: null, forwardDraft: null }),
-  setForwardDraft: (forwardDraft) => set({ forwardDraft, replyDraft: null, editDraft: null }),
-  clearDrafts: () => set({ replyDraft: null, editDraft: null, forwardDraft: null }),
+  patchComposerDraft: (key, patch) =>
+    set((state) => {
+      if (!key) return state
+      const draft = { ...(state.composerDrafts[key] ?? EMPTY_COMPOSER_DRAFT), ...patch }
+      const composerDrafts = { ...state.composerDrafts }
+      if (draft.text || draft.attachment || draft.reply || draft.edit || draft.forward) {
+        composerDrafts[key] = draft
+      } else {
+        delete composerDrafts[key]
+      }
+      return { composerDrafts }
+    }),
 
   hydrate: (conversations) => {
     const cleaned: Record<string, ChatMessage[]> = {}
@@ -367,12 +424,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       typingByConversation: {},
       knownOnlineUsers: [],
       presenceReady: false,
-      replyDraft: null,
-      editDraft: null,
-      forwardDraft: null,
       activeKey: '',
       filter: '',
       unreadByKey: {},
+      firstUnreadByKey: {},
+      readingActiveView: '',
       roomScope: '-',
     }),
 
@@ -386,12 +442,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
       typingByConversation: {},
       knownOnlineUsers: [],
       presenceReady: false,
-      replyDraft: null,
-      editDraft: null,
-      forwardDraft: null,
       activeKey: '',
       filter: '',
       unreadByKey: {},
+      firstUnreadByKey: {},
+      readingActiveView: '',
     }),
 }))
 

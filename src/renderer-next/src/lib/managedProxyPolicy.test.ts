@@ -8,11 +8,13 @@ const configured = {
   proxy_uuid: 'managed-id',
 }
 
-test('只有管理员和高级用户可以编辑团队代理配置', () => {
+test('只有管理员可以编辑团队代理配置，高级 AI 权限不能解锁编辑', () => {
   assert.equal(canEditManagedProxy(null), false)
   assert.equal(canEditManagedProxy({}), false)
   assert.equal(canEditManagedProxy({ isAdmin: true }), true)
-  assert.equal(canEditManagedProxy({ advancedAiAllowed: true }), true)
+  assert.equal(canEditManagedProxy({ advancedAiAllowed: true }), false)
+  assert.equal(canEditManagedProxy({ isAdmin: false, advancedAiAllowed: true }), false)
+  assert.equal(canEditManagedProxy({ isAdmin: true, advancedAiAllowed: false }), true)
 })
 
 test('普通成员始终接受完整的管理员配置更新', () => {
@@ -26,8 +28,17 @@ test('普通成员始终接受完整的管理员配置更新', () => {
   )
 })
 
-test('管理员和高级用户只在本机配置不完整时补全', () => {
+test('管理员只在本机配置不完整时补全', () => {
   assert.equal(shouldApplyManagedProxy(configured, configured, true), false)
   assert.equal(shouldApplyManagedProxy({ proxy_server: '' }, configured, true), true)
   assert.equal(shouldApplyManagedProxy(configured, { proxy_server: '' }, false), false)
+})
+
+test('高级用户接受完整的管理员更新，但不把缺失配置当成清空指令', () => {
+  const editable = canEditManagedProxy({ advancedAiAllowed: true })
+  assert.equal(
+    shouldApplyManagedProxy(configured, { ...configured, proxy_port: '8443' }, editable),
+    true,
+  )
+  assert.equal(shouldApplyManagedProxy(configured, {}, editable), false)
 })

@@ -19,6 +19,7 @@ import {
 } from '@/lib/collabLoginTransaction'
 import type { AppSettings } from '@/types/settings'
 import { requirePrincipalActivation, type PrincipalActivation } from '@/lib/principalActivation'
+import { canEditManagedProxy } from '@/lib/managedProxyPolicy'
 
 // 协作服务器登录/退出逻辑 (移植自旧 renderer.js performCollabLogin / collabLogout)。
 // 端点 (渲染层直连协作服务器, 非 IPC):
@@ -266,7 +267,7 @@ export function useAuth() {
           if (!principalSnapshot) throw new Error('线路授权缺少账号上下文')
           return refreshAuthoritativeClientBootstrap(cleanedServer, issuedToken, {
             allowLegacyAdminConfig: profile.isAdmin,
-            managedConfigEditable: Boolean(profile.isAdmin || profile.advancedAiAllowed),
+            managedConfigEditable: canEditManagedProxy(profile),
             principalSnapshot,
           }).then(() => undefined)
         },

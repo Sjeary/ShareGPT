@@ -452,8 +452,10 @@ function runComposerScript(operation, options = {}) {
     querySelector: () => editor,
     contains: (node) => node === editor,
     getBoundingClientRect: () => ({ width: 300, height: 80 }),
-    dispatchEvent: () => true,
-    focus: () => {},
+    dispatchEvent: (event) => options.onEvent?.(event, editor, document) !== false,
+    focus: () => {
+      options.onFocus?.(editor, document);
+    },
     setSelectionRange: () => {},
   };
   const document = {
@@ -472,8 +474,17 @@ function runComposerScript(operation, options = {}) {
       },
     },
     getComputedStyle: () => ({ visibility: "visible", display: "block" }),
-    InputEvent: class InputEvent {},
-    Event: class Event {},
+    InputEvent: class InputEvent {
+      constructor(type) {
+        this.type = type;
+      }
+    },
+    Event: class Event {
+      constructor(type) {
+        this.type = type;
+      }
+    },
+    Date: { now: () => options.now?.() ?? Date.now() },
     addEventListener: (type, listener) => listeners.set(type, listener),
     removeEventListener: (type, listener) => {
       if (listeners.get(type) === listener) listeners.delete(type);
@@ -488,6 +499,9 @@ function runComposerScript(operation, options = {}) {
   const result = vm.runInNewContext(composerWriteScript(operation), context);
   return {
     editor,
+    document,
+    timers,
+    context,
     listeners,
     result,
     setUrl: (url) => {
@@ -558,3 +572,61 @@ test("the executable send gate accepts one trusted Enter and rejects an untruste
   });
   assert.equal(prevented, true);
 });
+
+for (const phase of ["focus", "beforeinput", "input", "change"]) {
+  for (const mutation of ["replace", "focus", "text"]) {
+    test(`composer rejects ${mutation} during ${phase} without arming a send`, () => {
+      const mutate = (editor, document) => {
+        if (mutation === "replace") editor.isConnected = false;
+        if (mutation === "focus") document.activeElement = {};
+        if (mutation === "text") editor.value = "new user draft";
+      };
+      const result = runComposerScript(
+        createComposerOperation(snapshot(), { text: "translated", send: true }),
+        {
+          initialText: "original draft",
+          onFocus: phase === "focus" ? mutate : undefined,
+          onEvent: (event, editor, document) => {
+            if (event.type === phase) mutate(editor, document);
+          },
+        },
+      );
+      assert.equal(result.result.ok, false);
+      assert.equal(result.listeners.has("keydown"), false);
+      if (phase === "focus" || phase === "beforeinput") {
+        assert.equal(
+          result.editor.value,
+          mutation === "text" ? "new user draft" : "original draft",
+        );
+      }
+    });
+  }
+}
+
+for (const mutation of ["replace", "focus", "text", "url", "timer", "deadline"]) {
+  test(`queued Enter is blocked after ${mutation}, then releases the listener`, () => {
+    let now = 100;
+    const harness = runComposerScript(
+      createComposerOperation(snapshot(), { text: "translated", send: true }),
+      { now: () => now },
+    );
+    if (mutation === "replace") harness.editor.isConnected = false;
+    if (mutation === "focus") harness.document.activeElement = { ...harness.editor };
+    if (mutation === "text") harness.editor.value += " changed";
+    if (mutation === "url") harness.setUrl("https://chatgpt.com/c/other");
+    if (mutation === "timer") for (const callback of [...harness.timers.values()]) callback();
+    if (mutation === "deadline") now += 5000;
+    let prevented = false;
+    harness.listeners.get("keydown")?.({
+      key: "Enter",
+      isTrusted: true,
+      preventDefault: () => {
+        prevented = true;
+      },
+      stopImmediatePropagation() {},
+    });
+    assert.equal(prevented, true, "stale Enter must not reach the page");
+    assert.equal(harness.listeners.has("keydown"), false);
+    assert.equal(harness.context.__shareGptOneShotComposerOperation.status, "blocked");
+  });
+}

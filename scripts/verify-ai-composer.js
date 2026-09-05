@@ -100,7 +100,8 @@ async function main() {
   const fixture = await startFixture();
   // CDP focus emulation keeps trusted keyboard delivery deterministic on CI,
   // where the native runner window is not guaranteed to become the foreground app.
-  const window = new BrowserWindow({ show: true, width: 640, height: 480 });
+  if (process.platform === "darwin") app.dock.hide();
+  const window = new BrowserWindow({ show: false, width: 640, height: 480 });
   const view = new WebContentsView({
     webPreferences: {
       contextIsolation: true,
@@ -169,8 +170,6 @@ async function main() {
     wc.debugger.attach("1.3");
     await wc.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
     await installAcceptedSendTracker(wc, usageToken);
-    window.focus();
-    wc.focus();
 
     process.stdout.write("[verify] guard off leaves non-target Enter untouched\n");
     await runGuard(false);
@@ -321,6 +320,94 @@ async function main() {
     await setPrompt(wc, "关闭后直接发送");
     await dispatchEnter();
     await waitFor(async () => (await acceptedCount(wc)) === 5, "guard disable refresh");
+
+    process.stdout.write("[verify] editor mutations during write fail closed in real Chromium\n");
+    for (const richText of [false, true]) {
+      await wc.executeJavaScript(`(() => {
+        const editor = document.createElement(${JSON.stringify(richText ? "div" : "textarea")});
+        editor.id = 'prompt';
+        editor.style.cssText = 'width:400px;height:100px;white-space:pre-wrap';
+        if (${richText}) editor.contentEditable = 'true';
+        document.querySelector('#prompt').replaceWith(editor);
+      })()`);
+      for (const strategy of ["fail-if-not-empty", "append", "replace"]) {
+        process.stdout.write(
+          `[verify] ${richText ? "contenteditable" : "textarea"} multiline ${strategy}\n`,
+        );
+        const text = "first line\nsecond line";
+        await executeComposerWrite(wc, createComposerOperation(snapshot(), { text, strategy }));
+        assert.equal(
+          await wc.executeJavaScript(
+            "(() => { const node = document.querySelector('#prompt'); if ('value' in node) return node.value.trim(); const range = document.createRange(); range.selectNodeContents(node); const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range); const text = selection.toString().trim(); selection.collapseToEnd(); return text; })()",
+          ),
+          strategy === "append" ? `${text}\n\n${text}` : text,
+        );
+      }
+      for (const phase of ["focus", "beforeinput", "input", "change"]) {
+        for (const mutation of ["replace", "focus", "text"]) {
+          await wc.executeJavaScript(`(() => {
+            const old = document.querySelector('#prompt');
+            const editor = document.createElement(${JSON.stringify(richText ? "div" : "textarea")});
+            editor.id = 'prompt';
+            editor.style.cssText = 'width:400px;height:100px;white-space:pre-wrap';
+            if (${richText}) editor.contentEditable = 'true';
+            const write = (node, text) => { if ('value' in node) node.value = text; else node.textContent = text; };
+            write(editor, 'original draft');
+            old.replaceWith(editor);
+            window.replacedEditor = null;
+            editor.addEventListener(${JSON.stringify(phase)}, () => {
+              const mutation = ${JSON.stringify(mutation)};
+              if (mutation === 'replace') {
+                const replacement = editor.cloneNode(true);
+                write(replacement, 'replacement draft');
+                editor.replaceWith(replacement);
+                replacement.focus();
+                window.replacedEditor = replacement;
+              } else if (mutation === 'focus') document.querySelector('#search-input').focus();
+              else write(editor, 'new user draft');
+            }, { once: true });
+          })()`);
+          const operation = createComposerOperation(snapshot(), { text: "translated", send: true });
+          await assert.rejects(
+            executeComposerWrite(wc, operation),
+            { code: "COMPOSER_WRITE_REJECTED" },
+            `${richText ? "contenteditable" : "textarea"} ${phase} ${mutation}`,
+          );
+          if (mutation === "replace") {
+            assert.equal(
+              await wc.executeJavaScript(
+                "window.replacedEditor.value ?? window.replacedEditor.textContent",
+              ),
+              "replacement draft",
+            );
+          }
+          assert.equal(await acceptedCount(wc), 5);
+        }
+      }
+    }
+
+    // Reload the fixture so the original editor and page submit handlers are restored.
+    await wc.loadURL(fixture.url);
+    await installAcceptedSendTracker(wc, usageToken);
+    consoleMessages.length = 0;
+    process.stdout.write(
+      "[verify] expired queued Enter cannot submit; the next normal Enter still works\n",
+    );
+    const expiredSend = createComposerOperation(snapshot(), { text: "expired send", send: true });
+    await executeComposerWrite(wc, expiredSend, { ttlMs: 100 });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await dispatchEnter();
+    assert.equal((await waitForComposerOutcome(wc, expiredSend.token)).reason, "timeout");
+    assert.equal(await acceptedCount(wc), 0);
+    assert.equal(
+      consoleMessages.filter((message) => parseSendAttemptMessage(message, usageToken)).length,
+      0,
+    );
+    await dispatchEnter();
+    await waitFor(
+      async () => (await acceptedCount(wc)) === 1,
+      "normal Enter after consumed stale operation",
+    );
     process.stdout.write("[verify] AI composer behavior passed\n");
   } finally {
     try {
