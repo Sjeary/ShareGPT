@@ -39,7 +39,7 @@ async function main() {
     await loginThroughForm(page, fixture.baseUrl);
     await page.getByRole("button", { name: /协作聊天/ }).click();
 
-    const composer = page.locator('textarea[placeholder="登录账户后即可发送消息"]');
+    const composer = page.getByRole("textbox", { name: "消息内容", exact: true });
     await composer.waitFor({ state: "visible" });
 
     process.stdout.write("[verify] short composer text does not create a false scrollbar\n");

@@ -2,8 +2,20 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAppStore } from '@/store/useAppStore'
-import { privateConversationKey, storeKeyForActive, useChatStore } from '@/store/useChatStore'
-import type { ChatAttachment, ChatForwardDraft, ChatMessage } from '@/store/useChatStore'
+import {
+  chatViewKey,
+  EMPTY_COMPOSER_DRAFT,
+  privateConversationKey,
+  storeKeyForActive,
+  useChatStore,
+} from '@/store/useChatStore'
+import type {
+  ChatAttachment,
+  ChatComposerDraft,
+  ChatForwardDraft,
+  ChatMessage,
+} from '@/store/useChatStore'
+import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
 import type { CollabSettings } from '@/types/settings'
 import { useChat } from '@/hooks/useChat'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -72,13 +84,25 @@ export function ChatPanel() {
   const filter = useChatStore((s) => s.filter)
   const setFilter = useChatStore((s) => s.setFilter)
   const typingByConversation = useChatStore((s) => s.typingByConversation)
-  const replyDraft = useChatStore((s) => s.replyDraft)
-  const editDraft = useChatStore((s) => s.editDraft)
-  const forwardDraft = useChatStore((s) => s.forwardDraft)
-  const setReplyDraft = useChatStore((s) => s.setReplyDraft)
-  const setEditDraft = useChatStore((s) => s.setEditDraft)
-  const setForwardDraft = useChatStore((s) => s.setForwardDraft)
-  const clearDrafts = useChatStore((s) => s.clearDrafts)
+  const principal = settingsPrincipalRuntime.current()
+  const viewKey = chatViewKey(principal.principalId, storeKeyForActive(activeKey, roomScope))
+  const draft = useChatStore((s) => s.composerDrafts[viewKey] ?? EMPTY_COMPOSER_DRAFT)
+  const { reply: replyDraft, edit: editDraft, forward: forwardDraft } = draft
+  function patchDraft(patch: Partial<ChatComposerDraft>) {
+    try {
+      settingsPrincipalRuntime.assertCurrent(principal)
+      useChatStore.getState().patchComposerDraft(viewKey, patch)
+    } catch {
+      /* A completed file read from an old Principal cannot write a draft. */
+    }
+  }
+  const setReplyDraft = (reply: ChatComposerDraft['reply']) =>
+    patchDraft({ reply, edit: null, forward: null })
+  const setEditDraft = (edit: ChatComposerDraft['edit']) =>
+    patchDraft({ edit, reply: null, forward: null })
+  const setForwardDraft = (forward: ChatComposerDraft['forward']) =>
+    patchDraft({ forward, reply: null, edit: null })
+  const clearDrafts = () => patchDraft({ reply: null, edit: null, forward: null })
   // 未读计数改由 store 维护 (仅实时入站累加, 历史加载不计), 见 useChat.trackUnread。
   const unreadByKey = useChatStore((s) => s.unreadByKey)
   const clearUnread = useChatStore((s) => s.clearUnread)
@@ -171,11 +195,6 @@ export function ChatPanel() {
   const online = connection === 'online'
   const scope: 'subnet' | 'private' = activeConversation?.kind === 'private' ? 'private' : 'subnet'
 
-  // 切换会话时清空草稿 (旧逻辑: 切换联系人会重置输入意图)。
-  useEffect(() => {
-    clearDrafts()
-  }, [activeKey, clearDrafts])
-
   // 会话可见时批量已读 (旧 markVisible*ConversationRead, 打开会话 / 收到历史后触发)。
   const appActive = useAppStore((s) => s.active)
   useEffect(() => {
@@ -249,33 +268,32 @@ export function ChatPanel() {
   }
 
   function handleSend(text: string, attachments: ChatAttachment[]) {
-    if (!activeConversation) return
-    try {
-      if (forwardDraft) {
-        chat.sendForward(forwardDraft, scope, activeConversation.username)
-      }
-      if (text || attachments.length) {
-        chat.sendMessage({
-          text,
-          scope,
-          to: activeConversation.username,
-          replyTo: replyDraft,
-          attachments,
-        })
-      }
-      clearDrafts()
-    } catch (err) {
-      reportSendError(err)
+    settingsPrincipalRuntime.assertCurrent(principal)
+    if (!activeConversation) return false
+    if (forwardDraft) {
+      chat.sendForward(forwardDraft, scope, activeConversation.username)
+      // If the following comment fails, retry only the comment, not the already queued forward.
+      patchDraft({ forward: null })
     }
+    if (text || attachments.length) {
+      const queued = chat.sendMessage({
+        text,
+        scope,
+        to: activeConversation.username,
+        replyTo: replyDraft,
+        attachments,
+      })
+      if (!queued) return false
+    }
+    clearDrafts()
+    return true
   }
 
   function handleEditSubmit(id: string, text: string) {
-    try {
-      chat.sendEdit(id, text)
-      clearDrafts()
-    } catch (err) {
-      reportSendError(err)
-    }
+    settingsPrincipalRuntime.assertCurrent(principal)
+    chat.sendEdit(id, text)
+    clearDrafts()
+    return true
   }
 
   // 从在线联系人开启私聊 (旧 pickPrivateTarget ~3445)。
@@ -451,18 +469,20 @@ export function ChatPanel() {
 
         {/* 输入区 (编辑态用 key 重挂载以 seed 原文) */}
         <Composer
-          key={editDraft ? `edit:${editDraft.id}` : `compose:${activeKey}`}
-          disabled={!online || !activeConversation}
+          key={`${viewKey}:${principal.generation}:${editDraft?.id ?? 'compose'}`}
+          disabled={!activeConversation || !principal.principalId}
+          sendDisabled={!online}
           placeholder={
             online
               ? activeConversation?.kind === 'private'
                 ? `发消息给 ${activeConversation.title}…`
                 : '发送到房间…'
-              : '登录账户后即可发送消息'
+              : connection === 'idle'
+                ? '登录后可发送，当前可编辑草稿…'
+                : '连接已断开，可继续编辑草稿…'
           }
-          reply={replyDraft}
-          edit={editDraft}
-          forward={forwardDraft}
+          draft={draft}
+          onDraftChange={patchDraft}
           onSend={handleSend}
           onEditSubmit={handleEditSubmit}
           onCancelDraft={clearDrafts}

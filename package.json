@@ -43,6 +43,7 @@
     "verify:chat-composer-layout": "npm run build:next && node scripts/verify-chat-composer-layout.js",
     "verify:chat-sidebar-layout": "npm run build:next && node scripts/verify-chat-sidebar-layout.js",
     "verify:chat-message-menu": "node scripts/verify-chat-message-menu.js",
+    "verify:chat-interactions": "node scripts/verify-chat-interactions.js",
     "verify:personal-workspace": "npm run build:next && node scripts/verify-personal-workspace.js",
     "verify:release-win": "node scripts/verify-win-release.js",
     "verify:release-contract": "node scripts/verify-release-contract.mjs",

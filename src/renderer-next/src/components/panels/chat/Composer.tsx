@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   CornerUpLeft,
   Paperclip,
@@ -16,6 +16,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ChatEmojiPicker } from './ChatEmojiPicker'
 import type {
   ChatAttachment,
+  ChatComposerDraft,
   ChatEditDraft,
   ChatForwardDraft,
   ChatReplyTarget,
@@ -34,12 +35,6 @@ function resizeComposer(node: HTMLTextAreaElement) {
   const contentHeight = node.scrollHeight + borderHeight
   node.style.height = `${Math.min(MAX_COMPOSER_HEIGHT, contentHeight)}px`
   node.style.overflowY = contentHeight > MAX_COMPOSER_HEIGHT ? 'auto' : 'hidden'
-}
-
-function resetComposer(node: HTMLTextAreaElement | null) {
-  if (!node) return
-  node.style.height = 'auto'
-  node.style.overflowY = 'hidden'
 }
 
 // 剪贴板兜底描述符 (旧 window.api.readClipboardAttachment 返回结构)。
@@ -97,7 +92,13 @@ function DraftBar({
         <div className="truncate text-xs font-medium">{title}</div>
         <div className="truncate text-xs text-muted-foreground">{preview}</div>
       </div>
-      <Button type="button" variant="ghost" size="icon-sm" onClick={onCancel}>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label="取消当前操作"
+        onClick={onCancel}
+      >
         <X className="size-4" />
       </Button>
     </div>
@@ -107,10 +108,10 @@ function DraftBar({
 // 底部输入区: 草稿条 + 附件 + 文本框 + 发送。
 export function Composer({
   disabled,
+  sendDisabled,
   placeholder,
-  reply,
-  edit,
-  forward,
+  draft,
+  onDraftChange,
   onSend,
   onEditSubmit,
   onCancelDraft,
@@ -118,27 +119,39 @@ export function Composer({
   onArrowUpEmpty,
 }: {
   disabled: boolean
+  sendDisabled: boolean
   placeholder: string
-  reply: ChatReplyTarget | null
-  edit: ChatEditDraft | null
-  forward: ChatForwardDraft | null
-  onSend: (text: string, attachments: ChatAttachment[]) => void
-  onEditSubmit: (id: string, text: string) => void
+  draft: ChatComposerDraft
+  onDraftChange: (patch: Partial<ChatComposerDraft>) => void
+  onSend: (text: string, attachments: ChatAttachment[]) => boolean
+  onEditSubmit: (id: string, text: string) => boolean
   onCancelDraft: () => void
   onTyping?: (active: boolean) => void
   // ArrowUp 召回编辑: text 为空且非 edit/forward 态时触发 (旧 ~6077)。
   onArrowUpEmpty?: () => void
 }) {
-  // 进入编辑态: 以原文懒初始化 (Composer 在 edit.id 变化时由父级 key 重挂载,
-  // 故此处一次性 seed 即可, 避免 effect 内 setState) (旧 setEditDraftFromMessage ~4806)。
-  const [text, setText] = useState(() => edit?.preview ?? '')
-  const [attachment, setAttachment] = useState<ChatAttachment | null>(null)
+  const { reply, edit, forward, attachment } = draft
+  const text = edit ? edit.preview : draft.text
+  const setText = (text: string) =>
+    onDraftChange(edit ? { edit: { ...edit, preview: text } } : { text })
+  const setAttachment = (attachment: ChatAttachment | null) => onDraftChange({ attachment })
   const [error, setError] = useState('')
   const [dragOver, setDragOver] = useState(false)
   const [emojiOpen, setEmojiOpen] = useState(false)
   const dragDepth = useRef(0)
   const fileRef = useRef<HTMLInputElement>(null)
   const textRef = useRef<HTMLTextAreaElement>(null)
+  const fileRequest = useRef(0)
+
+  useEffect(
+    () => () => {
+      fileRequest.current += 1
+    },
+    [],
+  )
+  useLayoutEffect(() => {
+    if (textRef.current) resizeComposer(textRef.current)
+  }, [text])
 
   const inEdit = Boolean(edit?.id)
 
@@ -170,38 +183,42 @@ export function Composer({
       resizeComposer(node)
     }
   }, [inEdit])
-  const canSend = !disabled && (text.trim().length > 0 || (!inEdit && attachment !== null))
+  const canSend =
+    !disabled &&
+    !sendDisabled &&
+    (text.trim().length > 0 || (!inEdit && Boolean(attachment || forward)))
 
   function submit() {
     if (!canSend) return
-    if (inEdit && edit) {
-      onEditSubmit(edit.id, text.trim())
-    } else {
-      onSend(text.trim(), attachment ? [attachment] : [])
+    try {
+      const accepted =
+        inEdit && edit
+          ? onEditSubmit(edit.id, text.trim())
+          : onSend(text.trim(), attachment ? [attachment] : [])
+      if (!accepted) throw new Error('消息未发送，草稿已保留。')
+      if (!inEdit) onDraftChange({ text: '', attachment: null })
+      fileRequest.current += 1
+      setError('')
+      onTyping?.(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '发送失败，草稿已保留。')
     }
-    setText('')
-    setAttachment(null)
-    setError('')
-    onTyping?.(false)
-    resetComposer(textRef.current)
   }
 
   function cancelDraft() {
     onCancelDraft()
-    if (inEdit) {
-      setText('')
-      resetComposer(textRef.current)
-    }
   }
 
   async function pickFile(file: File | undefined) {
     if (!file) return
+    const request = ++fileRequest.current
     if (file.size > MAX_BYTES) {
       setError(`文件不能超过 ${formatBytes(MAX_BYTES)}。`)
       return
     }
     try {
       const dataUrl = await readFileAsDataUrl(file)
+      if (request !== fileRequest.current) return
       setAttachment({
         kind: file.type.startsWith('image/') ? 'image' : 'file',
         name: file.name || 'file',
@@ -211,6 +228,7 @@ export function Composer({
       })
       setError('')
     } catch {
+      if (request !== fileRequest.current) return
       setError('读取文件失败。')
     }
   }
@@ -238,6 +256,7 @@ export function Composer({
   // 粘贴: 优先剪贴板里的图片/文件项, 否则走主进程剪贴板兜底 (旧 ~6040)。
   async function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
     if (inEdit) return
+    const request = ++fileRequest.current
     const items = Array.from(e.clipboardData?.items ?? [])
     const imageItem = items.find((it) => String(it.type || '').startsWith('image/'))
     const fileItem = items.find((it) => it.kind === 'file')
@@ -252,10 +271,11 @@ export function Composer({
       const descriptor = (await api.readClipboardAttachment?.()) as
         | ClipboardAttachmentDescriptor
         | undefined
-      if (!descriptor?.dataUrl) return
+      if (request !== fileRequest.current || !descriptor?.dataUrl) return
       e.preventDefault()
       applyDescriptor(descriptor)
     } catch (err) {
+      if (request !== fileRequest.current) return
       setError(err instanceof Error ? err.message : '读取剪贴板内容失败')
     }
   }
@@ -301,7 +321,11 @@ export function Composer({
           </span>
         </div>
       )}
-      {error && <div className="mb-2 text-xs text-destructive">{error}</div>}
+      {error && (
+        <div role="alert" className="mb-2 text-xs text-destructive">
+          {error}
+        </div>
+      )}
 
       <DraftBar reply={reply} edit={edit} forward={forward} onCancel={cancelDraft} />
 
@@ -320,7 +344,16 @@ export function Composer({
           <span className="shrink-0 text-xs text-muted-foreground">
             {formatBytes(attachment.size)}
           </span>
-          <Button type="button" variant="ghost" size="icon-sm" onClick={() => setAttachment(null)}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="移除附件"
+            onClick={() => {
+              fileRequest.current += 1
+              setAttachment(null)
+            }}
+          >
             <X className="size-4" />
           </Button>
         </div>
@@ -343,6 +376,7 @@ export function Composer({
           disabled={disabled || inEdit}
           onClick={() => fileRef.current?.click()}
           title="添加附件"
+          aria-label="添加附件"
         >
           <Paperclip className="size-5" />
         </Button>
@@ -374,6 +408,7 @@ export function Composer({
         <textarea
           ref={textRef}
           value={text}
+          aria-label={inEdit ? '编辑消息' : '消息内容'}
           disabled={disabled}
           placeholder={inEdit ? '编辑消息…' : placeholder}
           rows={1}

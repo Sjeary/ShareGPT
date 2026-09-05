@@ -842,7 +842,7 @@ export function useChat() {
     if (!text && !attachments.length) return false
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      throw new Error('消息服务尚未连接，请先登录账户。')
+      throw new Error('消息服务连接已断开，草稿已保留，请连接后重试。')
     }
     ws.send(
       JSON.stringify({
@@ -910,7 +910,7 @@ export function useChat() {
   function requireOpenSocket(): WebSocket {
     const ws = wsRef.current
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      throw new Error('当前未连接消息服务，请先登录账户。')
+      throw new Error('当前未连接消息服务，请连接后重试。')
     }
     return ws
   }

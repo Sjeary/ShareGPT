@@ -13,6 +13,7 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { MessageBubble } from '/src/components/panels/chat/MessageBubble.tsx';
 import { Composer } from '/src/components/panels/chat/Composer.tsx';
+import { EMPTY_COMPOSER_DRAFT } from '/src/store/useChatStore.ts';
 import '/src/index.css';
 const message = {
   id: 'menu-fixture', type: 'chat', scope: 'subnet', from: 'self', to: '',
@@ -24,6 +25,12 @@ const message = {
 const actions = Object.fromEntries(['Reply', 'Forward', 'Edit', 'Recall', 'React', 'OpenImage', 'JumpToMessage']
   .map(name => ['on' + name, () => { document.querySelector('output').textContent = name; }]));
 const root = createRoot(document.getElementById('root'));
+function FixtureComposer() {
+  const [draft, setDraft] = React.useState(EMPTY_COMPOSER_DRAFT);
+  return <Composer disabled={false} sendDisabled={false} placeholder="Message" draft={draft}
+    onDraftChange={patch => setDraft(d => ({...d, ...patch}))}
+    onSend={() => true} onEditSubmit={() => true} onCancelDraft={() => {}} />;
+}
 window.renderMenuFixture = ({ mine = true, top = false, height = 240, dark = false, readers = false, composer = false } = {}) => {
   document.documentElement.classList.toggle('dark', dark);
   flushSync(() => root.render(<main className="bg-background text-foreground" style={{ padding: 24 }}>
@@ -34,8 +41,7 @@ window.renderMenuFixture = ({ mine = true, top = false, height = 240, dark = fal
         showAvatar={!mine} selfUsername="self" actions={actions} />
       {top && <div style={{ height }} />}
     </div>
-    {composer && <Composer disabled={false} placeholder="Message" reply={null} edit={null} forward={null}
-      onSend={() => true} onEditSubmit={() => true} onCancelDraft={() => {}} />}
+    {composer && <FixtureComposer />}
     <button id="outside">Outside</button><output />
   </main>));
 };

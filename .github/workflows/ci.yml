@@ -111,6 +111,8 @@ jobs:
 
       - name: 聊天消息菜单边界与键盘验收
         run: npm run verify:chat-message-menu
+      - name: Verify chat drafts and reading continuity
+        run: npm run verify:chat-interactions
 
       - name: 协作登录与客户端/服务端兼容验收
         run: npm run verify:collab-login-compatibility
