@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import {
   CornerUpLeft,
   FileText,
@@ -10,6 +10,12 @@ import {
 } from 'lucide-react'
 import { Theme, EmojiStyle, type EmojiClickData } from 'emoji-picker-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
 import { emojiClusters, JUMBO_MAX } from '@/lib/chat/emoji'
 import { useAppStore } from '@/store/useAppStore'
@@ -91,22 +97,25 @@ export function MessageBubble({
   const [pickerOpen, setPickerOpen] = useState(false)
   const [confirmRecall, setConfirmRecall] = useState(false)
   const [readersOpen, setReadersOpen] = useState(false)
+  const [menuBoundary, setMenuBoundary] = useState<HTMLElement | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const readersRef = useRef<HTMLDivElement>(null)
   const dark = useAppStore((s) => s.dark)
+  const setMenuElement = useCallback((element: HTMLDivElement | null) => {
+    menuRef.current = element
+    setMenuBoundary(element?.closest<HTMLElement>('[data-chat-scroll-viewport]') ?? null)
+  }, [])
 
   useEffect(() => {
-    if (!menuOpen && !pickerOpen) return
+    if (!pickerOpen) return
     const onDown = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false)
         setPickerOpen(false)
-        setConfirmRecall(false)
       }
     }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
-  }, [menuOpen, pickerOpen])
+  }, [pickerOpen])
 
   useEffect(() => {
     if (!readersOpen) return
@@ -169,6 +178,8 @@ export function MessageBubble({
   function openContextMenu(e: React.MouseEvent) {
     if (!menuItems.length) return
     e.preventDefault()
+    setPickerOpen(false)
+    setConfirmRecall(false)
     setMenuOpen(true)
   }
 
@@ -302,7 +313,7 @@ export function MessageBubble({
 
           {menuItems.length > 0 && (
             <div
-              ref={menuRef}
+              ref={setMenuElement}
               className={cn(
                 'absolute top-0 z-10 flex gap-0.5',
                 mine ? 'left-0 -translate-x-full pr-1' : 'right-0 translate-x-full pl-1',
@@ -349,44 +360,50 @@ export function MessageBubble({
                   </Suspense>
                 </div>
               )}
-              <button
-                type="button"
-                aria-label="消息操作"
-                onClick={() => {
-                  setMenuOpen((v) => !v)
-                  setPickerOpen(false)
-                  setConfirmRecall(false)
+              <DropdownMenu
+                modal={false}
+                open={menuOpen}
+                onOpenChange={(open) => {
+                  setMenuOpen(open)
+                  if (!open) setConfirmRecall(false)
                 }}
-                className={cn(
-                  'grid size-6 place-items-center rounded-full bg-secondary text-muted-foreground opacity-0 outline-none transition-opacity hover:text-foreground',
-                  'group-hover/bubble:opacity-100 group-focus-within/bubble:opacity-100',
-                  'focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring',
-                  menuOpen && 'opacity-100',
-                )}
               >
-                <MoreHorizontal className="size-4" />
-              </button>
-              {menuOpen && (
-                <div
-                  className={cn(
-                    'absolute top-7 z-20 min-w-32 origin-top overflow-hidden rounded-lg border border-border bg-popover py-1 text-popover-foreground shadow-md',
-                    'animate-in fade-in zoom-in-95',
-                    mine ? 'left-0' : 'right-0',
-                  )}
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="消息操作"
+                    onClick={() => {
+                      setPickerOpen(false)
+                      setConfirmRecall(false)
+                    }}
+                    className={cn(
+                      'grid size-6 place-items-center rounded-full bg-secondary text-muted-foreground opacity-0 outline-none transition-opacity hover:text-foreground',
+                      'group-hover/bubble:opacity-100 group-focus-within/bubble:opacity-100',
+                      'focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring',
+                      menuOpen && 'opacity-100',
+                    )}
+                  >
+                    <MoreHorizontal className="size-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  side="bottom"
+                  align={mine ? 'start' : 'end'}
+                  collisionBoundary={menuBoundary}
+                  collisionPadding={8}
+                  hideWhenDetached
                 >
                   {menuItems.map((item) => {
                     const needsConfirm = item.danger && !confirmRecall
                     return (
-                      <button
+                      <DropdownMenuItem
                         key={item.label}
-                        type="button"
-                        onClick={() => {
+                        onSelect={(event) => {
                           if (needsConfirm) {
+                            event.preventDefault()
                             setConfirmRecall(true)
                             return
                           }
-                          setMenuOpen(false)
-                          setConfirmRecall(false)
                           item.run()
                         }}
                         className={cn(
@@ -401,11 +418,11 @@ export function MessageBubble({
                           )}
                         />
                         {item.danger && confirmRecall ? '确认撤回？' : item.label}
-                      </button>
+                      </DropdownMenuItem>
                     )
                   })}
-                </div>
-              )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           )}
         </div>
