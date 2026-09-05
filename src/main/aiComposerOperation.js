@@ -489,14 +489,19 @@ function composerWriteScript(operation, options = {}) {
 
       const readRaw = () => String('value' in editor ? editor.value : editor.innerText || editor.textContent || '');
       const read = () => readRaw().trim();
+      const editorCurrent = () => {
+        const focused = deepActive();
+        return currentUrl() === payload.url && visible(editor) &&
+          (focused === editor || editor.contains?.(focused));
+      };
       const existingText = readRaw();
       if (payload.strategy === 'fail-if-not-empty' && existingText.trim()) {
         return { ok: false, sent: false, conflict: 'existing-draft' };
       }
-      const finalText = payload.strategy === 'append' && existingText.trim()
+      let finalText = payload.strategy === 'append' && existingText.trim()
         ? existingText.trimEnd() + '\\n\\n' + payload.text
         : payload.text;
-      if (finalText.length > ${MAX_COMPOSER_CHARS}) {
+      if ('value' in editor && finalText.length > ${MAX_COMPOSER_CHARS}) {
         return { ok: false, sent: false, reason: 'content-too-long' };
       }
       const inputEvent = (type, init) => {
@@ -511,17 +516,19 @@ function composerWriteScript(operation, options = {}) {
         }
       };
       editor.focus();
-      if (currentUrl() !== payload.url) return { ok: false, reason: 'page-changed' };
-      const beforeInput = inputEvent('beforeinput', {
+      if (!editorCurrent() || readRaw() !== existingText) return { ok: false, reason: 'page-changed' };
+      const beforeInput = () => inputEvent('beforeinput', {
         bubbles: true,
         cancelable: true,
         composed: true,
         data: finalText,
         inputType: 'insertReplacementText',
       });
+      let expectedWrittenText = finalText.trim();
       if ('value' in editor) {
         editor.setSelectionRange?.(0, String(editor.value || '').length);
-        if (!editor.dispatchEvent(beforeInput)) return { ok: false, reason: 'write-cancelled' };
+        if (!editor.dispatchEvent(beforeInput())) return { ok: false, reason: 'write-cancelled' };
+        if (!editorCurrent() || readRaw() !== existingText) return { ok: false, reason: 'page-changed' };
         const prototype = Object.getPrototypeOf(editor);
         const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
         if (setter) setter.call(editor, finalText);
@@ -534,26 +541,43 @@ function composerWriteScript(operation, options = {}) {
         range?.selectNodeContents(editor);
         selection?.removeAllRanges();
         if (range) selection?.addRange(range);
-        if (!editor.dispatchEvent(beforeInput)) return { ok: false, reason: 'write-cancelled' };
+        if (!selection || !range || !editorCurrent() || readRaw() !== existingText) return { ok: false, reason: 'page-changed' };
+        // Chromium innerText adds an extra newline for empty editable blocks; selection text matches copy/paste.
+        const selectedDraft = selection.toString();
+        if (payload.strategy === 'append' && selectedDraft.trim()) finalText = selectedDraft.trimEnd() + '\\n\\n' + payload.text;
+        if (finalText.length > ${MAX_COMPOSER_CHARS}) return { ok: false, reason: 'content-too-long' };
+        if (!editor.dispatchEvent(beforeInput())) return { ok: false, reason: 'write-cancelled' };
+        if (!editorCurrent() || readRaw() !== existingText) return { ok: false, reason: 'page-changed' };
         let inserted = false;
+        if (!editor.contains(selection.anchorNode) || !editor.contains(selection.focusNode) || selection.toString() !== selectedDraft) return { ok: false, reason: 'page-changed' };
         try {
           inserted = Boolean(document.execCommand?.('insertText', false, finalText));
         } catch {}
-        if (!inserted) editor.replaceChildren(document.createTextNode(finalText));
+        if (!inserted) {
+          if (!editorCurrent() || readRaw() !== existingText) return { ok: false, reason: 'write-rejected' };
+          editor.replaceChildren(document.createTextNode(finalText));
+        }
+        if (!editorCurrent()) return { ok: false, reason: 'write-rejected' };
         const finalRange = document.createRange?.();
         finalRange?.selectNodeContents(editor);
-        finalRange?.collapse(false);
         selection?.removeAllRanges();
         if (finalRange) selection?.addRange(finalRange);
+        if (!editorCurrent() || selection.toString().trim() !== finalText.trim()) return { ok: false, reason: 'write-rejected' };
+        expectedWrittenText = read();
+        finalRange?.collapse(false);
+        selection.removeAllRanges();
+        if (finalRange) selection.addRange(finalRange);
       }
+      if (!editorCurrent() || read() !== expectedWrittenText) return { ok: false, reason: 'write-rejected' };
       editor.dispatchEvent(inputEvent('input', {
         bubbles: true,
         composed: true,
         inputType: 'insertReplacementText',
         data: finalText,
       }));
+      if (!editorCurrent() || read() !== expectedWrittenText) return { ok: false, reason: 'write-rejected' };
       editor.dispatchEvent(new Event('change', { bubbles: true }));
-      if (currentUrl() !== payload.url || read() !== finalText.trim()) {
+      if (!editorCurrent() || read() !== expectedWrittenText) {
         return { ok: false, reason: 'write-rejected' };
       }
       if (!payload.send) return { ok: true, sent: false };
@@ -564,7 +588,8 @@ function composerWriteScript(operation, options = {}) {
         token: payload.token,
         url: payload.url,
         editor,
-        expectedText: finalText.trim(),
+        expectedText: expectedWrittenText,
+        expiresAt: Date.now() + payload.ttlMs,
         status: 'armed',
         reason: '',
         timer: null,
@@ -585,6 +610,7 @@ function composerWriteScript(operation, options = {}) {
         if (event.key !== 'Enter' || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || event.repeat || event.isComposing) return;
         const focused = deepActive();
         const reason =
+          state.status !== 'armed' || Date.now() >= state.expiresAt ? 'timeout' :
           !event.isTrusted ? 'untrusted' :
           currentUrl() !== state.url ? 'page-changed' :
           !state.editor.isConnected ? 'editor-removed' :
@@ -599,7 +625,12 @@ function composerWriteScript(operation, options = {}) {
         }
       };
       globalThis.addEventListener('keydown', state.listener, true);
-      state.timer = globalThis.setTimeout(() => cleanup('timeout'), payload.ttlMs);
+      // Keep the one-shot listener until a queued native Enter is consumed, even after expiry.
+      state.timer = globalThis.setTimeout(() => {
+        state.timer = null;
+        state.status = 'blocked';
+        state.reason = 'timeout';
+      }, payload.ttlMs);
       globalThis.__shareGptOneShotComposerOperation = state;
       return { ok: true, sent: false, armed: true, token: payload.token };
     })();
