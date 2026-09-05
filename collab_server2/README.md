@@ -63,6 +63,9 @@ node add_user.js admin MyStrongPass123 --admin
 - `SESSION_TTL_MS`
 - `HISTORY_MAX`
 - `GPT_USAGE_MAX`
+- `MAX_ATTACHMENTS_PER_MESSAGE`（默认 `4`）
+- `MAX_ATTACHMENT_BYTES`（按 data URL 解码后的实际字节校验，默认 30 MiB）
+- `MAX_CHAT_PAYLOAD_BYTES`（WebSocket 整条消息上限；默认根据附件数量、实际大小和 Base64 膨胀计算）
 - `SHAREGPT_TRANSLATION_MASTER_KEY`（32 字节 hex 或 base64 主密钥）
 - `TRANSLATION_PROFILES_FILE`
 - `TRANSLATION_USAGE_FILE`
@@ -151,6 +154,14 @@ sudo -u sharegpt node add_user.js <user> <password>
 - `releases/`、`release_shared/`
 
 这些内容都不纳入 Git 版本控制。
+
+### 聊天历史与发送次数的恢复
+
+`chat_history.json` 与 `gpt_usage.json`、`gemini_usage.json`、`claude_usage.json` 保持原有 JSON 格式。保存工作进入专用后台写入队列，不阻塞 Node 主事件循环；新快照先写入同目录临时文件并同步文件内容，再把旧主文件轮换为同名 `.backup` 并原子替换主文件。存储目录应仅由一个服务进程写入，不支持多个实例共享这些 JSON 文件。
+
+如果主文件损坏且备份有效，服务保留损坏原件为 `.corrupt-<随机标识>`，恢复备份并输出警告。备份可能比最后一次写入旧，恢复不代表最近记录完全无损；统计恢复后的去重也只能依据备份内保存的记录。没有有效备份时会报错并拒绝覆盖，不再把坏文件当作空数据。聊天历史在启动阶段读取，无法恢复时需要管理员修复文件后再启动；使用统计读写失败会向请求方返回错误。
+
+遇到恢复警告时，应暂停服务并备份整个数据目录（包括 `.backup` 和 `.corrupt-*`），核对聊天记录和发送次数后再恢复运行。不要把损坏原件或这些含用户数据的备份提交到 Git。自动快照不能替代独立、定期且经过恢复演练的服务器备份，也不保证磁盘损坏或突然断电时零丢失。
 
 ## 管理端
 

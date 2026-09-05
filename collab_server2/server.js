@@ -7,6 +7,7 @@ const { WebSocketServer } = require("ws");
 const { createTranslationProfileService } = require("./translation_profiles");
 const { createTranslationUsageService } = require("./translation_usage");
 const { createTranslationRequestRegistry } = require("./translation_requests");
+const { writeJsonAtomic, readJsonStore, saveJsonStoreAsync } = require("./json_store");
 
 process.on("uncaughtException", (err) => {
   try {
@@ -60,6 +61,11 @@ const MAX_ATTACHMENTS_PER_MESSAGE = Number.parseInt(
 );
 const MAX_ATTACHMENT_BYTES = Number.parseInt(
   process.env.MAX_ATTACHMENT_BYTES || `${30 * 1024 * 1024}`,
+  10,
+);
+const MAX_CHAT_PAYLOAD_BYTES = Number.parseInt(
+  process.env.MAX_CHAT_PAYLOAD_BYTES ||
+    `${Math.ceil((MAX_ATTACHMENT_BYTES * MAX_ATTACHMENTS_PER_MESSAGE * 4) / 3) + 256 * 1024}`,
   10,
 );
 const RECALL_EDITABLE_WINDOW_MS = Number.parseInt(
@@ -294,13 +300,6 @@ function saveUserStore(store) {
   writeJsonAtomic(USERS_FILE, store);
 }
 
-function ensureGptUsageFile() {
-  fs.mkdirSync(path.dirname(GPT_USAGE_FILE), { recursive: true });
-  if (!fs.existsSync(GPT_USAGE_FILE)) {
-    fs.writeFileSync(GPT_USAGE_FILE, JSON.stringify({ events: [] }, null, 2), "utf-8");
-  }
-}
-
 function normalizeUsageEvent(record) {
   const username = safeText(record?.username);
   const timestamp = safeText(record?.timestamp);
@@ -313,13 +312,6 @@ function normalizeUsageEvent(record) {
     count,
     ...(safeText(record?.usageId) ? { usageId: safeText(record.usageId) } : {}),
   };
-}
-
-function ensureChatHistoryFile() {
-  fs.mkdirSync(path.dirname(CHAT_HISTORY_FILE), { recursive: true });
-  if (!fs.existsSync(CHAT_HISTORY_FILE)) {
-    fs.writeFileSync(CHAT_HISTORY_FILE, JSON.stringify({ history: [] }, null, 2), "utf-8");
-  }
 }
 
 function ensureClientBootstrapFile() {
@@ -575,10 +567,32 @@ function requireDevSession(req, res) {
   return s;
 }
 
+function dataUrlByteLength(value) {
+  const dataUrl = String(value || "");
+  const comma = dataUrl.indexOf(",");
+  if (!dataUrl.startsWith("data:") || comma < 5) return -1;
+  const metadata = dataUrl.slice(5, comma);
+  const payload = dataUrl.slice(comma + 1);
+  if (/;base64(?:;|$)/i.test(metadata)) {
+    if (payload.length > Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4 + 2) return -1;
+    if (payload.length % 4 === 1 || /\s/.test(payload) || !/^[a-z0-9+/]*={0,2}$/i.test(payload)) {
+      return -1;
+    }
+    const padding = payload.endsWith("==") ? 2 : payload.endsWith("=") ? 1 : 0;
+    return Math.floor((payload.length * 3) / 4) - padding;
+  }
+  try {
+    if (payload.length > MAX_ATTACHMENT_BYTES * 3) return -1;
+    return Buffer.byteLength(decodeURIComponent(payload), "utf8");
+  } catch {
+    return -1;
+  }
+}
+
 function normalizeAttachment(record) {
   const dataUrl = safeText(record?.dataUrl);
-  const size = Math.max(0, Number.parseInt(String(record?.size || "0"), 10) || 0);
-  if (!dataUrl || size > MAX_ATTACHMENT_BYTES) {
+  const size = dataUrlByteLength(dataUrl);
+  if (!dataUrl || size < 0 || size > MAX_ATTACHMENT_BYTES) {
     return null;
   }
 
@@ -589,6 +603,20 @@ function normalizeAttachment(record) {
     size,
     dataUrl,
   };
+}
+
+function normalizeIncomingAttachments(records) {
+  if (!Array.isArray(records)) return { attachments: [] };
+  if (records.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+    return { error: `每条消息最多发送 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件` };
+  }
+  const attachments = records.map(normalizeAttachment);
+  if (attachments.some((attachment) => !attachment)) {
+    return {
+      error: `附件数据无效或实际大小超过 ${Math.floor(MAX_ATTACHMENT_BYTES / 1024 / 1024)} MB`,
+    };
+  }
+  return { attachments };
 }
 
 function normalizeReplyTarget(record) {
@@ -702,65 +730,23 @@ function messageActivityTimestamp(record) {
 }
 
 function loadChatHistoryStore() {
-  ensureChatHistoryFile();
-  try {
-    const raw = JSON.parse(fs.readFileSync(CHAT_HISTORY_FILE, "utf-8"));
-    const items = Array.isArray(raw.history)
-      ? raw.history.map(normalizeHistoryMessage).filter(Boolean)
-      : [];
-    if (items.length > HISTORY_MAX) {
-      items.splice(0, items.length - HISTORY_MAX);
-    }
-    return items;
-  } catch {
-    return [];
+  const raw = readJsonStore(CHAT_HISTORY_FILE, "history");
+  const items = raw.history.map(normalizeHistoryMessage).filter(Boolean);
+  if (items.length > HISTORY_MAX) {
+    items.splice(0, items.length - HISTORY_MAX);
   }
+  return items;
 }
 
-function saveChatHistoryStore(items) {
-  const history = Array.isArray(items) ? items.map(normalizeHistoryMessage).filter(Boolean) : [];
+async function saveChatHistoryStore(items) {
+  const history = Array.isArray(items) ? items.slice() : [];
   if (history.length > HISTORY_MAX) {
     history.splice(0, history.length - HISTORY_MAX);
   }
-  fs.writeFileSync(CHAT_HISTORY_FILE, JSON.stringify({ history }, null, 2), "utf-8");
+  await saveJsonStoreAsync(CHAT_HISTORY_FILE, { history }, "history");
 }
 
 const history = loadChatHistoryStore();
-
-function loadGptUsageStore() {
-  ensureGptUsageFile();
-  try {
-    const raw = JSON.parse(fs.readFileSync(GPT_USAGE_FILE, "utf-8"));
-    const events = Array.isArray(raw.events)
-      ? raw.events.map(normalizeUsageEvent).filter((item) => item.username)
-      : [];
-    return { events };
-  } catch {
-    return { events: [] };
-  }
-}
-
-function saveGptUsageStore(store) {
-  const events = Array.isArray(store?.events)
-    ? store.events.map(normalizeUsageEvent).filter((item) => item.username)
-    : [];
-  if (events.length > GPT_USAGE_MAX) {
-    events.splice(0, events.length - GPT_USAGE_MAX);
-  }
-  fs.writeFileSync(GPT_USAGE_FILE, JSON.stringify({ events }, null, 2), "utf-8");
-}
-
-function recordGptUsage(username, count = 1) {
-  const normalizedUsername = safeText(username);
-  if (!normalizedUsername) return;
-  const usageStore = loadGptUsageStore();
-  usageStore.events.push({
-    username: normalizedUsername,
-    timestamp: nowIso(),
-    count: Math.max(1, Number.parseInt(String(count || "1"), 10) || 1),
-  });
-  saveGptUsageStore(usageStore);
-}
 
 // 多服务 (gpt/gemini/claude) 使用统计: 各自独立存储文件, 与 GPT 同目录。
 function serviceUsageFile(service) {
@@ -768,41 +754,42 @@ function serviceUsageFile(service) {
   return path.join(path.dirname(GPT_USAGE_FILE), service + "_usage.json");
 }
 function loadUsageStoreFile(file) {
-  try {
-    const raw = JSON.parse(fs.readFileSync(file, "utf-8"));
-    const events = Array.isArray(raw.events)
-      ? raw.events.map(normalizeUsageEvent).filter((item) => item.username)
-      : [];
-    return { events };
-  } catch {
-    return { events: [] };
-  }
+  const raw = readJsonStore(file, "events");
+  return { events: raw.events.map(normalizeUsageEvent).filter((item) => item.username) };
 }
-function saveUsageStoreFile(file, store) {
+async function saveUsageStoreFile(file, store) {
   const events = Array.isArray(store && store.events)
     ? store.events.map(normalizeUsageEvent).filter((item) => item.username)
     : [];
   if (events.length > GPT_USAGE_MAX) events.splice(0, events.length - GPT_USAGE_MAX);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ events }, null, 2), "utf-8");
+  await saveJsonStoreAsync(file, { events }, "events");
 }
+const usageMutationTails = new Map();
 function recordServiceUsage(service, username, count = 1, usageId = "") {
-  const u = safeText(username);
-  if (!u) return { recorded: false, duplicate: false };
-  const id = safeText(usageId);
-  const file = serviceUsageFile(service);
-  const store = loadUsageStoreFile(file);
-  if (id && store.events.some((event) => event.username === u && event.usageId === id)) {
-    return { recorded: false, duplicate: true };
-  }
-  store.events.push({
-    username: u,
-    timestamp: nowIso(),
-    count: Math.max(1, Number.parseInt(String(count || "1"), 10) || 1),
-    ...(id ? { usageId: id } : {}),
+  const previous = usageMutationTails.get(service) || Promise.resolve();
+  const operation = previous.then(async () => {
+    const u = safeText(username);
+    if (!u) return { recorded: false, duplicate: false };
+    const id = safeText(usageId);
+    const file = serviceUsageFile(service);
+    const store = loadUsageStoreFile(file);
+    if (id && store.events.some((event) => event.username === u && event.usageId === id)) {
+      return { recorded: false, duplicate: true };
+    }
+    store.events.push({
+      username: u,
+      timestamp: nowIso(),
+      count: Math.max(1, Number.parseInt(String(count || "1"), 10) || 1),
+      ...(id ? { usageId: id } : {}),
+    });
+    await saveUsageStoreFile(file, store);
+    return { recorded: true, duplicate: false };
   });
-  saveUsageStoreFile(file, store);
-  return { recorded: true, duplicate: false };
+  usageMutationTails.set(
+    service,
+    operation.catch(() => undefined),
+  );
+  return operation;
 }
 function buildServiceUsageStats(service, fromRaw, toRaw) {
   const events = loadUsageStoreFile(serviceUsageFile(service)).events;
@@ -1537,14 +1524,14 @@ function broadcastPresence() {
   }
 }
 
-function addHistory(message) {
+async function addHistory(message) {
   const normalized = normalizeHistoryMessage(message);
   if (!normalized) return;
-  history.push(normalized);
-  if (history.length > HISTORY_MAX) {
-    history.splice(0, history.length - HISTORY_MAX);
+  const next = [...history, normalized];
+  if (next.length > HISTORY_MAX) {
+    next.splice(0, next.length - HISTORY_MAX);
   }
-  saveChatHistoryStore(history);
+  await persistHistorySnapshot(next);
 }
 
 function resolveAdminSessionByToken(token) {
@@ -1705,8 +1692,14 @@ function findHistoryMessage(messageId) {
   };
 }
 
-function persistHistorySnapshot() {
-  saveChatHistoryStore(history);
+async function persistHistorySnapshot(next) {
+  try {
+    await saveChatHistoryStore(next);
+  } catch (error) {
+    error.code = "CHAT_HISTORY_WRITE_FAILED";
+    throw error;
+  }
+  history.splice(0, history.length, ...next);
 }
 
 function buildHistorySyncPayload(client, sinceTimestamp = "") {
@@ -1740,7 +1733,8 @@ function visibleHistoryForClient(client) {
   return visibleHistoryForIdentity(client.username, client.subnetKey);
 }
 
-function markPrivateMessagesRead(username, messageIds, conversationWith = "") {
+async function markPrivateMessagesRead(username, messageIds, conversationWith = "") {
+  const nextHistory = history.slice();
   const reader = safeText(username);
   const fromUser = safeText(conversationWith);
   const ids = Array.isArray(messageIds)
@@ -1764,18 +1758,19 @@ function markPrivateMessagesRead(username, messageIds, conversationWith = "") {
       ...item,
       readAt: now,
     };
-    history[index] = next;
+    nextHistory[index] = next;
     updated.push(next);
   }
 
   if (updated.length) {
-    persistHistorySnapshot();
+    await persistHistorySnapshot(nextHistory);
   }
 
   return updated;
 }
 
-function markSubnetMessagesRead(client, messageIds) {
+async function markSubnetMessagesRead(client, messageIds) {
+  const nextHistory = history.slice();
   const reader = safeText(client?.username);
   const displayName = safeText(client?.displayName) || reader;
   const subnetKey = safeText(client?.subnetKey);
@@ -1812,12 +1807,12 @@ function markSubnetMessagesRead(client, messageIds) {
         },
       ],
     };
-    history[index] = next;
+    nextHistory[index] = next;
     updated.push(next);
   }
 
   if (updated.length) {
-    persistHistorySnapshot();
+    await persistHistorySnapshot(nextHistory);
   }
 
   return updated;
@@ -1979,14 +1974,6 @@ function buildGptUsageStats(usageEvents, fromRaw, toRaw) {
 }
 
 // ===== v1.0.2 新增辅助: 原子写 / 组队日历 / 个人云端存储 / 单用户多端广播 =====
-// 原子写 JSON: 先写临时文件再 rename, 避免写一半被 kill 损坏主数据文件。
-function writeJsonAtomic(file, obj) {
-  const data = JSON.stringify(obj, null, 2);
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
-  fs.writeFileSync(tmp, data, "utf-8");
-  fs.renameSync(tmp, file);
-}
-
 const CALENDAR_RSVP_VALUES = ["needs_action", "accept", "decline", "tentative"];
 
 function ensureCalendarsFile() {
@@ -3113,7 +3100,7 @@ const server = http.createServer(async (req, res) => {
           sendText(res, 400, "usageId 无效");
           return;
         }
-        const result = recordServiceUsage(usageMatch[1], session.username, count, usageId);
+        const result = await recordServiceUsage(usageMatch[1], session.username, count, usageId);
         sendJson(res, 200, {
           ok: true,
           service: usageMatch[1],
@@ -3568,7 +3555,21 @@ const server = http.createServer(async (req, res) => {
   sendText(res, 404, "Not Found");
 });
 
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_CHAT_PAYLOAD_BYTES });
+let historyMessageTail = Promise.resolve();
+const HISTORY_MUTATING_MESSAGE_TYPES = new Set([
+  "chat",
+  "chat_edit",
+  "chat_react",
+  "chat_read",
+  "chat_recall",
+]);
+
+function enqueueHistoryMessage(operation) {
+  const result = historyMessageTail.then(operation);
+  historyMessageTail = result.catch(() => undefined);
+  return result;
+}
 
 server.on("upgrade", (request, socket, head) => {
   const reqUrl = new URL(request.url || "/", `http://${request.headers.host || "127.0.0.1"}`);
@@ -3632,14 +3633,7 @@ wss.on("connection", (ws) => {
   });
   broadcastPresence();
 
-  ws.on("message", (raw) => {
-    let payload;
-    try {
-      payload = JSON.parse(String(raw));
-    } catch {
-      return;
-    }
-
+  const handleMessage = async (payload) => {
     if (payload?.type === "history_sync") {
       sendToClient(ws, buildHistorySyncPayload(ws, payload?.since));
       return;
@@ -3691,8 +3685,9 @@ wss.on("connection", (ws) => {
         recalled: true,
         recalledAt: nowIso(),
       };
-      history[index] = recalledMessage;
-      persistHistorySnapshot();
+      await persistHistorySnapshot(
+        history.map((item, position) => (position === index ? recalledMessage : item)),
+      );
 
       const payloadToSend = {
         type: "chat_recall",
@@ -3725,8 +3720,9 @@ wss.on("connection", (ws) => {
       else users.add(ws.username);
       if (users.size) reactions[emoji] = [...users];
       else delete reactions[emoji];
-      history[index] = { ...message, reactions };
-      persistHistorySnapshot();
+      await persistHistorySnapshot(
+        history.map((item, position) => (position === index ? { ...message, reactions } : item)),
+      );
       const out = {
         type: "chat_reaction",
         messageId: message.id,
@@ -3752,7 +3748,7 @@ wss.on("connection", (ws) => {
       const conversationWith = safeText(payload?.with);
       const messageIds = Array.isArray(payload?.messageIds) ? payload.messageIds : [];
       if (scope === "private") {
-        const updated = markPrivateMessagesRead(ws.username, messageIds, conversationWith);
+        const updated = await markPrivateMessagesRead(ws.username, messageIds, conversationWith);
         if (!updated.length) {
           return;
         }
@@ -3774,7 +3770,7 @@ wss.on("connection", (ws) => {
         return;
       }
 
-      const updated = markSubnetMessagesRead(ws, messageIds);
+      const updated = await markSubnetMessagesRead(ws, messageIds);
       if (!updated.length) {
         return;
       }
@@ -3845,8 +3841,9 @@ wss.on("connection", (ws) => {
         edited: true,
         editedAt: nowIso(),
       };
-      history[index] = editedMessage;
-      persistHistorySnapshot();
+      await persistHistorySnapshot(
+        history.map((item, position) => (position === index ? editedMessage : item)),
+      );
 
       const payloadToSend = {
         type: "chat_edit",
@@ -3914,12 +3911,16 @@ wss.on("connection", (ws) => {
     if (payload?.type !== "chat") return;
 
     const text = String(payload?.text || "").slice(0, 8000);
-    const attachments = Array.isArray(payload?.attachments)
-      ? payload.attachments
-          .map(normalizeAttachment)
-          .filter(Boolean)
-          .slice(0, MAX_ATTACHMENTS_PER_MESSAGE)
-      : [];
+    const normalizedAttachments = normalizeIncomingAttachments(payload?.attachments);
+    if (normalizedAttachments.error) {
+      sendToClient(ws, {
+        type: "error",
+        text: normalizedAttachments.error,
+        timestamp: nowIso(),
+      });
+      return;
+    }
+    const attachments = normalizedAttachments.attachments;
     const replyTo = normalizeReplyTarget(payload?.replyTo);
     const forwardedFrom = normalizeForwardedFrom(payload?.forwardedFrom);
     if (!safeText(text) && !attachments.length) return;
@@ -3974,7 +3975,7 @@ wss.on("connection", (ws) => {
         editedAt: "",
       };
 
-      addHistory(message);
+      await addHistory(message);
       sendToClient(ws, message);
       if (targetClient && targetClient !== ws) {
         sendToClient(targetClient, message);
@@ -4002,8 +4003,36 @@ wss.on("connection", (ws) => {
       editedAt: "",
     };
 
-    addHistory(message);
+    await addHistory(message);
     broadcastToSubnet(ws.subnetKey, message);
+  };
+
+  ws.on("message", (raw) => {
+    let payload;
+    try {
+      payload = JSON.parse(String(raw));
+    } catch {
+      return;
+    }
+    const operation = HISTORY_MUTATING_MESSAGE_TYPES.has(payload?.type)
+      ? enqueueHistoryMessage(() => handleMessage(payload))
+      : handleMessage(payload);
+    void operation.catch((error) => {
+      const persistenceFailure = error.code === "CHAT_HISTORY_WRITE_FAILED";
+      console.error(
+        persistenceFailure
+          ? "[collab] chat history persistence failed"
+          : "[collab] WebSocket message failed",
+        error.message,
+      );
+      sendToClient(ws, {
+        type: "error",
+        text: persistenceFailure
+          ? "聊天记录保存失败，本次操作未完成，请联系管理员检查存储后重试"
+          : "消息处理失败，请稍后重试",
+        timestamp: nowIso(),
+      });
+    });
   });
 
   ws.on("close", () => {

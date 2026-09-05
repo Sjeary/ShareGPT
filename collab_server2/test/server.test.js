@@ -31,6 +31,8 @@ process.env.TRANSLATION_USAGE_FILE = path.join(tmpDir, "translation_usage.json")
 process.env.SHAREGPT_TRANSLATION_MASTER_KEY = Buffer.alloc(32, 7).toString("base64");
 process.env.LOGIN_MAX_FAILS = "3"; // 测试用小阈值
 process.env.LOGIN_LOCK_MS = "10000";
+process.env.MAX_ATTACHMENT_BYTES = "8";
+process.env.MAX_CHAT_PAYLOAD_BYTES = "4096";
 
 const srv = require("../server.js");
 const proxyRoutesBackupFile = `${process.env.PROXY_ROUTES_FILE}.backup`;
@@ -658,6 +660,69 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   assert.strictEqual(legacyChat.scope, "subnet");
   assert.strictEqual(typeof legacyChat.id, "string");
   assert.strictEqual(typeof legacyChat.timestamp, "string");
+  const savedHistory = JSON.parse(fs.readFileSync(process.env.CHAT_HISTORY_FILE, "utf8"));
+  assert.ok(savedHistory.history.some((message) => message.id === legacyChat.id));
+  assert.ok(fs.existsSync(`${process.env.CHAT_HISTORY_FILE}.backup`));
+
+  legacySocket.ws.send(
+    JSON.stringify({
+      type: "chat",
+      attachments: [
+        {
+          kind: "file",
+          name: "forged-size.txt",
+          size: 0,
+          dataUrl: `data:text/plain;base64,${Buffer.from("123456789").toString("base64")}`,
+        },
+      ],
+    }),
+  );
+  const oversizedAttachment = await legacySocket.next((message) => message.type === "error");
+  assert.match(oversizedAttachment.text, /实际大小超过/);
+
+  legacySocket.ws.send(
+    JSON.stringify({
+      type: "chat",
+      attachments: [
+        {
+          kind: "file",
+          name: "actual-size.txt",
+          size: 0,
+          dataUrl: `data:text/plain;base64,${Buffer.from("12345678").toString("base64")}`,
+        },
+      ],
+    }),
+  );
+  const validAttachment = await legacySocket.next(
+    (message) => message.type === "chat" && message.attachments?.[0]?.name === "actual-size.txt",
+  );
+  assert.strictEqual(validAttachment.attachments[0].size, 8);
+
+  const historySnapshot = fs.readFileSync(process.env.CHAT_HISTORY_FILE);
+  const historyBackup = fs.readFileSync(`${process.env.CHAT_HISTORY_FILE}.backup`);
+  fs.writeFileSync(process.env.CHAT_HISTORY_FILE, "{broken-history");
+  fs.writeFileSync(`${process.env.CHAT_HISTORY_FILE}.backup`, "{broken-backup");
+  for (const operation of [
+    { type: "chat", text: "must not appear" },
+    { type: "chat_edit", messageId: legacyChat.id, text: "must not replace" },
+    { type: "chat_react", messageId: legacyChat.id, emoji: "👍" },
+    { type: "chat_recall", messageId: legacyChat.id },
+  ]) {
+    legacySocket.ws.send(JSON.stringify(operation));
+    const failure = await legacySocket.next((message) => message.type === "error");
+    assert.match(failure.text, /保存失败/);
+    legacySocket.ws.send(JSON.stringify({ type: "history_sync", since: "" }));
+    const unchanged = await legacySocket.next((message) => message.type === "history_sync");
+    const original = unchanged.messages.find((message) => message.id === legacyChat.id);
+    assert.deepStrictEqual(
+      original,
+      savedHistory.history.find((message) => message.id === legacyChat.id),
+    );
+    assert.ok(!unchanged.messages.some((message) => message.text === "must not appear"));
+    assert.strictEqual(fs.readFileSync(process.env.CHAT_HISTORY_FILE, "utf8"), "{broken-history");
+  }
+  fs.writeFileSync(process.env.CHAT_HISTORY_FILE, historySnapshot);
+  fs.writeFileSync(`${process.env.CHAT_HISTORY_FILE}.backup`, historyBackup);
 
   legacySocket.ws.send(JSON.stringify({ type: "history_sync", since: "" }));
   const legacyHistorySync = await legacySocket.next(
@@ -1091,11 +1156,51 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   assert.strictEqual(legacyUsage.status, 200);
   assert.strictEqual((await legacyUsage.json()).duplicate, false);
 
+  const concurrentUsage = await Promise.all(
+    ["usage-concurrent-1", "usage-concurrent-2"].map((usageId) =>
+      fetch(`${baseUrl}/api/gpt/usage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders },
+        body: JSON.stringify({ count: 1, usageId }),
+      }),
+    ),
+  );
+  assert.deepStrictEqual(
+    concurrentUsage.map((response) => response.status),
+    [200, 200],
+  );
+
   const stats = await fetch(`${baseUrl}/api/gpt/stats`, { headers: authHeaders });
   assert.strictEqual(stats.status, 200);
   const statsBody = await stats.json();
-  assert.strictEqual(statsBody.totalQueries, 2);
+  assert.strictEqual(statsBody.totalQueries, 4);
   assert.ok(Array.isArray(statsBody.users));
+
+  const usageSnapshot = fs.readFileSync(process.env.GPT_USAGE_FILE);
+  fs.copyFileSync(process.env.GPT_USAGE_FILE, `${process.env.GPT_USAGE_FILE}.backup`);
+  fs.writeFileSync(process.env.GPT_USAGE_FILE, "{interrupted");
+  const recoveredUsage = await fetch(`${baseUrl}/api/gpt/usage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ count: 1, usageId: "usage-once-1" }),
+  });
+  assert.strictEqual(recoveredUsage.status, 200);
+  assert.strictEqual((await recoveredUsage.json()).duplicate, true);
+  const recoveredStats = await fetch(`${baseUrl}/api/gpt/stats`, { headers: authHeaders });
+  assert.strictEqual((await recoveredStats.json()).totalQueries, 4);
+
+  fs.writeFileSync(process.env.GPT_USAGE_FILE, "{unrecoverable");
+  fs.writeFileSync(`${process.env.GPT_USAGE_FILE}.backup`, "{unrecoverable-backup");
+  const blockedUsage = await fetch(`${baseUrl}/api/gpt/usage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ count: 1, usageId: "usage-must-not-save" }),
+  });
+  assert.strictEqual(blockedUsage.status, 500);
+  assert.match(await blockedUsage.text(), /原件保留/);
+  assert.strictEqual(fs.readFileSync(process.env.GPT_USAGE_FILE, "utf8"), "{unrecoverable");
+  fs.writeFileSync(process.env.GPT_USAGE_FILE, usageSnapshot);
+  fs.writeFileSync(`${process.env.GPT_USAGE_FILE}.backup`, usageSnapshot);
 
   const calendar = await fetch(`${baseUrl}/api/user-store/calendar`, { headers: authHeaders });
   assert.strictEqual(calendar.status, 200);
