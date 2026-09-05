@@ -32,6 +32,7 @@ import {
 } from '@/hooks/clientBootstrap'
 import { requireConfirmedLoginResponse } from '@/lib/collabLoginTransaction'
 import { createSingleFlight } from '@/lib/singleFlight'
+import { canEditManagedProxy } from '@/lib/managedProxyPolicy'
 import {
   settingsPrincipalRuntime,
   type SettingsPrincipalSnapshot,
@@ -507,9 +508,7 @@ export function useChat() {
         try {
           await fetchAndApplyAuthoritativeClientBootstrap(serverUrl, issuedToken, {
             allowLegacyAdminConfig: Boolean(payload.profile?.isAdmin),
-            managedConfigEditable: Boolean(
-              payload.profile?.isAdmin || payload.profile?.advancedAiAllowed,
-            ),
+            managedConfigEditable: canEditManagedProxy(payload.profile),
             principalSnapshot,
           })
         } catch (error) {

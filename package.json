@@ -45,6 +45,7 @@
     "verify:chat-message-menu": "node scripts/verify-chat-message-menu.js",
     "verify:chat-interactions": "node scripts/verify-chat-interactions.js",
     "verify:profile-editor": "npm run build:next && node scripts/verify-profile-editor.js",
+    "verify:managed-proxy-readonly": "node scripts/verify-managed-proxy-readonly.js",
     "verify:personal-workspace": "npm run build:next && node scripts/verify-personal-workspace.js",
     "verify:release-win": "node scripts/verify-win-release.js",
     "verify:release-contract": "node scripts/verify-release-contract.mjs",
