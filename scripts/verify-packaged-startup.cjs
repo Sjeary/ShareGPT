@@ -1,0 +1,69 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const { _electron: electron } = require("playwright");
+
+// Packaged builds intentionally use the real OS appData path. Never run this on a user's desktop.
+if (process.env.GITHUB_ACTIONS !== "true" || !process.env.RUNNER_TEMP) {
+  throw new Error("Packaged startup acceptance is restricted to disposable GitHub runners.");
+}
+const executablePath = path.resolve(process.argv[2] || "");
+const allowedRoots = [process.env.GITHUB_WORKSPACE, process.env.RUNNER_TEMP].filter(Boolean);
+if (!allowedRoots.some((root) => executablePath.startsWith(path.resolve(root) + path.sep))) {
+  throw new Error("The executable must belong to this runner's workspace or temporary install.");
+}
+
+async function run() {
+  let app;
+  try {
+    app = await electron.launch({ executablePath, timeout: 60000 });
+    const page = await app.firstWindow();
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(String(error)));
+    await page.getByText("欢迎来到 ShareGPT", { exact: true }).waitFor({ timeout: 60000 });
+    const identity = await app.evaluate(({ app }) => ({
+      packaged: app.isPackaged,
+      version: app.getVersion(),
+      data: app.getPath("userData"),
+    }));
+    assert.equal(identity.packaged, true);
+    assert.equal(identity.version, require("../package.json").version);
+    assert.equal(path.basename(identity.data), "ShareGPT");
+    await page.getByRole("button", { name: "开始设置", exact: true }).click();
+    await page.getByRole("button", { name: /仅在本机使用/ }).click();
+    await page.getByRole("button", { name: "进入个人工作区", exact: true }).click();
+    await page.locator('[data-tour="nav-service"]').waitFor();
+    assert.equal(
+      (await page.evaluate(() => window.api.getSettingsPrincipal())).principalId,
+      "local-device",
+    );
+    const sentinel = path.join(identity.data, "packaged-startup-sentinel.txt");
+    fs.writeFileSync(sentinel, "preserve");
+    await app.close();
+    app = await electron.launch({ executablePath, timeout: 60000 });
+    const reopened = await app.firstWindow();
+    await reopened.locator("#account-server").waitFor({ timeout: 60000 });
+    assert.equal(await reopened.getByText("欢迎来到 ShareGPT", { exact: true }).count(), 0);
+    assert.equal(await reopened.locator('[data-tour="nav-service"]').count(), 0);
+    await reopened.getByRole("button", { name: "返回选择使用方式", exact: true }).click();
+    await reopened.getByRole("button", { name: /仅在本机使用/ }).click();
+    await reopened.getByRole("button", { name: "进入个人工作区", exact: true }).click();
+    await reopened.locator('[data-tour="nav-service"]').waitFor({ timeout: 60000 });
+    assert.equal(
+      (await reopened.evaluate(() => window.api.getSettingsPrincipal())).principalId,
+      "local-device",
+    );
+    assert.equal(await app.evaluate(({ app }) => app.getPath("userData")), identity.data);
+    assert.equal(fs.readFileSync(sentinel, "utf8"), "preserve");
+    assert.deepEqual(errors, []);
+    console.log(
+      "Packaged startup passed: real entry/preload, onboarding, personal Principal, restart login gate, explicit personal re-entry and data retention.",
+    );
+  } finally {
+    if (app) await app.close();
+  }
+}
+run().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

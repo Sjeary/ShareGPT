@@ -1,6 +1,6 @@
 # ShareGPT 自托管完整教程：协作后端、统一出口、FRP 树莓派出口与节点分发
 
-> 适用版本：ShareGPT `1.0.8` 及当前源码。本文面向服务器管理员，不面向普通客户端用户。`1.0.9` 尚未发布，部署候选源码时必须锁定经过你验证的完整提交 SHA。
+> 适用版本：ShareGPT `1.0.9`，并保留现有 `1.0.x` 客户端兼容。本文面向服务器管理员，不面向普通客户端用户。部署前请确认 GitHub Release 和对应 tag 已存在，不能用桌面版本号代替服务端版本核对。
 >
 > 文中的域名、IP、端口、UUID、Token、密码和订阅地址全部是占位符。请替换为你自己的值，不要把真实凭据提交到 Git、Issue、截图或聊天记录中。
 
@@ -169,12 +169,12 @@ sudo chmod 750 /var/lib/sharegpt-collab /etc/sharegpt-collab
 
 ```bash
 sudo -u sharegpt git clone https://github.com/Sjeary/ShareGPT.git /opt/sharegpt/source
-sudo -u sharegpt git -C /opt/sharegpt/source checkout --detach v1.0.8
+sudo -u sharegpt git -C /opt/sharegpt/source checkout --detach v1.0.9
 sudo -u sharegpt npm --prefix /opt/sharegpt/source/collab_server2 ci --omit=dev
 ```
 
 部署时必须先切到你验证过的不可变 tag 或提交，再安装该版本的依赖，不能永远跟随 `main`。
-上面的 `v1.0.8` 是本文更新时最新的正式 Release。`1.0.9` 仍处于候选阶段，因此不要使用不存在的 `v1.0.9` tag；若需要验证候选能力，请把 `v1.0.8` 替换为经过审核的完整 40 位提交 SHA，并在正式发布后切换到真实 tag。
+上例使用 `v1.0.9`。若该 tag 尚未公开，请等待 Release，或仅在测试环境使用经过审核的完整 40 位提交 SHA。升级服务器前先备份数据和翻译加密密钥；桌面客户端升级不会自动更新服务器。
 
 正式暴露服务前执行生产依赖审计：
 
