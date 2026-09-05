@@ -53,3 +53,27 @@ test('clearing one completed draft does not remove another conversation', () => 
   patch('', { text: 'unscoped' })
   assert.equal(useChatStore.getState().composerDrafts[''], undefined)
 })
+
+test('reading positions stay isolated and unread marker advances after clearing a batch', () => {
+  useChatStore.setState({ readingPositions: {} })
+  const a = chatViewKey('A', 'room:team')
+  const b = chatViewKey('B', 'room:team')
+  const first = {
+    anchorId: 'first',
+    offset: -12,
+    scrollTop: 400,
+    atBottom: false,
+    unreadMarkerId: '',
+  }
+  useChatStore.getState().saveReadingPosition(a, first)
+  useChatStore.getState().saveReadingPosition(b, { ...first, scrollTop: 50 })
+  useChatStore.getState().clearGroupCaches()
+  assert.equal(useChatStore.getState().readingPositions[a].scrollTop, 400)
+  assert.equal(useChatStore.getState().readingPositions[b].scrollTop, 50)
+  useChatStore.getState().incrementUnread('room:team', 'one')
+  useChatStore.getState().incrementUnread('room:team', 'two')
+  assert.equal(useChatStore.getState().firstUnreadByKey['room:team'], 'one')
+  useChatStore.getState().clearUnread('room:team')
+  useChatStore.getState().incrementUnread('room:team', 'three')
+  assert.equal(useChatStore.getState().firstUnreadByKey['room:team'], 'three')
+})
