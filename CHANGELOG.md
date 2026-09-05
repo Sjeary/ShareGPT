@@ -7,7 +7,9 @@
 
 ## [Unreleased]
 
-> **1.0.9 待发布：个人与团队双工作区、全新翻译工作台**。你可以不登录团队账号，在本机独立使用 ShareGPT；团队用户则获得更完整的翻译分发、权限和用量管理。升级会继续保留原有账号、配置和 AI 网页登录状态。
+## [1.0.9] - 2026-09-05
+
+> **个人与团队双工作区、全新翻译工作台**。你可以不登录团队账号，在本机独立使用 ShareGPT；团队用户则获得更完整的翻译分发、权限和用量管理。升级继续沿用原有数据目录，不要求清除账号、配置或 AI 网页登录资料。
 
 ### 选择适合你的使用方式
 
@@ -73,7 +75,7 @@
 
 - 从 1.0.x 升级时，无需先卸载或清除本地数据。个人与团队工作区独立保存；切换工作区不是搬迁或合并网页登录资料。
 - 团队共享翻译、管理员用量报表和服务器历史备份保护需要同步升级协作服务器。管理员请先备份服务器数据，并按[自托管指南](docs/SELF_HOSTING.md)配置翻译服务的加密密钥；只更新桌面客户端不会自动升级服务器。
-- 当前仍为待发布候选。正式安装包通过签名和发布验证后才会在 GitHub Release 提供；本地测试包不能代替正式安装包。
+- 本版沿用历史分发方式：Windows 安装包没有正式代码签名，macOS 应用使用 ad-hoc 签名且未经 Apple 公证，首次安装可能出现系统安全提示。仅从本仓库 Release 下载，按其安装说明核对来源；不要关闭系统安全功能，也不要忽略恶意软件或文件损坏警告。
 
 ## [1.0.8] - 2026-08-26
 
@@ -290,7 +292,8 @@
 
 - 更早的 5.x 为测试版本，不在此正式记录。
 
-[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.8...HEAD
+[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.9...HEAD
+[1.0.9]: https://github.com/Sjeary/ShareGPT/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/Sjeary/ShareGPT/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/Sjeary/ShareGPT/compare/v1.0.6...v1.0.7
 [1.0.6]: https://github.com/Sjeary/ShareGPT/compare/v1.0.5...v1.0.6
