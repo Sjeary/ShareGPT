@@ -1,12 +1,13 @@
 import { StrictMode, useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Minus, Square, X, Save, UserRound } from 'lucide-react'
+import { AlertCircle, Check, Loader2, RefreshCw, Save, X } from 'lucide-react'
+import { Titlebar } from '@/components/layout/Titlebar'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Toaster } from '@/components/ui/sonner'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { cn } from '@/lib/utils'
 import './index.css'
 
 function safeText(v: unknown): string {
@@ -38,35 +39,7 @@ interface ProfileData {
   avatar: string
 }
 
-function WindowControls() {
-  return (
-    <div className="app-no-drag flex items-center gap-1">
-      <button
-        onClick={() => api?.minimizeWindow?.()}
-        aria-label="最小化"
-        className="grid size-8 place-items-center rounded-md text-muted-foreground transition hover:bg-secondary hover:text-foreground"
-      >
-        <Minus className="size-4" />
-      </button>
-      <button
-        onClick={() => api?.toggleMaximizeWindow?.()}
-        aria-label="最大化"
-        className="grid size-8 place-items-center rounded-md text-muted-foreground transition hover:bg-secondary hover:text-foreground"
-      >
-        <Square className="size-3.5" />
-      </button>
-      <button
-        onClick={() => api?.closeWindow?.()}
-        aria-label="关闭"
-        className="grid size-8 place-items-center rounded-md text-muted-foreground transition hover:bg-destructive hover:text-destructive-foreground"
-      >
-        <X className="size-4" />
-      </button>
-    </div>
-  )
-}
-
-function ProfileApp() {
+export function ProfileApp() {
   const params = useMemo(() => new URLSearchParams(window.location.search), [])
   const serverUrl = safeText(params.get('serverUrl')).replace(/\/+$/, '')
   const token = safeText(params.get('token'))
@@ -79,7 +52,13 @@ function ProfileApp() {
   const [roomScope, setRoomScope] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(() =>
+    !serverUrl || !token ? '登录信息已失效，请回到主页面重新打开个人资料。' : '',
+  )
+  const [saveError, setSaveError] = useState('')
+  const [retry, setRetry] = useState(0)
+  const [saved, setSaved] = useState<ProfileData | null>(null)
+  const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
 
   // 头像取首字; 与主窗 settings.ui.theme 对齐主题。
   useEffect(() => {
@@ -94,38 +73,57 @@ function ProfileApp() {
       )
       .then((s) => {
         const theme = (s as { ui?: { theme?: string } })?.ui?.theme
-        document.documentElement.classList.toggle('dark', safeText(theme).toLowerCase() !== 'light')
+        const nextDark = safeText(theme).toLowerCase() !== 'light'
+        document.documentElement.classList.toggle('dark', nextDark)
+        setDark(nextDark)
       })
       .catch(() => {})
   }, [])
 
   useEffect(() => {
+    const controller = new AbortController()
     if (!serverUrl || !token) {
-      setError('登录信息已失效，请回到主页面重新打开个人资料。')
       return
     }
     void (async () => {
       try {
         const resp = await fetch(`${serverUrl}/api/profile`, {
           headers: { Authorization: `Bearer ${token}` },
+          signal: controller.signal,
         })
         if (!resp.ok) throw new Error((await resp.text()) || `读取资料失败（${resp.status}）`)
         const payload = await resp.json()
         const p = (payload?.profile ?? {}) as Partial<ProfileData>
+        if (controller.signal.aborted) return
         setUsername(safeText(p.username) || queryUsername)
         setDisplayName(safeText(p.displayName) || safeText(p.username) || queryUsername)
         setBio(safeText(p.bio))
         setAvatar(firstChar(p.avatar))
         setRoomScope(safeText(payload?.roomScope))
+        setSaved({
+          username: safeText(p.username) || queryUsername,
+          displayName: safeText(p.displayName) || safeText(p.username) || queryUsername,
+          bio: safeText(p.bio),
+          avatar: firstChar(p.avatar),
+        })
         setLoaded(true)
       } catch (e) {
+        if (controller.signal.aborted) return
         setError(e instanceof Error ? e.message : '读取资料失败')
       }
     })()
-  }, [serverUrl, token, queryUsername])
+    return () => controller.abort()
+  }, [serverUrl, token, queryUsername, retry])
+
+  const dirty =
+    saved !== null &&
+    ((safeText(displayName) || username) !== saved.displayName ||
+      safeText(bio) !== saved.bio ||
+      firstChar(avatar) !== saved.avatar)
 
   async function handleSave() {
-    if (saving) return
+    if (saving || !loaded || !dirty) return
+    setSaveError('')
     setSaving(true)
     try {
       const dn = safeText(displayName).slice(0, 30) || username
@@ -148,10 +146,20 @@ function ProfileApp() {
         avatar: av,
         avatarKind: 'emoji',
       }
+      const accepted = {
+        username: safeText(profile.username) || username,
+        displayName: safeText(profile.displayName) || dn,
+        bio: safeText(profile.bio),
+        avatar: firstChar(profile.avatar),
+      }
+      setDisplayName(accepted.displayName)
+      setBio(accepted.bio)
+      setAvatar(accepted.avatar)
+      setSaved(accepted)
       api?.emitProfileUpdated?.({ profile })
       toast.success('资料已保存')
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '保存失败')
+      setSaveError(e instanceof Error ? e.message : '保存失败，请重试。')
     } finally {
       setSaving(false)
     }
@@ -163,119 +171,150 @@ function ProfileApp() {
 
   return (
     <div className="flex h-full flex-col bg-background text-foreground">
-      {/* 标题栏 (可拖拽) */}
-      <header className="app-drag flex h-11 shrink-0 items-center justify-between border-b border-border px-3">
-        <div className="flex items-center gap-2.5">
-          <div className="grid size-6 place-items-center rounded-md bg-primary text-primary-foreground">
-            <UserRound className="size-3.5" />
-          </div>
-          <span className="text-sm font-semibold tracking-tight">个人资料</span>
-        </div>
-        <WindowControls />
-      </header>
+      <Titlebar title="个人资料" auxiliary />
 
       {error ? (
         <div className="grid flex-1 place-items-center p-6">
-          <p className="max-w-sm text-center text-sm text-destructive">{error}</p>
-        </div>
-      ) : (
-        <div className="min-h-0 flex-1 overflow-auto p-6">
-          <div className="mx-auto grid max-w-3xl gap-6 md:grid-cols-[1fr_320px]">
-            {/* 表单 */}
-            <section className="rounded-xl border border-border bg-card p-6">
-              <h2 className="text-base font-semibold">编辑显示信息</h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                保存后会同步显示在账号信息、联系人列表和聊天消息里。
-              </p>
-              <div className="mt-5 grid gap-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="p-username">登录账号</Label>
-                  <Input id="p-username" value={username} disabled />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="p-name">显示昵称</Label>
-                  <Input
-                    id="p-name"
-                    maxLength={30}
-                    placeholder="例如 小王 / 设计部 / 助理 01"
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    disabled={!loaded}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="p-bio">一句话介绍</Label>
-                  <textarea
-                    id="p-bio"
-                    rows={5}
-                    maxLength={200}
-                    placeholder="例如：白天在线，急事请直接私聊"
-                    value={bio}
-                    onChange={(e) => setBio(e.target.value)}
-                    disabled={!loaded}
-                    className="resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="p-avatar">头像文字</Label>
-                  <Input
-                    id="p-avatar"
-                    maxLength={4}
-                    placeholder="例如 王 / A / 星"
-                    value={avatar}
-                    onChange={(e) => setAvatar(firstChar(e.target.value))}
-                    disabled={!loaded}
-                    className="w-28"
-                  />
-                </div>
-              </div>
-            </section>
-
-            {/* 预览 */}
-            <aside className="flex flex-col gap-4">
-              <div className="rounded-xl border border-border bg-card p-5">
-                <h2 className="text-sm font-semibold">别人看到的样子</h2>
-                <div className="mt-4 flex items-center gap-3">
-                  <div className="grid size-12 shrink-0 place-items-center rounded-full bg-primary text-lg font-semibold text-primary-foreground">
-                    {previewAvatar}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold">{previewName}</div>
-                    <div className="truncate text-xs text-muted-foreground">{previewBio}</div>
-                  </div>
-                </div>
-              </div>
-              <div className="rounded-xl border border-border bg-muted/30 p-4 text-xs text-muted-foreground">
-                <p className="mb-1.5">· 昵称尽量简洁，列表里更清楚。</p>
-                <p className="mb-1.5">· 头像可用一个字或符号，便于识别。</p>
-                <p>· 简介可填在线时间、用途或提醒信息。</p>
-              </div>
-              {roomScope && (
-                <p className="px-1 text-xs text-muted-foreground">当前房间：{roomScope}</p>
-              )}
-            </aside>
+          <div className="flex max-w-sm flex-col items-center gap-4 text-center">
+            <AlertCircle className="size-6 text-destructive" />
+            <p role="alert" className="break-words text-sm text-destructive">
+              {error}
+            </p>
+            {serverUrl && token && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setError('')
+                  setRetry((value) => value + 1)
+                }}
+              >
+                <RefreshCw />
+                重新加载
+              </Button>
+            )}
           </div>
         </div>
+      ) : !loaded ? (
+        <div
+          role="status"
+          className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"
+        >
+          <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+          正在加载资料
+        </div>
+      ) : (
+        <main className="min-h-0 flex-1 overflow-auto px-5 py-6 sm:px-8">
+          <form
+            id="profile-form"
+            className="mx-auto max-w-xl"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void handleSave()
+            }}
+          >
+            <section
+              aria-label="资料预览"
+              className="flex min-w-0 items-center gap-4 border-b border-border pb-5"
+            >
+              <Avatar size="lg" className="size-14 data-[size=lg]:size-14">
+                <AvatarFallback className="text-xl">{previewAvatar}</AvatarFallback>
+              </Avatar>
+              <div className="min-w-0 flex-1">
+                <h1 className="break-words text-lg font-semibold">{previewName}</h1>
+                <p className="mt-1 line-clamp-2 break-words text-sm text-muted-foreground">
+                  {previewBio}
+                </p>
+              </div>
+            </section>
+            <dl className="grid gap-3 border-b border-border py-4 text-sm sm:grid-cols-2">
+              <div className="min-w-0">
+                <dt className="text-xs text-muted-foreground">登录账号</dt>
+                <dd className="mt-1 select-text break-all">{username}</dd>
+              </div>
+              {roomScope && (
+                <div className="min-w-0">
+                  <dt className="text-xs text-muted-foreground">当前房间</dt>
+                  <dd className="mt-1 select-text break-all">{roomScope}</dd>
+                </div>
+              )}
+            </dl>
+            <fieldset disabled={saving} className="mt-5 grid min-w-0 gap-5 disabled:opacity-60">
+              <div className="grid gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="p-name">显示昵称</Label>
+                  <span id="p-name-count" className="text-xs tabular-nums text-muted-foreground">
+                    {displayName.length}/30
+                  </span>
+                </div>
+                <Input
+                  id="p-name"
+                  maxLength={30}
+                  placeholder={username}
+                  value={displayName}
+                  aria-describedby="p-name-count"
+                  onChange={(event) => setDisplayName(event.target.value)}
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="p-avatar">头像文字</Label>
+                <Input
+                  id="p-avatar"
+                  maxLength={4}
+                  placeholder="字或符号"
+                  value={avatar}
+                  onChange={(event) => setAvatar(firstChar(event.target.value))}
+                  className="w-28"
+                />
+              </div>
+              <div className="grid gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <Label htmlFor="p-bio">个人简介</Label>
+                  <span id="p-bio-count" className="text-xs tabular-nums text-muted-foreground">
+                    {bio.length}/200
+                  </span>
+                </div>
+                <textarea
+                  id="p-bio"
+                  rows={3}
+                  maxLength={200}
+                  placeholder="暂未填写简介"
+                  value={bio}
+                  aria-describedby="p-bio-count"
+                  onChange={(event) => setBio(event.target.value)}
+                  className="w-full min-w-0 resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"
+                />
+              </div>
+            </fieldset>
+          </form>
+        </main>
       )}
 
-      {/* 底部操作 */}
-      {!error && (
-        <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border px-6 py-3">
-          <Button variant="ghost" onClick={() => api?.closeWindow?.()}>
+      <footer className="shrink-0 border-t border-border px-5 py-3 sm:px-8">
+        <div className="mx-auto flex max-w-xl flex-wrap items-center justify-end gap-3">
+          <div className="min-w-0 flex-1 basis-24 text-xs">
+            {saveError ? (
+              <p role="alert" className="break-words text-destructive">
+                {saveError}
+              </p>
+            ) : (
+              <p role="status" className="flex items-center gap-1.5 text-muted-foreground">
+                {loaded && !dirty && <Check className="size-3.5 shrink-0" />}
+                {saving ? '正在保存' : loaded ? (dirty ? '有未保存的更改' : '已同步') : ''}
+              </p>
+            )}
+          </div>
+          <Button variant="ghost" onClick={() => api?.closeWindow?.()} disabled={saving}>
+            <X />
             关闭
           </Button>
-          <Button
-            onClick={() => void handleSave()}
-            disabled={!loaded || saving}
-            className={cn(saving && 'opacity-80')}
-          >
-            <Save className="size-4" />
+          <Button type="submit" form="profile-form" disabled={!loaded || saving || !dirty}>
+            {saving ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <Save />}
             {saving ? '保存中…' : '保存更改'}
           </Button>
-        </footer>
-      )}
+        </div>
+      </footer>
 
-      <Toaster position="bottom-right" richColors />
+      <Toaster position="top-right" theme={dark ? 'dark' : 'light'} richColors />
     </div>
   )
 }

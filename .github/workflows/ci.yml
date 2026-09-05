@@ -113,6 +113,8 @@ jobs:
         run: npm run verify:chat-message-menu
       - name: Verify chat drafts and reading continuity
         run: npm run verify:chat-interactions
+      - name: Verify profile editor layout and saving
+        run: npm run verify:profile-editor
 
       - name: 协作登录与客户端/服务端兼容验收
         run: npm run verify:collab-login-compatibility
