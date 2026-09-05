@@ -107,7 +107,7 @@ ShareGPT 是一个面向 AI 网页使用、个人知识管理和小团队协作�
 
 > ShareGPT 不附带公共团队服务器、代理节点、第三方 AI 账号或翻译 API Key。个人用户使用自己的服务；团队用户从自己的管理员处获得连接信息和授权。
 
-> 正式 GitHub Release 应带有有效的 Windows Authenticode 或 macOS Developer ID 签名与公证。若系统显示未知发布者、签名无效或来源不明，请先停止安装并核对 Release 页面、文件名和发布者；不要通过关闭安全检查或移除隔离属性来绕过警告。
+> **1.0.9 沿用历史分发方式：Windows 安装包未签名，macOS 应用只有 ad-hoc 签名、未经 Apple 公证。** 首次安装可能出现未知发布者或无法验证开发者提示，不保证在组织管控设备上可运行。请仅从本仓库 Release 下载并核对其安装说明；不要关闭系统安全功能，不要忽略恶意软件或文件损坏警告。后续版本的正式签名要求见发布文档。
 
 ## 🛠️ 部署指南（管理员 / 自建）
 
@@ -175,7 +175,7 @@ npm run dist:admin:win      # 管理控制台
 **发布新版本 / 自建更新源**（维护者 / fork）：应用以 **GitHub Releases** 为自动更新源，不经过协作服务器。完整的签名、构建、资产和发布门禁见 [docs/RELEASING.md](docs/RELEASING.md)。
 
 1. 改 `package.json` 版本号 → 完整桌面版执行 `npm run dist:win:installer`（NSIS）和 `npm run dist:mac`；拆分发送端才使用 `dist:win:sender` / `dist:mac:sender`。
-2. Windows 正式包必须通过 Authenticode 签名与时间戳校验；macOS 正式包必须通过 Developer ID、hardened runtime、公证和 staple 校验。本地未签名或 ad-hoc 候选不得上传 Release。
+2. 默认要求 Windows Authenticode 签名与时间戳、macOS Developer ID、hardened runtime、公证和 staple 校验。`v1.0.9` 有明确的历史分发例外，仍须从发布源码重新构建和验证，不能直接上传本机候选或宣称已正式签名。
 3. 在自己的 GitHub 仓库创建 `v<版本号>` Release，并上传工作流要求的完整资产。portable 只用于本地自测，不作为更新包。
 
 **目录结构**

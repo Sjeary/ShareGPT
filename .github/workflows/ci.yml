@@ -126,6 +126,16 @@ jobs:
           npm run verify:browser-privacy
           npm run verify:browser-privacy-ui
 
+      - name: Verify v1.0.9 legacy Mac packaging and real packaged startup
+        env:
+          SHAREGPT_RELEASE_TAG: v1.0.9
+        run: |
+          if [ "$(node -p "require('./package.json').version")" = "1.0.9" ]; then
+            npm run prepare:release-mac-assets
+            node scripts/build-legacy-release.cjs
+            node scripts/verify-packaged-startup.cjs release_sender/mac-arm64/ShareGPT.app/Contents/MacOS/ShareGPT
+          fi
+
   windows-package:
     runs-on: windows-2025
     steps:
@@ -156,3 +166,13 @@ jobs:
         run: |
           npm run dist:win:installer
           npm run verify:release-win
+
+      - name: Install and launch the actual NSIS package
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $destination = Join-Path $env:RUNNER_TEMP "ShareGPT-installed"
+          $installer = Start-Process -FilePath "release/sharegpt-$version.exe" -ArgumentList @("/S", "/D=$destination") -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw "NSIS installation failed" }
+          node scripts/verify-packaged-startup.cjs "$destination/sharegpt.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Installed app startup failed" }
