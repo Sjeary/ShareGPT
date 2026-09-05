@@ -56,7 +56,7 @@ async function run() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-message-menu-"));
   const server = await createServer({
     root: path.join(ROOT, "src/renderer-next"),
-    server: { host: "127.0.0.1", port: 0 },
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
     plugins: [
       {
         name: "message-menu-fixture",

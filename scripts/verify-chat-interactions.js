@@ -87,7 +87,7 @@ async function run() {
   const source = fixtureSource("http://127.0.0.1:" + backend.address().port);
   const server = await createServer({
     root: path.join(ROOT, "src/renderer-next"),
-    server: { host: "127.0.0.1", port: 0 },
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
     plugins: [
       {
         name: "chat-interaction-fixture",
