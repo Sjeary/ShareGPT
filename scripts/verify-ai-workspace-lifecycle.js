@@ -14,17 +14,30 @@ const HOST_BOUNDS = Object.freeze({ x: 96, y: 96, width: 920, height: 560 });
 function waitUntil(predicate, label, timeoutMs = 15_000) {
   const startedAt = Date.now();
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const deadline = setTimeout(() => {
+      settled = true;
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    const finish = (result, error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      if (error) reject(error);
+      else resolve(result);
+    };
     const poll = async () => {
+      if (settled) return;
       try {
         const value = await predicate();
-        if (value) return resolve(value);
+        if (value) return finish(value);
       } catch (error) {
-        if (Date.now() - startedAt >= timeoutMs) return reject(error);
+        if (Date.now() - startedAt >= timeoutMs) return finish(undefined, error);
       }
       if (Date.now() - startedAt >= timeoutMs) {
-        return reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+        return finish(undefined, new Error(`${label} timed out after ${timeoutMs}ms`));
       }
-      setTimeout(poll, 50);
+      if (!settled) setTimeout(poll, 50);
     };
     void poll();
   });
@@ -131,10 +144,15 @@ function listen(server) {
 function createCertificate(directory) {
   const keyPath = path.join(directory, "fixture-key.pem");
   const certificatePath = path.join(directory, "fixture-cert.pem");
+  const configPath = path.join(directory, "fixture-openssl.cnf");
+  // Do not depend on a machine-wide OpenSSL config, which may be absent on Windows.
+  fs.writeFileSync(configPath, "[req]\ndistinguished_name = subject\n[subject]\n");
   const result = spawnSync(
     "openssl",
     [
       "req",
+      "-config",
+      configPath,
       "-x509",
       "-newkey",
       "rsa:2048",
@@ -222,8 +240,16 @@ async function startFixtureServers(directory) {
     });
     response.end(fixtureDocument());
   };
+  // Certificate failures must not leave an already-listening fixture behind.
+  const certificate = createCertificate(directory);
   const httpServer = await listen(http.createServer(handler));
-  const httpsServer = await listen(https.createServer(createCertificate(directory), handler));
+  let httpsServer;
+  try {
+    httpsServer = await listen(https.createServer(certificate, handler));
+  } catch (error) {
+    await new Promise((resolve) => httpServer.close(resolve));
+    throw error;
+  }
   return { httpServer, httpsServer };
 }
 
@@ -683,12 +709,24 @@ async function fixtureState(electronApp, urlPattern, script = "window.__sharegpt
         )
         .sort((left, right) => right.id - left.id);
       for (const contents of matches) {
+        let timer;
         try {
           return {
             webContentsId: contents.id,
-            value: await contents.executeJavaScript(args.script),
+            // A read racing a Windows renderer crash can remain pending even
+            // after a replacement is ready. Retry that replacement, not a dead read.
+            value: await Promise.race([
+              contents.executeJavaScript(args.script),
+              new Promise((_, reject) => {
+                timer = setTimeout(() => reject(new Error("fixture read timed out")), 2000);
+              }),
+            ]),
           };
-        } catch {}
+        } catch {
+          // The renderer may be between crash and replacement; the caller polls again.
+        } finally {
+          clearTimeout(timer);
+        }
       }
       return null;
     },
