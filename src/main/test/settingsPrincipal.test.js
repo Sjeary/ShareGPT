@@ -95,6 +95,33 @@ function principalId(backend) {
   return backend.getPrincipalContext().principalId;
 }
 
+test("isolated development keeps update downloads and backup recovery inside its profile", (t) => {
+  const original = process.env.SHAREGPT_USER_DATA;
+  t.after(() => {
+    if (original === undefined) delete process.env.SHAREGPT_USER_DATA;
+    else process.env.SHAREGPT_USER_DATA = original;
+  });
+  const installed = createBackend(t);
+  const userData = installed.app.getPath("userData");
+  process.env.SHAREGPT_USER_DATA = userData;
+  const isolated = new Backend({ ...installed.app, isPackaged: false }, () => null);
+  assert.equal(isolated.updatesDir, path.join(userData, "ShareGPT Updates"));
+  assert.equal(isolated.updateBackupsDir, path.join(userData, "ShareGPT Backups"));
+  const backupDir = path.join(installed.updateBackupsDir, "update-2099-01-01T00-00-00-000Z");
+  fs.mkdirSync(backupDir, { recursive: true });
+  const sentinel = JSON.stringify({ collab: { server_url: "https://private.example.test" } });
+  fs.writeFileSync(path.join(backupDir, "settings.json"), sentinel);
+  assert.equal(isolated.restoreMissingDataFromLatestUpdateBackup(), null);
+  assert.equal(fs.existsSync(isolated.settingsFile), false);
+  assert.equal(fs.readFileSync(path.join(backupDir, "settings.json"), "utf8"), sentinel);
+
+  // Packaged upgrades ignore the development override and retain normal recovery.
+  const packaged = new Backend(installed.app, () => null);
+  assert.equal(packaged.updateBackupsDir, installed.updateBackupsDir);
+  assert.ok(packaged.restoreMissingDataFromLatestUpdateBackup());
+  assert.equal(fs.readFileSync(packaged.settingsFile, "utf8"), sentinel);
+});
+
 function patchSettings(backend, section, patch, revision, expectedPrincipalId, generation) {
   return backend.patchSettings(
     section,

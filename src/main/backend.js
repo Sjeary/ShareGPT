@@ -866,8 +866,17 @@ class Backend {
       requirePrincipalContext: true,
     });
     this.runtimeDir = path.join(this.app.getPath("userData"), "runtime");
-    this.updatesDir = path.join(this.app.getPath("downloads"), "ShareGPT Updates");
-    this.updateBackupsDir = path.join(this.app.getPath("appData"), "ShareGPT Backups");
+    const isolatedDevelopment = !this.app.isPackaged && Boolean(process.env.SHAREGPT_USER_DATA);
+    this.updatesDir = path.join(
+      this.app.getPath(isolatedDevelopment ? "userData" : "downloads"),
+      "ShareGPT Updates",
+    );
+    // An explicitly isolated development profile must not import the user's
+    // installed-app backups (including saved login and browser state).
+    this.updateBackupsDir = path.join(
+      this.app.getPath(isolatedDevelopment ? "userData" : "appData"),
+      "ShareGPT Backups",
+    );
 
     this.senderProcess = null;
     this.receiverFrpc = null;
