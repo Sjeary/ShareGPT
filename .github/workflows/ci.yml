@@ -129,6 +129,11 @@ jobs:
           npm run verify:browser-privacy
           npm run verify:browser-privacy-ui
 
+      - name: Verify personal workspace onboarding and data boundaries
+        run: |
+          npm run prepare:release-mac-assets
+          npm run verify:personal-workspace
+
       - name: Verify v1.0.9 legacy Mac packaging and real packaged startup
         env:
           SHAREGPT_RELEASE_TAG: v1.0.9
@@ -167,6 +172,24 @@ jobs:
       - name: 下载并校验固定版本 Windows 二进制
         shell: pwsh
         run: ./scripts/prepare-windows-release-assets.ps1
+
+      - name: Verify Windows desktop behavior parity
+        shell: pwsh
+        run: |
+          $checks = @(
+            "test",
+            "verify:chat-message-menu",
+            "verify:chat-interactions",
+            "verify:profile-editor",
+            "verify:managed-proxy-readonly",
+            "verify:personal-workspace",
+            "verify:ai-workspace-lifecycle",
+            "verify:ai-composer"
+          )
+          foreach ($check in $checks) {
+            npm run $check
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
       - name: 构建并验收 Windows NSIS 安装包
         run: |
