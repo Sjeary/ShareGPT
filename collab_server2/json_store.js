@@ -101,7 +101,7 @@ function getStoreWorker() {
     pendingRequests.delete(id);
     if (pendingRequests.size === 0) worker.unref();
     if (error) {
-      const failure = new Error(error.message);
+      const failure = /** @type {Error & {code?: string}} */ (new Error(error.message));
       if (error.code) failure.code = error.code;
       pending.reject(failure);
       return;

@@ -8,6 +8,7 @@ const { createTranslationProfileService } = require("./translation_profiles");
 const { createTranslationUsageService } = require("./translation_usage");
 const { createTranslationRequestRegistry } = require("./translation_requests");
 const { writeJsonAtomic, readJsonStore, saveJsonStoreAsync } = require("./json_store");
+const { signLoginIdentity } = require("./server_identity");
 
 process.on("uncaughtException", (err) => {
   try {
@@ -30,6 +31,8 @@ function resolveHost(env = process.env) {
 const HOST = resolveHost();
 const PORT = Number.parseInt(process.env.PORT || "8088", 10);
 const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, "data", "users.json");
+const SERVER_IDENTITY_FILE =
+  process.env.SERVER_IDENTITY_FILE || path.join(path.dirname(USERS_FILE), "server_identity.json");
 const GPT_USAGE_FILE = process.env.GPT_USAGE_FILE || path.join(__dirname, "data", "gpt_usage.json");
 const CHAT_HISTORY_FILE =
   process.env.CHAT_HISTORY_FILE || path.join(__dirname, "data", "chat_history.json");
@@ -2238,6 +2241,11 @@ const server = http.createServer(async (req, res) => {
       }
       clearLoginFails(remoteIp);
 
+      // Additive: old clients keep the existing login response and need no challenge.
+      const identity = payload?.identityNonce
+        ? signLoginIdentity(SERVER_IDENTITY_FILE, user, payload.identityNonce, store.users)
+        : null;
+
       for (const [oldToken, session] of sessions.entries()) {
         if (session.username === username) {
           sessions.delete(oldToken);
@@ -2275,6 +2283,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         token,
         username,
+        ...(identity ? { identity } : {}),
         profile: getPublicProfile(username),
         roomScope: subnetLabel,
         users: buildUserDirectory(),

@@ -629,6 +629,7 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   });
   assert.strictEqual(login.status, 200);
   const loginBody = await login.json();
+  assert.strictEqual(loginBody.identity, undefined, "legacy login response remains compatible");
   const { token } = loginBody;
   assert.strictEqual(typeof loginBody.token, "string");
   assert.strictEqual(loginBody.username, "verify-user");
@@ -775,10 +776,41 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   const adminClientLogin = await fetch(`${baseUrl}/api/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "admin-user", password }),
+    body: JSON.stringify({ username: "admin-user", password, identityNonce: "a".repeat(64) }),
   });
   assert.strictEqual(adminClientLogin.status, 200);
-  const adminClientToken = (await adminClientLogin.json()).token;
+  const adminClientBody = await adminClientLogin.json();
+  const adminClientToken = adminClientBody.token;
+  const identity = adminClientBody.identity;
+  assert.strictEqual(identity.username, "admin-user");
+  assert.strictEqual(identity.nonce, "a".repeat(64));
+  const crypto = require("node:crypto");
+  assert.ok(
+    crypto.verify(
+      null,
+      Buffer.from(
+        JSON.stringify([
+          "sharegpt-login-identity-v1",
+          identity.nonce,
+          identity.username,
+          identity.userId,
+          identity.publicKey,
+        ]),
+      ),
+      crypto.createPublicKey({
+        key: Buffer.from(identity.publicKey, "base64"),
+        format: "der",
+        type: "spki",
+      }),
+      Buffer.from(identity.signature, "base64"),
+    ),
+  );
+  assert.strictEqual(
+    JSON.parse(fs.readFileSync(process.env.USERS_FILE, "utf8")).users.find(
+      (user) => user.username === "admin-user",
+    ).identityUserId,
+    identity.userId,
+  );
   const adminClientBootstrap = await fetch(`${baseUrl}/api/client/bootstrap`, {
     headers: { Authorization: `Bearer ${adminClientToken}` },
   });
