@@ -220,6 +220,24 @@ jobs:
           npm run typecheck:main
           npm run lint
 
+      - name: Verify Windows desktop behavior parity
+        shell: pwsh
+        run: |
+          $checks = @(
+            "verify:chat-emoji",
+            "verify:chat-message-menu",
+            "verify:chat-interactions",
+            "verify:profile-editor",
+            "verify:managed-proxy-readonly",
+            "verify:personal-workspace",
+            "verify:ai-workspace-lifecycle",
+            "verify:ai-composer"
+          )
+          foreach ($check in $checks) {
+            npm run $check
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
       - name: Download pinned Windows binaries
         shell: pwsh
         run: ./scripts/prepare-windows-release-assets.ps1
