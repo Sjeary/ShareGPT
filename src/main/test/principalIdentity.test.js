@@ -28,7 +28,8 @@ test("server identity persists across restart; proof binds account and fresh log
   assert.throws(() => verifiedIdentity(proof, nextNonce, "Alice"));
   assert.throws(() => verifiedIdentity(proof, nonce, "alice"));
   assert.throws(() => verifiedIdentity({ ...proof, userId: "0".repeat(36) }, nonce, "Alice"));
-  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  // Windows reports synthetic POSIX mode bits; encryption/signature assertions still apply.
+  if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   assert.equal(JSON.stringify(proof).includes("PRIVATE KEY"), false);
   fs.unlinkSync(file);
   assert.throws(() => signLoginIdentity(file, user, nextNonce, [user]), /missing/);

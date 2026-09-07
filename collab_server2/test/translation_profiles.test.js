@@ -46,7 +46,8 @@ test("翻译 API Key 使用 AES-GCM 加密且不会进入管理端或客户端�
   const saved = service.save({ defaultProfileId: "team-default", profiles: [profilePayload()] });
   const stored = fs.readFileSync(file, "utf8");
   assert.doesNotMatch(stored, /server-secret-key/);
-  assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
+  // Windows reports synthetic POSIX mode bits; this assertion verifies Unix permissions.
+  if (process.platform !== "win32") assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
   assert.strictEqual(saved.profiles[0].apiKeyConfigured, true);
   assert.strictEqual(Object.hasOwn(saved.profiles[0], "apiKeyEncrypted"), false);
   assert.strictEqual(Object.hasOwn(saved.profiles[0], "apiKey"), false);
