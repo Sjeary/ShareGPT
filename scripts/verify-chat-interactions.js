@@ -4,6 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const http = require("node:http");
 const { pathToFileURL } = require("node:url");
+const { listenFixture } = require("./lib/listen-fixture.cjs");
 const { WebSocketServer } = require("../collab_server2/node_modules/ws");
 const ROOT = path.resolve(__dirname, "..");
 
@@ -110,7 +111,7 @@ async function run() {
   });
   let app;
   try {
-    await server.listen();
+    await listenFixture(server);
     app = await electron.launch({
       args: [__filename],
       env: {

@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { listenFixture } = require("./lib/listen-fixture.cjs");
 
 async function serveFixture() {
   const root = path.resolve(__dirname, "../src/renderer-next");
@@ -43,7 +44,7 @@ window.fixtureReady = true;
       },
     ],
   });
-  await server.listen();
+  await listenFixture(server);
   return { server, url: `http://127.0.0.1:${server.httpServer.address().port}/emoji-fixture` };
 }
 

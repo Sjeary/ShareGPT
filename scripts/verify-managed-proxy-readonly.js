@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { listenFixture } = require("./lib/listen-fixture.cjs");
 const ROOT = path.resolve(__dirname, "..");
 
 // Production SenderForm with fixture identities; never starts a real proxy or changes user data.
@@ -98,7 +99,7 @@ async function run() {
   });
   let app;
   try {
-    await server.listen();
+    await listenFixture(server);
     app = await electron.launch({
       args: [__filename],
       env: {
