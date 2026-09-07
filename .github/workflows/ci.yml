@@ -106,6 +106,9 @@ jobs:
       - name: 聊天输入框布局验收
         run: npm run verify:chat-composer-layout
 
+      - name: Verify emoji combination loading and recovery
+        run: npm run verify:chat-emoji
+
       - name: Composer 与成功发送统计验收
         run: npm run verify:ai-composer
 
@@ -157,6 +160,9 @@ jobs:
           npm run test:release
           npm run typecheck:main
           npm run verify:release-contract
+
+      - name: Verify emoji combination loading and recovery on Windows
+        run: npm run verify:chat-emoji
 
       - name: 下载并校验固定版本 Windows 二进制
         shell: pwsh
