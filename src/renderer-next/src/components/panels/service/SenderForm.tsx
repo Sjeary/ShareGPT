@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Play, Square, Loader2, TriangleAlert, X, LockKeyhole } from 'lucide-react'
+import { Play, Square, Loader2, TriangleAlert, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils'
 import type { SenderSettings } from '@/types/settings'
 import { canStartWorkspaceProxy } from '@/lib/workspaceCapabilities'
 import { canEditManagedProxy } from '@/lib/managedProxyPolicy'
+import { availableAiRoutes } from '@/lib/aiEnvironments'
 import { Field } from './Field'
 import {
   DEFAULT_TARGET_DOMAINS,
@@ -42,10 +43,6 @@ export function SenderForm() {
   // 仅管理员可见的「全部流量走代理」测试开关 (isAdmin 由服务端 /api/login 下发)。
   const isAdmin = useAuthStore((s) => Boolean(s.profile?.isAdmin))
   const canEditTeamConfig = useAuthStore((s) => canEditManagedProxy(s.profile))
-  // Preserve existing visibility; advanced AI access no longer grants configuration editing.
-  const showTeamConfig = useAuthStore((s) =>
-    Boolean(s.profile?.isAdmin || s.profile?.advancedAiAllowed),
-  )
   const [busy, setBusy] = useState(false)
 
   const running = isSenderRunning(status)
@@ -66,6 +63,12 @@ export function SenderForm() {
   const personalPort = safeText(form.personal_proxy_port) || safeText(form.proxy_port)
   // 团队配置仅管理员可编辑；个人工作区不受团队角色限制。
   const locked = running || busy || (!personalWorkspace && !canEditTeamConfig)
+  const selectionLocked = running || busy
+  const routes = availableAiRoutes(form)
+  const unifiedAvailable = routes.some((route) => route.id === 'internal-unified')
+  const airportAvailable =
+    Boolean(form.airport_outbound) &&
+    routes.some((route) => route.id === 'internal-airport')
 
   // 对齐旧 getSenderForm(~2408): target_domains 为空时回填默认域名清单,
   // 既用于只读展示, 也用于随设置保存 / 启动发送时下发。
@@ -80,6 +83,12 @@ export function SenderForm() {
   function update(patch: Partial<SenderSettings>) {
     if (locked) return
     void patchSection('sender', patch)
+  }
+
+  function selectProxy(proxyMode: 'unified' | 'airport') {
+    if (personalWorkspace || selectionLocked) return
+    if (proxyMode === 'airport' ? !airportAvailable : !unifiedAvailable) return
+    void patchSection('sender', { proxy_mode: proxyMode })
   }
 
   // 启动 / 保存时实际下发的发送端配置, 与旧版一致地把默认域名清单兜底写入。
@@ -111,15 +120,14 @@ export function SenderForm() {
       return null
     }
     if (form.proxy_mode === 'airport') {
-      // 机场模式: 用下发节点出站, 不需要统一梯子的 server/port/uuid。
-      if (!form.airport_outbound) {
-        return '当前没有可用的机场节点（管理员未下发），请改用「统一梯子」或联系管理员'
-      }
+      // 机场模式使用已下发且获授权的节点，不依赖统一梯子的连接字段。
+      if (!airportAvailable) return '机场节点暂不可用，请选择其他可用线路或联系管理员'
     } else {
       const server = safeText(form.proxy_server)
       if (!server) return '请先填写服务器地址，再开启代理'
       if (!isPortNumber(safeText(form.proxy_port))) return '连接端口必须为数字'
       if (!safeText(form.proxy_uuid)) return '请填写连接身份码'
+      if (!unifiedAvailable) return '统一梯子暂不可用，请选择其他可用线路或联系管理员'
     }
     const socks = safeText(form.socks_listen_port)
     if (socks && !isPortNumber(socks)) return '本地代理端口必须为数字'
@@ -191,18 +199,19 @@ export function SenderForm() {
           ? '连接你已有的代理。ShareGPT 只会将内嵌 AI 所需的网站交给它，其余流量保持直连。'
           : canEditTeamConfig
             ? '你可以调整当前账号的代理设置；修改后需要重新开启代理。'
-            : '团队网络由管理员统一配置。设置更新后会自动同步，你只需开启或停止代理。'}
+            : '连接信息由管理员配置并自动同步，可查看但不可修改。你可以选择下方可用的代理方式；切换前请先停止代理。'}
       </p>
 
       {/* 组织工作区可在账号线路和管理员下发节点之间选择；个人工作区没有这层切换。 */}
-      {!personalWorkspace && showTeamConfig && (
+      {!personalWorkspace && (
         <div className="grid gap-1.5">
           <Label className="cursor-default">代理方式</Label>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={locked}
-              onClick={() => update({ proxy_mode: 'unified' })}
+              disabled={selectionLocked || !unifiedAvailable}
+              aria-pressed={form.proxy_mode !== 'airport'}
+              onClick={() => selectProxy('unified')}
               className={cn(
                 'flex-1 rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-60',
                 form.proxy_mode !== 'airport'
@@ -211,12 +220,17 @@ export function SenderForm() {
               )}
             >
               <div className="text-sm font-medium">统一梯子（默认）</div>
-              <div className="truncate text-xs text-muted-foreground">使用当前账号的连接配置</div>
+              <div className="truncate text-xs text-muted-foreground">
+                {unifiedAvailable
+                  ? `经统一服务器 ${safeText(form.proxy_server)} 出网`
+                  : '配置未就绪或暂未获授权'}
+              </div>
             </button>
             <button
               type="button"
-              disabled={locked || !form.airport_outbound}
-              onClick={() => update({ proxy_mode: 'airport' })}
+              disabled={selectionLocked || !airportAvailable}
+              aria-pressed={form.proxy_mode === 'airport'}
+              onClick={() => selectProxy('airport')}
               className={cn(
                 'flex-1 rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-50',
                 form.proxy_mode === 'airport'
@@ -226,9 +240,9 @@ export function SenderForm() {
             >
               <div className="text-sm font-medium">机场节点</div>
               <div className="truncate text-xs text-muted-foreground">
-                {form.airport_outbound
+                {airportAvailable
                   ? `当前：${safeText(form.airport_name) || '已下发节点'}`
-                  : '管理员暂未下发节点'}
+                  : '管理员暂未下发可用节点'}
               </div>
             </button>
           </div>
@@ -316,7 +330,7 @@ export function SenderForm() {
             />
           </div>
         </div>
-      ) : showTeamConfig ? (
+      ) : (
         <>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field
@@ -396,17 +410,6 @@ export function SenderForm() {
             />
           </div>
         </>
-      ) : (
-        <div className="flex items-start gap-3 rounded-md border border-border bg-muted/35 px-4 py-3">
-          <LockKeyhole className="mt-0.5 size-4 shrink-0 text-primary" />
-          <div className="min-w-0">
-            <p className="text-sm font-medium">团队托管配置</p>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              服务器、身份码、端口和网站规则由管理员维护，不会在普通成员界面展示或修改。
-              管理员更新后，本机会自动获取新配置并停止旧线路，避免继续使用过期设置。
-            </p>
-          </div>
-        </div>
       )}
 
       {!personalWorkspace && isAdmin && (
