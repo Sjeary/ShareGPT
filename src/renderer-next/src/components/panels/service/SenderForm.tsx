@@ -67,8 +67,7 @@ export function SenderForm() {
   const routes = availableAiRoutes(form)
   const unifiedAvailable = routes.some((route) => route.id === 'internal-unified')
   const airportAvailable =
-    Boolean(form.airport_outbound) &&
-    routes.some((route) => route.id === 'internal-airport')
+    Boolean(form.airport_outbound) && routes.some((route) => route.id === 'internal-airport')
 
   // 对齐旧 getSenderForm(~2408): target_domains 为空时回填默认域名清单,
   // 既用于只读展示, 也用于随设置保存 / 启动发送时下发。

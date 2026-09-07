@@ -508,7 +508,15 @@ export function useChat() {
         if (payload.username.trim() !== username) {
           throw new Error('服务器返回的账号身份与当前会话不一致')
         }
-        if (!await api.verifySettingsPrincipalLogin({serverUrl, username, identity: payload.identity, identityNonce, snapshot: principalSnapshot})) {
+        if (
+          !(await api.verifySettingsPrincipalLogin({
+            serverUrl,
+            username,
+            identity: payload.identity,
+            identityNonce,
+            snapshot: principalSnapshot,
+          }))
+        ) {
           throw new Error('服务器身份验证失败')
         }
         try {
