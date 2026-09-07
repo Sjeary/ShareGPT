@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("settings:principal-activate", payload),
   clearSettingsPrincipal: (payload) => ipcRenderer.invoke("settings:principal-clear", payload),
   getSettingsPrincipal: () => ipcRenderer.invoke("settings:principal-context"),
+  verifySettingsPrincipalLogin: (payload) =>
+    ipcRenderer.invoke("settings:principal-verify", payload),
   saveSettings: (payload) => ipcRenderer.invoke("settings:save", payload),
   patchSettings: (payload) => ipcRenderer.invoke("settings:patch", payload),
   operateSettings: (payload) => ipcRenderer.invoke("settings:operate", payload),

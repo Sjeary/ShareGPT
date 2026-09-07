@@ -5,6 +5,74 @@ const os = require("node:os");
 const path = require("node:path");
 const { Backend, decodeLegacyEncryptedSettings, prepareImportedSettings } = require("../backend");
 const { principalIdFor } = require("../principal");
+const { linkPrincipalEndpoint } = require("../principalIdentity");
+const { partitionForAiEnvironment } = require("../aiEnvironments");
+const { signLoginIdentity } = require("../../../collab_server2/server_identity");
+
+test("silent identity verification rejects stale generations and changed proofs without switching storage", (t) => {
+  const backend = createBackend(t);
+  const file = path.join(path.dirname(backend.settingsFile), "server_identity.json");
+  const user = { username: "Alice" };
+  const nonce = "a".repeat(64);
+  const proof = signLoginIdentity(file, user, nonce);
+  backend.activatePrincipal("https://team.example", "Alice", { proof, nonce });
+  const snapshot = backend.getPrincipalContext();
+  const before = fs.readFileSync(backend.settingsFile, "utf8");
+  assert.equal(
+    backend.verifyPrincipalLogin("https://team.example", "Alice", { proof, nonce }, snapshot),
+    true,
+  );
+  assert.equal(fs.readFileSync(backend.settingsFile, "utf8"), before);
+  assert.throws(() => backend.verifyPrincipalLogin("https://team.example", "Alice", {}, snapshot));
+  assert.throws(() =>
+    backend.verifyPrincipalLogin(
+      "https://team.example",
+      "Alice",
+      { proof, nonce: "b".repeat(64) },
+      snapshot,
+    ),
+  );
+  backend.clearPrincipal();
+  assert.throws(() =>
+    backend.verifyPrincipalLogin("https://team.example", "Alice", { proof, nonce }, snapshot),
+  );
+});
+
+test("endpoint migration reuses old advanced/browser settings across save and restart without overwriting destination", (t) => {
+  const backend = createBackend(t);
+  const oldUrl = "https://old.example/team";
+  const newUrl = "https://new.example/team";
+  backend.activatePrincipal(oldUrl, "Alice");
+  const oldSettings = backend.loadSettings();
+  oldSettings.advancedAi.environments = [
+    { id: "env-old", kind: "gpt", name: "Old", routeId: "internal-unified" },
+  ];
+  backend.saveSettings(oldSettings);
+  const originalContext = backend.getPrincipalContext();
+  const partition = partitionForAiEnvironment("gpt", "env-old", originalContext);
+  backend.activatePrincipal(newUrl, "Alice");
+  const nextSettings = backend.loadSettings();
+  nextSettings.advancedAi.environments = [
+    { id: "env-new", kind: "gpt", name: "New", routeId: "internal-unified" },
+  ];
+  backend.saveSettings(nextSettings);
+  const stored = backend.readStoredSettings();
+  const nextId = principalIdFor(newUrl, "Alice");
+  const nextData = structuredClone(stored.principalSettings.byPrincipal[nextId]);
+  linkPrincipalEndpoint(stored.principalSettings, oldUrl, newUrl, "Alice");
+  backend.writeStoredSettings(stored);
+  const restored = backend.activatePrincipal(newUrl, "Alice");
+  assert.equal(restored.principalId, originalContext.principalId);
+  assert.equal(restored.settings.advancedAi.environments[0].id, "env-old");
+  assert.equal(
+    partitionForAiEnvironment("gpt", "env-old", backend.getPrincipalContext()),
+    partition,
+  );
+  backend.saveSettings(restored.settings);
+  backend.clearPrincipal();
+  assert.equal(backend.activatePrincipal(newUrl, "Alice").principalId, originalContext.principalId);
+  assert.deepEqual(backend.readStoredSettings().principalSettings.byPrincipal[nextId], nextData);
+});
 
 function createBackend(t, dependencies = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-principal-settings-"));

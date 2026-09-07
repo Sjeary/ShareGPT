@@ -27,6 +27,7 @@ const {
 } = require("./principal");
 const { buildUpdateReleaseInfo } = require("./updateRelease");
 const { copyMissingChromiumPartitions } = require("./userDataPath");
+const { resolvePrincipalIdentity } = require("./principalIdentity");
 
 // 自动更新源 = GitHub Releases (参考 cc-switch 的做法)。仓库地址从 package.json 推导,
 // fork 的人只要改 package.json 的 homepage/repository 就指向自己的仓库, 不写死任何自建服务器。
@@ -1396,9 +1397,7 @@ class Backend {
     return this.materializePrincipalSettings(this.readStoredSettings());
   }
 
-  activatePrincipal(serverUrl, username) {
-    const principalId = principalIdFor(serverUrl, username);
-    if (!principalId) throw new Error("协作账号 principal 信息不合法");
+  activatePrincipal(serverUrl, username, identityOptions = {}) {
     const confirmedServer = normalizeServerBaseUrl(serverUrl);
     const confirmedUsername = normalizePrincipalUsername(username);
     const stored = this.readStoredSettings();
@@ -1406,7 +1405,14 @@ class Backend {
       serverUrl: confirmedServer,
       username: confirmedUsername,
     });
-    if (migrated) {
+    const resolved = resolvePrincipalIdentity(
+      state,
+      confirmedServer,
+      confirmedUsername,
+      identityOptions,
+    );
+    const principalId = resolved.principalId;
+    if (migrated || resolved.changed) {
       stored.principalSettings = state;
       stored.settingsRevision = Math.max(0, Number(stored.settingsRevision) || 0) + 1;
       this.writeStoredSettings(stored);
@@ -1456,6 +1462,22 @@ class Backend {
       this.activePrincipalGeneration = previous.generation;
       throw error;
     }
+  }
+
+  verifyPrincipalLogin(serverUrl, username, identityOptions, snapshot) {
+    this.assertSettingsPrincipalSnapshot(snapshot);
+    if (
+      normalizeServerBaseUrl(serverUrl) !== this.activePrincipalServerUrl ||
+      username !== this.activePrincipalUsername
+    ) {
+      throw new Error("登录入口或账号与当前会话不匹配");
+    }
+    const { state } = this.principalSettingsState(this.readStoredSettings());
+    const resolved = resolvePrincipalIdentity(state, serverUrl, username, identityOptions);
+    if (resolved.principalId !== this.activePrincipalId)
+      throw new Error("服务器身份与当前会话不匹配");
+    // Validation only: silent recovery must not create a second settings writer.
+    return true;
   }
 
   getPrincipalContext() {

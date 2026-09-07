@@ -33,6 +33,7 @@ import {
 import { requireConfirmedLoginResponse } from '@/lib/collabLoginTransaction'
 import { createSingleFlight } from '@/lib/singleFlight'
 import { canEditManagedProxy } from '@/lib/managedProxyPolicy'
+import { createLoginIdentityNonce } from '@/lib/loginIdentity'
 import {
   settingsPrincipalRuntime,
   type SettingsPrincipalSnapshot,
@@ -479,10 +480,11 @@ export function useChat() {
           )
         }
         settingsPrincipalRuntime.assertCurrent(principalSnapshot)
+        const identityNonce = createLoginIdentityNonce()
         const res = await fetch(`${serverUrl}/api/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password }),
+          body: JSON.stringify({ username, password, identityNonce }),
           signal: controller.signal,
         })
         if (!res.ok) {
@@ -491,6 +493,7 @@ export function useChat() {
         }
         const payload = await requireConfirmedLoginResponse<{
           token: string
+          identity?: unknown
           username: string
           profile?: {
             avatar?: string
@@ -504,6 +507,9 @@ export function useChat() {
         issuedToken = payload.token
         if (payload.username.trim() !== username) {
           throw new Error('服务器返回的账号身份与当前会话不一致')
+        }
+        if (!await api.verifySettingsPrincipalLogin({serverUrl, username, identity: payload.identity, identityNonce, snapshot: principalSnapshot})) {
+          throw new Error('服务器身份验证失败')
         }
         try {
           await fetchAndApplyAuthoritativeClientBootstrap(serverUrl, issuedToken, {

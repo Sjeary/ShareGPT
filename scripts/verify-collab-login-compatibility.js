@@ -127,6 +127,10 @@ function legacyAdminBootstrap() {
 }
 
 async function createFixtureServer() {
+  const identityKey = crypto.generateKeyPairSync("ed25519");
+  const publicKey = identityKey.publicKey
+    .export({ format: "der", type: "spki" })
+    .toString("base64");
   const events = [];
   const tokens = new Map();
   const sockets = new Set();
@@ -148,8 +152,34 @@ async function createFixtureServer() {
           ? "fixture-reused-token"
           : `fixture-token-${++tokenSequence}`;
       tokens.set(token, body.username);
+      let identity;
+      if (body.username === "modern-routes" && body.identityNonce) {
+        identity = {
+          version: 1,
+          nonce: body.identityNonce,
+          username: body.username,
+          userId: "10000000-0000-4000-8000-000000000001",
+          publicKey,
+        };
+        identity.signature = crypto
+          .sign(
+            null,
+            Buffer.from(
+              JSON.stringify([
+                "sharegpt-login-identity-v1",
+                identity.nonce,
+                identity.username,
+                identity.userId,
+                publicKey,
+              ]),
+            ),
+            identityKey.privateKey,
+          )
+          .toString("base64");
+      }
       json(response, 200, {
         token,
+        ...(identity ? { identity } : {}),
         username: body.username,
         profile: {
           displayName: body.username,
@@ -476,7 +506,7 @@ async function launchCase({
   const electronApp = await electron.launch({
     args,
     cwd: ROOT,
-    env: { ...process.env, SHAREGPT_USER_DATA: userDataDir },
+    env: { ...process.env, SHAREGPT_USER_DATA: userDataDir, SHAREGPT_BACKGROUND_TEST: "1" },
   });
   const blockedRequests = [];
   try {

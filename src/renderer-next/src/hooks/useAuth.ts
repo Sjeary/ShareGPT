@@ -20,6 +20,7 @@ import {
 import type { AppSettings } from '@/types/settings'
 import { requirePrincipalActivation, type PrincipalActivation } from '@/lib/principalActivation'
 import { canEditManagedProxy } from '@/lib/managedProxyPolicy'
+import { createLoginIdentityNonce } from '@/lib/loginIdentity'
 
 // 协作服务器登录/退出逻辑 (移植自旧 renderer.js performCollabLogin / collabLogout)。
 // 端点 (渲染层直连协作服务器, 非 IPC):
@@ -88,6 +89,7 @@ export interface LoginParams {
 }
 
 interface LoginResponse {
+  identity?: unknown
   token?: string
   username?: string
   profile?: {
@@ -165,6 +167,7 @@ export function useAuth() {
       const attempt = loginAttempts.begin()
       const cleanedServer = trimTrailingSlash(serverUrl.trim())
       const cleanedUser = username.trim()
+      const identityNonce = createLoginIdentityNonce()
 
       if (!cleanedServer || !cleanedUser || !password) {
         throw new Error('请先填写完整的服务地址、账号和密码')
@@ -181,6 +184,7 @@ export function useAuth() {
           body: JSON.stringify({
             username: cleanedUser,
             password,
+            identityNonce,
             client: await clientVersionPayload(),
           }),
         },
@@ -236,6 +240,8 @@ export function useAuth() {
             await api.activateSettingsPrincipal({
               serverUrl: cleanedServer,
               username: confirmedUsername,
+              identity: payload.identity,
+              identityNonce,
             }),
           )
           return activation

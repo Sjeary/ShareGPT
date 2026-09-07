@@ -236,7 +236,7 @@ export interface ShareGptApi {
     expectedPrincipalId: string
     expectedPrincipalGeneration: number
   }) => Promise<Record<string, unknown>>
-  activateSettingsPrincipal: (payload: { serverUrl: string; username: string }) => Promise<{
+  activateSettingsPrincipal: (payload: { serverUrl: string; username: string; identity?: unknown; identityNonce?: string }) => Promise<{
     principalId: string
     generation: number
     settings: Record<string, unknown>
@@ -250,6 +250,7 @@ export interface ShareGptApi {
     settings: Record<string, unknown>
   }>
   getSettingsPrincipal: () => Promise<{ principalId: string; generation: number }>
+  verifySettingsPrincipalLogin: (payload: {serverUrl: string; username: string; identity?: unknown; identityNonce: string; snapshot: {principalId: string; generation: number}}) => Promise<boolean>
   saveSettings: (payload: {
     settings: Record<string, unknown>
     expectedPrincipalId: string

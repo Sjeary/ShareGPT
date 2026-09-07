@@ -17,6 +17,7 @@ const fallback = {
     settings: {},
   }),
   getSettingsPrincipal: async () => ({ principalId: 'local-device', generation: 0 }),
+  verifySettingsPrincipalLogin: async () => false,
   saveSettings: async () => undefined,
   patchSettings: async () => ({}),
   operateSettings: async () => ({}),

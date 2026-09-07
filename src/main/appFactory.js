@@ -671,6 +671,12 @@ function createElectronApp(baseMode = "all") {
   }
 
   function focusMainWindow() {
+    if (
+      !app.isPackaged &&
+      process.env.SHAREGPT_BACKGROUND_TEST === "1" &&
+      process.env.SHAREGPT_USER_DATA
+    )
+      return;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) {
       mainWindow.restore();
@@ -2313,7 +2319,14 @@ function createElectronApp(baseMode = "all") {
   }
 
   function createWindow() {
+    // Isolated development acceptance only; packaged applications always show normally.
+    const backgroundTest =
+      !app.isPackaged &&
+      process.env.SHAREGPT_BACKGROUND_TEST === "1" &&
+      Boolean(process.env.SHAREGPT_USER_DATA);
+    if (backgroundTest && process.platform === "darwin") app.dock.hide();
     mainWindow = new BrowserWindow({
+      show: !backgroundTest,
       width: 1180,
       height: 760,
       minWidth: 860,
@@ -2414,7 +2427,10 @@ function createElectronApp(baseMode = "all") {
     });
     ipcMain.handle("settings:principal-activate", (_event, payload) =>
       runPrincipalTransition(() =>
-        backend.activatePrincipal(payload?.serverUrl, payload?.username),
+        backend.activatePrincipal(payload?.serverUrl, payload?.username, {
+          proof: payload?.identity,
+          nonce: payload?.identityNonce,
+        }),
       ),
     );
     ipcMain.handle("settings:principal-clear", (_event, payload) => {
@@ -2433,6 +2449,14 @@ function createElectronApp(baseMode = "all") {
       });
     });
     ipcMain.handle("settings:principal-context", () => backend.getPrincipalContext());
+    ipcMain.handle("settings:principal-verify", (_event, payload) =>
+      backend.verifyPrincipalLogin(
+        payload?.serverUrl,
+        payload?.username,
+        { proof: payload?.identity, nonce: payload?.identityNonce },
+        payload?.snapshot,
+      ),
+    );
     ipcMain.handle("settings:save", (_event, payload) =>
       backend.saveSettingsForPrincipal(
         payload?.settings,
