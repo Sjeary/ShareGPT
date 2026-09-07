@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
+import { RotateCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { notoAnimatedWebp, resolveEmojiKitchen } from '@/lib/chat/emoji'
-
-// 组合结果缓存 (会话内): url=有组合且已就绪; null=无组合/失败。同一对再次出现直接命中。
-const kitchenCache = new Map<string, string | null>()
+import { loadEmojiImage } from '@/lib/chat/emojiImage'
 
 // 单个动态 emoji: 优先 Noto 动图 (WebP), 加载失败回退为系统静态 emoji 字符。
 function AnimatedEmoji({ cluster, size }: { cluster: string; size: number }) {
@@ -29,45 +28,42 @@ function AnimatedEmoji({ cluster, size }: { cluster: string; size: number }) {
 
 // 两个 emoji: 查本地索引判断是否有 Emoji Kitchen 组合。
 // 始终先即时显示两个动态 emoji 占位; 若有组合, 后台直连 Google gstatic 预加载好再无缝替换;
-// 无组合则一直保持两个 emoji(0 网络请求)。会话内缓存结果, 二次出现直接命中。
+// 无组合则保留两个 emoji；临时网络失败可重试，成功图片复用有界缓存。
 function KitchenCombo({ a, b, size }: { a: string; b: string; size: number }) {
   const key = `${a}__${b}`
-  // undefined=查询中; string=组合图就绪; null=无组合/失败
-  const [url, setUrl] = useState<string | null | undefined>(() =>
-    kitchenCache.has(key) ? kitchenCache.get(key) : undefined,
-  )
+  const [result, setResult] = useState<{ key: string; url?: string; failed?: boolean }>()
+  const [attempt, setAttempt] = useState(0)
+  const current = result?.key === key ? result : undefined
 
   useEffect(() => {
-    if (kitchenCache.has(key)) return
+    const retry = () => setAttempt((value) => value + 1)
+    window.addEventListener('online', retry)
+    return () => window.removeEventListener('online', retry)
+  }, [])
+
+  useEffect(() => {
     let alive = true
-    void resolveEmojiKitchen(a, b).then((resolved) => {
-      if (!resolved) {
-        kitchenCache.set(key, null)
-        if (alive) setUrl(null)
-        return
-      }
-      const img = new Image()
-      img.onload = () => {
-        kitchenCache.set(key, resolved)
-        if (alive) setUrl(resolved)
-      }
-      img.onerror = () => {
-        kitchenCache.set(key, null)
-        if (alive) setUrl(null)
-      }
-      img.src = resolved // 后台预加载, 加载完进 HTTP 缓存
-    })
+    void resolveEmojiKitchen(a, b)
+      .then(async (url) => {
+        if (!alive) return
+        if (url) await loadEmojiImage(url)
+        if (alive) setResult({ key, url: url ?? undefined })
+      })
+      .catch(() => {
+        if (alive) setResult({ key, failed: true })
+      })
     return () => {
       alive = false
     }
-  }, [a, b, key])
+  }, [a, b, key, attempt])
 
-  if (typeof url === 'string') {
+  if (current?.url) {
     return (
       <img
-        src={url}
+        src={current.url}
         alt={`${a}${b}`}
         draggable={false}
+        onError={() => setResult({ key, failed: true })}
         style={{ height: size * 1.4 }}
         className="inline-block select-none"
       />
@@ -76,8 +72,22 @@ function KitchenCombo({ a, b, size }: { a: string; b: string; size: number }) {
   // 查询中 / 无组合 → 即时两个动态 emoji, 不留空白
   return (
     <span className="flex items-center gap-1">
-      <AnimatedEmoji cluster={a} size={size} />
-      <AnimatedEmoji cluster={b} size={size} />
+      <AnimatedEmoji key={`a:${a}`} cluster={a} size={size} />
+      <AnimatedEmoji key={`b:${b}`} cluster={b} size={size} />
+      {current?.failed && (
+        <button
+          type="button"
+          aria-label="重新加载组合表情"
+          title="组合图片加载失败，点击重试"
+          className="rounded p-1 text-muted-foreground hover:bg-secondary focus-visible:outline focus-visible:outline-primary"
+          onClick={() => {
+            setResult({ key })
+            setAttempt((value) => value + 1)
+          }}
+        >
+          <RotateCw size={14} />
+        </button>
+      )}
     </span>
   )
 }

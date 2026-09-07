@@ -50,7 +50,10 @@ function loadKitchenIndex(): Promise<KitchenIndex> {
     // 懒加载(~2.5MB): 仅当出现第一个双 emoji 消息时才加载, 不拖累启动。
     kitchenIndexPromise = import('@/assets/emoji-kitchen-index.json')
       .then((m) => (m.default || m) as KitchenIndex)
-      .catch(() => ({ dates: [], pairs: {} }) as KitchenIndex)
+      .catch((error) => {
+        kitchenIndexPromise = null
+        throw error
+      })
   }
   return kitchenIndexPromise
 }
