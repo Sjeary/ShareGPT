@@ -128,7 +128,7 @@ ShareGPT 是独立开源项目，与 OpenAI、Anthropic、Google 无隶属关系
 
 ### 2. 管理控制台
 
-[`admin_console/`](admin_console/) 是独立 Electron 管理端。构建：`npm run dist:admin:win`。登录后可管理用户和高级 AI 权限、导入及授权多条代理线路、分别设置三种 AI 的默认线路、配置加密托管翻译服务并查看用量，以及维护版本信息。
+[`admin_console/`](admin_console/) 是独立 Electron 管理端。构建：`npm run dist:admin:win`。登录后可查看三种 AI 的成功发送统计，管理用户和高级 AI 权限，导入及授权多条代理线路，分别设置三种 AI 的默认出口，配置加密托管翻译服务并查看用量，以及维护版本信息。
 
 ### 3. 集中代理出口（统一出口 IP，可选）
 
