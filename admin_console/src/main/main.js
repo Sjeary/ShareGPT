@@ -199,6 +199,7 @@ app.whenReady().then(() => {
   );
   ipcMain.handle("prefs:load", () => loadPrefs());
   ipcMain.handle("prefs:save", (_event, data) => savePrefs(data || {}));
+  ipcMain.handle("app:version", () => app.getVersion());
   ipcMain.handle("window:minimize", (event) => {
     getEventWindow(event)?.minimize();
     return true;

@@ -33,6 +33,7 @@ export interface AdminPrefs {
 
 export interface AdminApi {
   platform: NodeJS.Platform | string
+  getAppVersion: () => Promise<string>
   loadPrefs: () => Promise<AdminPrefs>
   savePrefs: (payload: AdminPrefs) => Promise<AdminPrefs>
   minimizeWindow: () => Promise<unknown>

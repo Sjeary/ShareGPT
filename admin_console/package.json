@@ -1,6 +1,6 @@
 {
   "name": "sharegpt-admin-console",
-  "version": "1.0.0",
+  "version": "1.0.10",
   "description": "Standalone admin console for ShareGPT server management.",
   "main": "src/main/main.js",
   "author": "Sjeary",

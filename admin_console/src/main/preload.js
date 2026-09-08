@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("adminApi", {
   platform: process.platform,
+  getAppVersion: () => ipcRenderer.invoke("app:version"),
   loadPrefs: () => ipcRenderer.invoke("prefs:load"),
   savePrefs: (payload) => ipcRenderer.invoke("prefs:save", payload),
   minimizeWindow: () => ipcRenderer.invoke("window:minimize"),

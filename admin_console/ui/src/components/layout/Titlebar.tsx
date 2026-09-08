@@ -40,8 +40,13 @@ export function Titlebar() {
   const profile = useAdminStore((s) => s.profile)
 
   const [maximized, setMaximized] = useState(false)
+  const [appVersion, setAppVersion] = useState('')
   useEffect(() => {
     let alive = true
+    void adminApi
+      .getAppVersion()
+      .then((version) => alive && setAppVersion(String(version || '')))
+      .catch(() => alive && setAppVersion(''))
     void adminApi
       .isWindowMaximized()
       .then((v) => alive && setMaximized(Boolean(v)))
@@ -94,6 +99,9 @@ export function Titlebar() {
           <ShieldCheck className="size-3.5" />
         </div>
         <span className="text-sm font-semibold tracking-tight">ShareGPT Admin</span>
+        {appVersion && appVersion !== 'dev' && (
+          <span className="text-[10px] font-medium text-muted-foreground">v{appVersion}</span>
+        )}
         {role !== 'none' && (
           <>
             <span className="hidden rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted-foreground sm:inline">
