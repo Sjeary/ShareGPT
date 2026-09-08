@@ -169,6 +169,7 @@ export function useChat() {
   const reconnectStrategy = useRef<'socket' | 'relogin'>('socket')
   const silentReloginInFlight = useRef(false)
   const intentionalClose = useRef(false)
+  const retryLoginRef = useRef<() => void>(() => undefined)
   // 对端 typing 过期定时器 (旧 typingExpiryTimers ~500)。
   const typingTimers = useRef<Map<string, number>>(new Map())
   // 需要手动重登时由 connect 设置, 供 UI 读取提示。
@@ -379,6 +380,7 @@ export function useChat() {
   // attemptSilentCollabRelogin (~4101 / ~4632)。
   useEffect(() => {
     if (!authed || !identity.token || !identity.serverUrl) {
+      retryLoginRef.current = () => undefined
       intentionalClose.current = true
       if (reconnectTimer.current) {
         window.clearTimeout(reconnectTimer.current)
@@ -583,6 +585,21 @@ export function useChat() {
       }
     }
 
+    // User-initiated recovery reuses the same token refresh and Principal/route guards as
+    // automatic recovery, but skips any pending backoff delay. It never logs out or clears data.
+    const retryLoginNow = () => {
+      if (cancelled || silentReloginInFlight.current) return
+      if (reconnectTimer.current) {
+        window.clearTimeout(reconnectTimer.current)
+        reconnectTimer.current = null
+      }
+      reconnectAttempt.current = 0
+      reconnectStrategy.current = 'relogin'
+      manualReloginRef.current = ''
+      void attemptSilentRelogin()
+    }
+    retryLoginRef.current = retryLoginNow
+
     const connect = () => {
       if (cancelled || intentionalClose.current) return
       const { serverUrl, token } = useChatStore.getState().identity
@@ -776,6 +793,7 @@ export function useChat() {
 
     return () => {
       cancelled = true
+      if (retryLoginRef.current === retryLoginNow) retryLoginRef.current = () => undefined
       intentionalClose.current = true
       if (reconnectTimer.current) {
         window.clearTimeout(reconnectTimer.current)
@@ -849,6 +867,10 @@ export function useChat() {
       }),
     )
     return true
+  }, [])
+
+  const retryLogin = useCallback(() => {
+    retryLoginRef.current()
   }, [])
 
   // 批量已读: 当前会话可见时, 对会话中所有未读对端消息发已读回执
@@ -965,6 +987,7 @@ export function useChat() {
   return useMemo(
     () => ({
       connection,
+      retryLogin,
       sendMessage,
       sendTyping,
       sendRecall,
@@ -979,6 +1002,7 @@ export function useChat() {
     }),
     [
       connection,
+      retryLogin,
       sendMessage,
       sendTyping,
       sendRecall,

@@ -346,13 +346,13 @@ async function createFixtureServer() {
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     events,
-    closeUserSocket(username, reason = "fixture authorization revoked") {
+    closeUserSocket(username, reason = "fixture authorization revoked", code = 4002) {
       const socket = [...sockets]
         .reverse()
         .find((candidate) => socketUsers.get(candidate) === username && !candidate.destroyed);
       if (!socket) return false;
       events.push({ type: "fixture-close", username });
-      socket.end(websocketCloseFrame(4002, reason));
+      socket.end(websocketCloseFrame(code, reason));
       return true;
     },
     close: () =>
@@ -930,6 +930,57 @@ async function verifySameTokenDoubleRevocation(fixture) {
   return events;
 }
 
+async function verifyManualRelogin(fixture) {
+  const username = "manual-relogin";
+  const before = fixture.events.length;
+  const result = await launchCase({
+    baseUrl: fixture.baseUrl,
+    events: fixture.events,
+    username,
+    exercise: async ({ window }) => {
+      await window.locator('[data-tour="nav-chat"]').click();
+      const initialLoginCount = countEvents(fixture.events, "login", username);
+      assert.equal(
+        fixture.closeUserSocket(username, "fixture session replaced", 4003),
+        true,
+        "the collaboration socket must exist before manual recovery",
+      );
+
+      const retryButton = window.getByRole("button", { name: "重新登录", exact: true });
+      await retryButton.waitFor({ state: "visible", timeout: 8000 });
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      assert.equal(
+        countEvents(fixture.events, "login", username),
+        initialLoginCount,
+        "a manual-login close reason must not start an automatic login",
+      );
+
+      await retryButton.click();
+      await waitFor(
+        () =>
+          countEvents(fixture.events, "login", username) === initialLoginCount + 1 &&
+          countEvents(fixture.events, "ws", username) === 2,
+        12000,
+      );
+      await retryButton.waitFor({ state: "hidden", timeout: 8000 });
+      return {
+        loginCount: countEvents(fixture.events, "login", username),
+        wsCount: countEvents(fixture.events, "ws", username),
+      };
+    },
+  });
+  const events = fixture.events.slice(before);
+  assert.equal(result.authed, true, "manual recovery must keep the account signed in");
+  assert.equal(
+    events.some((event) => event.type === "logout"),
+    false,
+    "manual recovery must not log out or clear the current account",
+  );
+  assert.deepEqual(result.exerciseResult, { loginCount: 2, wsCount: 2 });
+  assert.deepEqual(result.blockedRequests, []);
+  return events;
+}
+
 async function main() {
   const fixture = await createFixtureServer();
   try {
@@ -984,6 +1035,7 @@ async function main() {
     const personalOrganizationIsolation = await verifyPersonalOrganizationIsolation(fixture);
     const authorizationPersistenceFailure = await verifyAuthorizationPersistenceFailure(fixture);
     const sameTokenDoubleRevocation = await verifySameTokenDoubleRevocation(fixture);
+    const manualRelogin = await verifyManualRelogin(fixture);
 
     const beforeInvalid = fixture.events.length;
     const invalid = await launchCase({
@@ -1040,6 +1092,7 @@ async function main() {
           personalOrganizationIsolation,
           authorizationPersistenceFailure,
           sameTokenDoubleRevocation,
+          manualRelogin,
         },
         null,
         2,

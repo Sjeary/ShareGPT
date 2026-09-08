@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDown, CornerDownLeft, MessageSquare } from 'lucide-react'
+import { ArrowDown, CornerDownLeft, MessageSquare, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAppStore } from '@/store/useAppStore'
 import {
@@ -382,25 +382,39 @@ export function ChatPanel() {
               {/* 右上仅在「与协作服务器的连接」异常时提示; 正常连接不显示, 避免被误解为对方在线。
                   对话方/房间的真实在线状态见标题下方副标题。 */}
               {connection !== 'online' && (
-                <span
-                  className={cn(
-                    'flex items-center gap-1.5 text-xs',
-                    connection === 'closed' || connection === 'error'
-                      ? 'text-destructive'
-                      : 'text-muted-foreground',
-                  )}
-                  title="与协作服务器的连接状态"
-                >
+                <div className="flex items-center gap-2">
                   <span
                     className={cn(
-                      'size-2 rounded-full',
+                      'flex items-center gap-1.5 text-xs',
                       connection === 'closed' || connection === 'error'
-                        ? 'bg-destructive'
-                        : 'animate-pulse bg-muted-foreground/50',
+                        ? 'text-destructive'
+                        : 'text-muted-foreground',
                     )}
-                  />
-                  {connectionLabel(connection)}
-                </span>
+                    title="与协作服务器的连接状态"
+                  >
+                    <span
+                      className={cn(
+                        'size-2 rounded-full',
+                        connection === 'closed' || connection === 'error'
+                          ? 'bg-destructive'
+                          : 'animate-pulse bg-muted-foreground/50',
+                      )}
+                    />
+                    {connectionLabel(connection)}
+                  </span>
+                  {(connection === 'closed' || connection === 'error') && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1.5 px-2 text-xs"
+                      onClick={chat.retryLogin}
+                    >
+                      <RefreshCw className="size-3.5" />
+                      重新登录
+                    </Button>
+                  )}
+                </div>
               )}
             </>
           ) : (
