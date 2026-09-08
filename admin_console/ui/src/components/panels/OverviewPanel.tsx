@@ -8,6 +8,10 @@ import {
   RotateCw,
   Rocket,
   Server,
+  Network,
+  Languages,
+  Sparkles,
+  Send,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -58,14 +62,38 @@ export function OverviewPanel() {
   const usersLoading = useAdminStore((s) => s.usersLoading)
   const loadUsers = useAdminStore((s) => s.loadUsers)
   const loadBootstrap = useAdminStore((s) => s.loadBootstrap)
+  const proxyRoutes = useAdminStore((s) => s.proxyRoutes)
+  const translationCatalog = useAdminStore((s) => s.translationCatalog)
+  const translationUsage = useAdminStore((s) => s.translationUsage)
 
   const stats = useMemo(() => {
     const total = users.length
     const online = users.filter((u) => u.online).length
     const admins = users.filter((u) => u.isAdmin).length
     const disabled = users.filter((u) => u.disabled).length
-    return { total, online, admins, disabled }
+    const advancedAi = users.filter((u) => u.isAdmin || u.advancedAiAllowed).length
+    return { total, online, admins, disabled, advancedAi }
   }, [users])
+
+  const managedStats = useMemo(() => {
+    const sender = bootstrap?.sender || {}
+    const unifiedReady = Boolean(
+      String(sender.proxy_server || '').trim() &&
+      String(sender.proxy_port || '').trim() &&
+      String(sender.proxy_uuid || '').trim(),
+    )
+    return {
+      routes: proxyRoutes.filter((route) => route.enabled).length + (unifiedReady ? 1 : 0),
+      translationProfiles:
+        translationCatalog?.profiles.filter((profile) => profile.enabled).length || 0,
+      translationRequests: translationUsage?.totals.requests || 0,
+    }
+  }, [
+    bootstrap?.sender,
+    proxyRoutes,
+    translationCatalog?.profiles,
+    translationUsage?.totals.requests,
+  ])
 
   // 客户端版本分布 (仅统计已上报版本的用户)。
   const versionDist = useMemo(() => {
@@ -108,6 +136,17 @@ export function OverviewPanel() {
           <StatCard icon={Wifi} label="在线" value={stats.online} tone="success" />
           <StatCard icon={ShieldCheck} label="管理员" value={stats.admins} tone="primary" />
           <StatCard icon={Ban} label="已禁用" value={stats.disabled} tone="destructive" />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatCard icon={Sparkles} label="高级 AI 授权" value={stats.advancedAi} tone="primary" />
+          <StatCard icon={Network} label="可用团队线路" value={managedStats.routes} />
+          <StatCard
+            icon={Languages}
+            label="已启用翻译服务"
+            value={managedStats.translationProfiles}
+          />
+          <StatCard icon={Send} label="托管翻译成功请求" value={managedStats.translationRequests} />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
