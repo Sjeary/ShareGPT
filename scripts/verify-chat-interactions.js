@@ -230,8 +230,47 @@ async function run() {
       return node.scrollHeight - node.scrollTop - node.clientHeight < 2;
     });
     await latest.waitFor({ state: "hidden" });
+    await page.getByRole("separator", { name: "未读消息", exact: true }).waitFor({
+      state: "hidden",
+    });
     assert.ok(received.some((m) => m.type === "chat_read" && m.messageIds?.includes("live-1")));
     await page.screenshot({ path: path.join(directory, "reading-latest.png") });
+
+    const privateUnread = Array.from({ length: 30 }, (_, i) => ({
+      id: "private-unread-" + i,
+      type: "chat",
+      scope: "private",
+      from: "Bob",
+      to: "Alice",
+      username: "Bob",
+      text: "Private unread " + i,
+      timestamp: new Date(2026, 8, 7, 11, i).toISOString(),
+    }));
+    for (const message of privateUnread) broadcast(message);
+    await page.waitForFunction(() => window.chatStore.getState().unreadByKey["user:Bob"] === 30);
+    await page.evaluate(() => window.chatStore.getState().setActiveKey("user:Bob"));
+    const privateLatest = page.getByRole("button", { name: "30 条新消息", exact: true });
+    await privateLatest.waitFor();
+    const privateMarker = page.getByRole("separator", { name: "未读消息", exact: true });
+    await privateMarker.waitFor();
+    const unreadPlacement = await page
+      .locator('[data-message-id="private-unread-0"]')
+      .evaluate((node) => {
+        const root = document.querySelector("[data-chat-scroll-viewport]");
+        return {
+          messageTop: node.getBoundingClientRect().top,
+          viewportTop: root.getBoundingClientRect().top,
+          viewportBottom: root.getBoundingClientRect().bottom,
+        };
+      });
+    assert.ok(unreadPlacement.messageTop >= unreadPlacement.viewportTop);
+    assert.ok(unreadPlacement.messageTop < unreadPlacement.viewportTop + 140);
+    assert.ok(unreadPlacement.messageTop < unreadPlacement.viewportBottom);
+    await privateLatest.click();
+    await privateLatest.waitFor({ state: "hidden" });
+    await privateMarker.waitFor({ state: "hidden" });
+    await page.evaluate(() => window.chatStore.getState().setActiveKey(""));
+
     const receiptsBefore = received.filter((m) => m.type === "chat_read").length;
     broadcast({
       type: "chat_read",

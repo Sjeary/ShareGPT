@@ -7,6 +7,23 @@ function messageNode(root: HTMLElement, id: string) {
   )
 }
 
+const UNREAD_TOP_CONTEXT_PX = 56
+
+function availableUnreadId(messages: ChatMessage[], requestedId: string): string {
+  if (!requestedId) return ''
+  if (messages.some((message) => message.id === requestedId)) return requestedId
+  // 超过本地 300 条上限时，最早未读可能已被裁掉；定位到仍可见的最早一条。
+  return messages.find((message) => message.id)?.id ?? ''
+}
+
+function positionUnread(root: HTMLElement, id: string): boolean {
+  const node = messageNode(root, id)
+  if (!node) return false
+  root.scrollTop +=
+    node.getBoundingClientRect().top - root.getBoundingClientRect().top - UNREAD_TOP_CONTEXT_PX
+  return true
+}
+
 function capture(root: HTMLElement, unreadMarkerId = ''): ChatReadingPosition {
   const top = root.getBoundingClientRect().top
   const anchor = Array.from(root.querySelectorAll<HTMLElement>('[data-message-id]')).find(
@@ -21,8 +38,8 @@ function capture(root: HTMLElement, unreadMarkerId = ''): ChatReadingPosition {
   }
 }
 
-function restore(root: HTMLElement, position?: ChatReadingPosition) {
-  if (!position || position.atBottom) {
+function restore(root: HTMLElement, position?: ChatReadingPosition, followLatest = true) {
+  if (!position || (position.atBottom && followLatest)) {
     root.scrollTop = root.scrollHeight
     return
   }
@@ -44,6 +61,13 @@ export function useChatReading(
 ) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
+  const resolvedUnreadId = availableUnreadId(messages, firstUnreadId)
+  const requestedUnreadRef = useRef(firstUnreadId)
+  const resolvedUnreadRef = useRef(resolvedUnreadId)
+  requestedUnreadRef.current = firstUnreadId
+  resolvedUnreadRef.current = resolvedUnreadId
+  const activeViewRef = useRef('')
+  const pendingUnreadRef = useRef<{ key: string; id: string } | null>(null)
   // Pixel offsets are retained in the store without re-rendering every message on every scroll event.
   const atBottom = useChatStore((state) => state.readingPositions[viewKey]?.atBottom ?? true)
   const unreadMarkerId = useChatStore(
@@ -73,17 +97,42 @@ export function useChatReading(
 
   useLayoutEffect(() => {
     const root = scrollRef.current
-    if (!root || !active) return
+    if (!root || !active) {
+      if (!active && activeViewRef.current === viewKey) activeViewRef.current = ''
+      return
+    }
+    const enteringView = activeViewRef.current !== viewKey
+    activeViewRef.current = viewKey
+    const unreadTarget = resolvedUnreadRef.current || requestedUnreadRef.current
+    const savedPosition = useChatStore.getState().readingPositions[viewKey]
+    // 已经在本会话见过这批未读时恢复原阅读锚点；只有离开期间新出现的未读才定位首条。
+    if (enteringView && unreadTarget && savedPosition?.unreadMarkerId !== unreadTarget) {
+      pendingUnreadRef.current = {
+        key: viewKey,
+        id: unreadTarget,
+      }
+    }
     useChatStore.setState({ readingActiveView: viewKey })
     const save = () => {
       if (!root.clientHeight) return
       const old = useChatStore.getState().readingPositions[viewKey]
       if (old?.anchorId && !root.querySelector('[data-message-id]')) return
-      useChatStore.getState().saveReadingPosition(viewKey, capture(root, old?.unreadMarkerId))
+      useChatStore.getState().saveReadingPosition(viewKey, capture(root, resolvedUnreadRef.current))
     }
     const reconcile = () => {
       if (!root.clientHeight) return
-      restore(root, useChatStore.getState().readingPositions[viewKey])
+      const pending = pendingUnreadRef.current
+      if (pending?.key === viewKey) {
+        const target = resolvedUnreadRef.current || pending.id
+        if (target && positionUnread(root, target)) {
+          pendingUnreadRef.current = null
+          save()
+          return
+        }
+        if (requestedUnreadRef.current) return
+        pendingUnreadRef.current = null
+      }
+      restore(root, useChatStore.getState().readingPositions[viewKey], !requestedUnreadRef.current)
       save()
     }
     let frame = 0
@@ -114,16 +163,29 @@ export function useChatReading(
     if (store.readingActiveView !== viewKey) useChatStore.setState({ readingActiveView: viewKey })
     const old = store.readingPositions[viewKey]
     if (old?.anchorId && messages.length === 0) return
-    restore(root, old)
-    store.saveReadingPosition(viewKey, capture(root, firstUnreadId || old?.unreadMarkerId))
-  }, [viewKey, messages, active, firstUnreadId])
+    const pending = pendingUnreadRef.current
+    if (pending?.key === viewKey) {
+      const target = resolvedUnreadId || pending.id
+      if (target && positionUnread(root, target)) {
+        pendingUnreadRef.current = null
+      } else if (firstUnreadId) {
+        return
+      } else {
+        pendingUnreadRef.current = null
+        restore(root, old, focused && !firstUnreadId)
+      }
+    } else {
+      // 后台/失焦期间即使原来贴底，也以最后已读消息为锚，不替用户吞掉新消息。
+      restore(root, old, focused && !firstUnreadId)
+    }
+    store.saveReadingPosition(viewKey, capture(root, resolvedUnreadId))
+  }, [viewKey, messages, active, firstUnreadId, resolvedUnreadId, focused])
 
   function toLatest() {
     const root = scrollRef.current
     if (!root) return
     root.scrollTop = root.scrollHeight
-    const old = useChatStore.getState().readingPositions[viewKey]
-    useChatStore.getState().saveReadingPosition(viewKey, capture(root, old?.unreadMarkerId))
+    useChatStore.getState().saveReadingPosition(viewKey, capture(root, resolvedUnreadRef.current))
     setReturnTarget(null)
   }
 
@@ -147,7 +209,7 @@ export function useChatReading(
     const root = scrollRef.current
     if (!root || returnTarget?.key !== viewKey) return
     restore(root, returnTarget.position)
-    useChatStore.getState().saveReadingPosition(viewKey, capture(root, unreadMarkerId))
+    useChatStore.getState().saveReadingPosition(viewKey, capture(root, resolvedUnreadRef.current))
     setReturnTarget(null)
   }
 
