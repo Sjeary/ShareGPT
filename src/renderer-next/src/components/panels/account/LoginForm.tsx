@@ -26,6 +26,7 @@ import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuth } from '@/hooks/useAuth'
 import { autoLoginParams } from '@/lib/autoLogin'
+import { isStaleAttemptError } from '@/lib/latestAttempt'
 import { ImportActions } from './ImportActions'
 import { BrowserPrivacySection } from './BrowserPrivacySection'
 import { compareVersions, checkGithubUpdate, type BootstrapUpdate } from './bootstrap'
@@ -141,22 +142,30 @@ export function LoginForm() {
   // 登录失败时聚焦并选中密码框 (移植自旧 renderer.js focusCollabField("c_password", true) ~4688)。
   const passwordRef = useRef<HTMLInputElement>(null)
   const autoLoginAttempted = useRef(false)
+  // React state does not synchronously guard two submit events in the same frame. Keep one
+  // presentation owner so a duplicate click cannot start a second login transaction.
+  const loginUiBusyRef = useRef(false)
 
   useEffect(() => {
     if (workspaceMode === 'personal') return
     const params = autoLoginParams(collab)
-    if (!params || autoLoginAttempted.current) return
+    if (!params || autoLoginAttempted.current || loginUiBusyRef.current) return
     autoLoginAttempted.current = true
+    loginUiBusyRef.current = true
     setSubmitting(true)
     setError('')
     setErrorField(null)
     void login(params)
       .catch((err) => {
+        if (isStaleAttemptError(err)) return
         const message = err instanceof Error ? err.message : '自动登录失败，请重新登录'
         setError(`自动登录失败：${message}`)
         setErrorField('password')
       })
-      .finally(() => setSubmitting(false))
+      .finally(() => {
+        loginUiBusyRef.current = false
+        setSubmitting(false)
+      })
   }, [collab, login, workspaceMode])
 
   function focusField(field: ErrorField, select = false) {
@@ -169,7 +178,7 @@ export function LoginForm() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
-    if (submitting || enteringPersonal) return
+    if (loginUiBusyRef.current || submitting || enteringPersonal) return
 
     // 提交前必填校验: 聚焦首个空字段并显示内联错误 (旧 collabLogin -> performCollabLogin 校验)。
     const trimmedServer = serverUrl.trim()
@@ -195,6 +204,7 @@ export function LoginForm() {
 
     setError('')
     setErrorField(null)
+    loginUiBusyRef.current = true
     setSubmitting(true)
     try {
       if (!hasSeenWorkspaceIntro) {
@@ -203,6 +213,7 @@ export function LoginForm() {
       const profile = await login({ serverUrl, username, password, rememberPassword })
       toast.success(`登录成功，欢迎 ${profile.displayName}`)
     } catch (err) {
+      if (isStaleAttemptError(err)) return
       const message = err instanceof Error ? err.message : '登录失败，请稍后重试'
       toast.error(message)
       // 内联持久错误条 + 红边密码框 + 聚焦选中 (对齐旧版失败聚焦密码语义)。
@@ -210,6 +221,7 @@ export function LoginForm() {
       setErrorField('password')
       focusField('password', true)
     } finally {
+      loginUiBusyRef.current = false
       setSubmitting(false)
     }
   }

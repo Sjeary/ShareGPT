@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createLatestAttemptCoordinator } from './latestAttempt.ts'
+import {
+  createLatestAttemptCoordinator,
+  isStaleAttemptError,
+  StaleAttemptError,
+} from './latestAttempt.ts'
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => undefined
@@ -34,4 +38,13 @@ test('invalidate cancels an in-flight login attempt', () => {
   const attempt = attempts.begin()
   attempts.invalidate()
   assert.throws(() => attempts.assertCurrent(attempt), /旧操作已取消/)
+})
+
+test('stale login control flow can be kept out of user-facing errors', () => {
+  assert.equal(isStaleAttemptError(new StaleAttemptError()), true)
+  assert.equal(
+    isStaleAttemptError(Object.assign(new Error('cancelled'), { name: 'StaleAttemptError' })),
+    true,
+  )
+  assert.equal(isStaleAttemptError(new Error('密码错误')), false)
 })

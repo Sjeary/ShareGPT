@@ -5,6 +5,15 @@ export class StaleAttemptError extends Error {
   }
 }
 
+// Stale attempts are expected control flow: a newer login or workspace choice owns the result.
+// They must never be presented to the user as an authentication failure.
+export function isStaleAttemptError(error: unknown): error is StaleAttemptError {
+  return (
+    error instanceof StaleAttemptError ||
+    (error instanceof Error && error.name === 'StaleAttemptError')
+  )
+}
+
 export function createLatestAttemptCoordinator() {
   let latestAttempt = 0
   return {
