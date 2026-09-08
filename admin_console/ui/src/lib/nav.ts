@@ -8,6 +8,7 @@ import {
   ShieldAlert,
   Network,
   Languages,
+  BarChart3,
   type LucideIcon,
 } from 'lucide-react'
 import type { AdminTab } from '@/types/admin'
@@ -21,6 +22,7 @@ export interface NavItem {
 
 export const NAV: NavItem[] = [
   { key: 'overview', label: '概览', icon: LayoutDashboard, hint: '全局状态一览' },
+  { key: 'ai-usage', label: 'AI 使用统计', icon: BarChart3, hint: '成功发送次数与成员排行' },
   { key: 'users', label: '用户管理', icon: Users, hint: '查看 / 新增 / 编辑用户' },
   { key: 'bootstrap', label: 'Sender 配置', icon: Cable, hint: '首登下发默认配置' },
   { key: 'airport', label: '代理线路', icon: Network, hint: '内置线路目录与出口预期' },

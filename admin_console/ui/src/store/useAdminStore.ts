@@ -16,10 +16,13 @@ import {
   type AdminTranslationProfile,
   type TranslationProfileCatalog,
   type TranslationUsageReport,
+  type AiServiceKind,
+  type AiUsageReport,
 } from '@/types/admin'
 
 const THEME_KEY = 'sharegpt-admin-theme'
 const AUTOREFRESH_KEY = 'sharegpt-admin-autorefresh'
+let aiUsageRequestId = 0
 
 interface CreateUserInput {
   username: string
@@ -80,6 +83,8 @@ interface AdminState {
   translationLoading: boolean
   translationUsage: TranslationUsageReport | null
   translationUsageLoading: boolean
+  aiUsage: AiUsageReport | null
+  aiUsageLoading: boolean
 
   // 导航 / 偏好
   activeTab: AdminTab
@@ -111,6 +116,10 @@ interface AdminState {
   loadTranslationUsage: (opts?: {
     silent?: boolean
     filters?: { from?: string; to?: string; username?: string; profileId?: string }
+  }) => Promise<void>
+  loadAiUsage: (opts?: {
+    silent?: boolean
+    filters?: { service?: AiServiceKind; from?: string; to?: string }
   }) => Promise<void>
 
   // 开发者(全局发布)
@@ -165,6 +174,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
       bootstrap: null,
       translationCatalog: null,
       translationUsage: null,
+      aiUsage: null,
     })
     if (message) toast.error(message)
   }
@@ -207,6 +217,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
     translationLoading: false,
     translationUsage: null,
     translationUsageLoading: false,
+    aiUsage: null,
+    aiUsageLoading: false,
 
     activeTab: 'overview',
     setActiveTab: (activeTab) => set({ activeTab }),
@@ -328,6 +340,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
         bootstrap: null,
         translationCatalog: null,
         translationUsage: null,
+        aiUsage: null,
         activeTab: 'overview',
       })
     },
@@ -496,6 +509,25 @@ export const useAdminStore = create<AdminState>((set, get) => {
         }
       } finally {
         set({ translationUsageLoading: false })
+      }
+    },
+
+    loadAiUsage: async (opts) => {
+      const requestId = ++aiUsageRequestId
+      set({ aiUsageLoading: true })
+      try {
+        const query = new URLSearchParams()
+        query.set('service', opts?.filters?.service || 'gpt')
+        if (opts?.filters?.from) query.set('from', opts.filters.from)
+        if (opts?.filters?.to) query.set('to', opts.filters.to)
+        const payload = await request<AiUsageReport>(`/api/admin/ai-usage?${query.toString()}`)
+        if (requestId === aiUsageRequestId) set({ aiUsage: payload })
+      } catch (err) {
+        if (!opts?.silent && !(err instanceof AuthExpiredError)) {
+          toast.error(err instanceof Error ? err.message : String(err))
+        }
+      } finally {
+        if (requestId === aiUsageRequestId) set({ aiUsageLoading: false })
       }
     },
 

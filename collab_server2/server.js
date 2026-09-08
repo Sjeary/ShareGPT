@@ -752,6 +752,7 @@ async function saveChatHistoryStore(items) {
 const history = loadChatHistoryStore();
 
 // 多服务 (gpt/gemini/claude) 使用统计: 各自独立存储文件, 与 GPT 同目录。
+const AI_SERVICE_KINDS = ["gpt", "gemini", "claude"];
 function serviceUsageFile(service) {
   if (service === "gpt") return GPT_USAGE_FILE;
   return path.join(path.dirname(GPT_USAGE_FILE), service + "_usage.json");
@@ -2784,6 +2785,29 @@ const server = http.createServer(async (req, res) => {
       );
     } catch (err) {
       sendText(res, 400, err.message || "读取翻译用量失败");
+    }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/api/admin/ai-usage") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    try {
+      const service = safeText(reqUrl.searchParams.get("service") || "gpt").toLowerCase();
+      if (!AI_SERVICE_KINDS.includes(service)) {
+        sendText(res, 400, "AI 服务类型无效");
+        return;
+      }
+      sendJson(res, 200, {
+        service,
+        ...buildServiceUsageStats(
+          service,
+          reqUrl.searchParams.get("from") || "",
+          reqUrl.searchParams.get("to") || "",
+        ),
+      });
+    } catch (err) {
+      sendText(res, 400, err.message || "读取 AI 使用统计失败");
     }
     return;
   }

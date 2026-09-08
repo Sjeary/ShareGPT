@@ -1208,6 +1208,38 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   assert.strictEqual(statsBody.totalQueries, 4);
   assert.ok(Array.isArray(statsBody.users));
 
+  const geminiUsage = await fetch(`${baseUrl}/api/gemini/usage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ count: 2, usageId: "gemini-usage-once-1" }),
+  });
+  assert.strictEqual(geminiUsage.status, 200);
+
+  const unauthenticatedAdminUsage = await fetch(`${baseUrl}/api/admin/ai-usage`);
+  assert.strictEqual(unauthenticatedAdminUsage.status, 401);
+
+  const adminGptUsage = await fetch(`${baseUrl}/api/admin/ai-usage?service=gpt`, {
+    headers: adminHeaders,
+  });
+  assert.strictEqual(adminGptUsage.status, 200);
+  const adminGptUsageBody = await adminGptUsage.json();
+  assert.strictEqual(adminGptUsageBody.service, "gpt");
+  assert.strictEqual(adminGptUsageBody.totalQueries, 4);
+  assert.strictEqual(adminGptUsageBody.users[0].username, "verify-user");
+
+  const adminGeminiUsage = await fetch(`${baseUrl}/api/admin/ai-usage?service=gemini`, {
+    headers: adminHeaders,
+  });
+  assert.strictEqual(adminGeminiUsage.status, 200);
+  const adminGeminiUsageBody = await adminGeminiUsage.json();
+  assert.strictEqual(adminGeminiUsageBody.service, "gemini");
+  assert.strictEqual(adminGeminiUsageBody.totalQueries, 2);
+
+  const invalidAdminUsage = await fetch(`${baseUrl}/api/admin/ai-usage?service=unknown`, {
+    headers: adminHeaders,
+  });
+  assert.strictEqual(invalidAdminUsage.status, 400);
+
   const usageSnapshot = fs.readFileSync(process.env.GPT_USAGE_FILE);
   fs.copyFileSync(process.env.GPT_USAGE_FILE, `${process.env.GPT_USAGE_FILE}.backup`);
   fs.writeFileSync(process.env.GPT_USAGE_FILE, "{interrupted");

@@ -11,6 +11,7 @@ import { FeedbackPanel } from '@/components/panels/FeedbackPanel'
 import { ProxyMissingPanel } from '@/components/panels/ProxyMissingPanel'
 import { AirportPanel } from '@/components/panels/AirportPanel'
 import { TranslationPanel } from '@/components/panels/TranslationPanel'
+import { AiUsagePanel } from '@/components/panels/AiUsagePanel'
 
 const REFRESH_INTERVAL = 15000
 
@@ -35,6 +36,7 @@ export function Shell() {
         <Sidebar />
         <main className="flex min-h-0 min-w-0 flex-1 flex-col">
           {active === 'overview' && <OverviewPanel />}
+          {active === 'ai-usage' && <AiUsagePanel />}
           {active === 'users' && <UsersPanel />}
           {active === 'bootstrap' && <BootstrapPanel />}
           {active === 'airport' && <AirportPanel />}
