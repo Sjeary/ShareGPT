@@ -94,6 +94,8 @@ export interface TypingMeta {
 
 export interface ChatMessage {
   id: string
+  // 服务端持久化顺序。旧服务器/旧本地缓存可能没有，客户端会回退到 timestamp。
+  serverSequence?: number
   type: string
   scope: ChatScope
   from: string
@@ -247,6 +249,40 @@ function dedupeFingerprint(m: ChatMessage): string {
   return [m.scope, m.from, m.to, m.timestamp, m.text, m.recalled, m.attachments.length].join('|')
 }
 
+const MAX_MESSAGES_PER_CONVERSATION = 300
+
+function validServerSequence(message: ChatMessage): number | null {
+  const value = message.serverSequence
+  return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : null
+}
+
+// 服务端时间决定正常的时间线；同一毫秒内由持久化顺序消除多端到达先后的差异。
+// 旧消息或临时 system 消息没有序号时保留稳定的批次/实时到达顺序。
+export function compareChatMessages(a: ChatMessage, b: ChatMessage): number {
+  const aTime = Date.parse(a.timestamp)
+  const bTime = Date.parse(b.timestamp)
+  if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+    return aTime - bTime
+  }
+  if (Number.isFinite(aTime) !== Number.isFinite(bTime)) {
+    return Number.isFinite(aTime) ? -1 : 1
+  }
+
+  const aSequence = validServerSequence(a)
+  const bSequence = validServerSequence(b)
+  if (aSequence !== null && bSequence !== null && aSequence !== bSequence) {
+    return aSequence - bSequence
+  }
+  return 0
+}
+
+function orderAndLimitMessages(messages: ChatMessage[]): ChatMessage[] {
+  const ordered = [...messages].sort(compareChatMessages)
+  return ordered.length > MAX_MESSAGES_PER_CONVERSATION
+    ? ordered.slice(-MAX_MESSAGES_PER_CONVERSATION)
+    : ordered
+}
+
 const INITIAL_IDENTITY: ChatIdentity = {
   serverUrl: '',
   token: '',
@@ -351,7 +387,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const cleaned: Record<string, ChatMessage[]> = {}
     for (const [key, items] of Object.entries(conversations || {})) {
       if (!Array.isArray(items) || !items.length) continue
-      cleaned[key] = items.slice(-300)
+      cleaned[key] = orderAndLimitMessages(items)
     }
     set({ messagesByConversation: cleaned })
   },
@@ -381,7 +417,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             reactions: message.reactions ?? next[idx].reactions ?? {},
           }
           return {
-            messagesByConversation: { ...s.messagesByConversation, [key]: next },
+            messagesByConversation: {
+              ...s.messagesByConversation,
+              [key]: orderAndLimitMessages(next),
+            },
           }
         }
       }
@@ -391,9 +430,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return s
       }
       next.push(message)
-      if (next.length > 300) next.splice(0, next.length - 300)
       return {
-        messagesByConversation: { ...s.messagesByConversation, [key]: next },
+        messagesByConversation: {
+          ...s.messagesByConversation,
+          [key]: orderAndLimitMessages(next),
+        },
       }
     })
   },

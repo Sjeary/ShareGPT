@@ -661,6 +661,8 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   assert.strictEqual(legacyChat.scope, "subnet");
   assert.strictEqual(typeof legacyChat.id, "string");
   assert.strictEqual(typeof legacyChat.timestamp, "string");
+  assert.ok(Number.isSafeInteger(legacyChat.serverSequence));
+  assert.ok(legacyChat.serverSequence > 0);
   const savedHistory = JSON.parse(fs.readFileSync(process.env.CHAT_HISTORY_FILE, "utf8"));
   assert.ok(savedHistory.history.some((message) => message.id === legacyChat.id));
   assert.ok(fs.existsSync(`${process.env.CHAT_HISTORY_FILE}.backup`));
@@ -698,6 +700,7 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
     (message) => message.type === "chat" && message.attachments?.[0]?.name === "actual-size.txt",
   );
   assert.strictEqual(validAttachment.attachments[0].size, 8);
+  assert.ok(validAttachment.serverSequence > legacyChat.serverSequence);
 
   const historySnapshot = fs.readFileSync(process.env.CHAT_HISTORY_FILE);
   const historyBackup = fs.readFileSync(`${process.env.CHAT_HISTORY_FILE}.backup`);

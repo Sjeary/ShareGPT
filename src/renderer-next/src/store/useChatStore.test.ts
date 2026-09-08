@@ -1,6 +1,41 @@
 import assert from 'node:assert/strict'
 import { beforeEach, test } from 'node:test'
-import { chatViewKey, EMPTY_COMPOSER_DRAFT, useChatStore } from './useChatStore.ts'
+import {
+  chatViewKey,
+  EMPTY_COMPOSER_DRAFT,
+  roomConversationKey,
+  useChatStore,
+  type ChatMessage,
+} from './useChatStore.ts'
+
+function roomMessage(id: string, timestamp: string, serverSequence?: number): ChatMessage {
+  return {
+    id,
+    serverSequence,
+    type: 'chat',
+    scope: 'subnet',
+    from: 'peer',
+    to: '',
+    username: 'peer',
+    displayName: 'Peer',
+    avatar: '',
+    text: id,
+    attachments: [],
+    replyTo: null,
+    forwardedFrom: null,
+    timestamp,
+    readAt: '',
+    readBy: [],
+    edited: false,
+    editedAt: '',
+    subnetKey: 'team',
+    subnetLabel: 'team',
+    system: false,
+    recalled: false,
+    recalledAt: '',
+    reactions: {},
+  }
+}
 
 beforeEach(() => {
   useChatStore.getState().reset()
@@ -76,4 +111,43 @@ test('reading positions stay isolated and unread marker advances after clearing 
   useChatStore.getState().clearUnread('room:team')
   useChatStore.getState().incrementUnread('room:team', 'three')
   assert.equal(useChatStore.getState().firstUnreadByKey['room:team'], 'three')
+})
+
+test('public room stays in server order when cached, history, and live messages arrive out of order', () => {
+  const key = roomConversationKey('team')
+  useChatStore.setState({ roomScope: 'team' })
+
+  useChatStore.getState().hydrate({
+    [key]: [
+      roomMessage('third', '2026-09-07T10:00:00.003Z', 3),
+      roomMessage('first', '2026-09-07T10:00:00.001Z', 1),
+    ],
+  })
+  useChatStore.getState().mergeMessages([roomMessage('second', '2026-09-07T10:00:00.002Z', 2)])
+
+  assert.deepEqual(
+    useChatStore.getState().messagesByConversation[key].map((message) => message.id),
+    ['first', 'second', 'third'],
+  )
+
+  // 旧服务器没有 serverSequence 时仍按服务端 timestamp 修复迟到历史。
+  useChatStore.getState().upsertMessage(roomMessage('legacy-middle', '2026-09-07T10:00:00.001Z'))
+  assert.deepEqual(
+    useChatStore.getState().messagesByConversation[key].map((message) => message.id),
+    ['first', 'legacy-middle', 'second', 'third'],
+  )
+
+  useChatStore
+    .getState()
+    .mergeMessages([
+      roomMessage('same-millisecond-later', '2026-09-07T10:00:00.004Z', 5),
+      roomMessage('same-millisecond-earlier', '2026-09-07T10:00:00.004Z', 4),
+    ])
+  assert.deepEqual(
+    useChatStore
+      .getState()
+      .messagesByConversation[key].slice(-2)
+      .map((message) => message.id),
+    ['same-millisecond-earlier', 'same-millisecond-later'],
+  )
 })

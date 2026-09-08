@@ -670,7 +670,7 @@ function stableMessageId(record) {
   return crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex").slice(0, 24);
 }
 
-function normalizeHistoryMessage(record) {
+function normalizeHistoryMessage(record, fallbackSequence = 0) {
   const recalled = Boolean(record?.recalled);
   const scope = safeText(record?.scope) === "private" ? "private" : "subnet";
   const text = recalled ? "" : String(record?.text || "").slice(0, 8000);
@@ -689,8 +689,17 @@ function normalizeHistoryMessage(record) {
     return null;
   }
 
+  const persistedSequence = Number(record?.serverSequence);
+  const serverSequence =
+    Number.isSafeInteger(persistedSequence) && persistedSequence > 0
+      ? persistedSequence
+      : Number.isSafeInteger(fallbackSequence) && fallbackSequence > 0
+        ? fallbackSequence
+        : 0;
+
   return {
     id: safeText(record?.id) || stableMessageId(record),
+    ...(serverSequence ? { serverSequence } : {}),
     type: "chat",
     scope,
     from: safeText(record?.from || record?.username),
@@ -734,7 +743,9 @@ function messageActivityTimestamp(record) {
 
 function loadChatHistoryStore() {
   const raw = readJsonStore(CHAT_HISTORY_FILE, "history");
-  const items = raw.history.map(normalizeHistoryMessage).filter(Boolean);
+  const items = raw.history
+    .map((record, index) => normalizeHistoryMessage(record, index + 1))
+    .filter(Boolean);
   if (items.length > HISTORY_MAX) {
     items.splice(0, items.length - HISTORY_MAX);
   }
@@ -750,6 +761,9 @@ async function saveChatHistoryStore(items) {
 }
 
 const history = loadChatHistoryStore();
+let nextChatServerSequence =
+  history.reduce((maximum, message) => Math.max(maximum, Number(message.serverSequence) || 0), 0) +
+  1;
 
 // 多服务 (gpt/gemini/claude) 使用统计: 各自独立存储文件, 与 GPT 同目录。
 const AI_SERVICE_KINDS = ["gpt", "gemini", "claude"];
@@ -1529,13 +1543,16 @@ function broadcastPresence() {
 }
 
 async function addHistory(message) {
-  const normalized = normalizeHistoryMessage(message);
-  if (!normalized) return;
+  const sequence = nextChatServerSequence;
+  const normalized = normalizeHistoryMessage({ ...message, serverSequence: sequence }, sequence);
+  if (!normalized) return null;
   const next = [...history, normalized];
   if (next.length > HISTORY_MAX) {
     next.splice(0, next.length - HISTORY_MAX);
   }
   await persistHistorySnapshot(next);
+  nextChatServerSequence = sequence + 1;
+  return normalized;
 }
 
 function resolveAdminSessionByToken(token) {
@@ -4008,10 +4025,11 @@ wss.on("connection", (ws) => {
         editedAt: "",
       };
 
-      await addHistory(message);
-      sendToClient(ws, message);
+      const storedMessage = await addHistory(message);
+      if (!storedMessage) return;
+      sendToClient(ws, storedMessage);
       if (targetClient && targetClient !== ws) {
-        sendToClient(targetClient, message);
+        sendToClient(targetClient, storedMessage);
       }
       return;
     }
@@ -4036,8 +4054,9 @@ wss.on("connection", (ws) => {
       editedAt: "",
     };
 
-    await addHistory(message);
-    broadcastToSubnet(ws.subnetKey, message);
+    const storedMessage = await addHistory(message);
+    if (!storedMessage) return;
+    broadcastToSubnet(ws.subnetKey, storedMessage);
   };
 
   ws.on("message", (raw) => {

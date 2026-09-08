@@ -21,6 +21,11 @@ function num(v: unknown): number {
   return Number.isInteger(n) && n >= 0 ? n : 0
 }
 
+function positiveSafeInteger(v: unknown): number | undefined {
+  const n = Number(v)
+  return Number.isSafeInteger(n) && n > 0 ? n : undefined
+}
+
 export function normalizeAttachments(items: unknown): ChatAttachment[] {
   if (!Array.isArray(items)) return []
   return items
@@ -93,6 +98,7 @@ export function normalizeChatMessage(raw: unknown): ChatMessage {
 
   return {
     id: s(p.id),
+    serverSequence: positiveSafeInteger(p.serverSequence),
     type: s(p.type) || (system ? 'system' : 'chat'),
     scope,
     from,
