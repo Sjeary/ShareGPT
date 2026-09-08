@@ -47,6 +47,7 @@
     "verify:chat-emoji": "node scripts/verify-chat-emoji.js",
     "verify:profile-editor": "npm run build:next && node scripts/verify-profile-editor.js",
     "verify:managed-proxy-readonly": "node scripts/verify-managed-proxy-readonly.js",
+    "verify:admin-console": "npm --prefix admin_console/ui run build && node scripts/verify-admin-console.js",
     "verify:personal-workspace": "npm run build:next && node scripts/verify-personal-workspace.js",
     "verify:release-win": "node scripts/verify-win-release.js",
     "verify:release-contract": "node scripts/verify-release-contract.mjs",
