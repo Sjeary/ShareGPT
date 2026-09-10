@@ -182,6 +182,7 @@ jobs:
             "verify:chat-interactions",
             "verify:profile-editor",
             "verify:managed-proxy-readonly",
+            "verify:advanced-environment-recreate",
             "verify:personal-workspace",
             "verify:ai-workspace-lifecycle",
             "verify:ai-composer"
