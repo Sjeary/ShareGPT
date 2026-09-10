@@ -188,6 +188,7 @@ async function createFixtureServer() {
             "silent-relogin-legacy-admin",
             "authorization-persist-failure",
             "workspace-isolation",
+            "environment-recreate",
           ].includes(body.username),
         },
         history: [],
@@ -237,7 +238,9 @@ async function createFixtureServer() {
         json(response, 200, unavailableBootstrap());
         return;
       }
-      if (["legacy-admin", "silent-relogin-legacy-admin"].includes(username)) {
+      if (
+        ["legacy-admin", "silent-relogin-legacy-admin", "environment-recreate"].includes(username)
+      ) {
         json(response, 200, legacyAdminBootstrap());
         return;
       }
@@ -981,9 +984,99 @@ async function verifyManualRelogin(fixture) {
   return events;
 }
 
+async function verifyAdvancedEnvironmentRecreate(fixture) {
+  const username = "environment-recreate";
+  const before = fixture.events.length;
+  const result = await launchCase({
+    baseUrl: fixture.baseUrl,
+    events: fixture.events,
+    username,
+    exercise: async ({ window }) => {
+      await window.locator('[data-tour="nav-gpt"]').click();
+      const environmentButton = window.getByTitle(/新建 AI 环境|管理环境与线路/);
+      await environmentButton.waitFor({ state: "visible", timeout: 8000 });
+      await environmentButton.click();
+
+      const createEnvironment = async (name) => {
+        const firstEnvironment = window.getByRole("button", {
+          name: "新建第一个独立环境",
+          exact: true,
+        });
+        if (await firstEnvironment.isVisible().catch(() => false)) {
+          await firstEnvironment.click();
+        } else {
+          await window.getByRole("button", { name: "新建", exact: true }).click();
+        }
+        await window.getByPlaceholder(/新环境名称/).fill(name);
+        await window.getByLabel("新环境内置网络线路").selectOption("internal-unified");
+        await window.getByRole("button", { name: "完成", exact: true }).click();
+        await window.getByLabel("当前 AI 环境").waitFor({ state: "visible", timeout: 8000 });
+        return window.evaluate(async (expectedName) => {
+          const principal = await window.api.getSettingsPrincipal();
+          const settings = await window.api.loadSettings({
+            expectedPrincipalId: principal.principalId,
+            expectedPrincipalGeneration: principal.generation,
+          });
+          const environment = settings.advancedAi.environments.find(
+            (candidate) => candidate.kind === "gpt" && candidate.name === expectedName,
+          );
+          return {
+            id: environment?.id || "",
+            routeId: environment?.routeId || "",
+            activeId: settings.advancedAi.activeByKind.gpt,
+          };
+        }, name);
+      };
+
+      const first = await createEnvironment("First Windows environment");
+      assert.ok(first.id, `the first environment must be persisted: ${JSON.stringify(first)}`);
+      assert.equal(first.routeId, "internal-unified");
+      assert.equal(first.activeId, first.id);
+
+      window.once("dialog", (dialog) => dialog.accept());
+      await window.getByTitle("删除环境").click();
+      await window
+        .getByRole("button", { name: "新建第一个独立环境", exact: true })
+        .waitFor({ state: "visible", timeout: 8000 });
+
+      const afterDelete = await window.evaluate(async () => {
+        const principal = await window.api.getSettingsPrincipal();
+        const settings = await window.api.loadSettings({
+          expectedPrincipalId: principal.principalId,
+          expectedPrincipalGeneration: principal.generation,
+        });
+        return {
+          environmentIds: settings.advancedAi.environments
+            .filter((environment) => environment.kind === "gpt")
+            .map((environment) => environment.id),
+          activeId: settings.advancedAi.activeByKind.gpt,
+        };
+      });
+      assert.deepEqual(afterDelete, { environmentIds: [], activeId: "" });
+
+      const replacement = await createEnvironment("Replacement Windows environment");
+      assert.ok(replacement.id, "the replacement environment must be persisted");
+      assert.notEqual(replacement.id, first.id);
+      assert.equal(replacement.routeId, "internal-unified");
+      assert.equal(replacement.activeId, replacement.id);
+      return { first, afterDelete, replacement };
+    },
+  });
+  assert.equal(result.authed, true);
+  assert.deepEqual(result.blockedRequests, []);
+  return { events: fixture.events.slice(before), lifecycle: result.exerciseResult };
+}
+
 async function main() {
   const fixture = await createFixtureServer();
   try {
+    if (process.argv.includes("--case=advanced-environment-recreate")) {
+      const advancedEnvironmentRecreate = await verifyAdvancedEnvironmentRecreate(fixture);
+      process.stdout.write(
+        `${JSON.stringify({ ok: true, advancedEnvironmentRecreate }, null, 2)}\n`,
+      );
+      return;
+    }
     const cases = [
       { username: "legacy-admin", expectedRoutes: ["internal-unified", "internal-airport"] },
       { username: "legacy-routes", expectedRoutes: ["route-legacy"] },
@@ -1036,6 +1129,7 @@ async function main() {
     const authorizationPersistenceFailure = await verifyAuthorizationPersistenceFailure(fixture);
     const sameTokenDoubleRevocation = await verifySameTokenDoubleRevocation(fixture);
     const manualRelogin = await verifyManualRelogin(fixture);
+    const advancedEnvironmentRecreate = await verifyAdvancedEnvironmentRecreate(fixture);
 
     const beforeInvalid = fixture.events.length;
     const invalid = await launchCase({
@@ -1093,6 +1187,7 @@ async function main() {
           authorizationPersistenceFailure,
           sameTokenDoubleRevocation,
           manualRelogin,
+          advancedEnvironmentRecreate,
         },
         null,
         2,

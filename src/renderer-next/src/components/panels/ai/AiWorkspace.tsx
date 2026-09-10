@@ -64,7 +64,7 @@ import {
   normalizeAdvancedAiSettings,
   routeForEnvironment,
 } from '@/lib/aiEnvironments'
-import type { AdvancedAiSettings, AppSettings } from '@/types/settings'
+import type { AdvancedAiSettings } from '@/types/settings'
 import {
   TRANSLATION_PANEL_DEFAULT_WIDTH,
   TRANSLATION_PANEL_MIN_WIDTH,
@@ -163,10 +163,8 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const [environmentPanelOpen, setEnvironmentPanelOpen] = useState(false)
 
   const saveAdvancedAi = useCallback(async (next: AdvancedAiSettings) => {
-    const current = useAppStore.getState().settings
-    if (!current) return
     const normalized = normalizeAdvancedAiSettings(next)
-    await useAppStore.getState().saveSettings({ ...current, advancedAi: normalized } as AppSettings)
+    await useAppStore.getState().patchSection('advancedAi', normalized)
   }, [])
 
   const selectEnvironment = useCallback(

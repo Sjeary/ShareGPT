@@ -500,6 +500,57 @@ test("stale principal and revision writes are rejected without changing current 
   assert.equal(backend.loadSettings().translation.provider, changed.translation.provider);
 });
 
+test("删除当前高级环境后可以原子创建并激活替代环境", (t) => {
+  const backend = createBackend(t);
+  const activated = backend.activatePrincipal("https://collab.example", "Alice");
+  const principal = backend.getPrincipalContext();
+  const first = {
+    id: "env-first",
+    kind: "gpt",
+    name: "First",
+    routeId: "route-a",
+    createdAt: "2026-09-09T00:00:00.000Z",
+  };
+  let settings = patchSettings(
+    backend,
+    "advancedAi",
+    {
+      enabled: true,
+      environments: [first],
+      activeByKind: { gpt: first.id, gemini: "", claude: "" },
+    },
+    activated.settings.settingsRevision,
+    principal.principalId,
+    principal.generation,
+  );
+
+  settings = operateSettings(
+    backend,
+    "advancedAi",
+    [{ op: "delete", path: ["environments", first.id] }],
+    settings.settingsRevision,
+    principal.principalId,
+    principal.generation,
+  );
+  assert.deepEqual(settings.advancedAi.environments, []);
+  assert.equal(settings.advancedAi.activeByKind.gpt, "");
+
+  const replacement = { ...first, id: "env-replacement", name: "Replacement" };
+  settings = operateSettings(
+    backend,
+    "advancedAi",
+    [
+      { op: "set", path: ["environments", replacement.id], value: replacement },
+      { op: "set", path: ["activeByKind", "gpt"], value: replacement.id },
+    ],
+    settings.settingsRevision,
+    principal.principalId,
+    principal.generation,
+  );
+  assert.deepEqual(settings.advancedAi.environments, [replacement]);
+  assert.equal(settings.advancedAi.activeByKind.gpt, replacement.id);
+});
+
 test("principal generation changes across A/B/A", (t) => {
   const backend = createBackend(t);
   const alice = backend.activatePrincipal("https://collab.example", "Alice");

@@ -1502,7 +1502,12 @@ function createElectronApp(baseMode = "all") {
       throw new Error("目标网页标签未能安全关闭，请重启客户端后再清除");
     }
     aiWorkspaceRegistry.clear(targetKind, environmentId);
-    hostStateByKind[targetKind] = { visible: false, bounds: null };
+    if (
+      environmentId === undefined ||
+      currentAiEnvironment(targetKind) === safeText(environmentId)
+    ) {
+      hostStateByKind[targetKind] = { visible: false, bounds: null };
+    }
     scheduleAiReconcile("workspace-close", currentAiTarget());
   }
 
@@ -2788,18 +2793,67 @@ function createElectronApp(baseMode = "all") {
       const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
       if (!isAiKind(kind) || !environmentId) throw new Error("AI 环境标识不合法");
       getConfiguredAiEnvironment(kind, environmentId);
+      const principal = backend.getPrincipalContext();
       const targetLoaded = listWorkspaces(kind, environmentId).length > 0;
       if (targetLoaded) await closeWorkspacesForKind(kind, environmentId);
       assertAiRuntimeEpoch(epoch);
-      const partition = partitionForAiEnvironment(
+      backend.assertSettingsPrincipalSnapshot(principal);
+
+      // Configuration removal is the authoritative delete. Commit it in main before clearing
+      // Chromium data so a platform-specific cache failure cannot leave a closed-but-configured
+      // environment that blocks creating its replacement.
+      const currentSettings = backend.loadSettings();
+      const advanced = currentSettings.advancedAi || {};
+      const environments = Array.isArray(advanced.environments) ? advanced.environments : [];
+      const remaining = environments.filter(
+        (environment) => normalizeAiEnvironmentId(environment?.id) !== environmentId,
+      );
+      const nextEnvironmentId =
+        remaining.find((environment) => safeText(environment?.kind) === kind)?.id || "";
+      const operations = [{ op: "delete", path: ["environments", environmentId] }];
+      if (normalizeAiEnvironmentId(advanced.activeByKind?.[kind]) === environmentId) {
+        operations.push({
+          op: "set",
+          path: ["activeByKind", kind],
+          value: nextEnvironmentId,
+        });
+      }
+      backend.operateSettings(
+        "advancedAi",
+        operations,
+        currentSettings.settingsRevision,
+        principal.principalId,
+        principal.generation,
+      );
+      if (currentAiEnvironment(kind) === environmentId) {
+        aiWorkspaceRegistry.activateEnvironment(kind, nextEnvironmentId);
+        scheduleAiReconcile("environment-delete", currentAiTarget());
+        emitTabsChanged(kind);
+      }
+
+      const partition = partitionForAiEnvironment(kind, environmentId, principal);
+      let dataCleared = true;
+      try {
+        await clearAiSessionData(session.fromPartition(partition));
+      } catch (error) {
+        dataCleared = false;
+        mainLog.warn("AI environment configuration removed but session cleanup failed", {
+          kind,
+          environmentId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      assertAiRuntimeEpoch(epoch);
+      backend.assertSettingsPrincipalSnapshot(principal);
+      aiContactedHostsByPartition.get(partition)?.clear();
+      return {
+        ok: true,
         kind,
         environmentId,
-        backend.getPrincipalContext(),
-      );
-      await clearAiSessionData(session.fromPartition(partition));
-      assertAiRuntimeEpoch(epoch);
-      aiContactedHostsByPartition.get(partition)?.clear();
-      return { ok: true, kind, environmentId };
+        dataCleared,
+        // Include writes that may have completed while Chromium storage was being cleared.
+        settings: backend.loadSettings(),
+      };
     });
 
     ipcMain.handle("ai:environment-egress-check", async (_event, payload) => {

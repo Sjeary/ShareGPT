@@ -36,6 +36,7 @@
     "verify:browser-privacy": "electron scripts/verify-browser-privacy.js",
     "verify:browser-privacy-ui": "npm run build:next && node scripts/verify-browser-privacy-ui.js",
     "verify:collab-login-compatibility": "npm run build:next && node scripts/verify-collab-login-compatibility.js",
+    "verify:advanced-environment-recreate": "npm run build:next && node scripts/verify-collab-login-compatibility.js --case=advanced-environment-recreate",
     "verify:ai-composer": "electron scripts/verify-ai-composer.js",
     "verify:ai-tab-scrollbar": "npm run build:next && electron scripts/verify-ai-tab-scrollbar.js",
     "verify:ai-workspace-lifecycle": "npm run build:next && node scripts/verify-ai-workspace-lifecycle.js",

@@ -7,7 +7,12 @@ import { createAiEnvironmentId } from '@/lib/aiEnvironments'
 import type { AiKind } from '@/store/useAiStore'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
-import type { AdvancedAiEnvironment, AdvancedAiRoute, AdvancedAiSettings } from '@/types/settings'
+import type {
+  AdvancedAiEnvironment,
+  AdvancedAiRoute,
+  AdvancedAiSettings,
+  AppSettings,
+} from '@/types/settings'
 import { toast } from 'sonner'
 
 const KIND_LABEL: Record<AiKind, string> = { gpt: 'ChatGPT', gemini: 'Gemini', claude: 'Claude' }
@@ -43,6 +48,7 @@ export function AiEnvironmentPanel({
   const [environmentName, setEnvironmentName] = useState('')
   const [newRouteId, setNewRouteId] = useState('')
   const [checkingId, setCheckingId] = useState('')
+  const [savingId, setSavingId] = useState('')
   const [adding, setAdding] = useState(false)
   const [healthById, setHealthById] = useState<Record<string, RouteHealth>>({})
   const environments = settings.environments.filter((environment) => environment.kind === kind)
@@ -53,6 +59,7 @@ export function AiEnvironmentPanel({
       : routes[0]?.id || ''
 
   async function addEnvironment() {
+    if (savingId) return
     const routeId = selectedNewRouteId
     if (!routeId) {
       toast.error('当前没有可用的内置 sing-box 线路')
@@ -66,38 +73,57 @@ export function AiEnvironmentPanel({
       routeId,
       createdAt: new Date().toISOString(),
     }
-    await onChange({
-      ...settings,
-      environments: [...settings.environments, environment],
-      activeByKind: { ...settings.activeByKind, [kind]: environment.id },
-    })
-    setEnvironmentName('')
-    setAdding(false)
+    setSavingId(environment.id)
+    try {
+      await onChange({
+        ...settings,
+        environments: [...settings.environments, environment],
+        activeByKind: { ...settings.activeByKind, [kind]: environment.id },
+      })
+      setEnvironmentName('')
+      setAdding(false)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '新建环境失败')
+    } finally {
+      setSavingId('')
+    }
   }
 
   async function patchEnvironment(id: string, patch: Partial<AdvancedAiEnvironment>) {
-    await onChange({
-      ...settings,
-      environments: settings.environments.map((environment) =>
-        environment.id === id ? { ...environment, ...patch } : environment,
-      ),
-    })
+    if (savingId) return
+    setSavingId(id)
+    try {
+      await onChange({
+        ...settings,
+        environments: settings.environments.map((environment) =>
+          environment.id === id ? { ...environment, ...patch } : environment,
+        ),
+      })
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '保存环境失败')
+    } finally {
+      setSavingId('')
+    }
   }
 
   async function removeEnvironment(environment: AdvancedAiEnvironment) {
     if (!window.confirm(`删除“${environment.name}”并清除其中的登录状态？此操作无法撤销。`)) return
     try {
-      await api.deleteAiEnvironment({ kind, environmentId: environment.id })
-      const remaining = settings.environments.filter((item) => item.id !== environment.id)
-      const nextActive = remaining.find((item) => item.kind === kind)?.id || ''
-      await onChange({
-        ...settings,
-        environments: remaining,
-        activeByKind: { ...settings.activeByKind, [kind]: nextActive },
-      })
-      toast.success('环境及其登录状态已清除')
+      setSavingId(environment.id)
+      const result = (await api.deleteAiEnvironment({
+        kind,
+        environmentId: environment.id,
+      })) as { settings?: AppSettings; dataCleared?: boolean }
+      if (result.settings) useAppStore.setState({ settings: result.settings })
+      if (result.dataCleared === false) {
+        toast.warning('环境已删除；旧登录缓存未完全清理，但不影响新建环境')
+      } else {
+        toast.success('环境及其登录状态已清除')
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '删除环境失败')
+    } finally {
+      setSavingId('')
     }
   }
 
@@ -135,6 +161,7 @@ export function AiEnvironmentPanel({
           <Button
             size="xs"
             variant={adding ? 'secondary' : 'outline'}
+            disabled={Boolean(savingId)}
             onClick={() => setAdding((open) => !open)}
           >
             <Plus />
@@ -164,6 +191,7 @@ export function AiEnvironmentPanel({
                 <Input
                   defaultValue={environment.name}
                   aria-label="环境名称"
+                  disabled={savingId === environment.id}
                   className="h-8 min-w-0 border-transparent bg-transparent px-1.5 shadow-none hover:border-input focus:border-input focus:bg-background"
                   onBlur={(event) => {
                     const name = event.target.value.trim()
@@ -179,7 +207,7 @@ export function AiEnvironmentPanel({
                   }
                   aria-label="内置网络线路"
                   className="h-8 min-w-0 rounded-md border border-transparent bg-transparent px-1.5 text-sm outline-none hover:border-input focus-visible:border-input focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-ring"
-                  disabled={!routes.length}
+                  disabled={!routes.length || savingId === environment.id}
                   onChange={(event) =>
                     void patchEnvironment(environment.id, { routeId: event.target.value })
                   }
@@ -200,7 +228,9 @@ export function AiEnvironmentPanel({
                     variant="ghost"
                     size="icon-sm"
                     title="检测出口"
-                    disabled={checkingId === environment.id || !routes.length}
+                    disabled={
+                      checkingId === environment.id || !routes.length || savingId === environment.id
+                    }
                     onClick={() => void checkEnvironment(environment)}
                   >
                     <RefreshCw className={checkingId === environment.id ? 'animate-spin' : ''} />
@@ -209,6 +239,7 @@ export function AiEnvironmentPanel({
                     variant="ghost"
                     size="icon-sm"
                     title="删除环境"
+                    disabled={Boolean(savingId)}
                     onClick={() => void removeEnvironment(environment)}
                   >
                     <Trash2 />
@@ -234,6 +265,7 @@ export function AiEnvironmentPanel({
             <div className="mt-1 grid gap-2 rounded-md bg-muted/40 p-2 sm:grid-cols-[minmax(140px,1fr)_minmax(150px,220px)_auto]">
               <Input
                 value={environmentName}
+                disabled={Boolean(savingId)}
                 onChange={(event) => setEnvironmentName(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') void addEnvironment()
@@ -245,7 +277,7 @@ export function AiEnvironmentPanel({
                 value={selectedNewRouteId}
                 aria-label="新环境内置网络线路"
                 className="h-8 min-w-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                disabled={!routes.length}
+                disabled={!routes.length || Boolean(savingId)}
                 onChange={(event) => setNewRouteId(event.target.value)}
               >
                 {routes.map((route) => (
@@ -254,7 +286,11 @@ export function AiEnvironmentPanel({
                   </option>
                 ))}
               </select>
-              <Button size="sm" disabled={!routes.length} onClick={() => void addEnvironment()}>
+              <Button
+                size="sm"
+                disabled={!routes.length || Boolean(savingId)}
+                onClick={() => void addEnvironment()}
+              >
                 <CheckCircle2 />
                 完成
               </Button>
