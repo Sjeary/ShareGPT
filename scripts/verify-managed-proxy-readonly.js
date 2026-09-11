@@ -48,7 +48,7 @@ window.setRole = (role) => {
   }});
   useChatStore.setState({connection: role === 'personal' ? 'offline' : 'online'});
   useAppStore.setState({workspaceMode: role === 'personal' ? 'personal' : 'organization',
-    mode: 'sender', status: {}, settings: { ui: { airport_notice_dismissed: true }, sender: {
+    mode: 'sender', status: {}, settings: { ui: { airport_notice_dismissed: false }, sender: {
       proxy_server: 'proxy.example.test', proxy_port: '443', proxy_uuid: 'fixture-uuid',
       socks_listen_port: '1080', fallback_mode: 'system_proxy', fallback_local_port: '7890',
       proxy_mode: 'unified', airport_outbound: { type: 'socks', server: 'node.example.test', server_port: 1080 },
@@ -126,6 +126,8 @@ async function run() {
     const airport = page.getByRole("button", { name: /机场节点/ });
     await expect(unified).toBeEnabled();
     await expect(airport).toBeEnabled();
+    await expect(page.getByText(/机场节点.*不太稳定/)).toHaveCount(0);
+    await expect(page.getByText(/Cloudflare 人机验证/)).toHaveCount(0);
     await expect(page.locator("#s_target_domains")).toHaveJSProperty("readOnly", true);
     const start = page.getByRole("button", { name: "开启代理", exact: true });
     await expect(start).toBeEnabled();
