@@ -22,10 +22,13 @@
   "collab": {
     "server_url": "http://your-server.example.com:8088",
     "last_username": "your-account",
-    "notify_message_popup": true,
-    "notify_system_notification": true,
-    "notify_sound_play": true,
+    "notify_message_popup": false,
+    "notify_system_notification": false,
+    "notify_sound_play": false,
     "notify_user_online": false
+  },
+  "ui": {
+    "hiddenNav": ["calendar", "team", "todo", "notes", "focus"]
   },
   "gpt": {
     "proxy_host": "127.0.0.1",

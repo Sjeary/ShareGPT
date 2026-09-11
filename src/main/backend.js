@@ -192,6 +192,21 @@ const PUBLIC_DEFAULT_SETTINGS = {
   },
 };
 
+// Materialize these preferences only when a profile creates its local defaults file for the
+// first time. Keeping them separate preserves the legacy fallback for existing profiles whose
+// older settings intentionally omit one of these fields.
+const FRESH_INSTALL_DEFAULT_SETTINGS = {
+  collab: {
+    notify_message_popup: false,
+    notify_system_notification: false,
+    notify_sound_play: false,
+    notify_user_online: false,
+  },
+  ui: {
+    hiddenNav: ["calendar", "team", "todo", "notes", "focus"],
+  },
+};
+
 const LOCAL_CHAT_HISTORY_MAX_PER_CONVERSATION = 800;
 const LOCAL_CHAT_HISTORY_MAX_TOTAL = 6000;
 const UPDATE_BACKUP_KEEP = 5;
@@ -957,16 +972,16 @@ class Backend {
     if (existing) return;
 
     const userDataFile = path.join(this.app.getPath("userData"), "private.defaults.local.json");
-    let template = structuredClone(PUBLIC_DEFAULT_SETTINGS);
+    let template = mergeSettings(PUBLIC_DEFAULT_SETTINGS, FRESH_INSTALL_DEFAULT_SETTINGS);
 
     for (const candidate of this.resolveExampleDefaultsCandidates()) {
       if (!fs.existsSync(candidate)) continue;
       try {
         const raw = JSON.parse(fs.readFileSync(candidate, "utf-8"));
-        template = mergeSettings(PUBLIC_DEFAULT_SETTINGS, raw);
+        template = mergeSettings(template, raw);
         break;
       } catch {
-        template = structuredClone(PUBLIC_DEFAULT_SETTINGS);
+        template = mergeSettings(PUBLIC_DEFAULT_SETTINGS, FRESH_INSTALL_DEFAULT_SETTINGS);
         break;
       }
     }

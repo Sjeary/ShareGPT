@@ -1,80 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useState, type CSSProperties } from 'react'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/store/useAppStore'
+import { buildOnboardingSteps } from '@/lib/onboardingSteps'
 
 // 分步高亮新手导览 (类 sub2api 引导): 首次进入主界面自动开, 也可在标题栏「?」手动重开。
 // 通过 data-tour="nav-xxx" 锚点定位侧栏项, 用 box-shadow 镂空高亮 + 浮动卡片逐步讲解。
 // 完成/跳过后写 settings.ui.onboarding_done, 不再自动弹。
-
-interface Step {
-  // 高亮锚点 (data-tour 值); 省略则为居中欢迎/结束卡。
-  target?: string
-  title: string
-  body: string
-}
-
-function buildSteps(brand: string): Step[] {
-  return [
-    {
-      title: `欢迎使用 ${brand} 👋`,
-      body: '花 30 秒带你认识主界面的几个核心功能，随时可以跳过。',
-    },
-    {
-      target: 'nav-service',
-      title: '网络 / 代理',
-      body: '在这里配置代理出口。开启后，内嵌的 AI 网页会自动复用同一个代理。',
-    },
-    {
-      target: 'nav-chat',
-      title: '协作聊天',
-      body: '和团队成员实时收发消息、互传文件，在线状态一目了然。输入框可插入表情；消息可加表情回应，纯表情消息会放大并动态显示。',
-    },
-    {
-      target: 'nav-calendar',
-      title: '个人日历',
-      body: '月/周/日视图管理日程，可导入外部 .ics 日历；事件还能一键「共享到团队」。',
-    },
-    {
-      target: 'nav-team',
-      title: '组队日历',
-      body: '团队共享日程，邀请成员并收集 接受/拒绝/待定 回应；未登录也能本地预览。',
-    },
-    {
-      target: 'nav-todo',
-      title: '备忘录 / 待办',
-      body: '清单 + 智能视图 + 便签；自然语言快速添加，待办还能一键同步到个人日历。',
-    },
-    {
-      target: 'nav-notes',
-      title: '笔记 / 知识库',
-      body: '本地 Markdown 笔记 + 双链 [[..]] 与反链、关系图谱、全文检索、Canvas 白板与表格视图；还有 AI 辅助写作（扩写/润色/⌘K 内联改写）和全库「AI 自动连线」，可云端同步。',
-    },
-    {
-      target: 'nav-focus',
-      title: '专注 / 番茄钟',
-      body: '番茄钟计时、绑定待办、白噪音与专注统计；还能和团队比拼专注时长排行榜。',
-    },
-    {
-      target: 'nav-gpt',
-      title: '内嵌 AI 网页',
-      body: 'ChatGPT / Gemini / Claude 直接在客户端里打开，免去来回切换浏览器。空白处右键有浏览器式菜单；Ctrl + 鼠标滚轮（或 Ctrl 加 +/-/0）可缩放页面。',
-    },
-    {
-      target: 'nav-stats',
-      title: '使用统计',
-      body: '查看用量与排行，了解团队的整体使用情况。',
-    },
-    {
-      target: 'nav-account',
-      title: '账户与通知设置',
-      body: '登录、退出与个性化设置都在这里。其中「协作通知」——消息弹窗、提示音、系统通知、上线提醒——默认是关闭的，想要在收到消息时弹窗/响铃，来这里按需打开即可。',
-    },
-    {
-      title: '准备就绪 🎉',
-      body: '就这些！现在开始上手吧。左侧入口可长按拖动排序；需要时点标题栏右上角的「?」可再次查看本引导。',
-    },
-  ]
-}
 
 const PAD = 6 // 高亮框相对目标的外扩
 
@@ -89,7 +20,7 @@ export function Onboarding() {
     /\s+(Sender|Receiver)$/i,
     '',
   )
-  const steps = buildSteps(brand)
+  const steps = buildOnboardingSteps(brand)
 
   const [index, setIndex] = useState(0)
   const [rect, setRect] = useState<DOMRect | null>(null)

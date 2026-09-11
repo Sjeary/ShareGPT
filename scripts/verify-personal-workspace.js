@@ -16,8 +16,8 @@ async function dismissGuides(page) {
 async function assertPersonalWorkspace(page) {
   await page.locator('[data-tour="nav-service"]').waitFor({ state: "visible" });
   assert.equal(await page.locator('[data-tour="nav-service"]').count(), 1);
-  assert.equal(await page.locator('[data-tour="nav-calendar"]').count(), 1);
-  assert.equal(await page.locator('[data-tour="nav-notes"]').count(), 1);
+  assert.equal(await page.locator('[data-tour="nav-calendar"]').count(), 0);
+  assert.equal(await page.locator('[data-tour="nav-notes"]').count(), 0);
   assert.equal(await page.locator('[data-tour="nav-gpt"]').count(), 1);
   assert.equal(await page.locator('[data-tour="nav-chat"]').count(), 0);
   assert.equal(await page.locator('[data-tour="nav-team"]').count(), 0);

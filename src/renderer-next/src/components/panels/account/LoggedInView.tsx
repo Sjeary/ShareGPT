@@ -64,7 +64,7 @@ const NOTIFY_FIELDS: ReadonlyArray<{
   {
     key: 'notify_system_notification',
     label: '系统通知',
-    desc: '通过操作系统通知中心提醒',
+    desc: '通过操作系统通知中心提醒（默认关闭）',
     defaultOn: true,
   },
   {
@@ -73,7 +73,12 @@ const NOTIFY_FIELDS: ReadonlyArray<{
     desc: '收到新消息时播放提示音（默认关闭）',
     defaultOn: false,
   },
-  { key: 'notify_user_online', label: '上线提醒', desc: '有成员上线时提醒', defaultOn: false },
+  {
+    key: 'notify_user_online',
+    label: '上线提醒',
+    desc: '有成员上线时提醒（默认关闭）',
+    defaultOn: false,
+  },
 ]
 
 // 仓库地址 (Star / 源码 / Issue 入口)。fork 后改这里即可。

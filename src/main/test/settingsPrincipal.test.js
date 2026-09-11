@@ -150,6 +150,43 @@ function saveSettingsForPrincipal(backend, settings, expectedPrincipalId, genera
   );
 }
 
+test("首次安装默认关闭可选效率入口和全部协作通知", (t) => {
+  const backend = createBackend(t);
+  backend.init();
+  const defaultsFile = backend
+    .resolvePrivateDefaultsCandidates()
+    .find((candidate) => fs.existsSync(candidate));
+  assert.ok(defaultsFile);
+  const defaults = JSON.parse(fs.readFileSync(defaultsFile, "utf8"));
+  assert.deepEqual(defaults.ui.hiddenNav, ["calendar", "team", "todo", "notes", "focus"]);
+  assert.deepEqual(
+    {
+      popup: defaults.collab.notify_message_popup,
+      system: defaults.collab.notify_system_notification,
+      sound: defaults.collab.notify_sound_play,
+      online: defaults.collab.notify_user_online,
+    },
+    { popup: false, system: false, sound: false, online: false },
+  );
+});
+
+test("升级时不重写现有用户的导航和通知默认文件", (t) => {
+  const backend = createBackend(t);
+  const defaultsFile = backend.resolvePrivateDefaultsCandidates().at(-1);
+  const existing = JSON.stringify(
+    {
+      ui: { hiddenNav: ["notes"] },
+      collab: { notify_system_notification: true },
+    },
+    null,
+    2,
+  );
+  fs.mkdirSync(path.dirname(defaultsFile), { recursive: true });
+  fs.writeFileSync(defaultsFile, existing);
+  backend.init();
+  assert.equal(fs.readFileSync(defaultsFile, "utf8"), existing);
+});
+
 test("legacy settings are claimed only by the exact server path and username", (t) => {
   const backend = createBackend(t);
   fs.writeFileSync(
