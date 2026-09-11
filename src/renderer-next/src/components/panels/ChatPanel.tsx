@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDown, CornerDownLeft, MessageSquare, RefreshCw } from 'lucide-react'
+import { ArrowDown, CornerDownLeft, MessageSquare } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAppStore } from '@/store/useAppStore'
 import {
@@ -403,18 +403,6 @@ export function ChatPanel() {
                     />
                     {connectionLabel(connection)}
                   </span>
-                  {(connection === 'closed' || connection === 'error') && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-7 gap-1.5 px-2 text-xs"
-                      onClick={chat.retryLogin}
-                    >
-                      <RefreshCw className="size-3.5" />
-                      重新登录
-                    </Button>
-                  )}
                 </div>
               )}
             </>

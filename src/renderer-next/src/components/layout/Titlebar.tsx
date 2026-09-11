@@ -1,10 +1,23 @@
 import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
-import { Cable, Moon, Sun, Minus, Square, Copy, X, HelpCircle, Timer } from 'lucide-react'
+import {
+  Cable,
+  Moon,
+  Sun,
+  Minus,
+  Square,
+  Copy,
+  X,
+  HelpCircle,
+  Timer,
+  RefreshCw,
+} from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { useFocusStore } from '@/store/useFocusStore'
+import { useChatStore } from '@/store/useChatStore'
+import { Button } from '@/components/ui/button'
 import { useClockTick } from '@/hooks/useFocusTimer'
 
 // 标题栏番茄钟倒计时: 运行时显示剩余时间, 点击跳到「专注」面板。
@@ -73,6 +86,9 @@ export function Titlebar({
     (s) => s.workspaceMode === 'personal' || (s.workspaceMode === 'organization' && s.authed),
   )
   const setTourOpen = useAppStore((s) => s.setTourOpen)
+  const organizationAuthed = useAppStore((s) => s.workspaceMode === 'organization' && s.authed)
+  const connection = useChatStore((s) => s.connection)
+  const retryLogin = useChatStore((s) => s.retryLogin)
 
   // [LOW] 最大化按钮态 (旧 syncWindowMaxButton ~2640): 监听窗口最大化变化,
   // 更新图标 (最大化->双层叠图标 / 还原->方框) 与无障碍标签/标题。
@@ -159,6 +175,19 @@ export function Titlebar({
       </div>
       <div className="app-no-drag flex items-center gap-1">
         {!auxiliary && <FocusChip />}
+        {!auxiliary && organizationAuthed && retryLogin && connection !== 'online' && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 px-2 text-xs"
+            disabled={connection === 'connecting'}
+            onClick={retryLogin}
+          >
+            <RefreshCw className={cn('size-3.5', connection === 'connecting' && 'animate-spin')} />
+            {connection === 'connecting' ? '正在连接…' : '重新登录'}
+          </Button>
+        )}
         {!auxiliary && inShell && (
           <CtlButton onClick={() => setTourOpen(true)} label="新手引导">
             <HelpCircle className="size-4" />

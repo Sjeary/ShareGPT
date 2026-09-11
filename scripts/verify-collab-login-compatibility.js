@@ -941,7 +941,7 @@ async function verifyManualRelogin(fixture) {
     events: fixture.events,
     username,
     exercise: async ({ window }) => {
-      await window.locator('[data-tour="nav-chat"]').click();
+      await window.locator('[data-tour="nav-service"]').click();
       const initialLoginCount = countEvents(fixture.events, "login", username);
       assert.equal(
         fixture.closeUserSocket(username, "fixture session replaced", 4003),
@@ -951,6 +951,18 @@ async function verifyManualRelogin(fixture) {
 
       const retryButton = window.getByRole("button", { name: "重新登录", exact: true });
       await retryButton.waitFor({ state: "visible", timeout: 8000 });
+      assert.equal(
+        await window
+          .locator("header")
+          .getByRole("button", { name: "重新登录", exact: true })
+          .count(),
+        1,
+      );
+      for (const panel of ["account", "gpt", "chat", "service"]) {
+        await window.locator(`[data-tour="nav-${panel}"]`).click();
+        await retryButton.waitFor({ state: "visible" });
+        assert.equal(await retryButton.count(), 1, "one global recovery control on every panel");
+      }
       await new Promise((resolve) => setTimeout(resolve, 350));
       assert.equal(
         countEvents(fixture.events, "login", username),

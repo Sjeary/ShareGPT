@@ -147,6 +147,7 @@ interface ChatState {
   // 身份 / 连接
   identity: ChatIdentity
   connection: ConnectionState
+  retryLogin: (() => void) | null
   roomScope: string
 
   // 数据
@@ -294,6 +295,7 @@ const INITIAL_IDENTITY: ChatIdentity = {
 export const useChatStore = create<ChatState>((set, get) => ({
   identity: INITIAL_IDENTITY,
   connection: 'idle',
+  retryLogin: null,
   roomScope: '-',
   messagesByConversation: {},
   directory: [],

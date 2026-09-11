@@ -169,7 +169,6 @@ export function useChat() {
   const reconnectStrategy = useRef<'socket' | 'relogin'>('socket')
   const silentReloginInFlight = useRef(false)
   const intentionalClose = useRef(false)
-  const retryLoginRef = useRef<() => void>(() => undefined)
   // 对端 typing 过期定时器 (旧 typingExpiryTimers ~500)。
   const typingTimers = useRef<Map<string, number>>(new Map())
   // 需要手动重登时由 connect 设置, 供 UI 读取提示。
@@ -380,7 +379,7 @@ export function useChat() {
   // attemptSilentCollabRelogin (~4101 / ~4632)。
   useEffect(() => {
     if (!authed || !identity.token || !identity.serverUrl) {
-      retryLoginRef.current = () => undefined
+      useChatStore.setState({ retryLogin: null })
       intentionalClose.current = true
       if (reconnectTimer.current) {
         window.clearTimeout(reconnectTimer.current)
@@ -598,7 +597,7 @@ export function useChat() {
       manualReloginRef.current = ''
       void attemptSilentRelogin()
     }
-    retryLoginRef.current = retryLoginNow
+    useChatStore.setState({ retryLogin: retryLoginNow })
 
     const connect = () => {
       if (cancelled || intentionalClose.current) return
@@ -793,7 +792,8 @@ export function useChat() {
 
     return () => {
       cancelled = true
-      if (retryLoginRef.current === retryLoginNow) retryLoginRef.current = () => undefined
+      if (useChatStore.getState().retryLogin === retryLoginNow)
+        useChatStore.setState({ retryLogin: null })
       intentionalClose.current = true
       if (reconnectTimer.current) {
         window.clearTimeout(reconnectTimer.current)
@@ -867,10 +867,6 @@ export function useChat() {
       }),
     )
     return true
-  }, [])
-
-  const retryLogin = useCallback(() => {
-    retryLoginRef.current()
   }, [])
 
   // 批量已读: 当前会话可见时, 对会话中所有未读对端消息发已读回执
@@ -987,7 +983,6 @@ export function useChat() {
   return useMemo(
     () => ({
       connection,
-      retryLogin,
       sendMessage,
       sendTyping,
       sendRecall,
@@ -1002,7 +997,6 @@ export function useChat() {
     }),
     [
       connection,
-      retryLogin,
       sendMessage,
       sendTyping,
       sendRecall,
