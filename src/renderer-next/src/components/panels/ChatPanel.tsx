@@ -28,6 +28,7 @@ import { Composer } from './chat/Composer'
 import { ImageLightbox, type LightboxTarget } from './chat/ImageLightbox'
 import { activeConversationMessages, buildConversations } from './chat/conversations'
 import { avatarMark, formatDateLabel, isSameDay, messagePreview } from './chat/format'
+import { shouldShowUnreadMarker } from '@/lib/chatUnreadMarker'
 
 // 由消息派生回复草稿 (旧 createReplyDraftFromMessage ~394)。
 function replyDraftFromMessage(m: ChatMessage) {
@@ -449,7 +450,7 @@ export function ChatPanel() {
                       !mine && (!prev || prev.system || prev.from !== message.from || showDate)
                     return (
                       <div key={message.id || `${message.timestamp}-${i}`}>
-                        {message.id === unreadMarkerId && (
+                        {shouldShowUnreadMarker(message.id, unreadMarkerId) && (
                           <div
                             className="my-3 flex items-center gap-3 text-xs text-primary"
                             role="separator"

@@ -131,6 +131,26 @@ async function run() {
         window.chatStore?.getState().connection === "online" &&
         window.chatStore.getState().directory.length === 2,
     );
+    const broadcast = (payload) => {
+      for (const socket of sockets.clients) socket.send(JSON.stringify(payload));
+    };
+    for (let index = 0; index < 3; index += 1) {
+      broadcast({
+        type: "system",
+        scope: "subnet",
+        text: "Fixture member is online " + index,
+        timestamp: new Date(2026, 8, 7, 10, index).toISOString(),
+      });
+    }
+    await page
+      .locator("[data-chat-scroll-viewport]")
+      .getByText("Fixture member is online 2", { exact: true })
+      .waitFor();
+    assert.equal(
+      await page.getByRole("separator", { name: "未读消息", exact: true }).count(),
+      0,
+      "id-less system messages must not match an empty unread marker",
+    );
     const input = page.getByRole("textbox", { name: "消息内容", exact: true });
     await input.fill("Room draft");
     await page.evaluate(() => window.chatStore.getState().setActiveKey("user:Bob"));
@@ -180,9 +200,6 @@ async function run() {
     assert.equal(received.filter((m) => m.type === "chat").length, 1);
     await page.screenshot({ path: path.join(directory, "offline-draft.png") });
     await page.evaluate(() => window.chatStore.getState().setConnection("online"));
-    const broadcast = (payload) => {
-      for (const socket of sockets.clients) socket.send(JSON.stringify(payload));
-    };
     const history = Array.from({ length: 70 }, (_, i) => ({
       id: "history-" + i,
       type: "chat",
