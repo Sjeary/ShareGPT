@@ -1,3 +1,4 @@
+import { useUserDataTransition, userDataTransitionState } from '@/lib/userDataTransitionState'
 import { useEffect } from 'react'
 import { useChatStore } from '@/store/useChatStore'
 import { useCalendarStore } from '@/store/useCalendarStore'
@@ -21,6 +22,7 @@ const POLL_INTERVAL_MS = 20000
 // 个人数据云端同步主控 hook (在 Shell 挂载一次)。登录态下自动: 初次拉取合并 -> 本地变更推送
 // -> 服务器实时推送其它端更新。乐观并发(rev)防止老版本覆盖新版本; 未登录/服务器不支持则静默本地。
 export function useCloudSync(): void {
+  const dataSuspended = useUserDataTransition()
   const serverUrl = useChatStore((s) => s.identity.serverUrl)
   const token = useChatStore((s) => s.identity.token)
   const username = useChatStore((s) => s.identity.username)
@@ -28,7 +30,7 @@ export function useCloudSync(): void {
   useEffect(() => {
     const setStatus = useSyncStatus.getState().setState
 
-    if (!serverUrl || !token) {
+    if (dataSuspended || !serverUrl || !token) {
       setStatus('calendar', 'local')
       setStatus('tasks', 'local')
       return
@@ -41,6 +43,7 @@ export function useCloudSync(): void {
       const current = settingsPrincipalRuntime.current()
       return (
         !cancelled &&
+        !userDataTransitionState.isSuspended() &&
         current.principalId === snapshot.principalId &&
         current.generation === snapshot.generation
       )
@@ -79,7 +82,7 @@ export function useCloudSync(): void {
         if (res.ok) {
           const j = (await res.json()) as { rev: number; data?: unknown }
           assertCurrent()
-          setStoredRev(serverUrl, username, kind, j.rev)
+          setStoredRev(snapshot.principalId, kind, j.rev)
           if (j.data) cfg.apply(cfg.merge(cfg.getLocal() as never, j.data) as never, snapshot)
           lastSynced[kind] = stable(j.data ?? data)
           if (isCurrent()) setStatus(kind, 'synced')
@@ -92,7 +95,7 @@ export function useCloudSync(): void {
           const merged = cfg.merge(cfg.getLocal() as never, j.data) as never
           cfg.apply(merged, snapshot)
           lastSynced[kind] = stable(merged)
-          setStoredRev(serverUrl, username, kind, j.rev)
+          setStoredRev(snapshot.principalId, kind, j.rev)
           await push(kind, merged, j.rev, depth + 1)
           return
         }
@@ -120,7 +123,7 @@ export function useCloudSync(): void {
           const merged = cfg.merge(cfg.getLocal() as never, remote.data) as never
           cfg.apply(merged, snapshot)
           lastSynced[kind] = stable(merged)
-          setStoredRev(serverUrl, username, kind, remote.rev)
+          setStoredRev(snapshot.principalId, kind, remote.rev)
           if (stable(merged) !== stable(remote.data)) {
             await push(kind, merged, remote.rev)
           } else if (isCurrent()) {
@@ -160,7 +163,7 @@ export function useCloudSync(): void {
             setStatus(kind, 'synced')
             return
           }
-          void push(kind, data, getStoredRev(serverUrl, username, kind))
+          void push(kind, data, getStoredRev(snapshot.principalId, kind))
         }, PUSH_DEBOUNCE_MS)
       }
       unsubs.push(cfg.subscribe(handler))
@@ -171,12 +174,12 @@ export function useCloudSync(): void {
       if (!isCurrent()) return
       const cfg = KIND_CONFIGS[kind]
       if (!cfg.isLoaded()) return
-      if (rev <= getStoredRev(serverUrl, username, kind)) return
+      if (rev <= getStoredRev(snapshot.principalId, kind)) return
       supported[kind] = true
       const merged = cfg.merge(cfg.getLocal() as never, data) as never
       cfg.apply(merged, snapshot)
       lastSynced[kind] = stable(merged)
-      setStoredRev(serverUrl, username, kind, rev)
+      setStoredRev(snapshot.principalId, kind, rev)
       // 合并后若本地仍有服务器没有的条目, 推回去保持一致。
       if (stable(merged) !== stable(data)) void push(kind, merged, rev)
       else setStatus(kind, 'synced')
@@ -202,7 +205,7 @@ export function useCloudSync(): void {
           const res = await authFetch(`/api/user-store/${kind}`, { method: 'GET' })
           if (!res.ok) continue
           const remote = (await res.json()) as { rev: number; data: unknown }
-          if (remote.rev > getStoredRev(serverUrl, username, kind)) {
+          if (remote.rev > getStoredRev(snapshot.principalId, kind)) {
             applyRemote(kind, remote.rev, remote.data)
           }
         } catch {
@@ -251,5 +254,5 @@ export function useCloudSync(): void {
         }
       }
     }
-  }, [serverUrl, token, username])
+  }, [serverUrl, token, username, dataSuspended])
 }

@@ -1,6 +1,7 @@
+import { useUserDataTransition, userDataTransitionState } from '@/lib/userDataTransitionState'
 import { useEffect } from 'react'
 import { create } from 'zustand'
-import { api } from '@/lib/api'
+import { userDataApiFor } from '@/lib/api'
 import { useChatStore } from '@/store/useChatStore'
 import { useVaultStore } from '@/store/useVaultStore'
 import { wsBus } from '@/lib/wsBus'
@@ -34,33 +35,33 @@ export const useNotesSyncStore = create<NotesSyncStore>((set) => ({
 const PUSH_DEBOUNCE_MS = 900
 const POLL_MS = 25000
 
-function baseKey(server: string, user: string) {
-  return `notesync:base:${server}:${user}`
+function baseKey(principal: string) {
+  return `notesync:base:${principal}`
 }
-function revKey(server: string, user: string) {
-  return `notesync:rev:${server}:${user}`
+function revKey(principal: string) {
+  return `notesync:rev:${principal}`
 }
-function loadBase(server: string, user: string): VaultFiles {
+function loadBase(principal: string): VaultFiles {
   try {
-    return JSON.parse(localStorage.getItem(baseKey(server, user)) || '{}') as VaultFiles
+    return JSON.parse(localStorage.getItem(baseKey(principal)) || '{}') as VaultFiles
   } catch {
     return {}
   }
 }
-function saveBase(server: string, user: string, files: VaultFiles) {
+function saveBase(principal: string, files: VaultFiles) {
   try {
-    localStorage.setItem(baseKey(server, user), JSON.stringify(files))
+    localStorage.setItem(baseKey(principal), JSON.stringify(files))
   } catch {
     /* 配额超限则放弃持久化 base (下次按全量对比, 仍安全) */
   }
 }
-function loadRev(server: string, user: string): number {
-  const v = Number(localStorage.getItem(revKey(server, user)))
+function loadRev(principal: string): number {
+  const v = Number(localStorage.getItem(revKey(principal)))
   return Number.isInteger(v) && v >= 0 ? v : 0
 }
-function saveRev(server: string, user: string, rev: number) {
+function saveRev(principal: string, rev: number) {
   try {
-    localStorage.setItem(revKey(server, user), String(rev))
+    localStorage.setItem(revKey(principal), String(rev))
   } catch {
     /* ignore */
   }
@@ -74,23 +75,26 @@ function stable(files: VaultFiles): string {
 }
 
 export function useNotesSync(): void {
+  const dataSuspended = useUserDataTransition()
   const serverUrl = useChatStore((s) => s.identity.serverUrl)
   const token = useChatStore((s) => s.identity.token)
   const username = useChatStore((s) => s.identity.username)
 
   useEffect(() => {
     const setState = useNotesSyncStore.getState().setState
-    if (!serverUrl || !token) {
+    if (dataSuspended || !serverUrl || !token) {
       setState('local')
       return
     }
     let cancelled = false
     const snapshot = settingsPrincipalRuntime.current()
+    const api = userDataApiFor(snapshot)
     const controller = new AbortController()
     const isCurrent = () => {
       const current = settingsPrincipalRuntime.current()
       return (
         !cancelled &&
+        !userDataTransitionState.isSuspended() &&
         current.principalId === snapshot.principalId &&
         current.generation === snapshot.generation
       )
@@ -160,8 +164,8 @@ export function useNotesSync(): void {
         if (res.ok) {
           const j = (await res.json()) as { rev: number }
           assertCurrent()
-          saveRev(serverUrl, username, j.rev)
-          saveBase(serverUrl, username, data)
+          saveRev(snapshot.principalId, j.rev)
+          saveBase(snapshot.principalId, data)
           lastSynced = stable(data)
           if (isCurrent()) setState('synced')
           return
@@ -169,7 +173,7 @@ export function useNotesSync(): void {
         if (res.status === 409 && depth < 2) {
           await pullAndMerge(true)
           assertCurrent()
-          await push(loadRev(serverUrl, username), depth + 1)
+          await push(loadRev(snapshot.principalId), depth + 1)
           return
         }
         if (isCurrent()) setState('error')
@@ -194,8 +198,8 @@ export function useNotesSync(): void {
         }
         if (!isCurrent()) return
         const theirs = remote.data?.files ?? {}
-        const storedRev = loadRev(serverUrl, username)
-        const base = loadBase(serverUrl, username)
+        const storedRev = loadRev(snapshot.principalId)
+        const base = loadBase(snapshot.principalId)
         const local = ours()
 
         if (remote.rev > storedRev) {
@@ -204,8 +208,8 @@ export function useNotesSync(): void {
             await applyMerged(report.merged)
           }
           assertCurrent()
-          saveBase(serverUrl, username, report.merged)
-          saveRev(serverUrl, username, remote.rev)
+          saveBase(snapshot.principalId, report.merged)
+          saveRev(snapshot.principalId, remote.rev)
           lastSynced = stable(report.merged)
           // 回推合并结果, 拿到新 rev (保持服务器与本地一致)。
           await push(remote.rev)
@@ -236,7 +240,7 @@ export function useNotesSync(): void {
             setState('synced')
             return
           }
-          void enqueue(() => push(loadRev(serverUrl, username)))
+          void enqueue(() => push(loadRev(snapshot.principalId)))
         }, PUSH_DEBOUNCE_MS)
       }
       unsubs.push(useVaultStore.subscribe(handler))
@@ -246,7 +250,7 @@ export function useNotesSync(): void {
       unsubs.push(
         wsBus.subscribe((p) => {
           if (!isCurrent() || p.type !== 'user_store_updated' || p.kind !== 'notes') return
-          if (typeof p.rev === 'number' && p.rev > loadRev(serverUrl, username)) {
+          if (typeof p.rev === 'number' && p.rev > loadRev(snapshot.principalId)) {
             void enqueue(() => pullAndMerge())
           }
         }),
@@ -289,5 +293,5 @@ export function useNotesSync(): void {
         }
       }
     }
-  }, [serverUrl, token, username])
+  }, [serverUrl, token, username, dataSuspended])
 }

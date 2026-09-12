@@ -34,6 +34,10 @@ test("late cloud 409 cannot read new-account data, apply or retry with old crede
   };
   const exports = {};
   const mocks = {
+    "@/lib/userDataTransitionState": {
+      useUserDataTransition: () => false,
+      userDataTransitionState: { isSuspended: () => false },
+    },
     react: {
       useEffect: (fn) => {
         cleanup = fn();

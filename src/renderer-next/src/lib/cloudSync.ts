@@ -148,25 +148,20 @@ export function stable(data: unknown): string {
 }
 
 // rev 持久化 (按 服务器+用户+kind), 跨重启记住上次版本, 减少冲突。
-export function revKey(serverUrl: string, username: string, kind: SyncKind): string {
-  return `cloudsync:rev:${serverUrl}:${username}:${kind}`
+export function revKey(principalId: string, kind: SyncKind): string {
+  return `cloudsync:rev:principal:${principalId}:${kind}`
 }
-export function getStoredRev(serverUrl: string, username: string, kind: SyncKind): number {
+export function getStoredRev(principalId: string, kind: SyncKind): number {
   try {
-    const v = Number(localStorage.getItem(revKey(serverUrl, username, kind)))
+    const v = Number(localStorage.getItem(revKey(principalId, kind)))
     return Number.isInteger(v) && v >= 0 ? v : 0
   } catch {
     return 0
   }
 }
-export function setStoredRev(
-  serverUrl: string,
-  username: string,
-  kind: SyncKind,
-  rev: number,
-): void {
+export function setStoredRev(principalId: string, kind: SyncKind, rev: number): void {
   try {
-    localStorage.setItem(revKey(serverUrl, username, kind), String(rev))
+    localStorage.setItem(revKey(principalId, kind), String(rev))
   } catch {
     /* ignore */
   }

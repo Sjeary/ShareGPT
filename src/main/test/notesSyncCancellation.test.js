@@ -34,6 +34,10 @@ async function exercise(cancel) {
   };
   const exports = {};
   const mocks = {
+    "@/lib/userDataTransitionState": {
+      useUserDataTransition: () => false,
+      userDataTransitionState: { isSuspended: () => false },
+    },
     react: {
       useEffect: (fn) => {
         cleanup = fn();
@@ -87,6 +91,7 @@ async function exercise(cancel) {
       }),
     },
   };
+  mocks["@/lib/api"].userDataApiFor = () => mocks["@/lib/api"].api;
   vm.runInNewContext(output, {
     exports,
     require: (name) => mocks[name],
