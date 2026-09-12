@@ -622,7 +622,9 @@ export function useChat() {
         // 网络类错误: 继续退避重试。
         setConnection('closed')
         useChatStore.setState({ recoveryError: '暂时无法连接服务器，请检查网络后重试。' })
-        scheduleReconnect('relogin')
+        // Entered credentials stay in the form until a successful login. A failed manual
+        // request must not retry the obsolete runtime password in the background.
+        if (passwordOverride === undefined) scheduleReconnect('relogin')
         return false
       } finally {
         silentReloginInFlight = false

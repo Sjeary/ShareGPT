@@ -1023,9 +1023,23 @@ async function verifyRecoveryCredentials(fixture) {
       await window.getByText("登录状态已失效，请输入当前账号密码。", { exact: true }).waitFor();
       await retry.click();
       await window.locator("#session-recovery-password").waitFor({ state: "visible" });
+      fixture.failNextLogin(username);
+      await window.locator("#session-recovery-password").fill("changed-password");
+      await window.getByRole("button", { name: "恢复连接", exact: true }).click();
+      await window.getByText("暂时无法连接服务器，请检查网络后重试。", { exact: true }).waitFor();
+      await new Promise((resolve) => setTimeout(resolve, 1700));
+      assert.equal(
+        countEvents(fixture.events, "login", username),
+        3,
+        "failed entered credentials must not retry the obsolete runtime password",
+      );
+      assert.equal(
+        await window.locator("#session-recovery-password").inputValue(),
+        "changed-password",
+      );
       await window.locator("#session-recovery-password").fill("still-wrong");
       await window.getByRole("button", { name: "恢复连接", exact: true }).click();
-      await waitFor(() => countEvents(fixture.events, "login", username) === 3);
+      await waitFor(() => countEvents(fixture.events, "login", username) === 4);
       await window
         .getByRole("button", { name: "恢复连接", exact: true })
         .waitFor({ state: "visible" });
@@ -1047,7 +1061,7 @@ async function verifyRecoveryCredentials(fixture) {
   });
   const events = fixture.events.slice(before);
   assert.equal(result.authed, true);
-  assert.deepEqual(result.exerciseResult, { loginCount: 4, wsCount: 2 });
+  assert.deepEqual(result.exerciseResult, { loginCount: 5, wsCount: 2 });
   assert.equal(
     events.some((event) => event.type === "logout"),
     false,
