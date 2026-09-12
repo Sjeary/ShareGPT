@@ -5,6 +5,7 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const { _electron: electron } = require("playwright");
+const { partitionForAiEnvironment } = require("../src/main/aiEnvironments");
 
 const ROOT = path.resolve(__dirname, "..");
 const PASSWORD = "correct-password";
@@ -1096,7 +1097,7 @@ async function verifyAdvancedEnvironmentRecreate(fixture) {
     baseUrl: fixture.baseUrl,
     events: fixture.events,
     username,
-    exercise: async ({ window }) => {
+    exercise: async ({ electronApp, window, userDataDir }) => {
       await window.locator('[data-tour="nav-gpt"]').click();
       const environmentButton = window.getByTitle(/新建 AI 环境|管理环境与线路/);
       await environmentButton.waitFor({ state: "visible", timeout: 8000 });
@@ -1138,6 +1139,24 @@ async function verifyAdvancedEnvironmentRecreate(fixture) {
       assert.equal(first.routeId, "internal-unified");
       assert.equal(first.activeId, first.id);
 
+      const principal = await window.evaluate(() => window.api.getSettingsPrincipal());
+      const oldPartition = partitionForAiEnvironment("gpt", first.id, principal);
+      await electronApp.evaluate(async ({ session }, partition) => {
+        const target = session.fromPartition(partition);
+        await target.cookies.set({
+          url: "https://example.com",
+          name: "old-environment",
+          value: "retained-until-retry",
+        });
+        const clear = target.clearStorageData.bind(target);
+        globalThis.__restoreEnvironmentClear = () => {
+          target.clearStorageData = clear;
+        };
+        target.clearStorageData = async () => {
+          throw new Error("fixture locked browser storage");
+        };
+      }, oldPartition);
+
       window.once("dialog", (dialog) => dialog.accept());
       await window.getByTitle("删除环境").click();
       await window
@@ -1158,13 +1177,55 @@ async function verifyAdvancedEnvironmentRecreate(fixture) {
         };
       });
       assert.deepEqual(afterDelete, { environmentIds: [], activeId: "" });
+      await window
+        .getByRole("button", { name: "重试清理", exact: true })
+        .waitFor({ state: "visible" });
+      const pending = JSON.parse(
+        fs.readFileSync(path.join(userDataDir, "ai-environment-cleanup.json"), "utf8"),
+      );
+      assert.equal(pending.pending[0].partition, oldPartition);
 
       const replacement = await createEnvironment("Replacement Windows environment");
       assert.ok(replacement.id, "the replacement environment must be persisted");
       assert.notEqual(replacement.id, first.id);
       assert.equal(replacement.routeId, "internal-unified");
       assert.equal(replacement.activeId, replacement.id);
-      return { first, afterDelete, replacement };
+      const replacementPartition = partitionForAiEnvironment("gpt", replacement.id, principal);
+      await electronApp.evaluate(async ({ session }, partition) => {
+        await session
+          .fromPartition(partition)
+          .cookies.set({ url: "https://example.com", name: "replacement", value: "preserve" });
+        globalThis.__restoreEnvironmentClear();
+      }, replacementPartition);
+      await window.getByRole("button", { name: "重试清理", exact: true }).click();
+      await window.getByText("旧环境数据已清理", { exact: true }).waitFor({ state: "visible" });
+      await window
+        .getByRole("button", { name: "重试清理", exact: true })
+        .waitFor({ state: "hidden" });
+      const cookies = await electronApp.evaluate(
+        async ({ session }, partitions) => ({
+          old: await session.fromPartition(partitions.oldPartition).cookies.get({}),
+          replacement: await session.fromPartition(partitions.replacementPartition).cookies.get({}),
+        }),
+        { oldPartition, replacementPartition },
+      );
+      assert.equal(cookies.old.length, 0);
+      assert.equal(
+        cookies.replacement.find((cookie) => cookie.name === "replacement")?.value,
+        "preserve",
+      );
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(path.join(userDataDir, "ai-environment-cleanup.json"), "utf8"))
+          .pending,
+        [],
+      );
+      return {
+        first,
+        afterDelete,
+        replacement,
+        cleanupRetried: true,
+        replacementCookiePreserved: true,
+      };
     },
   });
   assert.equal(result.authed, true);

@@ -19,6 +19,7 @@ const { Backend, DEFAULT_TARGET_DOMAINS } = require("./backend");
 const { buildAiRouteHealth } = require("./aiRouteHealth");
 const { loadRendererEntry, resolveRendererEntry } = require("./rendererEntry");
 const { createTrustedIpc } = require("./trustedIpc");
+const { createAiEnvironmentCleanup } = require("./aiEnvironmentCleanup");
 const appLog = require("./logger");
 const updateLog = appLog.scoped("update");
 const {
@@ -487,6 +488,7 @@ function createElectronApp(baseMode = "all") {
   let profileWindow = null;
   let profilePrincipal = null;
   let backend = null;
+  let environmentCleanup = null;
   const trustedIpc = createTrustedIpc({ ipcMain, openExternal: openExternalUrl });
   // electron-updater: 仅 Windows 打包版启用「原地无感更新」(NSIS)。
   // mac 未签名无法走 Squirrel 自动更新, 仍用下载 dmg 的方式; dev/未打包也不启用。
@@ -595,7 +597,10 @@ function createElectronApp(baseMode = "all") {
     return runSettingsPrincipalTransition(
       {
         invalidate: cancelPrincipalRuntime,
-        activate: () => backend?.notesAi?.activatePrincipal?.(),
+        activate: () => {
+          backend?.notesAi?.activatePrincipal?.();
+          retryPendingEnvironmentCleanup();
+        },
       },
       transition,
     );
@@ -605,6 +610,14 @@ function createElectronApp(baseMode = "all") {
     if (epoch !== aiRuntimeEpoch) {
       throw Object.assign(new Error("账号已切换，请重新操作"), { code: "STALE_PRINCIPAL" });
     }
+  }
+
+  function retryPendingEnvironmentCleanup() {
+    if (!environmentCleanup) return;
+    const principal = backend.getPrincipalContext();
+    void environmentCleanup.retry(principal.principalId).catch((error) => {
+      mainLog.warn("Unable to retry pending environment cleanup", error);
+    });
   }
 
   function emitAiEvent(kind, type, payload = {}, principalOverride = null) {
@@ -2774,11 +2787,19 @@ function createElectronApp(baseMode = "all") {
 
     trustedIpc.handle("ai:environment-delete", async (_event, payload) => {
       const epoch = aiRuntimeEpoch;
+      backend.assertSettingsPrincipalSnapshot(payload?.snapshot);
       const kind = safeText(payload?.kind);
       const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
       if (!isAiKind(kind) || !environmentId) throw new Error("AI 环境标识不合法");
       getConfiguredAiEnvironment(kind, environmentId);
       const principal = backend.getPrincipalContext();
+      const partition = partitionForAiEnvironment(kind, environmentId, principal);
+      environmentCleanup.enqueue({
+        principalId: principal.principalId,
+        kind,
+        environmentId,
+        partition,
+      });
       const targetLoaded = listWorkspaces(kind, environmentId).length > 0;
       if (targetLoaded) await closeWorkspacesForKind(kind, environmentId);
       assertAiRuntimeEpoch(epoch);
@@ -2816,18 +2837,10 @@ function createElectronApp(baseMode = "all") {
         emitTabsChanged(kind);
       }
 
-      const partition = partitionForAiEnvironment(kind, environmentId, principal);
-      let dataCleared = true;
-      try {
-        await clearAiSessionData(session.fromPartition(partition));
-      } catch (error) {
-        dataCleared = false;
-        mainLog.warn("AI environment configuration removed but session cleanup failed", {
-          kind,
-          environmentId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+      await environmentCleanup.retry(principal.principalId, kind);
+      const dataCleared = !environmentCleanup
+        .list(principal.principalId)
+        .some((entry) => entry.partition === partition);
       assertAiRuntimeEpoch(epoch);
       backend.assertSettingsPrincipalSnapshot(principal);
       aiContactedHostsByPartition.get(partition)?.clear();
@@ -2836,8 +2849,24 @@ function createElectronApp(baseMode = "all") {
         kind,
         environmentId,
         dataCleared,
+        principal,
         // Include writes that may have completed while Chromium storage was being cleared.
         settings: backend.loadSettings(),
+      };
+    });
+
+    trustedIpc.handle("ai:environment-cleanup-list", (_event, payload) => {
+      backend.assertSettingsPrincipalSnapshot(payload?.snapshot);
+      const pending = environmentCleanup.list(payload.snapshot.principalId);
+      return { pendingCount: pending.filter((entry) => entry.kind === payload.kind).length };
+    });
+    trustedIpc.handle("ai:environment-cleanup-retry", async (_event, payload) => {
+      backend.assertSettingsPrincipalSnapshot(payload?.snapshot);
+      const result = await environmentCleanup.retry(payload.snapshot.principalId, payload.kind);
+      backend.assertSettingsPrincipalSnapshot(payload.snapshot);
+      return {
+        cleared: result.cleared,
+        pendingCount: result.pending.filter((entry) => entry.kind === payload.kind).length,
       };
     });
 
@@ -3389,6 +3418,19 @@ function createElectronApp(baseMode = "all") {
     process.on("unhandledRejection", (reason) => log.error("unhandledRejection:", reason));
     backend = new Backend(app, () => mainWindow, appMode);
     backend.init();
+
+    environmentCleanup = createAiEnvironmentCleanup({
+      file: path.join(app.getPath("userData"), "ai-environment-cleanup.json"),
+      clearPartition: (partition) => clearAiSessionData(session.fromPartition(partition)),
+      canClear: (record) => {
+        if (backend.getPrincipalContext().principalId !== record.principalId) return false;
+        return !(backend.loadSettings().advancedAi?.environments || []).some(
+          (environment) =>
+            environment.id === record.environmentId && environment.kind === record.kind,
+        );
+      },
+    });
+    retryPendingEnvironmentCleanup();
 
     registerIpc();
     createWindow();

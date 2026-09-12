@@ -365,6 +365,10 @@ export interface ShareGptApi {
   ensureAiWorkspace: (payload: unknown) => Promise<unknown>
   activateAiEnvironment: (payload: unknown) => Promise<unknown>
   deleteAiEnvironment: (payload: unknown) => Promise<unknown>
+  listAiEnvironmentCleanup: (payload: unknown) => Promise<{ pendingCount: number }>
+  retryAiEnvironmentCleanup: (
+    payload: unknown,
+  ) => Promise<{ cleared: number; pendingCount: number }>
   checkAiEnvironmentEgress: (payload: unknown) => Promise<unknown>
   syncAiViewHost: (payload: unknown) => Promise<unknown>
   navigateAiWorkspace: (payload: unknown) => Promise<unknown>

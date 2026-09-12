@@ -93,6 +93,9 @@ contextBridge.exposeInMainWorld("api", {
   ensureAiWorkspace: (payload) => ipcRenderer.invoke("ai:ensure", payload),
   activateAiEnvironment: (payload) => ipcRenderer.invoke("ai:environment-activate", payload),
   deleteAiEnvironment: (payload) => ipcRenderer.invoke("ai:environment-delete", payload),
+  listAiEnvironmentCleanup: (payload) => ipcRenderer.invoke("ai:environment-cleanup-list", payload),
+  retryAiEnvironmentCleanup: (payload) =>
+    ipcRenderer.invoke("ai:environment-cleanup-retry", payload),
   checkAiEnvironmentEgress: (payload) => ipcRenderer.invoke("ai:environment-egress-check", payload),
   syncAiViewHost: (payload) => ipcRenderer.invoke("ai:sync-host", payload),
   navigateAiWorkspace: (payload) => ipcRenderer.invoke("ai:navigate", payload),

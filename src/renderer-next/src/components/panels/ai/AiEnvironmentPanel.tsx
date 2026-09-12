@@ -1,9 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { CheckCircle2, Network, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
 import { createAiEnvironmentId } from '@/lib/aiEnvironments'
+import {
+  settingsPrincipalRuntime,
+  StaleSettingsPrincipalError,
+} from '@/lib/settingsPrincipalRuntime'
 import type { AiKind } from '@/store/useAiStore'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -50,6 +54,8 @@ export function AiEnvironmentPanel({
   const [checkingId, setCheckingId] = useState('')
   const [savingId, setSavingId] = useState('')
   const [adding, setAdding] = useState(false)
+  const [pendingCleanup, setPendingCleanup] = useState(0)
+  const [cleaning, setCleaning] = useState(false)
   const [healthById, setHealthById] = useState<Record<string, RouteHealth>>({})
   const environments = settings.environments.filter((environment) => environment.kind === kind)
   const selectedNewRouteId = routes.some((route) => route.id === newRouteId)
@@ -57,6 +63,48 @@ export function AiEnvironmentPanel({
     : routes.some((route) => route.id === preferredRouteId)
       ? preferredRouteId || ''
       : routes[0]?.id || ''
+
+  useEffect(() => {
+    let current = true
+    const snapshot = settingsPrincipalRuntime.current()
+    if (!snapshot.principalId) return
+    void api
+      .listAiEnvironmentCleanup({ kind, snapshot })
+      .then((result) => {
+        settingsPrincipalRuntime.assertCurrent(snapshot)
+        if (current) setPendingCleanup(result.pendingCount)
+      })
+      .catch(() => {})
+    return () => {
+      current = false
+    }
+  }, [kind, settings.environments])
+
+  async function retryCleanup() {
+    if (cleaning) return
+    const snapshot = settingsPrincipalRuntime.snapshot()
+    setCleaning(true)
+    try {
+      const result = await api.retryAiEnvironmentCleanup({ kind, snapshot })
+      settingsPrincipalRuntime.assertCurrent(snapshot)
+      setPendingCleanup(result.pendingCount)
+      if (result.pendingCount) toast.warning('部分旧环境数据仍被占用，可以稍后再次清理')
+      else toast.success('旧环境数据已清理')
+    } catch (error) {
+      try {
+        settingsPrincipalRuntime.assertCurrent(snapshot)
+      } catch {
+        return
+      }
+      if (!(error instanceof StaleSettingsPrincipalError))
+        toast.error(error instanceof Error ? error.message : '清理失败')
+    } finally {
+      try {
+        settingsPrincipalRuntime.assertCurrent(snapshot)
+        setCleaning(false)
+      } catch {}
+    }
+  }
 
   async function addEnvironment() {
     if (savingId) return
@@ -107,23 +155,37 @@ export function AiEnvironmentPanel({
   }
 
   async function removeEnvironment(environment: AdvancedAiEnvironment) {
+    if (savingId) return
     if (!window.confirm(`删除“${environment.name}”并清除其中的登录状态？此操作无法撤销。`)) return
+    const snapshot = settingsPrincipalRuntime.snapshot()
     try {
       setSavingId(environment.id)
       const result = (await api.deleteAiEnvironment({
         kind,
         environmentId: environment.id,
+        snapshot,
       })) as { settings?: AppSettings; dataCleared?: boolean }
+      settingsPrincipalRuntime.assertCurrent(snapshot)
       if (result.settings) useAppStore.setState({ settings: result.settings })
       if (result.dataCleared === false) {
-        toast.warning('环境已删除；旧登录缓存未完全清理，但不影响新建环境')
+        setPendingCleanup((count) => count + 1)
+        toast.warning('环境已删除；旧登录数据尚未完全清理，可点击“重试清理”')
       } else {
         toast.success('环境及其登录状态已清除')
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '删除环境失败')
+      try {
+        settingsPrincipalRuntime.assertCurrent(snapshot)
+      } catch {
+        return
+      }
+      if (!(error instanceof StaleSettingsPrincipalError))
+        toast.error(error instanceof Error ? error.message : '删除环境失败')
     } finally {
-      setSavingId('')
+      try {
+        settingsPrincipalRuntime.assertCurrent(snapshot)
+        setSavingId('')
+      } catch {}
     }
   }
 
@@ -174,6 +236,20 @@ export function AiEnvironmentPanel({
       </div>
 
       <div className="max-h-72 overflow-y-auto px-4 py-2">
+        {pendingCleanup > 0 && (
+          <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md bg-muted px-2 py-2 text-xs">
+            <span>{pendingCleanup} 个已删除环境的本地数据等待清理</span>
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={cleaning || Boolean(savingId)}
+              onClick={() => void retryCleanup()}
+            >
+              <RefreshCw className={cleaning ? 'animate-spin' : ''} />
+              {cleaning ? '清理中…' : '重试清理'}
+            </Button>
+          </div>
+        )}
         {!!environments.length && (
           <div className="hidden grid-cols-[minmax(140px,1fr)_minmax(150px,220px)_72px] gap-2 px-2 pb-1 text-[11px] font-medium text-muted-foreground sm:grid">
             <span>环境</span>

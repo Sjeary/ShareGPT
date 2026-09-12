@@ -93,6 +93,8 @@ const fallback = {
   ensureAiWorkspace: async () => undefined,
   activateAiEnvironment: async () => ({ ok: true }),
   deleteAiEnvironment: async () => ({ ok: true }),
+  listAiEnvironmentCleanup: async () => ({ pendingCount: 0 }),
+  retryAiEnvironmentCleanup: async () => ({ cleared: 0, pendingCount: 0 }),
   checkAiEnvironmentEgress: async () => {
     throw new Error('仅桌面客户端支持出口检测')
   },
