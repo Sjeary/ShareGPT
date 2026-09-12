@@ -244,3 +244,42 @@ test("private message reactions require participation while authorized legacy pa
     false,
   );
 });
+
+test("legacy user-store PUT preserves modern deletions and returns the canonical revision", async (t) => {
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const login = JSON.parse(
+    (await post("/api/login", { username: "first-admin", password: "test-password" }).result).body,
+  );
+  const headers = { Authorization: `Bearer ${login.token}`, "Content-Type": "application/json" };
+  async function put(baseRev, data) {
+    const response = await fetch(`${base}/api/user-store/calendar`, {
+      method: "PUT",
+      headers,
+      body: JSON.stringify({ baseRev, data }),
+    });
+    return { status: response.status, payload: await response.json() };
+  }
+  const initial = await put(0, { version: 1, calendars: [], events: [{ id: "removed" }] });
+  assert.equal(initial.status, 200);
+  const deleted = { events: { removed: "2026-01-02T03:04:05.000Z" } };
+  assert.equal((await put(1, { version: 1, calendars: [], events: [], deleted })).status, 200);
+  const legacyWrite = await put(2, {
+    version: 1,
+    calendars: [],
+    events: [{ id: "removed" }, { id: "new" }],
+  });
+  assert.equal(legacyWrite.status, 200);
+  assert.equal(legacyWrite.payload.rev, 3);
+  assert.deepEqual(legacyWrite.payload.data.events, [{ id: "new" }]);
+  assert.deepEqual(legacyWrite.payload.data.deleted, deleted);
+  const conflict = await put(2, { version: 1, calendars: [], events: [{ id: "stale" }] });
+  assert.equal(conflict.status, 409);
+  assert.deepEqual(conflict.payload.data, legacyWrite.payload.data);
+  const fetched = await fetch(`${base}/api/user-store/calendar`, { headers }).then((response) =>
+    response.json(),
+  );
+  assert.equal(fetched.rev, 3);
+  assert.deepEqual(fetched.data, legacyWrite.payload.data);
+});

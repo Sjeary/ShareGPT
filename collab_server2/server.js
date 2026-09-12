@@ -10,6 +10,7 @@ const { createTranslationRequestRegistry } = require("./translation_requests");
 const { writeJsonAtomic, readJsonStore, saveJsonStoreAsync } = require("./json_store");
 const { signLoginIdentity } = require("./server_identity");
 const { createUserStore } = require("./user_store");
+const { mergeUserStoreData } = require("./user_store_merge");
 
 process.on("uncaughtException", (err) => {
   try {
@@ -2110,10 +2111,14 @@ function putUserStore(stores, username, kind, baseRev, data) {
       data: entry.data,
     };
   }
-  const next = { rev: entry.rev + 1, updatedAt: nowIso(), data };
+  const next = {
+    rev: entry.rev + 1,
+    updatedAt: nowIso(),
+    data: mergeUserStoreData(kind, entry.data, data),
+  };
   stores.stores[username] = stores.stores[username] || {};
   stores.stores[username][kind] = next;
-  return { ok: true, rev: next.rev, updatedAt: next.updatedAt, data };
+  return { ok: true, rev: next.rev, updatedAt: next.updatedAt, data: next.data };
 }
 
 // 把负载实时下发给同一用户的其它在线端 (按 username 匹配, 排除发起端 token)。
@@ -3567,7 +3572,7 @@ async function handleRequest(req, res) {
             kind,
             rev: result.rev,
             updatedAt: result.updatedAt,
-            data,
+            data: result.data,
           },
           token,
         );
@@ -3575,6 +3580,7 @@ async function handleRequest(req, res) {
           ok: true,
           rev: result.rev,
           updatedAt: result.updatedAt,
+          data: result.data,
         });
       } catch (err) {
         sendText(res, 500, err.message || "保存失败");
