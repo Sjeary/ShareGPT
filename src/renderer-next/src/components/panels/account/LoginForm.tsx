@@ -29,6 +29,7 @@ import { autoLoginParams } from '@/lib/autoLogin'
 import { isStaleAttemptError } from '@/lib/latestAttempt'
 import { ImportActions } from './ImportActions'
 import { BrowserPrivacySection } from './BrowserPrivacySection'
+import { InterfaceSettings } from './InterfaceSettings'
 import { compareVersions, checkGithubUpdate, type BootstrapUpdate } from './bootstrap'
 
 // 登录页「发现新版本」提醒。自动更新源 = GitHub Releases (参考 cc-switch), 不再查询任何自建服务器,
@@ -605,7 +606,12 @@ export function LoginForm() {
             )}
           </div>
 
-          {!showWorkspaceEntry && <BrowserPrivacySection />}
+          {!showWorkspaceEntry && (
+            <>
+              <InterfaceSettings />
+              <BrowserPrivacySection />
+            </>
+          )}
         </div>
       </div>
     </div>

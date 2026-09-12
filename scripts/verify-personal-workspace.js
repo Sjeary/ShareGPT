@@ -39,7 +39,11 @@ async function main() {
     electronApp = await electron.launch({
       args: [ROOT],
       cwd: ROOT,
-      env: { ...process.env, SHAREGPT_USER_DATA: path.join(temporaryRoot, "user-data") },
+      env: {
+        ...process.env,
+        SHAREGPT_USER_DATA: path.join(temporaryRoot, "user-data"),
+        SHAREGPT_BACKGROUND_TEST: "1",
+      },
     });
     const page = await electronApp.firstWindow();
     await page.getByText("欢迎来到 ShareGPT", { exact: true }).waitFor({ state: "visible" });
@@ -176,6 +180,19 @@ async function main() {
     assert.equal(await page.getByRole("button", { name: "清除", exact: true }).count(), 3);
     assert.equal(await page.getByRole("button", { name: "重建资料环境", exact: true }).count(), 3);
     assert.equal(await page.locator("#browser-privacy-sync").count(), 0);
+    await page.getByText("界面设置", { exact: true }).waitFor({ state: "visible" });
+    assert.equal(await page.locator("#ui-show-calendar").getAttribute("aria-checked"), "false");
+    assert.equal(await page.locator("#ui-show-notes").getAttribute("aria-checked"), "false");
+    assert.equal(await page.locator("#ui-show-team").count(), 0);
+    assert.equal(await page.getByText("协作通知", { exact: true }).count(), 0);
+    await page.locator("#ui-show-calendar").click();
+    await page.locator("#ui-show-notes").click();
+    await page.locator('[data-tour="nav-calendar"]').waitFor({ state: "visible" });
+    await page.locator('[data-tour="nav-notes"]').waitFor({ state: "visible" });
+    await page.locator('[data-tour="nav-calendar"]').click();
+    await page.getByRole("button", { name: "今天", exact: true }).waitFor({ state: "visible" });
+    await accountNav.click();
+    assert.equal(await page.locator("#ui-show-calendar").getAttribute("aria-checked"), "true");
     assert.equal(
       await page.getByText(/个人工作区的环境配置、清理记录和网页分区只保存在本机/).count(),
       1,
@@ -241,12 +258,22 @@ async function main() {
     electronApp = await electron.launch({
       args: [ROOT],
       cwd: ROOT,
-      env: { ...process.env, SHAREGPT_USER_DATA: path.join(temporaryRoot, "user-data") },
+      env: {
+        ...process.env,
+        SHAREGPT_USER_DATA: path.join(temporaryRoot, "user-data"),
+        SHAREGPT_BACKGROUND_TEST: "1",
+      },
     });
     const relaunchedPage = await electronApp.firstWindow();
     await relaunchedPage.locator("#account-server").waitFor({ state: "visible" });
     assert.equal(await relaunchedPage.getByText("欢迎来到 ShareGPT", { exact: true }).count(), 0);
     assert.equal(await relaunchedPage.locator('[data-tour="nav-service"]').count(), 0);
+    await relaunchedPage.getByRole("button", { name: "返回选择使用方式", exact: true }).click();
+    await relaunchedPage.getByRole("button", { name: /仅在本机使用/ }).click();
+    await relaunchedPage.getByRole("button", { name: "进入个人工作区", exact: true }).click();
+    await dismissGuides(relaunchedPage);
+    await relaunchedPage.locator('[data-tour="nav-calendar"]').waitFor({ state: "visible" });
+    await relaunchedPage.locator('[data-tour="nav-notes"]').waitFor({ state: "visible" });
 
     process.stdout.write(
       `${JSON.stringify({ ok: true, principal, welcomeScreenshot, entryScreenshot, minimumEntryScreenshot, personalEntryScreenshot, organizationEntryScreenshot, screenshot, accountScreenshot })}\n`,
