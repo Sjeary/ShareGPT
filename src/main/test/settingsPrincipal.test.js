@@ -88,7 +88,14 @@ function createBackend(t, dependencies = {}) {
       return target;
     },
   };
-  return new Backend(app, () => null, "all", dependencies);
+  return new Backend(app, () => null, "all", {
+    legacySecretStorage: {
+      isEncryptionAvailable: () => true,
+      encryptString: (value) => Buffer.from(`fixture:${value}`, "utf8"),
+      decryptString: (value) => value.toString("utf8").slice("fixture:".length),
+    },
+    ...dependencies,
+  });
 }
 
 function principalId(backend) {
@@ -761,7 +768,7 @@ test("an existing version 2 principal store activates without a migration rewrit
   assert.equal(fs.readFileSync(backend.settingsFile, "utf8"), stored);
 });
 
-test("settings remain v1.0.8-compatible and do not invoke credential encryption", (t) => {
+test("new saved credentials are protected on disk while runtime settings retain their public shape", (t) => {
   const backend = createBackend(t);
   const activated = backend.activatePrincipal("https://collab.example", "Alice");
   let saved = patchSettings(
@@ -780,9 +787,12 @@ test("settings remain v1.0.8-compatible and do not invoke credential encryption"
   );
 
   const raw = fs.readFileSync(backend.settingsFile, "utf8");
-  assert.match(raw, /remembered-password/);
-  assert.match(raw, /remembered-api-key/);
-  assert.doesNotMatch(raw, /sharegpt-safe:/);
+  assert.doesNotMatch(raw, /remembered-password/);
+  assert.doesNotMatch(raw, /remembered-api-key/);
+  assert.match(raw, /sharegpt-safe:/);
+  const loaded = backend.loadSettings();
+  assert.equal(loaded.collab.saved_password, "remembered-password");
+  assert.equal(loaded.translation.ai.apiKey, "remembered-api-key");
 });
 
 test("settings imports discard the exported revision before applying current state", () => {

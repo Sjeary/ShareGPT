@@ -400,21 +400,120 @@ function decodeLegacyEncryptedSettings(value, storageOverride, decodedSecrets = 
   }
 }
 
-function preserveLegacyEncryptedSettings(value, decodedSecrets, key = "") {
-  if (typeof value === "string") {
-    const match = decodedSecrets.find((record) => record.key === key && record.plaintext === value);
-    return match ? match.ciphertext : value;
+const LOCAL_SECRET_KEYS = new Set(["saved_password", "apikey", "api_key"]);
+const PORTABLE_CREDENTIAL_KEYS = new Set([
+  ...LOCAL_SECRET_KEYS,
+  "password",
+  "token",
+  "frps_token",
+  "proxy_uuid",
+  "vmess_uuid",
+  "uuid",
+  "secret",
+  "authorization",
+]);
+
+function protectSettingsSecrets(
+  value,
+  {
+    storageOverride = undefined,
+    decodedSecrets = [],
+    previous = {},
+    trustedCiphertext = false,
+  } = {},
+) {
+  let storage;
+  let storageResolved = false;
+  const previousPlaintext = new Map();
+  const collect = (current, key = "") => {
+    if (typeof current === "string" && current && LOCAL_SECRET_KEYS.has(key.toLowerCase())) {
+      if (!current.startsWith(LEGACY_ENCRYPTED_SECRET_PREFIX)) {
+        const values = previousPlaintext.get(key) || new Set();
+        values.add(current);
+        previousPlaintext.set(key, values);
+      }
+    } else if (Array.isArray(current)) current.forEach((nested) => collect(nested, key));
+    else if (current && typeof current === "object")
+      Object.entries(current).forEach(([nestedKey, nested]) => collect(nested, nestedKey));
+  };
+  collect(previous);
+
+  const protect = (current, key = "") => {
+    if (typeof current === "string") {
+      const known = decodedSecrets.find(
+        (record) =>
+          record.key === key && (record.plaintext === current || record.ciphertext === current),
+      );
+      if (known) return known.ciphertext;
+      if (!current || !LOCAL_SECRET_KEYS.has(key.toLowerCase())) return current;
+      if (trustedCiphertext && current.startsWith(LEGACY_ENCRYPTED_SECRET_PREFIX)) {
+        if (!/^[A-Za-z0-9+/]+={0,2}$/.test(current.slice(LEGACY_ENCRYPTED_SECRET_PREFIX.length))) {
+          throw new Error("已有加密凭据内容无效，原文件未修改");
+        }
+        return current;
+      }
+      if (!storageResolved) {
+        storage = resolveLegacySecretStorage(storageOverride);
+        storageResolved = true;
+        if (storage?.getSelectedStorageBackend?.() === "basic_text") storage = null;
+      }
+      if (
+        !storage ||
+        typeof storage.encryptString !== "function" ||
+        storage.isEncryptionAvailable?.() === false
+      ) {
+        // Existing plaintext can still be read and carried through an unrelated legacy
+        // migration. New/changed secrets never silently fall back to plaintext storage.
+        if (previousPlaintext.get(key)?.has(current)) return current;
+        throw Object.assign(
+          new Error(
+            "系统安全存储不可用，无法保存新的密码或 API 密钥。请解锁系统钥匙串，或暂不记住密码后重试。",
+          ),
+          { code: "SECRET_STORAGE_UNAVAILABLE" },
+        );
+      }
+      try {
+        const encrypted = storage.encryptString(current);
+        if (!Buffer.isBuffer(encrypted) || !encrypted.length)
+          throw new Error("empty encryption result");
+        const ciphertext = LEGACY_ENCRYPTED_SECRET_PREFIX + encrypted.toString("base64");
+        decodedSecrets.push({ key, plaintext: current, ciphertext });
+        return ciphertext;
+      } catch {
+        if (previousPlaintext.get(key)?.has(current)) return current;
+        throw Object.assign(
+          new Error(
+            "系统安全存储未能保护密码或 API 密钥，本次设置未保存。请解锁系统钥匙串后重试。",
+          ),
+          { code: "SECRET_STORAGE_FAILED" },
+        );
+      }
+    }
+    if (Array.isArray(current)) return current.map((nested) => protect(nested, key));
+    if (!current || typeof current !== "object") return current;
+    return Object.fromEntries(
+      Object.entries(current).map(([nestedKey, nested]) => [nestedKey, protect(nested, nestedKey)]),
+    );
+  };
+  return protect(value);
+}
+
+function portableSettings(value, includeSecrets = false) {
+  const strip = (current, key = "") => {
+    if (PORTABLE_CREDENTIAL_KEYS.has(key.toLowerCase()) && typeof current === "string")
+      return includeSecrets ? current : "";
+    if (Array.isArray(current)) return current.map((nested) => strip(nested, key));
+    if (!current || typeof current !== "object") return current;
+    return Object.fromEntries(
+      Object.entries(current).map(([nestedKey, nested]) => [nestedKey, strip(nested, nestedKey)]),
+    );
+  };
+  const result = strip(value);
+  if (!includeSecrets && result?.collab) {
+    result.collab.remember_password = false;
+    result.collab.auto_login = false;
   }
-  if (Array.isArray(value)) {
-    return value.map((nested) => preserveLegacyEncryptedSettings(nested, decodedSecrets, key));
-  }
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([nestedKey, nested]) => [
-      nestedKey,
-      preserveLegacyEncryptedSettings(nested, decodedSecrets, nestedKey),
-    ]),
-  );
+  return result;
 }
 
 function writeJsonAtomic(file, payload) {
@@ -859,6 +958,7 @@ class Backend {
     this.app = app;
     this.getWindow = getWindow;
     this.appMode = appMode;
+    this.dialog = dependencies.dialog;
     this.legacySecretStorage = Object.prototype.hasOwnProperty.call(
       dependencies,
       "legacySecretStorage",
@@ -945,8 +1045,12 @@ class Backend {
       if (!fs.existsSync(candidate)) continue;
       try {
         const raw = JSON.parse(fs.readFileSync(candidate, "utf-8"));
-        return mergeSettings(PUBLIC_DEFAULT_SETTINGS, raw);
-      } catch {
+        return mergeSettings(
+          PUBLIC_DEFAULT_SETTINGS,
+          decodeLegacyEncryptedSettings(raw, this.legacySecretStorage),
+        );
+      } catch (error) {
+        if (error?.code === LEGACY_SECRET_DECRYPTION_FAILED) throw error;
         return structuredClone(PUBLIC_DEFAULT_SETTINGS);
       }
     }
@@ -987,7 +1091,20 @@ class Backend {
       }
     }
 
-    fs.writeFileSync(userDataFile, JSON.stringify(template, null, 2), "utf-8");
+    // Default templates describe setup; credentials are entered and protected through settings.
+    // Never materialize a plaintext saved password/API key from a distributed example file.
+    const withoutExampleSecrets = (value, key = "") => {
+      if (LOCAL_SECRET_KEYS.has(key.toLowerCase())) return "";
+      if (Array.isArray(value)) return value.map((nested) => withoutExampleSecrets(nested, key));
+      if (!value || typeof value !== "object") return value;
+      return Object.fromEntries(
+        Object.entries(value).map(([nestedKey, nested]) => [
+          nestedKey,
+          withoutExampleSecrets(nested, nestedKey),
+        ]),
+      );
+    };
+    writeLocalJson(userDataFile, withoutExampleSecrets(template));
   }
 
   init() {
@@ -1338,10 +1455,15 @@ class Backend {
   }
 
   writeStoredSettings(payload) {
-    writeLocalJson(
-      this.settingsFile,
-      preserveLegacyEncryptedSettings(payload, this.legacyEncryptedSecrets),
-    );
+    const previous = readLocalJson(this.settingsFile, {});
+    const decodedSecrets = [...this.legacyEncryptedSecrets];
+    const options = { storageOverride: this.legacySecretStorage, decodedSecrets, previous };
+    const protectedSettings = protectSettingsSecrets(payload, options);
+    writeLocalJson(this.settingsFile, protectedSettings, undefined, {
+      transformPrevious: (stored) =>
+        protectSettingsSecrets(stored, { ...options, trustedCiphertext: true }),
+    });
+    this.legacyEncryptedSecrets = decodedSecrets;
   }
 
   materializePrincipalSettings(stored) {
@@ -1848,9 +1970,24 @@ class Backend {
   }
 
   async exportUserData() {
-    const { dialog } = require("electron");
+    const dialog = this.dialog || require("electron").dialog;
     const window = this.getWindow();
     if (!window) return null;
+
+    const principal = this.getPrincipalContext();
+    const choice = await dialog.showMessageBox(window, {
+      type: "question",
+      title: "导出资料包",
+      message: "是否在资料包中包含登录密码、API 密钥和代理凭据？",
+      detail:
+        "不含凭据的资料包可用于迁移设置和聊天记录，导入后需重新配置凭据。包含凭据时，这些内容会以明文写入导出文件，请仅保存在可信位置。",
+      buttons: ["不含凭据", "包含密码和 API 密钥", "取消"],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    });
+    if (choice.response === 2) return null;
+    this.assertSettingsPrincipalSnapshot(principal);
 
     const result = await dialog.showSaveDialog(window, {
       title: "导出本机资料包",
@@ -1862,12 +1999,13 @@ class Backend {
     });
 
     if (result.canceled || !result.filePath) return null;
+    this.assertSettingsPrincipalSnapshot(principal);
 
     const payload = {
       format: "sharegpt-user-data",
       version: 1,
       exportedAt: new Date().toISOString(),
-      settings: this.loadSettings(),
+      settings: portableSettings(this.loadSettings(), choice.response === 1),
       chatHistory: this.loadChatHistory(),
     };
 
@@ -1913,6 +2051,23 @@ class Backend {
     for (const entryName of UPDATE_BACKUP_ENTRIES) {
       const sourcePath = path.join(userDataDir, entryName);
       const targetPath = path.join(backupDir, entryName);
+      if (
+        ["settings.json", "settings.json.bak", "private.defaults.local.json"].includes(entryName) &&
+        fs.existsSync(sourcePath)
+      ) {
+        try {
+          const stored = readLocalJson(sourcePath, {});
+          const protectedSnapshot = protectSettingsSecrets(stored, {
+            storageOverride: this.legacySecretStorage,
+            decodedSecrets: [...this.legacyEncryptedSecrets],
+            trustedCiphertext: true,
+          });
+          writeLocalJson(targetPath, protectedSnapshot);
+        } catch (error) {
+          errors.push(`${entryName}: ${error.message}`);
+        }
+        continue;
+      }
       copyImportantPath(sourcePath, targetPath, errors);
     }
 
@@ -2985,6 +3140,8 @@ class Backend {
 module.exports = {
   Backend,
   decodeLegacyEncryptedSettings,
+  protectSettingsSecrets,
+  portableSettings,
   DEFAULT_SETTINGS: PUBLIC_DEFAULT_SETTINGS,
   PUBLIC_DEFAULT_SETTINGS,
   DEFAULT_TARGET_DOMAINS,
