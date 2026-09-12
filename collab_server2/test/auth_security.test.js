@@ -197,3 +197,50 @@ test("chat-disabled accounts retain legacy login and proxy access but cannot rea
   );
   assert.deepEqual(relogin.history, []);
 });
+
+test("private message reactions require participation while authorized legacy packets still work", async (t) => {
+  const accounts = JSON.parse(fs.readFileSync(process.env.USERS_FILE));
+  for (const username of ["recipient", "unrelated-member"]) {
+    accounts.users.push(createUserRecord(username, "test-password"));
+  }
+  fs.writeFileSync(process.env.USERS_FILE, JSON.stringify(accounts));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const wsBase = `ws://127.0.0.1:${server.address().port}`;
+  const clients = [];
+  t.after(async () => {
+    for (const client of clients) client.ws.terminate();
+    await new Promise((resolve) => server.close(resolve));
+  });
+  for (const username of ["first-admin", "recipient", "unrelated-member"]) {
+    const login = JSON.parse(
+      (await post("/api/login", { username, password: "test-password" }).result).body,
+    );
+    clients.push(await openClient(wsBase, login.token));
+  }
+  const [sender, recipient, outsider] = clients;
+  sender.ws.send(
+    JSON.stringify({ type: "chat", scope: "private", to: "recipient", text: "private fixture" }),
+  );
+  await waitFor(() => recipient.messages.some((message) => message.text === "private fixture"));
+  const messageId = recipient.messages.find((message) => message.text === "private fixture").id;
+  const beforeUnauthorizedReaction = fs.readFileSync(process.env.CHAT_HISTORY_FILE, "utf8");
+  outsider.ws.send(JSON.stringify({ type: "chat_react", messageId, emoji: "👍" }));
+  await waitFor(() => outsider.messages.some((message) => message.type === "error"));
+  assert.equal(fs.readFileSync(process.env.CHAT_HISTORY_FILE, "utf8"), beforeUnauthorizedReaction);
+  recipient.ws.send(JSON.stringify({ type: "chat_react", messageId, emoji: "👍" }));
+  await waitFor(() =>
+    sender.messages.some(
+      (message) => message.type === "chat_reaction" && message.messageId === messageId,
+    ),
+  );
+  const reaction = sender.messages.find(
+    (message) => message.type === "chat_reaction" && message.messageId === messageId,
+  );
+  assert.deepEqual(reaction.reactions, { "👍": ["recipient"] });
+  assert.equal(
+    outsider.messages.some(
+      (message) => message.type === "chat_reaction" && message.messageId === messageId,
+    ),
+    false,
+  );
+});

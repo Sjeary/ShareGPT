@@ -1732,13 +1732,15 @@ function buildHistorySyncPayload(client, sinceTimestamp = "") {
   };
 }
 
+function messageVisibleToIdentity(message, username, subnetKey) {
+  if (message.scope === "private") {
+    return message.from === username || message.to === username;
+  }
+  return message.subnetKey === subnetKey;
+}
+
 function visibleHistoryForIdentity(username, subnetKey) {
-  return history.filter((item) => {
-    if (item.scope === "private") {
-      return item.from === username || item.to === username;
-    }
-    return item.subnetKey === subnetKey;
-  });
+  return history.filter((message) => messageVisibleToIdentity(message, username, subnetKey));
 }
 
 function visibleHistoryForClient(client) {
@@ -3795,6 +3797,14 @@ wss.on("connection", (ws) => {
       const emoji = safeText(payload?.emoji).slice(0, 16);
       const { index, message } = findHistoryMessage(payload?.messageId);
       if (!message || index < 0 || !emoji || message.recalled) return;
+      if (!messageVisibleToIdentity(message, ws.username, ws.subnetKey)) {
+        sendToClient(ws, {
+          type: "error",
+          text: "无法操作这条消息",
+          timestamp: nowIso(),
+        });
+        return;
+      }
       const reactions =
         message.reactions && typeof message.reactions === "object" ? { ...message.reactions } : {};
       const users = new Set(Array.isArray(reactions[emoji]) ? reactions[emoji] : []);
