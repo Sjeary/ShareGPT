@@ -226,11 +226,16 @@ class PrincipalData {
       if (!stat) return null;
       if (!stat.isDirectory()) throw fail("LEGACY_INVALID", "旧笔记目录无效");
       const canonical = fs.realpathSync(source);
-      if (
-        canonical === path.join(this.root, "PrincipalData") ||
-        canonical.startsWith(path.join(this.root, "PrincipalData") + path.sep)
-      )
-        throw fail("LEGACY_INVALID", "账号资料目录不能作为旧笔记来源");
+      const scopedRoot = path.join(this.root, "PrincipalData");
+      const contains = (parent, child) => {
+        const relative = path.relative(parent, child);
+        return (
+          relative === "" ||
+          (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+        );
+      };
+      if (contains(canonical, scopedRoot) || contains(scopedRoot, canonical))
+        throw fail("LEGACY_INVALID", "旧笔记来源不能包含或位于账号资料目录中");
       const entries = treeManifest(canonical);
       const targetFingerprint = hash(JSON.stringify(entries));
       return {

@@ -168,6 +168,27 @@ test("copy failure never publishes target or claims source; retry can succeed", 
   data.importLegacy(A, "notes", record.fingerprint);
 });
 
+test("notes import rejects every ancestor or descendant of scoped data before copying", (t) => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-overlap-data-"));
+  t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const root = path.join(parent, "user-data");
+  fs.mkdirSync(path.join(root, "PrincipalData", A), { recursive: true });
+  const data = new PrincipalData(root);
+  const sentinel = seed(root, "settings.json", "original settings sentinel");
+  const other = seed(data.directory(A), "private.txt", "other scoped sentinel");
+  for (const source of [root, parent, path.join(root, "PrincipalData"), data.directory(A)]) {
+    const meta = seed(root, "vault-meta.json", { root: source });
+    const before = fs.readFileSync(meta);
+    assert.equal(summary(data, B, "notes").reason, "LEGACY_INVALID");
+    assert.throws(() => data.importLegacy(B, "notes", "x"), { code: "LEGACY_INVALID" });
+    assert.deepEqual(fs.readFileSync(meta), before);
+    assert.equal(fs.readFileSync(sentinel, "utf8"), "original settings sentinel");
+    assert.equal(fs.readFileSync(other, "utf8"), "other scoped sentinel");
+    assert.equal(fs.existsSync(data.directory(B)), false);
+    assert.equal(fs.existsSync(data.ledgerFile), false);
+  }
+});
+
 test("failure after publication resumes the same claim without overwriting edited source or copy", (t) => {
   const { root, data } = setup(t);
   seed(root, "tasks.json", { tasks: [{ id: "old" }] });
