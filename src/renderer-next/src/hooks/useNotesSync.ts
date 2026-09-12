@@ -1,4 +1,7 @@
-import { useUserDataTransition, userDataTransitionState } from '@/lib/userDataTransitionState'
+import {
+  useUserDataTransitionVersion,
+  userDataTransitionState,
+} from '@/lib/userDataTransitionState'
 import { useEffect } from 'react'
 import { create } from 'zustand'
 import { userDataApiFor } from '@/lib/api'
@@ -75,7 +78,8 @@ function stable(files: VaultFiles): string {
 }
 
 export function useNotesSync(): void {
-  const dataSuspended = useUserDataTransition()
+  const dataVersion = useUserDataTransitionVersion()
+  const dataSuspended = dataVersion % 2 === 1
   const serverUrl = useChatStore((s) => s.identity.serverUrl)
   const token = useChatStore((s) => s.identity.token)
   const username = useChatStore((s) => s.identity.username)
@@ -87,6 +91,7 @@ export function useNotesSync(): void {
       return
     }
     let cancelled = false
+    const transitionRevision = userDataTransitionState.revision()
     const snapshot = settingsPrincipalRuntime.current()
     const api = userDataApiFor(snapshot)
     const controller = new AbortController()
@@ -95,6 +100,7 @@ export function useNotesSync(): void {
       return (
         !cancelled &&
         !userDataTransitionState.isSuspended() &&
+        userDataTransitionState.revision() === transitionRevision &&
         current.principalId === snapshot.principalId &&
         current.generation === snapshot.generation
       )
@@ -293,5 +299,5 @@ export function useNotesSync(): void {
         }
       }
     }
-  }, [serverUrl, token, username, dataSuspended])
+  }, [serverUrl, token, username, dataSuspended, dataVersion])
 }

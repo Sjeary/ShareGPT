@@ -35,8 +35,8 @@ async function exercise(cancel) {
   const exports = {};
   const mocks = {
     "@/lib/userDataTransitionState": {
-      useUserDataTransition: () => false,
-      userDataTransitionState: { isSuspended: () => false },
+      useUserDataTransitionVersion: () => 0,
+      userDataTransitionState: { isSuspended: () => false, revision: () => 0 },
     },
     react: {
       useEffect: (fn) => {

@@ -1,4 +1,7 @@
-import { useUserDataTransition, userDataTransitionState } from '@/lib/userDataTransitionState'
+import {
+  useUserDataTransitionVersion,
+  userDataTransitionState,
+} from '@/lib/userDataTransitionState'
 import { useEffect } from 'react'
 import { useChatStore } from '@/store/useChatStore'
 import { useCalendarStore } from '@/store/useCalendarStore'
@@ -22,7 +25,8 @@ const POLL_INTERVAL_MS = 20000
 // 个人数据云端同步主控 hook (在 Shell 挂载一次)。登录态下自动: 初次拉取合并 -> 本地变更推送
 // -> 服务器实时推送其它端更新。乐观并发(rev)防止老版本覆盖新版本; 未登录/服务器不支持则静默本地。
 export function useCloudSync(): void {
-  const dataSuspended = useUserDataTransition()
+  const dataVersion = useUserDataTransitionVersion()
+  const dataSuspended = dataVersion % 2 === 1
   const serverUrl = useChatStore((s) => s.identity.serverUrl)
   const token = useChatStore((s) => s.identity.token)
   const username = useChatStore((s) => s.identity.username)
@@ -37,6 +41,7 @@ export function useCloudSync(): void {
     }
 
     let cancelled = false
+    const transitionRevision = userDataTransitionState.revision()
     const snapshot = settingsPrincipalRuntime.current()
     const controller = new AbortController()
     const isCurrent = () => {
@@ -44,6 +49,7 @@ export function useCloudSync(): void {
       return (
         !cancelled &&
         !userDataTransitionState.isSuspended() &&
+        userDataTransitionState.revision() === transitionRevision &&
         current.principalId === snapshot.principalId &&
         current.generation === snapshot.generation
       )
@@ -254,5 +260,5 @@ export function useCloudSync(): void {
         }
       }
     }
-  }, [serverUrl, token, username, dataSuspended])
+  }, [serverUrl, token, username, dataSuspended, dataVersion])
 }
