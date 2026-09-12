@@ -1258,6 +1258,8 @@ Hysteria/Hysteria2、TUIC、WireGuard、Reality 的复杂组合和某些插件�
 
 协作服务每个 JSON 文件采用临时文件 + rename 的原子写入，但多个文件之间不是数据库事务。最可靠的小组备份方式是短暂停服后打包整个数据目录。
 
+账号资料请连同 `users.json.backup`、`users.json.initialized` 和已有的 `server_identity.json` 一起备份、迁移和恢复。`users.json.initialized` 会在服务读取或保存已有账号后自动生成，用于保留该部署已经初始化的状态；`server_identity.json` 用于维持同一后端的身份。下面的整目录备份方式会一并保留这些文件。
+
 ```bash
 sudo systemctl stop sharegpt-collab
 sudo tar -C /var/lib -czf "/root/sharegpt-collab-$(date +%F-%H%M).tar.gz" sharegpt-collab
