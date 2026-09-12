@@ -30,14 +30,14 @@ for (const name of [
 process.env.RELEASE_STORE = path.join(directory, "release-store");
 process.env.RELEASES_DIR = path.join(directory, "releases");
 process.env.LOGIN_MAX_FAILS = "3";
-const { server, createUserRecord } = require("../server");
+const { server, createUserRecord, clearLoginFails } = require("../server");
 test.after(() => fs.rmSync(directory, { recursive: true, force: true }));
 
-function post(url, body, hold = false) {
+function post(url, body, hold = false, options = {}) {
   const req = new PassThrough();
-  req.method = "POST";
+  req.method = options.method || "POST";
   req.url = url;
-  req.headers = { host: "localhost" };
+  req.headers = { host: "localhost", ...options.headers };
   req.socket = { remoteAddress: "127.0.0.1" };
   let finish;
   const result = new Promise((resolve) => {
@@ -282,4 +282,55 @@ test("legacy user-store PUT preserves modern deletions and returns the canonical
   );
   assert.equal(fetched.rev, 3);
   assert.deepEqual(fetched.data, legacyWrite.payload.data);
+});
+
+test("concurrent administrator edits retain unrelated account updates", async () => {
+  const accounts = JSON.parse(fs.readFileSync(process.env.USERS_FILE));
+  for (const username of ["edit-first", "edit-second"]) {
+    accounts.users.push(createUserRecord(username, "test-password"));
+  }
+  fs.writeFileSync(process.env.USERS_FILE, JSON.stringify(accounts));
+  clearLoginFails("admin:127.0.0.1");
+  const login = JSON.parse(
+    (await post("/api/admin/login", { username: "first-admin", password: "test-password" }).result)
+      .body,
+  );
+  const options = { method: "PATCH", headers: { authorization: `Bearer ${login.token}` } };
+  const first = post("/api/admin/users/edit-first", null, true, options);
+  const second = post("/api/admin/users/edit-second", null, true, options);
+  second.req.end(JSON.stringify({ bio: "second account update" }));
+  assert.equal((await second.result).status, 200);
+  first.req.end(JSON.stringify({ displayName: "first account update" }));
+  assert.equal((await first.result).status, 200);
+  const saved = JSON.parse(fs.readFileSync(process.env.USERS_FILE)).users;
+  assert.equal(
+    saved.find((user) => user.username === "edit-first").displayName,
+    "first account update",
+  );
+  assert.equal(saved.find((user) => user.username === "edit-second").bio, "second account update");
+});
+
+test("pending account writes stop when the administrator logs out", async () => {
+  for (const method of ["PATCH", "POST"]) {
+    const login = JSON.parse(
+      (
+        await post("/api/admin/login", { username: "first-admin", password: "test-password" })
+          .result
+      ).body,
+    );
+    const headers = { authorization: `Bearer ${login.token}` };
+    const url = method === "PATCH" ? "/api/admin/users/edit-first" : "/api/admin/users";
+    const pending = post(url, null, true, { method, headers });
+    assert.equal((await post("/api/admin/logout", {}, false, { headers }).result).status, 200);
+    const before = fs.readFileSync(process.env.USERS_FILE, "utf8");
+    pending.req.end(
+      JSON.stringify({
+        username: "not-created",
+        password: "test-password",
+        displayName: "must not be saved",
+      }),
+    );
+    assert.equal((await pending.result).status, 401);
+    assert.equal(fs.readFileSync(process.env.USERS_FILE, "utf8"), before);
+  }
 });

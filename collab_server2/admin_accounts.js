@@ -163,6 +163,7 @@ function createAdminAccountHandler({
       if (!adminSession) return true;
       try {
         const body = await readBody(req);
+        if (!requireAdminSession(req, res)) return true;
         const payload = safeParseJson(body) || {};
         const username = safeText(payload.username);
         const password = String(payload.password || "");
@@ -194,6 +195,9 @@ function createAdminAccountHandler({
       if (!adminSession) return true;
       try {
         const username = decodeURIComponent(pathname.slice("/api/admin/users/".length));
+        const body = await readBody(req);
+        if (!requireAdminSession(req, res)) return true;
+        const payload = safeParseJson(body) || {};
         const store = loadUserStore();
         const user = store.users.find((item) => item.username === username);
         if (!user) {
@@ -201,8 +205,6 @@ function createAdminAccountHandler({
           return true;
         }
 
-        const body = await readBody(req);
-        const payload = safeParseJson(body) || {};
         const nextPassword = String(payload.password || "");
         let securityChanged = false;
 
