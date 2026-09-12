@@ -225,6 +225,8 @@ const UPDATE_BACKUP_ENTRIES = [
   "calendar.json",
   "tasks.json",
   "focus.json",
+  "ai-environment-cleanup.json",
+  "ai-environment-cleanup.json.bak",
   "private.defaults.local.json",
   "ShareGPT-Vault",
   "Partitions",

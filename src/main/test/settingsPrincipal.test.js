@@ -1023,6 +1023,8 @@ test("update backup includes every local data store and browser partition", (t) 
     "calendar.json": { events: [{ id: "calendar-kept" }] },
     "tasks.json": { tasks: [{ id: "task-kept" }] },
     "focus.json": { sessions: [{ id: "focus-kept" }] },
+    "ai-environment-cleanup.json": { pending: [{ partition: "persist-cleanup-current" }] },
+    "ai-environment-cleanup.json.bak": { pending: [{ partition: "persist-cleanup-previous" }] },
   };
   const userDataDir = backend.app.getPath("userData");
   for (const [name, payload] of Object.entries(fixtures)) {
@@ -1046,6 +1048,26 @@ test("update backup includes every local data store and browser partition", (t) 
   );
   assert.ok(manifest.entries.includes("vault-meta.json"));
   assert.ok(manifest.entries.includes("ShareGPT-Vault"));
+});
+
+test("update restore recovers a missing cleanup ledger without replacing current cleanup intent", (t) => {
+  const backend = createBackend(t);
+  const userDataDir = backend.app.getPath("userData");
+  const ledger = path.join(userDataDir, "ai-environment-cleanup.json");
+  const previous = `${ledger}.bak`;
+  const original = JSON.stringify({ pending: [{ partition: "persist-cleanup-old" }] });
+  fs.writeFileSync(ledger, original);
+  fs.writeFileSync(previous, original);
+  backend.createUpdateBackup("test-cleanup");
+  fs.unlinkSync(ledger);
+  fs.unlinkSync(previous);
+  backend.restoreMissingDataFromLatestUpdateBackup();
+  assert.equal(fs.readFileSync(ledger, "utf8"), original);
+  assert.equal(fs.readFileSync(previous, "utf8"), original);
+  const current = JSON.stringify({ pending: [] });
+  fs.writeFileSync(ledger, current);
+  backend.restoreMissingDataFromLatestUpdateBackup();
+  assert.equal(fs.readFileSync(ledger, "utf8"), current);
 });
 
 test("update restore preserves an existing Chromium partition and reports the conflict", (t) => {
