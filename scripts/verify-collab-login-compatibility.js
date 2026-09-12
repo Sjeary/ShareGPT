@@ -366,6 +366,14 @@ async function createFixtureServer() {
       aliasServers.push(alias);
       return `http://127.0.0.1:${alias.address().port}`;
     },
+    sendUserMessage(username, message) {
+      const socket = [...sockets]
+        .reverse()
+        .find((candidate) => socketUsers.get(candidate) === username && !candidate.destroyed);
+      if (!socket) return false;
+      socket.write(websocketFrame(0x1, JSON.stringify(message)));
+      return true;
+    },
     closeUserSocket(username, reason = "fixture authorization revoked", code = 4002) {
       const socket = [...sockets]
         .reverse()
@@ -549,6 +557,16 @@ async function launchCase({
     });
 
     const window = await electronApp.firstWindow();
+    if (username === "data-A")
+      await window.evaluate(() => {
+        const NativeSocket = window.WebSocket;
+        window.WebSocket = class extends NativeSocket {
+          constructor(...args) {
+            super(...args);
+            window.__dataLifecycleSocket = this;
+          }
+        };
+      });
     const startSetup = window.getByRole("button", { name: "开始设置", exact: true });
     if ((await window.locator("#account-server").count()) === 0) {
       await Promise.race([
@@ -1262,9 +1280,140 @@ async function verifyAdvancedEnvironmentRecreate(fixture) {
   return { events: fixture.events.slice(before), lifecycle: result.exerciseResult };
 }
 
+async function verifyDataPrincipalLifecycle(fixture) {
+  return launchCase({
+    baseUrl: fixture.baseUrl,
+    events: fixture.events,
+    username: "data-A",
+    exercise: async ({ electronApp, window }) => {
+      const a = await window.evaluate(async () => {
+        const principal = await window.api.getSettingsPrincipal();
+        await window.api.vault.create("scope-a.md", "# A note\n");
+        return { principal, root: await window.api.vault.getRoot() };
+      });
+      assert.equal(
+        fixture.sendUserMessage("data-A", {
+          type: "chat",
+          id: "owned-chat-A",
+          scope: "subnet",
+          subnetKey: "fixture",
+          from: "peer",
+          displayName: "Peer",
+          text: "Private history A",
+          timestamp: new Date().toISOString(),
+        }),
+        true,
+      );
+      await window.locator('[data-tour="nav-chat"]').click();
+      await window.getByText("Private history A", { exact: true }).last().waitFor();
+      await window.locator('[data-tour="nav-account"]').click();
+      await window.locator("#ui-show-todo").click();
+      await window.locator("#ui-show-notes").click();
+      await window.locator('[data-tour="nav-todo"]').click();
+      await window.getByRole("button", { name: /^全部/ }).click();
+      await window.getByPlaceholder(/添加任务/).fill("Private task A");
+      await window.getByPlaceholder(/添加任务/).press("Enter");
+      await window.getByText("Private task A", { exact: true }).waitFor();
+      await window.locator('[data-tour="nav-notes"]').click();
+      await window.getByText("A note", { exact: true }).first().click();
+      await window.getByRole("button", { name: "编辑", exact: true }).click();
+      const editor = window.locator(".cm-content").first();
+      await editor.waitFor({ state: "visible" });
+      await electronApp.evaluate(({ ipcMain }) => {
+        globalThis.__restoreVaultWriter = ipcMain._invokeHandlers.get("vault:write");
+        ipcMain.removeHandler("vault:write");
+        ipcMain.handle("vault:write", () => {
+          throw new Error("fixture blocked vault write");
+        });
+      });
+      await editor.fill("# Unsaved private note A");
+      await window.locator('[data-tour="nav-account"]').click();
+      await window.evaluate(async () => {
+        const socket = window.__dataLifecycleSocket;
+        const queued = socket.onmessage;
+        [...document.querySelectorAll("button")]
+          .find((button) => button.textContent.trim() === "退出登录")
+          .click();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        queued?.call(
+          socket,
+          new MessageEvent("message", {
+            data: JSON.stringify({
+              type: "chat",
+              id: "retired-chat-A",
+              scope: "subnet",
+              subnetKey: "fixture",
+              from: "peer",
+              text: "Retired transition event",
+              timestamp: new Date().toISOString(),
+            }),
+          }),
+        );
+      });
+      await window
+        .getByText(/fixture blocked vault write/)
+        .first()
+        .waitFor();
+      const stillA = await window.evaluate(() => window.api.getSettingsPrincipal());
+      assert.equal(
+        stillA.principalId,
+        a.principal.principalId,
+        "failed note flush must cancel logout before changing account",
+      );
+      await electronApp.evaluate(({ ipcMain }) => {
+        ipcMain.removeHandler("vault:write");
+        ipcMain.handle("vault:write", globalThis.__restoreVaultWriter);
+      });
+      await window.getByRole("button", { name: "退出登录", exact: true }).click();
+      await window.locator("#account-server").waitFor({ state: "visible" });
+      assert.equal(
+        fs.readFileSync(path.join(a.root, "scope-a.md"), "utf8"),
+        "# Unsaved private note A",
+      );
+      await loginThroughForm(window, fixture.baseUrl, "data-B");
+      const b = await window.evaluate(async () => ({
+        history: await window.api.loadChatHistory(),
+        principal: await window.api.getSettingsPrincipal(),
+        tasks: await window.api.loadTasks(),
+        vault: await window.api.vault.readAll(),
+      }));
+      assert.notEqual(b.principal.principalId, a.principal.principalId);
+      assert.equal(b.tasks.tasks.length, 0);
+      assert.equal(b.vault.length, 0);
+      assert.equal(JSON.stringify(b.history).includes("owned-chat-A"), false);
+      assert.equal(JSON.stringify(b.history).includes("retired-chat-A"), false);
+      await window.getByRole("button", { name: "退出登录", exact: true }).click();
+      await window.locator("#account-server").waitFor({ state: "visible" });
+      await loginThroughForm(window, fixture.baseUrl, "data-A");
+      const restored = await window.evaluate(async () => ({
+        history: await window.api.loadChatHistory(),
+        principal: await window.api.getSettingsPrincipal(),
+        tasks: await window.api.loadTasks(),
+        vault: await window.api.vault.readAll(),
+      }));
+      assert.equal(restored.principal.principalId, a.principal.principalId);
+      assert.equal(restored.tasks.tasks[0].title, "Private task A");
+      assert.equal(JSON.stringify(restored.history).includes("owned-chat-A"), true);
+      assert.equal(JSON.stringify(restored.history).includes("retired-chat-A"), false);
+      assert.equal(
+        restored.vault.find((file) => file.path === "scope-a.md").content,
+        "# Unsaved private note A",
+      );
+      return { isolatedAccounts: true, failedFlushBlockedLogout: true, returnedDataRestored: true };
+    },
+  });
+}
+
 async function main() {
   const fixture = await createFixtureServer();
   try {
+    if (process.argv.includes("--case=data-principal-lifecycle")) {
+      const result = await verifyDataPrincipalLifecycle(fixture);
+      process.stdout.write(`${JSON.stringify({ ok: true, ...result.exerciseResult })}\n`);
+      return;
+    }
     if (process.argv.includes("--case=session-recovery")) {
       const manualRelogin = await verifyManualRelogin(fixture);
       const credentials = await verifyRecoveryCredentials(fixture);

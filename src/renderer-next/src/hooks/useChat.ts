@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { api } from '@/lib/api'
+import { chatPersistence } from '@/lib/chatPersistence'
+import {
+  useUserDataTransitionVersion,
+  userDataTransitionState,
+} from '@/lib/userDataTransitionState'
 import { wsBus } from '@/lib/wsBus'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -18,12 +23,7 @@ import {
 } from '@/store/useChatStore'
 import type { CollabSettings } from '@/types/settings'
 import { playNotificationTone, showNotificationToast, showSystemNotification } from '@/lib/notify'
-import {
-  hydrateConversations,
-  normalizeChatMessage,
-  normalizeDirectory,
-  serializeConversations,
-} from '@/components/panels/chat/normalize'
+import { normalizeChatMessage, normalizeDirectory } from '@/components/panels/chat/normalize'
 import { messagePreview } from '@/components/panels/chat/format'
 import {
   discardCollabToken,
@@ -106,34 +106,6 @@ function incomingConversationKey(message: ChatMessage, self: string, roomScope: 
   return roomConversationKey(roomId)
 }
 
-// —— 本地历史「按群」隔离 ——
-// 单个 chat_history.json 内, 会话 key 以 `<群(serverUrl)>\0<会话key>` 前缀区分不同群;
-// 旧版无前缀(legacy)会话视为「首个登录的群」的历史(迁移)。这样一个客户端连不同群时,
-// 本地缓存各群独立, 登录即切换, 不再串台。
-const GROUP_SEP = '\u0000'
-
-function splitFileKey(fileKey: string): { group: string; conv: string } {
-  const i = fileKey.indexOf(GROUP_SEP)
-  return i >= 0
-    ? { group: fileKey.slice(0, i), conv: fileKey.slice(i + 1) }
-    : { group: '', conv: fileKey }
-}
-
-// 从「全量(含各群)」会话表中取出某群的会话 (会话 key 还原为不带前缀)。
-// 严格只取本群前缀的会话; legacy(无前缀)在首次加载时已一次性迁移到某个群(见下), 不再被任何群继承,
-// 从而保证「连不同群, 聊天各自独立, 不串台」。
-function pickGroupConversations(
-  all: Record<string, ChatMessage[]>,
-  group: string,
-): Record<string, ChatMessage[]> {
-  const out: Record<string, ChatMessage[]> = {}
-  for (const [fk, msgs] of Object.entries(all)) {
-    const { group: g, conv } = splitFileKey(fk)
-    if (g === group) out[conv] = msgs
-  }
-  return out
-}
-
 export function useChat() {
   const settings = useAppStore((s) => s.settings)
   const authed = useAppStore((s) => s.authed)
@@ -144,11 +116,9 @@ export function useChat() {
   const setConnection = useChatStore((s) => s.setConnection)
   const setRoomScope = useChatStore((s) => s.setRoomScope)
   const setDirectory = useChatStore((s) => s.setDirectory)
-  const hydrate = useChatStore((s) => s.hydrate)
   const mergeMessages = useChatStore((s) => s.mergeMessages)
   const upsertMessage = useChatStore((s) => s.upsertMessage)
   const messagesByConversation = useChatStore((s) => s.messagesByConversation)
-  const clearGroupCaches = useChatStore((s) => s.clearGroupCaches)
   const applyReaction = useChatStore((s) => s.applyReaction)
 
   const setTyping = useChatStore((s) => s.setTyping)
@@ -162,7 +132,6 @@ export function useChat() {
     socket: WebSocket | null
     byConversation: Map<string, Set<string>>
   }>({ socket: null, byConversation: new Map() })
-  const persistTimer = useRef<number | null>(null)
   // 重连/重登状态 (移植自旧 state.collab.reconnect* / silentReloginInFlight)。
   const reconnectTimer = useRef<number | null>(null)
   const reconnectAttempt = useRef(0)
@@ -172,10 +141,6 @@ export function useChat() {
   const typingTimers = useRef<Map<string, number>>(new Map())
   // 需要手动重登时由 connect 设置, 供 UI 读取提示。
   const manualReloginRef = useRef('')
-  // 本地历史「按群」缓存: 整文件(含各群)读入此 ref; 当前已换入的群 key (= serverUrl)。
-  const fileConvsRef = useRef<Record<string, ChatMessage[]>>({})
-  const fileLoadedRef = useRef(false)
-  const loadedGroupRef = useRef<string | null>(null)
 
   const collab = (settings?.collab ?? {}) as Partial<CollabSettings>
 
@@ -189,68 +154,19 @@ export function useChat() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collab.server_url, collab.last_username, collab.last_avatar])
 
-  // 本地历史「按群」加载: 首次读入整文件; 登录或切到不同群(serverUrl)时, 清空内存缓存并换入该群会话。
-  // 这样同一客户端连不同群, 消息/成员各群独立, 登录即切换, 不再串台。
-  const group = identity.serverUrl
+  const dataVersion = useUserDataTransitionVersion()
+  const dataSuspended = dataVersion % 2 === 1
   useEffect(() => {
-    if (!group) return // 未登录: 不切换 (登出/重置另行处理)
-    let cancelled = false
-    void (async () => {
-      if (!fileLoadedRef.current) {
-        try {
-          fileConvsRef.current = hydrateConversations(await api.loadChatHistory())
-        } catch {
-          fileConvsRef.current = {}
-        }
-        fileLoadedRef.current = true
-        // 一次性迁移: 老版本「无群前缀」的混合历史归并到当前群并落盘; 此后各群严格隔离, 不再相互串台。
-        const hasLegacy = Object.keys(fileConvsRef.current).some(
-          (fk) => splitFileKey(fk).group === '',
-        )
-        if (hasLegacy) {
-          const migrated: Record<string, ChatMessage[]> = {}
-          for (const [fk, msgs] of Object.entries(fileConvsRef.current)) {
-            const { group: g, conv } = splitFileKey(fk)
-            const key = g === '' ? `${group}${GROUP_SEP}${conv}` : fk
-            if (!migrated[key]) migrated[key] = msgs
-          }
-          fileConvsRef.current = migrated
-          void api.saveChatHistory(serializeConversations(migrated)).catch(() => undefined)
-        }
-      }
-      if (cancelled || loadedGroupRef.current === group) return
-      // 切群: 先清掉上一个群的内存缓存(消息/成员/未读/输入态/草稿), 再换入本群本地会话。
-      clearGroupCaches()
-      hydrate(pickGroupConversations(fileConvsRef.current, group))
-      loadedGroupRef.current = group
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [group, hydrate, clearGroupCaches])
+    if (dataSuspended) return
+    void chatPersistence
+      .init()
+      .then(() => chatPersistence.schedule())
+      .catch(() => console.error('聊天资料暂时无法读取'))
+  }, [dataSuspended, dataVersion, identity.username, identity.serverUrl])
 
-  // 会话变更 -> 防抖持久化 (写回当前群的分片, 保留其它群; 切群未就绪时不写, 避免错群覆盖)。
   useEffect(() => {
-    if (!group || loadedGroupRef.current !== group) return
-    if (persistTimer.current) window.clearTimeout(persistTimer.current)
-    persistTimer.current = window.setTimeout(() => {
-      persistTimer.current = null
-      const next: Record<string, ChatMessage[]> = {}
-      for (const [fk, msgs] of Object.entries(fileConvsRef.current)) {
-        const g = splitFileKey(fk).group
-        if (g === group || g === '') continue // 丢弃旧的本群条目 + legacy(已迁移到本群)
-        next[fk] = msgs // 保留其它群
-      }
-      for (const [conv, msgs] of Object.entries(useChatStore.getState().messagesByConversation)) {
-        next[`${group}${GROUP_SEP}${conv}`] = msgs
-      }
-      fileConvsRef.current = next
-      void api.saveChatHistory(serializeConversations(next)).catch(() => undefined)
-    }, 300)
-    return () => {
-      if (persistTimer.current) window.clearTimeout(persistTimer.current)
-    }
-  }, [messagesByConversation, group])
+    chatPersistence.schedule()
+  }, [messagesByConversation])
 
   // 拉取在线联系人目录。
   const refreshDirectory = useCallback(async () => {
@@ -377,7 +293,7 @@ export function useChat() {
   // 只有拿到 token (登录成功) 才连接。整套移植自旧 connectCollabWebSocket/scheduleCollabReconnect/
   // attemptSilentCollabRelogin (~4101 / ~4632)。
   useEffect(() => {
-    if (!authed || !identity.token || !identity.serverUrl) {
+    if (dataSuspended || !authed || !identity.token || !identity.serverUrl) {
       useChatStore.setState({
         retryLogin: null,
         recoveryNeedsPassword: false,
@@ -408,6 +324,7 @@ export function useChat() {
 
     const typingTimersMap = typingTimers.current
     let cancelled = false
+    const transitionRevision = userDataTransitionState.revision()
     let silentReloginInFlight = false
     let loginController: AbortController | null = null
     const authorizationInvalidation = createSingleFlight<void>()
@@ -688,7 +605,12 @@ export function useChat() {
       }
 
       ws.onmessage = (event) => {
-        if (cancelled) return
+        if (
+          cancelled ||
+          userDataTransitionState.isSuspended() ||
+          userDataTransitionState.revision() !== transitionRevision
+        )
+          return
         let payload: Record<string, unknown>
         try {
           payload = JSON.parse(String(event.data || '{}'))
@@ -875,6 +797,8 @@ export function useChat() {
     }
   }, [
     authed,
+    dataSuspended,
+    dataVersion,
     identity.token,
     identity.serverUrl,
     clearTyping,
@@ -907,6 +831,7 @@ export function useChat() {
 
   // 发送消息 (移植自旧 renderer.js sendChatMessage ~5180 的 chat payload)。
   const sendMessage = useCallback((input: SendMessageInput) => {
+    if (userDataTransitionState.isSuspended()) throw new Error('正在切换资料，请稍候')
     const text = (input.text || '').trim()
     const attachments = input.attachments ?? []
     if (!text && !attachments.length) return false
