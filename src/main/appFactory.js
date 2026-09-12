@@ -618,10 +618,14 @@ function createElectronApp(baseMode = "all") {
 
   function retryPendingEnvironmentCleanup() {
     if (!environmentCleanup) return;
-    const principal = backend.getPrincipalContext();
-    void environmentCleanup.retry(principal.principalId).catch((error) => {
-      mainLog.warn("Unable to retry pending environment cleanup", error);
-    });
+    void Promise.resolve()
+      .then(() => {
+        const principal = backend.getPrincipalContext();
+        return environmentCleanup.retry(principal.principalId);
+      })
+      .catch((error) => {
+        mainLog.warn("Unable to retry pending environment cleanup", error);
+      });
   }
 
   function emitAiEvent(kind, type, payload = {}, principalOverride = null) {
