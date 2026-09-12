@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { useCalendarStore, type Calendar, type CalendarEvent } from '@/store/useCalendarStore'
 import { useTasksStore, type Memo, type Task, type TaskList } from '@/store/useTasksStore'
+import { filterDeleted, isDeleted, mergeDeletions, type StoreDeletions } from './storeDeletions'
 
 // 个人数据云端同步 (个人日历 calendar / 待办备忘 tasks):
 //  - 多端实时: 写入经服务器后, 服务器把更新推给同一用户的其它在线端。
@@ -52,11 +53,13 @@ function mergeByIdKeepLocal<T extends { id: string }>(local: T[], remote: T[]): 
 export interface CalendarData {
   calendars: Calendar[]
   events: CalendarEvent[]
+  deleted?: StoreDeletions
 }
 export interface TasksData {
   lists: TaskList[]
   tasks: Task[]
   memos: Memo[]
+  deleted?: StoreDeletions
 }
 
 function asArr<T>(v: unknown): T[] {
@@ -76,14 +79,24 @@ export const KIND_CONFIGS: { calendar: KindConfig<CalendarData>; tasks: KindConf
   calendar: {
     getLocal: () => {
       const s = useCalendarStore.getState()
-      return { calendars: s.calendars, events: s.events }
+      return { calendars: s.calendars, events: s.events, deleted: s.deleted }
     },
     apply: (data) => useCalendarStore.getState().replaceAll(data),
     merge: (local, remote) => {
       const r = (remote ?? {}) as Partial<CalendarData>
+      const deleted = mergeDeletions(local.deleted, r.deleted)
       return {
-        calendars: mergeByIdKeepLocal(local.calendars, asArr<Calendar>(r.calendars)),
-        events: mergeByIdNewer(local.events, asArr<CalendarEvent>(r.events)),
+        calendars: filterDeleted(
+          mergeByIdKeepLocal(local.calendars, asArr<Calendar>(r.calendars)),
+          deleted,
+          'calendars',
+        ),
+        events: filterDeleted(
+          mergeByIdNewer(local.events, asArr<CalendarEvent>(r.events)),
+          deleted,
+          'events',
+        ).filter((event) => !isDeleted(deleted, 'calendars', event.calendarId)),
+        deleted,
       }
     },
     subscribe: (fn) => useCalendarStore.subscribe(fn),
@@ -92,15 +105,31 @@ export const KIND_CONFIGS: { calendar: KindConfig<CalendarData>; tasks: KindConf
   tasks: {
     getLocal: () => {
       const s = useTasksStore.getState()
-      return { lists: s.lists, tasks: s.tasks, memos: s.memos }
+      return { lists: s.lists, tasks: s.tasks, memos: s.memos, deleted: s.deleted }
     },
     apply: (data) => useTasksStore.getState().replaceAll(data),
     merge: (local, remote) => {
       const r = (remote ?? {}) as Partial<TasksData>
+      const deleted = mergeDeletions(local.deleted, r.deleted)
+      const lists = filterDeleted(
+        mergeByIdKeepLocal(local.lists, asArr<TaskList>(r.lists)),
+        deleted,
+        'lists',
+      )
+      const fallback = lists.find((list) => list.isInbox)?.id ?? lists[0]?.id
       return {
-        lists: mergeByIdKeepLocal(local.lists, asArr<TaskList>(r.lists)),
-        tasks: mergeByIdNewer(local.tasks, asArr<Task>(r.tasks)),
-        memos: mergeByIdNewer(local.memos, asArr<Memo>(r.memos)),
+        lists,
+        tasks: filterDeleted(
+          mergeByIdNewer(local.tasks, asArr<Task>(r.tasks)),
+          deleted,
+          'tasks',
+        ).map((task) =>
+          fallback && isDeleted(deleted, 'lists', task.listId)
+            ? { ...task, listId: fallback }
+            : task,
+        ),
+        memos: filterDeleted(mergeByIdNewer(local.memos, asArr<Memo>(r.memos)), deleted, 'memos'),
+        deleted,
       }
     },
     subscribe: (fn) => useTasksStore.subscribe(fn),

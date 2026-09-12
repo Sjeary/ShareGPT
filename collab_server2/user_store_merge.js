@@ -41,9 +41,16 @@ function mergeUserStoreData(kind, previous, incoming) {
     next[collection] = next[collection].filter((item) => {
       if (isDeleted(collection, item?.id)) return false;
       if (collection === "events" && isDeleted("calendars", item?.calendarId)) return false;
-      if (collection === "tasks" && isDeleted("lists", item?.listId)) return false;
       return true;
     });
+  }
+  if (kind === "tasks" && Array.isArray(next.tasks) && Array.isArray(next.lists)) {
+    const fallback = next.lists.find((list) => list?.isInbox)?.id || next.lists[0]?.id;
+    if (fallback) {
+      next.tasks = next.tasks.map((task) =>
+        isDeleted("lists", task?.listId) ? { ...task, listId: fallback } : task,
+      );
+    }
   }
   return next;
 }

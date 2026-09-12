@@ -2,10 +2,17 @@ import { create } from 'zustand'
 import { addDays, addMonths, addWeeks, addYears, format, parseISO, startOfDay } from 'date-fns'
 import { api } from '@/lib/api'
 import type { TasksStoreFile } from '@/types/api'
+import {
+  filterDeleted,
+  isDeleted,
+  markDeleted,
+  mergeDeletions,
+  type StoreDeletions,
+} from '@/lib/storeDeletions'
 
 // 待办 + 备忘录 store (对齐滴答清单)。
 // 持久化: api.loadTasks() / api.saveTasks() (本地文件壳, 结构由本 store 维护)。
-//  - 初始化 load 一次; 首次为空则播种「收件箱」清单 + 示例任务/便签。
+//  - 初始化 load 一次; 首次为空只创建「收件箱」清单。
 //  - 任意 lists/tasks/memos 变更后 debounce(~300ms) 落盘。
 // 智能清单 (今天/最近7天/收件箱/全部/已完成) 不落盘, 由 selectors 计算。
 
@@ -84,94 +91,11 @@ function isObj(v: unknown): v is Record<string, unknown> {
 
 // —— 默认播种 —— (首次运行, 本地无数据)
 function seedDefaults(): { lists: TaskList[]; tasks: Task[]; memos: Memo[] } {
-  const inboxId = crypto.randomUUID()
-  const workId = crypto.randomUUID()
-  const lifeId = crypto.randomUUID()
-  const ts = nowIso()
-
-  const lists: TaskList[] = [
-    { id: inboxId, name: '收件箱', color: '#8e8e93', isInbox: true, sortOrder: 0 },
-    { id: workId, name: '工作', color: '#3b82f6', sortOrder: 1 },
-    { id: lifeId, name: '生活', color: '#34c759', sortOrder: 2 },
-  ]
-
-  const today = startOfDay(new Date())
-  const mk = (over: Partial<Task> & Pick<Task, 'title' | 'listId'>): Task => ({
-    id: crypto.randomUUID(),
-    notes: undefined,
-    priority: 0,
-    tags: [],
-    isAllDay: true,
-    repeat: null,
-    subtasks: [],
-    completed: false,
-    sortOrder: 0,
-    createdAt: ts,
-    updatedAt: ts,
-    ...over,
-  })
-
-  const tasks: Task[] = [
-    mk({
-      listId: workId,
-      title: '提交周报',
-      priority: 3,
-      tags: ['工作'],
-      dueDate: todayStr(),
-      dueTime: '18:00',
-      isAllDay: false,
-      sortOrder: 0,
-    }),
-    mk({
-      listId: lifeId,
-      title: '取快递',
-      priority: 1,
-      dueDate: format(addDays(today, -1), 'yyyy-MM-dd'), // 逾期
-      sortOrder: 1,
-    }),
-    mk({
-      listId: workId,
-      title: '项目评审会',
-      priority: 2,
-      dueDate: format(addDays(today, 6), 'yyyy-MM-dd'), // 下周
-      dueTime: '14:30',
-      isAllDay: false,
-      subtasks: [
-        { id: crypto.randomUUID(), title: '准备演示', completed: false },
-        { id: crypto.randomUUID(), title: '整理数据', completed: true },
-      ],
-      sortOrder: 2,
-    }),
-    mk({
-      listId: inboxId,
-      title: '随手记: 想读的书清单',
-      sortOrder: 3,
-    }),
-  ]
-
-  const memos: Memo[] = [
-    {
-      id: crypto.randomUUID(),
-      title: '欢迎使用备忘录',
-      body: '点击便签即可编辑。\n右上角图钉可以置顶。\n支持多种便签颜色。',
-      color: '#fef7cd',
-      pinned: true,
-      createdAt: ts,
-      updatedAt: ts,
-    },
-    {
-      id: crypto.randomUUID(),
-      title: '灵感',
-      body: '在快速添加里试试:\n明天下午5点写周报 !high #工作',
-      color: '#d8f5d3',
-      pinned: false,
-      tags: ['提示'],
-      createdAt: ts,
-      updatedAt: ts,
-    },
-  ]
-
-  return { lists, tasks, memos }
+  return {
+    lists: [{ id: 'default-inbox', name: '收件箱', color: '#8e8e93', isInbox: true, sortOrder: 0 }],
+    tasks: [],
+    memos: [],
+  }
 }
 
 // —— 反序列化 (宽松文件壳 -> 强类型) ——
@@ -283,8 +207,15 @@ function scheduleSave(get: () => TasksState) {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
     saveTimer = null
-    const { lists, tasks, memos } = get()
-    const payload: TasksStoreFile = { version: 1, updatedAt: nowIso(), lists, tasks, memos }
+    const { lists, tasks, memos, deleted } = get()
+    const payload: TasksStoreFile & { deleted: StoreDeletions } = {
+      version: 1,
+      updatedAt: nowIso(),
+      lists,
+      tasks,
+      memos,
+      deleted,
+    }
     void api.saveTasks(payload)
   }, 300)
 }
@@ -293,6 +224,7 @@ interface TasksState {
   lists: TaskList[]
   tasks: Task[]
   memos: Memo[]
+  deleted: StoreDeletions
   loaded: boolean
 
   init: () => Promise<void>
@@ -322,11 +254,16 @@ interface TasksState {
   toggleMemoPin: (id: string) => void
 
   // 用(云端合并后的)整组数据替换本地 (云同步用); 会触发本地落盘。
-  replaceAll: (data: { lists: TaskList[]; tasks: Task[]; memos: Memo[] }) => void
+  replaceAll: (data: {
+    lists: TaskList[]
+    tasks: Task[]
+    memos: Memo[]
+    deleted?: StoreDeletions
+  }) => void
 }
 
 export const useTasksStore = create<TasksState>((set, get) => {
-  const commit = (partial: Partial<Pick<TasksState, 'lists' | 'tasks' | 'memos'>>) => {
+  const commit = (partial: Partial<Pick<TasksState, 'lists' | 'tasks' | 'memos' | 'deleted'>>) => {
     set(partial)
     scheduleSave(get)
   }
@@ -335,6 +272,7 @@ export const useTasksStore = create<TasksState>((set, get) => {
     lists: [],
     tasks: [],
     memos: [],
+    deleted: {},
     loaded: false,
 
     init: async () => {
@@ -345,23 +283,33 @@ export const useTasksStore = create<TasksState>((set, get) => {
       } catch {
         file = null
       }
-      const lists = (file?.lists ?? [])
-        .map((v, i) => parseList(v, i))
-        .filter((l): l is TaskList => l !== null)
-      const tasks = (file?.tasks ?? [])
-        .map((v, i) => parseTask(v, i))
-        .filter((t): t is Task => t !== null)
-      const memos = (file?.memos ?? []).map(parseMemo).filter((m): m is Memo => m !== null)
+      const deleted = mergeDeletions((file as { deleted?: unknown } | null)?.deleted)
+      const lists = filterDeleted(
+        (file?.lists ?? []).map((v, i) => parseList(v, i)).filter((l): l is TaskList => l !== null),
+        deleted,
+        'lists',
+      )
+      const tasks = filterDeleted(
+        (file?.tasks ?? []).map((v, i) => parseTask(v, i)).filter((t): t is Task => t !== null),
+        deleted,
+        'tasks',
+      )
+      const memos = filterDeleted(
+        (file?.memos ?? []).map(parseMemo).filter((m): m is Memo => m !== null),
+        deleted,
+        'memos',
+      )
 
       // 没有任何清单 (或没有收件箱) -> 播种默认并落盘。
       if (lists.length === 0) {
         const seeded = seedDefaults()
-        set({ ...seeded, loaded: true })
-        void api.saveTasks({ version: 1, updatedAt: nowIso(), ...seeded })
+        const data = { lists: seeded.lists, tasks, memos, deleted }
+        set({ ...data, loaded: true })
+        void api.saveTasks({ version: 1, updatedAt: nowIso(), ...data })
         return
       }
 
-      set({ lists, tasks, memos, loaded: true })
+      set({ lists, tasks, memos, deleted, loaded: true })
     },
 
     inboxId: () => {
@@ -387,9 +335,12 @@ export const useTasksStore = create<TasksState>((set, get) => {
       if (!target || target.isInbox) return // 收件箱不可删
       const fallback = get().inboxId()
       commit({
+        deleted: markDeleted(get().deleted, 'lists', [id]),
         lists: get().lists.filter((l) => l.id !== id),
         // 该清单下的任务移回收件箱, 不直接删除, 避免误丢。
-        tasks: get().tasks.map((t) => (t.listId === id ? { ...t, listId: fallback } : t)),
+        tasks: get().tasks.map((t) =>
+          t.listId === id ? { ...t, listId: fallback, updatedAt: nowIso() } : t,
+        ),
       })
     },
 
@@ -427,7 +378,11 @@ export const useTasksStore = create<TasksState>((set, get) => {
     },
 
     removeTask: (id) => {
-      commit({ tasks: get().tasks.filter((t) => t.id !== id) })
+      if (!get().tasks.some((task) => task.id === id)) return
+      commit({
+        tasks: get().tasks.filter((t) => t.id !== id),
+        deleted: markDeleted(get().deleted, 'tasks', [id]),
+      })
     },
 
     toggleTask: (id) => {
@@ -545,7 +500,11 @@ export const useTasksStore = create<TasksState>((set, get) => {
     },
 
     removeMemo: (id) => {
-      commit({ memos: get().memos.filter((m) => m.id !== id) })
+      if (!get().memos.some((memo) => memo.id === id)) return
+      commit({
+        memos: get().memos.filter((m) => m.id !== id),
+        deleted: markDeleted(get().deleted, 'memos', [id]),
+      })
     },
 
     toggleMemoPin: (id) => {
@@ -557,10 +516,19 @@ export const useTasksStore = create<TasksState>((set, get) => {
     },
 
     replaceAll: (data) => {
+      const deleted = mergeDeletions(get().deleted, data.deleted)
+      const lists = filterDeleted(Array.isArray(data.lists) ? data.lists : [], deleted, 'lists')
+      const fallback = lists.find((list) => list.isInbox)?.id ?? lists[0]?.id
       commit({
-        lists: Array.isArray(data.lists) ? data.lists : [],
-        tasks: Array.isArray(data.tasks) ? data.tasks : [],
-        memos: Array.isArray(data.memos) ? data.memos : [],
+        lists,
+        tasks: filterDeleted(Array.isArray(data.tasks) ? data.tasks : [], deleted, 'tasks').map(
+          (task) =>
+            fallback && isDeleted(deleted, 'lists', task.listId)
+              ? { ...task, listId: fallback }
+              : task,
+        ),
+        memos: filterDeleted(Array.isArray(data.memos) ? data.memos : [], deleted, 'memos'),
+        deleted,
       })
     },
   }

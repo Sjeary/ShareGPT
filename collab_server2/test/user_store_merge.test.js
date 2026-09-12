@@ -45,13 +45,13 @@ test("calendar and task deletions merge monotonically and suppress children of d
     "tasks",
     { deleted: { lists: { removed: deletedAt }, memos: { memo: deletedAt } } },
     {
-      lists: [{ id: "removed" }],
+      lists: [{ id: "removed" }, { id: "inbox", isInbox: true }],
       tasks: [{ id: "child", listId: "removed" }, { id: "kept" }],
       memos: [{ id: "memo" }],
     },
   );
-  assert.deepEqual(tasks.lists, []);
-  assert.deepEqual(tasks.tasks, [{ id: "kept" }]);
+  assert.deepEqual(tasks.lists, [{ id: "inbox", isInbox: true }]);
+  assert.deepEqual(tasks.tasks, [{ id: "child", listId: "inbox" }, { id: "kept" }]);
   assert.deepEqual(tasks.memos, []);
 });
 
