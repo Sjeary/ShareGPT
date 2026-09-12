@@ -6,13 +6,13 @@
   "author": "Sjeary",
   "license": "UNLICENSED",
   "scripts": {
-    "build:ui": "npm --prefix ui install && npm --prefix ui run build",
+    "build:ui": "npm --prefix ui ci && npm --prefix ui run build",
     "dev": "npm run build:ui && npm exec -- electron .",
     "dist:win": "npm run build:ui && npm exec -- electron-builder --win portable",
     "dist:mac": "npm run build:ui && npm exec -- electron-builder --mac dmg"
   },
   "devDependencies": {
-    "electron": "^31.7.7",
+    "electron": "43.1.0",
     "electron-builder": "^24.13.3"
   },
   "build": {
