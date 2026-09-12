@@ -74,7 +74,7 @@ const TYPING_EXPIRY_MS = 3200
 const SILENT_LOGIN_TIMEOUT_MS = 10000
 
 // 静默重登失败时, 据错误判断是否需要用户手动重登 (移植自旧 attemptSilentCollabRelogin ~4665)。
-const MANUAL_RELOGIN_PATTERN = /401|403|账号|密码|登录失败|失效|未授权/i
+const MANUAL_RELOGIN_PATTERN = /401|403|账号|密码|失效|未授权/i
 
 // history_sync 增量游标: 取所有已存消息的 max(readAt, recalledAt, editedAt, timestamp), 空则 ''。
 // (旧版固定 since:'' 全量; 这里改为增量, 减少重复历史拉取)。
@@ -167,7 +167,6 @@ export function useChat() {
   const reconnectTimer = useRef<number | null>(null)
   const reconnectAttempt = useRef(0)
   const reconnectStrategy = useRef<'socket' | 'relogin'>('socket')
-  const silentReloginInFlight = useRef(false)
   const intentionalClose = useRef(false)
   // 对端 typing 过期定时器 (旧 typingExpiryTimers ~500)。
   const typingTimers = useRef<Map<string, number>>(new Map())
@@ -379,7 +378,12 @@ export function useChat() {
   // attemptSilentCollabRelogin (~4101 / ~4632)。
   useEffect(() => {
     if (!authed || !identity.token || !identity.serverUrl) {
-      useChatStore.setState({ retryLogin: null })
+      useChatStore.setState({
+        retryLogin: null,
+        recoveryNeedsPassword: false,
+        recoveryFormOpen: false,
+        recoveryError: '',
+      })
       intentionalClose.current = true
       if (reconnectTimer.current) {
         window.clearTimeout(reconnectTimer.current)
@@ -404,6 +408,8 @@ export function useChat() {
 
     const typingTimersMap = typingTimers.current
     let cancelled = false
+    let silentReloginInFlight = false
+    let loginController: AbortController | null = null
     const authorizationInvalidation = createSingleFlight<void>()
 
     const invalidateAuthorization = (
@@ -426,7 +432,7 @@ export function useChat() {
     // 指数退避重连: socket 策略直接重连; relogin 策略先静默刷新 token。
     const scheduleReconnect = (strategy: 'socket' | 'relogin') => {
       if (cancelled || intentionalClose.current || reconnectTimer.current) return
-      if (strategy === 'relogin' && silentReloginInFlight.current) return
+      if (strategy === 'relogin' && silentReloginInFlight) return
       reconnectStrategy.current = strategy
       const delay = Math.min(
         RECONNECT_MAX_DELAY,
@@ -444,29 +450,35 @@ export function useChat() {
     }
 
     // 静默重登: 用 runtimePassword 直接 POST /api/login 刷新 token, 写回 auth + chat store。
-    const attemptSilentRelogin = async () => {
-      if (cancelled || silentReloginInFlight.current) return
+    const attemptSilentRelogin = async (passwordOverride?: string): Promise<boolean> => {
+      if (cancelled || silentReloginInFlight) return false
       const serverUrl = useChatStore.getState().identity.serverUrl
       const username = useChatStore.getState().identity.username
       const previousToken = useChatStore.getState().identity.token
-      const password = useAuthStore.getState().runtimePassword
+      const password = passwordOverride ?? useAuthStore.getState().runtimePassword
       if (!serverUrl || !username || !password) {
-        manualReloginRef.current = '服务已重启，请重新登录。'
+        manualReloginRef.current = '请输入当前账号密码以恢复连接。'
+        useChatStore.setState({
+          recoveryNeedsPassword: true,
+          recoveryError: manualReloginRef.current,
+        })
         setConnection('error')
         showNotificationToast('需要重新登录', manualReloginRef.current)
         stopSenderForAccountOffline()
-        return
+        return false
       }
       let principalSnapshot: SettingsPrincipalSnapshot
       try {
         principalSnapshot = settingsPrincipalRuntime.snapshot()
       } catch {
         // A Principal transition invalidates this reconnect attempt before it starts.
-        return
+        return false
       }
-      silentReloginInFlight.current = true
+      silentReloginInFlight = true
       setConnection('connecting')
+      useChatStore.setState({ recoveryError: '' })
       const controller = new AbortController()
+      loginController = controller
       const timer = window.setTimeout(() => controller.abort(), SILENT_LOGIN_TIMEOUT_MS)
       let issuedToken = ''
       try {
@@ -534,8 +546,28 @@ export function useChat() {
         settingsPrincipalRuntime.assertCurrent(principalSnapshot)
         if (cancelled) {
           await discardCollabToken(serverUrl, issuedToken)
-          return
+          return false
         }
+        if (
+          passwordOverride !== undefined &&
+          useAppStore.getState().settings?.collab?.remember_password
+        ) {
+          try {
+            await useAppStore.getState().patchSection('collab', { saved_password: password })
+          } catch (error) {
+            console.warn('Recovered session password could not be saved', error)
+          }
+          settingsPrincipalRuntime.assertCurrent(principalSnapshot)
+          if (cancelled) {
+            await discardCollabToken(serverUrl, issuedToken)
+            return false
+          }
+        }
+        useChatStore.setState({
+          recoveryNeedsPassword: false,
+          recoveryFormOpen: false,
+          recoveryError: '',
+        })
         const displayName = (payload.profile?.displayName ?? '').trim() || username
         const avatar = (payload.profile?.avatar ?? '').trim()
         // 权威线路已经应用后才写回运行期 token。
@@ -561,33 +593,48 @@ export function useChat() {
           displayName,
           avatar,
         })
-        silentReloginInFlight.current = false
+        silentReloginInFlight = false
         // A fresh token rebuilds this effect and opens exactly one socket. Only a server that
         // reuses the same token needs an explicit reconnect because the dependency does not change.
         if (!cancelled && issuedToken === previousToken) connect()
+        return true
       } catch (err) {
-        if (issuedToken) await discardCollabToken(serverUrl, issuedToken)
-        silentReloginInFlight.current = false
+        if (issuedToken) await discardCollabToken(serverUrl, issuedToken).catch(() => undefined)
+        if (cancelled) return false
+        try {
+          settingsPrincipalRuntime.assertCurrent(principalSnapshot)
+        } catch {
+          return false
+        }
+        silentReloginInFlight = false
         const message = err instanceof Error ? err.message : String(err)
         if (MANUAL_RELOGIN_PATTERN.test(message)) {
-          manualReloginRef.current = '登录状态已失效，请重新登录。'
+          manualReloginRef.current = '登录状态已失效，请输入当前账号密码。'
+          useChatStore.setState({
+            recoveryNeedsPassword: true,
+            recoveryError: manualReloginRef.current,
+          })
           setConnection('error')
           showNotificationToast('需要重新登录', manualReloginRef.current)
           stopSenderForAccountOffline()
-          return
+          return false
         }
         // 网络类错误: 继续退避重试。
+        setConnection('closed')
+        useChatStore.setState({ recoveryError: '暂时无法连接服务器，请检查网络后重试。' })
         scheduleReconnect('relogin')
+        return false
       } finally {
-        silentReloginInFlight.current = false
+        silentReloginInFlight = false
         window.clearTimeout(timer)
+        if (loginController === controller) loginController = null
       }
     }
 
     // User-initiated recovery reuses the same token refresh and Principal/route guards as
     // automatic recovery, but skips any pending backoff delay. It never logs out or clears data.
-    const retryLoginNow = () => {
-      if (cancelled || silentReloginInFlight.current) return
+    const retryLoginNow = async (password?: string): Promise<boolean> => {
+      if (cancelled || silentReloginInFlight) return false
       if (reconnectTimer.current) {
         window.clearTimeout(reconnectTimer.current)
         reconnectTimer.current = null
@@ -595,7 +642,15 @@ export function useChat() {
       reconnectAttempt.current = 0
       reconnectStrategy.current = 'relogin'
       manualReloginRef.current = ''
-      void attemptSilentRelogin()
+      if (
+        password === undefined &&
+        (useChatStore.getState().recoveryNeedsPassword || !useAuthStore.getState().runtimePassword)
+      ) {
+        useChatStore.setState({ recoveryNeedsPassword: true, recoveryFormOpen: true })
+        useAppStore.getState().setActive('account')
+        return false
+      }
+      return attemptSilentRelogin(password)
     }
     useChatStore.setState({ retryLogin: retryLoginNow })
 
@@ -792,6 +847,7 @@ export function useChat() {
 
     return () => {
       cancelled = true
+      loginController?.abort()
       if (useChatStore.getState().retryLogin === retryLoginNow)
         useChatStore.setState({ retryLogin: null })
       intentionalClose.current = true

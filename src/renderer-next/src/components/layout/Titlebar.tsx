@@ -182,7 +182,7 @@ export function Titlebar({
             size="sm"
             className="h-7 gap-1.5 px-2 text-xs"
             disabled={connection === 'connecting'}
-            onClick={retryLogin}
+            onClick={() => void retryLogin()}
           >
             <RefreshCw className={cn('size-3.5', connection === 'connecting' && 'animate-spin')} />
             {connection === 'connecting' ? '正在连接…' : '重新登录'}

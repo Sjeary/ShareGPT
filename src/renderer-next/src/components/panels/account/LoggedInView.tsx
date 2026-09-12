@@ -19,6 +19,7 @@ import { CHANGELOG } from './changelog'
 import type { CollabSettings } from '@/types/settings'
 import { BrowserPrivacySection } from './BrowserPrivacySection'
 import { InterfaceSettings } from './InterfaceSettings'
+import { SessionRecoveryForm } from './SessionRecoveryForm'
 
 // 协作通知开关项 (对应 collab.notify_* 字段)。
 const NOTIFY_FIELDS: ReadonlyArray<{
@@ -548,6 +549,7 @@ export function LoggedInView() {
 
   return (
     <div className="mx-auto flex max-w-xl flex-col gap-4 p-6">
+      <SessionRecoveryForm />
       {/* 更新区 + 更新日志放最上面; 账户与其它设置放日志下面 (按需求重排)。 */}
       <UpdateSection />
       <ChangelogSection />

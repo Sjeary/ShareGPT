@@ -147,7 +147,10 @@ interface ChatState {
   // 身份 / 连接
   identity: ChatIdentity
   connection: ConnectionState
-  retryLogin: (() => void) | null
+  retryLogin: ((password?: string) => Promise<boolean>) | null
+  recoveryNeedsPassword: boolean
+  recoveryFormOpen: boolean
+  recoveryError: string
   roomScope: string
 
   // 数据
@@ -296,6 +299,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   identity: INITIAL_IDENTITY,
   connection: 'idle',
   retryLogin: null,
+  recoveryNeedsPassword: false,
+  recoveryFormOpen: false,
+  recoveryError: '',
   roomScope: '-',
   messagesByConversation: {},
   directory: [],
@@ -479,6 +485,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({
       identity: INITIAL_IDENTITY,
       connection: 'idle',
+      retryLogin: null,
+      recoveryNeedsPassword: false,
+      recoveryFormOpen: false,
+      recoveryError: '',
       roomScope: '-',
       messagesByConversation: {},
       directory: [],

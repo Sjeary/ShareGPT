@@ -136,13 +136,19 @@ async function createFixtureServer() {
   const sockets = new Set();
   const socketUsers = new Map();
   const bootstrapCounts = new Map();
+  const passwords = new Map();
+  const failNextLogin = new Set();
   let tokenSequence = 0;
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url || "/", "http://127.0.0.1");
     if (request.method === "POST" && url.pathname === "/api/login") {
       const body = JSON.parse((await readBody(request)) || "{}");
       events.push({ type: "login", username: body.username });
-      if (body.password !== PASSWORD) {
+      if (failNextLogin.delete(body.username)) {
+        json(response, 503, { error: "temporarily unavailable" });
+        return;
+      }
+      if (body.password !== (passwords.get(body.username) || PASSWORD)) {
         response.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
         response.end("密码错误");
         return;
@@ -349,6 +355,8 @@ async function createFixtureServer() {
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     events,
+    setPassword: (username, password) => passwords.set(username, password),
+    failNextLogin: (username) => failNextLogin.add(username),
     closeUserSocket(username, reason = "fixture authorization revoked", code = 4002) {
       const socket = [...sockets]
         .reverse()
@@ -996,6 +1004,91 @@ async function verifyManualRelogin(fixture) {
   return events;
 }
 
+async function verifyRecoveryCredentials(fixture) {
+  const username = "credential-recovery";
+  const before = fixture.events.length;
+  const result = await launchCase({
+    baseUrl: fixture.baseUrl,
+    events: fixture.events,
+    username,
+    exercise: async ({ window }) => {
+      const beforePrincipal = await window.evaluate(() => window.api.getSettingsPrincipal());
+      fixture.setPassword(username, "changed-password");
+      assert.equal(fixture.closeUserSocket(username, "fixture password changed", 4003), true);
+      const retry = window.locator("header").getByRole("button", { name: "重新登录", exact: true });
+      await retry.waitFor({ state: "visible" });
+      await retry.click();
+      await waitFor(() => countEvents(fixture.events, "login", username) === 2);
+      await window.getByText("登录状态已失效，请输入当前账号密码。", { exact: true }).waitFor();
+      await retry.click();
+      await window.locator("#session-recovery-password").waitFor({ state: "visible" });
+      await window.locator("#session-recovery-password").fill("still-wrong");
+      await window.getByRole("button", { name: "恢复连接", exact: true }).click();
+      await waitFor(() => countEvents(fixture.events, "login", username) === 3);
+      await window
+        .getByRole("button", { name: "恢复连接", exact: true })
+        .waitFor({ state: "visible" });
+      await window.locator("#session-recovery-password").fill("changed-password");
+      await window.getByRole("button", { name: "恢复连接", exact: true }).click();
+      await waitFor(() => countEvents(fixture.events, "ws", username) === 2);
+      await window.locator("#session-recovery-password").waitFor({ state: "hidden" });
+      const afterPrincipal = await window.evaluate(() => window.api.getSettingsPrincipal());
+      assert.deepEqual(
+        afterPrincipal,
+        beforePrincipal,
+        "password recovery keeps the same Principal and generation",
+      );
+      return {
+        loginCount: countEvents(fixture.events, "login", username),
+        wsCount: countEvents(fixture.events, "ws", username),
+      };
+    },
+  });
+  const events = fixture.events.slice(before);
+  assert.equal(result.authed, true);
+  assert.deepEqual(result.exerciseResult, { loginCount: 4, wsCount: 2 });
+  assert.equal(
+    events.some((event) => event.type === "logout"),
+    false,
+  );
+  return events;
+}
+
+async function verifyRecoveryBackoff(fixture) {
+  const username = "backoff-recovery";
+  const before = fixture.events.length;
+  const result = await launchCase({
+    baseUrl: fixture.baseUrl,
+    events: fixture.events,
+    username,
+    exercise: async ({ window }) => {
+      fixture.failNextLogin(username);
+      assert.equal(fixture.closeUserSocket(username, "fixture manual recovery", 4003), true);
+      const retry = window.locator("header").getByRole("button", { name: "重新登录", exact: true });
+      await retry.waitFor({ state: "visible" });
+      await retry.click();
+      await waitFor(() => countEvents(fixture.events, "login", username) === 2);
+      await retry.waitFor({ state: "visible" });
+      assert.equal(await retry.isEnabled(), true, "backoff must leave manual recovery available");
+      await retry.click();
+      await waitFor(() => countEvents(fixture.events, "ws", username) === 2);
+      await new Promise((resolve) => setTimeout(resolve, 1700));
+      return {
+        loginCount: countEvents(fixture.events, "login", username),
+        wsCount: countEvents(fixture.events, "ws", username),
+      };
+    },
+  });
+  const events = fixture.events.slice(before);
+  assert.equal(result.authed, true);
+  assert.deepEqual(result.exerciseResult, { loginCount: 3, wsCount: 2 });
+  assert.equal(
+    events.some((event) => event.type === "logout"),
+    false,
+  );
+  return events;
+}
+
 async function verifyAdvancedEnvironmentRecreate(fixture) {
   const username = "environment-recreate";
   const before = fixture.events.length;
@@ -1082,6 +1175,15 @@ async function verifyAdvancedEnvironmentRecreate(fixture) {
 async function main() {
   const fixture = await createFixtureServer();
   try {
+    if (process.argv.includes("--case=session-recovery")) {
+      const manualRelogin = await verifyManualRelogin(fixture);
+      const credentials = await verifyRecoveryCredentials(fixture);
+      const backoff = await verifyRecoveryBackoff(fixture);
+      process.stdout.write(
+        `${JSON.stringify({ ok: true, manualRelogin, credentials, backoff }, null, 2)}\n`,
+      );
+      return;
+    }
     if (process.argv.includes("--case=advanced-environment-recreate")) {
       const advancedEnvironmentRecreate = await verifyAdvancedEnvironmentRecreate(fixture);
       process.stdout.write(
@@ -1141,6 +1243,8 @@ async function main() {
     const authorizationPersistenceFailure = await verifyAuthorizationPersistenceFailure(fixture);
     const sameTokenDoubleRevocation = await verifySameTokenDoubleRevocation(fixture);
     const manualRelogin = await verifyManualRelogin(fixture);
+    const recoveryCredentials = await verifyRecoveryCredentials(fixture);
+    const recoveryBackoff = await verifyRecoveryBackoff(fixture);
     const advancedEnvironmentRecreate = await verifyAdvancedEnvironmentRecreate(fixture);
 
     const beforeInvalid = fixture.events.length;
@@ -1199,6 +1303,8 @@ async function main() {
           authorizationPersistenceFailure,
           sameTokenDoubleRevocation,
           manualRelogin,
+          recoveryCredentials,
+          recoveryBackoff,
           advancedEnvironmentRecreate,
         },
         null,
