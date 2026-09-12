@@ -53,12 +53,21 @@ function readLocalJson(file, fallback, validate = isObject) {
   }
 }
 
-function writeLocalJson(file, value, validate = isObject) {
+function writeLocalJson(
+  file,
+  value,
+  validate = isObject,
+  { transformPrevious = (previous) => previous } = {},
+) {
   if (!validate(value)) throw new Error("数据结构不合法");
   const text = JSON.stringify(value, null, 2);
   // Validate/recover existing data before touching either the primary or its backup.
   const previous = readLocalJson(file, null, validate);
-  if (previous !== null) atomicReplace(`${file}.bak`, JSON.stringify(previous, null, 2));
+  if (previous !== null) {
+    const backup = transformPrevious(previous);
+    if (!validate(backup)) throw new Error("备份数据结构不合法");
+    atomicReplace(`${file}.bak`, JSON.stringify(backup, null, 2));
+  }
   atomicReplace(file, text);
   return value;
 }

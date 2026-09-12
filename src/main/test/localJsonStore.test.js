@@ -40,3 +40,24 @@ test("missing primary restores backup; failed final rename preserves previous sn
   assert.throws(() => writeLocalJson(file, { tasks: [] }), { code: "ENOSPC" });
   assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8")), { tasks: ["first"] });
 });
+
+test("a storage owner can protect the previous backup without changing recovery semantics", (t) => {
+  const file = fixture(t);
+  writeLocalJson(file, { value: "old-sensitive-value" });
+  writeLocalJson(file, { value: "new-protected-value" }, undefined, {
+    transformPrevious: () => ({ value: "old-protected-value" }),
+  });
+  assert.equal(fs.readFileSync(`${file}.bak`, "utf8").includes("old-sensitive-value"), false);
+  assert.deepEqual(readLocalJson(`${file}.bak`, {}), { value: "old-protected-value" });
+  const primaryBefore = fs.readFileSync(file, "utf8");
+  const backupBefore = fs.readFileSync(`${file}.bak`, "utf8");
+  assert.throws(() =>
+    writeLocalJson(file, { value: "replacement" }, undefined, {
+      transformPrevious: () => {
+        throw new Error("protection unavailable");
+      },
+    }),
+  );
+  assert.equal(fs.readFileSync(file, "utf8"), primaryBefore);
+  assert.equal(fs.readFileSync(`${file}.bak`, "utf8"), backupBefore);
+});
