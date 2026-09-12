@@ -213,6 +213,8 @@ interface TasksState {
   memos: Memo[]
   deleted: StoreDeletions
   loaded: boolean
+  loading: boolean
+  loadError: string
 
   init: () => Promise<void>
   resetForPrincipal: () => void
@@ -280,13 +282,23 @@ export const useTasksStore = create<TasksState>((set, get) => {
     memos: [],
     deleted: {},
     loaded: false,
+    loading: false,
+    loadError: '',
 
     resetForPrincipal: () => {
       loadEpoch += 1
       owner = null
       persistence.cancel()
       initializations.clear()
-      set({ lists: [], tasks: [], memos: [], deleted: {}, loaded: false })
+      set({
+        lists: [],
+        tasks: [],
+        memos: [],
+        deleted: {},
+        loaded: false,
+        loading: false,
+        loadError: '',
+      })
     },
     flushPending: () => persistence.flushPending(),
 
@@ -298,7 +310,7 @@ export const useTasksStore = create<TasksState>((set, get) => {
         owner?.generation === snapshot.generation
       )
         return
-      set({ loaded: false })
+      set({ loaded: false, loading: true, loadError: '' })
       return coalesceInFlight(
         initializations,
         JSON.stringify([snapshot.principalId, snapshot.generation]),
@@ -323,7 +335,12 @@ export const useTasksStore = create<TasksState>((set, get) => {
           try {
             file = await api.loadTasks()
           } catch {
-            if (isCurrent()) console.error('个人数据读取失败，请重试')
+            if (isCurrent())
+              set({
+                loading: false,
+                loadError:
+                  '无法读取待办与备忘录，原有资料已保留。请检查文件访问权限或恢复有效备份后重试。',
+              })
             return
           }
           if (!isCurrent()) return
@@ -350,13 +367,13 @@ export const useTasksStore = create<TasksState>((set, get) => {
           if (lists.length === 0) {
             const seeded = seedDefaults()
             const data = { lists: seeded.lists, tasks, memos, deleted }
-            set({ ...data, loaded: true })
+            set({ ...data, loaded: true, loading: false, loadError: '' })
             scheduleSave()
             await persistence.flushPending()
             return
           }
 
-          set({ lists, tasks, memos, deleted, loaded: true })
+          set({ lists, tasks, memos, deleted, loaded: true, loading: false, loadError: '' })
         },
       )
     },

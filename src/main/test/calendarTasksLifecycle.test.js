@@ -356,9 +356,8 @@ test("failed new-account loads stay unavailable to cloud sync and can retry", as
   assert.equal(calendar.getState().loaded, false);
   assert.equal(tasks.getState().loaded, false);
   assert.equal(uploads.length, 0);
-  cleanup();
   failLoads = false;
-  hook.useCloudSync();
+  await Promise.all([calendar.getState().init(), tasks.getState().init()]);
   for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calendar.getState().loaded, true);
   assert.equal(tasks.getState().loaded, true);

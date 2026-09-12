@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { CheckSquare } from 'lucide-react'
 import { PanelScaffold } from './PanelScaffold'
 import { SyncBadge } from '@/components/SyncBadge'
+import { LocalDataStatus } from '@/components/LocalDataStatus'
 import { cn } from '@/lib/utils'
 import { useTasksStore } from '@/store/useTasksStore'
 import { TodoSidebar, type TodoSelection } from './todo/TodoSidebar'
@@ -18,6 +19,9 @@ type TopTab = 'todo' | 'memo'
 // 数据由 useTasksStore 提供, 初始化时加载本地数据 (首次播种)。
 export function TodoPanel() {
   const init = useTasksStore((s) => s.init)
+  const loaded = useTasksStore((s) => s.loaded)
+  const loading = useTasksStore((s) => s.loading)
+  const loadError = useTasksStore((s) => s.loadError)
   const lists = useTasksStore((s) => s.lists)
   const tasks = useTasksStore((s) => s.tasks)
   const inboxId = useTasksStore((s) => s.inboxId())
@@ -34,6 +38,13 @@ export function TodoPanel() {
     () => (editingTaskId ? (tasks.find((t) => t.id === editingTaskId) ?? null) : null),
     [editingTaskId, tasks],
   )
+
+  if (!loaded)
+    return (
+      <PanelScaffold icon={CheckSquare} title="待办与备忘" hint="任务清单与便签" scrollable={false}>
+        <LocalDataStatus loading={loading} error={loadError} onRetry={init} />
+      </PanelScaffold>
+    )
 
   return (
     <PanelScaffold

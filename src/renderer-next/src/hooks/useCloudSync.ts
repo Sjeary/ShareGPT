@@ -50,6 +50,7 @@ export function useCloudSync(): void {
     }
     const lastSynced: Record<SyncKind, string> = { calendar: '', tasks: '' }
     const supported: Record<SyncKind, boolean> = { calendar: false, tasks: false }
+    const waitingForLocal: Record<SyncKind, boolean> = { calendar: false, tasks: false }
     const pushTimers: Record<SyncKind, number | null> = { calendar: null, tasks: null }
     const unsubs: Array<() => void> = []
     let pollTimer: number | null = null
@@ -139,6 +140,14 @@ export function useCloudSync(): void {
     function watchLocal(kind: SyncKind): void {
       const cfg = KIND_CONFIGS[kind]
       const handler = () => {
+        if (isCurrent() && waitingForLocal[kind] && cfg.isLoaded()) {
+          waitingForLocal[kind] = false
+          void initialSync(kind).then(() => {
+            if (isCurrent() && supported[kind] && !pollTimer)
+              pollTimer = window.setInterval(() => void pollOnce(), POLL_INTERVAL_MS)
+          })
+          return
+        }
         if (!isCurrent() || !supported[kind]) return
         if (stable(cfg.getLocal()) === lastSynced[kind]) return
         setStatus(kind, 'syncing')
@@ -211,6 +220,8 @@ export function useCloudSync(): void {
       subscribeRealtime()
       for (const kind of KINDS) {
         if (!KIND_CONFIGS[kind].isLoaded()) {
+          waitingForLocal[kind] = true
+          watchLocal(kind)
           setStatus(kind, 'error')
           continue
         }

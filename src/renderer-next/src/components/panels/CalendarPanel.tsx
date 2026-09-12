@@ -4,6 +4,7 @@ import { addDays, addMonths, addWeeks, startOfDay } from 'date-fns'
 import { toast } from 'sonner'
 import { PanelScaffold } from './PanelScaffold'
 import { SyncBadge } from '@/components/SyncBadge'
+import { LocalDataStatus } from '@/components/LocalDataStatus'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useCalendarStore } from '@/store/useCalendarStore'
@@ -27,6 +28,8 @@ const VIEW_OPTIONS: { value: CalendarView; label: string }[] = [
 export function CalendarPanel() {
   const init = useCalendarStore((s) => s.init)
   const loaded = useCalendarStore((s) => s.loaded)
+  const loading = useCalendarStore((s) => s.loading)
+  const loadError = useCalendarStore((s) => s.loadError)
   const importEvents = useCalendarStore((s) => s.importEvents)
 
   const [cursor, setCursor] = useState(() => new Date())
@@ -132,6 +135,13 @@ export function CalendarPanel() {
     },
     [importEvents],
   )
+
+  if (!loaded)
+    return (
+      <PanelScaffold icon={CalendarDays} title="日历" hint="个人日程" scrollable={false}>
+        <LocalDataStatus loading={loading} error={loadError} onRetry={init} />
+      </PanelScaffold>
+    )
 
   const toolbar = (
     <div className="flex items-center gap-2">
