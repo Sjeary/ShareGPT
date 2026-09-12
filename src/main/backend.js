@@ -28,6 +28,7 @@ const {
 const { buildUpdateReleaseInfo } = require("./updateRelease");
 const { copyMissingChromiumPartitions } = require("./userDataPath");
 const { resolvePrincipalIdentity } = require("./principalIdentity");
+const { readLocalJson, writeLocalJson } = require("./localJsonStore");
 
 // 自动更新源 = GitHub Releases (参考 cc-switch 的做法)。仓库地址从 package.json 推导,
 // fork 的人只要改 package.json 的 homepage/repository 就指向自己的仓库, 不写死任何自建服务器。
@@ -1135,42 +1136,11 @@ class Backend {
 
   readStoredSettings() {
     const defaultSettings = this.loadPrivateDefaults();
-    if (!fs.existsSync(this.settingsFile)) {
-      return structuredClone(defaultSettings);
-    }
-
-    try {
-      const raw = JSON.parse(fs.readFileSync(this.settingsFile, "utf-8"));
-      const decodedSecrets = [];
-      const decoded = decodeLegacyEncryptedSettings(raw, this.legacySecretStorage, decodedSecrets);
-      this.legacyEncryptedSecrets = decodedSecrets;
-      return mergeSettings(defaultSettings, decoded);
-    } catch (error) {
-      if (error?.code === LEGACY_SECRET_DECRYPTION_FAILED) {
-        this.log("app", error.message || String(error));
-        throw error;
-      }
-      const backupFile = `${this.settingsFile}.bak`;
-      try {
-        const backup = JSON.parse(fs.readFileSync(backupFile, "utf-8"));
-        const decodedSecrets = [];
-        const decodedBackup = decodeLegacyEncryptedSettings(
-          backup,
-          this.legacySecretStorage,
-          decodedSecrets,
-        );
-        this.legacyEncryptedSecrets = decodedSecrets;
-        this.log("app", `设置文件损坏，已从上一份有效备份恢复：${error.message || error}`);
-        return mergeSettings(defaultSettings, decodedBackup);
-      } catch (backupError) {
-        if (backupError?.code === LEGACY_SECRET_DECRYPTION_FAILED) {
-          this.log("app", backupError.message || String(backupError));
-          throw backupError;
-        }
-        this.log("app", `设置文件损坏且无有效备份，已保留原文件：${error.message || error}`);
-        return structuredClone(defaultSettings);
-      }
-    }
+    const raw = readLocalJson(this.settingsFile, defaultSettings);
+    const decodedSecrets = [];
+    const decoded = decodeLegacyEncryptedSettings(raw, this.legacySecretStorage, decodedSecrets);
+    this.legacyEncryptedSecrets = decodedSecrets;
+    return mergeSettings(defaultSettings, decoded);
   }
 
   principalSettingsState(stored, owner = null) {
@@ -1368,7 +1338,7 @@ class Backend {
   }
 
   writeStoredSettings(payload) {
-    writeJsonAtomic(
+    writeLocalJson(
       this.settingsFile,
       preserveLegacyEncryptedSettings(payload, this.legacyEncryptedSecrets),
     );
@@ -1816,50 +1786,29 @@ class Backend {
 
   ensureChatHistoryFile() {
     if (!fs.existsSync(this.chatHistoryFile)) {
-      fs.writeFileSync(
-        this.chatHistoryFile,
-        JSON.stringify(
-          {
-            version: 1,
-            updatedAt: new Date().toISOString(),
-            conversations: {},
-          },
-          null,
-          2,
-        ),
-        "utf-8",
-      );
+      const data = readLocalJson(this.chatHistoryFile, {
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        conversations: {},
+      });
+      if (!fs.existsSync(this.chatHistoryFile)) writeLocalJson(this.chatHistoryFile, data);
     }
   }
 
   loadChatHistory() {
-    this.ensureChatHistoryFile();
-    try {
-      const raw = JSON.parse(fs.readFileSync(this.chatHistoryFile, "utf-8"));
-      return normalizeChatHistoryStore(raw);
-    } catch {
-      return normalizeChatHistoryStore({});
-    }
+    return normalizeChatHistoryStore(readLocalJson(this.chatHistoryFile, { conversations: {} }));
   }
 
   saveChatHistory(data) {
     const normalized = normalizeChatHistoryStore(data);
-    fs.writeFileSync(this.chatHistoryFile, JSON.stringify(normalized, null, 2), "utf-8");
+    writeLocalJson(this.chatHistoryFile, normalized);
     return normalized;
   }
 
-  // 通用本地 JSON 存储 (供日历/任务等新功能): 读不到或损坏则回退默认; 写入时盖上 updatedAt。
+  // Missing stores start empty; corrupt/unreadable stores block writes until recovered.
   // 结构由渲染层(store)负责, 后端不做强校验, 仅保证是对象、并防止整体过大(简单上限保护)。
   readLocalStore(file, fallback) {
-    try {
-      if (!fs.existsSync(file)) return structuredClone(fallback);
-      const raw = JSON.parse(fs.readFileSync(file, "utf-8"));
-      return raw && typeof raw === "object" && !Array.isArray(raw)
-        ? raw
-        : structuredClone(fallback);
-    } catch {
-      return structuredClone(fallback);
-    }
+    return readLocalJson(file, fallback);
   }
 
   writeLocalStore(file, data) {
@@ -1870,7 +1819,7 @@ class Backend {
     if (text.length > 16 * 1024 * 1024) {
       throw new Error("数据过大, 已拒绝写入");
     }
-    fs.writeFileSync(file, text, "utf-8");
+    writeLocalJson(file, payload);
     return payload;
   }
 
