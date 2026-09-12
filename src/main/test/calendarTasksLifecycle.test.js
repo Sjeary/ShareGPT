@@ -152,7 +152,7 @@ test("list removal preserves tasks in the inbox while explicit tasks and memos s
 });
 
 function deferred() {
-  let resolve;
+  let resolve = (_value = undefined) => {};
   const promise = new Promise((done) => {
     resolve = done;
   });
