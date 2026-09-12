@@ -161,6 +161,23 @@ async function run() {
     await expect(page.getByRole("alert")).toContainText("登录信息已失效");
     await expect(save).toBeDisabled();
     assert.deepEqual(errors, []);
+    // A main-process navigation can bypass will-navigate. Even then the actual preload
+    // must not grant a different document IPC access or forward its profile events.
+    const previousEmissions = await app.evaluate(() => global.profileEmissions.length);
+    await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].loadURL("data:text/html,<title>Untrusted fixture</title>"),
+    );
+    const rejection = await page.evaluate(async () => {
+      window.api.emitProfileUpdated({ profile: { username: "untrusted" } });
+      try {
+        await window.api.loadSettings();
+        return "allowed";
+      } catch (error) {
+        return String(error);
+      }
+    });
+    assert.match(rejection, /此页面无权调用该桌面功能/);
+    assert.equal(await app.evaluate(() => global.profileEmissions.length), previousEmissions);
     console.log(JSON.stringify({ ok: true, directory, updates: updates.length }));
   } finally {
     await app.close();
