@@ -13,7 +13,7 @@
 - `APPLE_API_ISSUER`
 - `MACOS_TEAM_ID`（Developer ID 证书的 Team Identifier，用于固定发布者身份）
 
-构建配置使用 `com.sjeary.sharegpt.desktop`、hardened runtime 和 electron-builder 24 支持的 `mac.notarize: true`。工作流会把已签名应用及 DMG 内应用的 Team Identifier 与 `MACOS_TEAM_ID` 精确比较，并对最终 DMG 显式执行 `notarytool submit --wait`、`stapler`、`spctl`，挂载 DMG 后重新检查 bundle ID、签名和 Gatekeeper。任何一步失败，publish job 都不会运行。
+构建配置使用 `com.sjeary.sharegpt.desktop`、hardened runtime 和固定版本 electron-builder 26.15.3 的 `mac.notarize: true`。工作流会把已签名应用及 DMG 内应用的 Team Identifier 与 `MACOS_TEAM_ID` 精确比较，并对最终 DMG 显式执行 `notarytool submit --wait`、`stapler`、`spctl`，挂载 DMG 后重新检查 bundle ID、签名和 Gatekeeper。任何一步失败，publish job 都不会运行。
 
 ## 本地连续性测试
 
