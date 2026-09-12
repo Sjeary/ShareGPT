@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
+const { readLocalJson, writeLocalJson } = require("../localJsonStore");
 
 // 纳入 vault 的文本类扩展 (其余文件视为附件, 仅在导入时按需复制, 不进笔记列表)。
 const TEXT_EXT = new Set([".md", ".markdown", ".canvas", ".base", ".txt"]);
@@ -27,34 +28,40 @@ function toPosix(p) {
 }
 
 class VaultManager {
-  constructor(app, getWindow) {
+  constructor(app, getWindow, options = {}) {
     this.app = app;
     this.getWindow = getWindow;
-    this.metaFile = path.join(app.getPath("userData"), "vault-meta.json");
+    this.dataRoot = options.dataRoot || app.getPath("userData");
+    this.getSnapshot = options.getSnapshot || (() => null);
+    this.isCurrent = options.isCurrent || (() => true);
+    this.validateRoot = options.validateRoot || (() => {});
+    this.metaFile = path.join(this.dataRoot, "vault-meta.json");
     this.root = this.#loadRoot();
     this.watcher = null;
     this.chokidar = null;
     this._emitTimer = null;
     this._pendingEvents = [];
     this._recentWrites = new Map(); // 抑制自身写入触发的回声: absPath -> 过期时间戳
+    this.watchEpoch = 0;
   }
 
   // —— 根目录 ——
   #loadRoot() {
-    try {
-      const raw = JSON.parse(fs.readFileSync(this.metaFile, "utf-8"));
-      if (raw && typeof raw.root === "string" && raw.root) return raw.root;
-    } catch {}
-    return path.join(this.app.getPath("userData"), "ShareGPT-Vault");
+    const raw = readLocalJson(this.metaFile, null);
+    const root =
+      raw && typeof raw.root === "string" && raw.root
+        ? raw.root
+        : path.join(this.dataRoot, "ShareGPT-Vault");
+    this.validateRoot(root);
+    return root;
   }
 
   #saveRoot() {
-    try {
-      fs.writeFileSync(this.metaFile, JSON.stringify({ root: this.root }, null, 2), "utf-8");
-    } catch {}
+    writeLocalJson(this.metaFile, { root: this.root });
   }
 
   #ensureRoot() {
+    this.validateRoot(this.root);
     fs.mkdirSync(this.root, { recursive: true });
   }
 
@@ -101,9 +108,16 @@ class VaultManager {
   async setRoot(absPath) {
     const next = String(absPath || "").trim();
     if (!next) throw new Error("路径为空");
+    this.validateRoot(next);
+    fs.mkdirSync(next, { recursive: true });
+    const previous = this.root;
     this.root = next;
-    this.#saveRoot();
-    this.#ensureRoot();
+    try {
+      this.#saveRoot();
+    } catch (error) {
+      this.root = previous;
+      throw error;
+    }
     await this.restartWatch();
     const files = await this.list();
     return { ok: true, root: this.root, count: files.length };
@@ -334,7 +348,10 @@ class VaultManager {
         return; // chokidar 不可用则降级为不监听 (手动刷新仍可用)
       }
     }
-    this.watcher = this.chokidar.watch(this.root, {
+    const watchedRoot = this.root;
+    const snapshot = this.getSnapshot();
+    const epoch = ++this.watchEpoch;
+    this.watcher = this.chokidar.watch(watchedRoot, {
       ignoreInitial: true,
       followSymlinks: false,
       depth: 12,
@@ -345,14 +362,15 @@ class VaultManager {
       },
     });
     const onEvt = (type) => (abs) => {
+      if (epoch !== this.watchEpoch || !this.isCurrent(snapshot)) return;
       const ext = path.extname(abs).toLowerCase();
       if (!TEXT_EXT.has(ext)) return;
       // 抑制自身写入回声
       const until = this._recentWrites.get(abs);
       if (until && until > Date.now()) return;
-      const rel = toPosix(path.relative(this.root, abs));
+      const rel = toPosix(path.relative(watchedRoot, abs));
       this._pendingEvents.push({ type, path: rel });
-      this.#scheduleEmit();
+      this.#scheduleEmit(snapshot, epoch);
     };
     this.watcher
       .on("add", onEvt("add"))
@@ -360,14 +378,15 @@ class VaultManager {
       .on("unlink", onEvt("unlink"));
   }
 
-  #scheduleEmit() {
+  #scheduleEmit(snapshot, epoch) {
     if (this._emitTimer) return;
     this._emitTimer = setTimeout(() => {
       this._emitTimer = null;
       const events = this._pendingEvents.splice(0);
+      if (epoch !== this.watchEpoch || !this.isCurrent(snapshot)) return;
       const win = this.getWindow();
       if (win && !win.isDestroyed()) {
-        win.webContents.send("vault:changed", { events });
+        win.webContents.send("vault:changed", { events, snapshot });
       }
     }, 300);
   }
@@ -378,6 +397,11 @@ class VaultManager {
   }
 
   async stopWatch() {
+    this.watchEpoch++;
+    if (this._emitTimer) clearTimeout(this._emitTimer);
+    this._emitTimer = null;
+    this._pendingEvents = [];
+    this._recentWrites.clear();
     if (this.watcher) {
       try {
         await this.watcher.close();
