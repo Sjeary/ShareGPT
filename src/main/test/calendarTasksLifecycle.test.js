@@ -10,7 +10,7 @@ const ts = require("typescript");
 const rendererRoot = path.resolve(__dirname, "../../renderer-next");
 const requireRenderer = createRequire(path.join(rendererRoot, "package.json"));
 
-function fixture(apiOverrides = {}) {
+function fixture(apiOverrides = {}, runtimeOverrides = {}) {
   const saved = { calendar: [], tasks: [] };
   const timers = new Map();
   let timerId = 0;
@@ -41,6 +41,7 @@ function fixture(apiOverrides = {}) {
       {
         exports: module.exports,
         require(name) {
+          if (Object.hasOwn(runtimeOverrides, name)) return runtimeOverrides[name];
           if (name === "@/lib/api") return { api };
           if (name.startsWith("@/")) return load(`${name.slice(2)}.ts`);
           if (name.startsWith("."))
@@ -55,6 +56,15 @@ function fixture(apiOverrides = {}) {
         crypto,
         structuredClone,
         console,
+        AbortController,
+        fetch: runtimeOverrides.fetch,
+        window: {
+          setTimeout: () => 1,
+          clearTimeout() {},
+          setInterval: () => 1,
+          clearInterval() {},
+        },
+        localStorage: { getItem: () => null, setItem() {} },
         setTimeout(callback) {
           timers.set(++timerId, callback);
           return timerId;
@@ -206,6 +216,8 @@ for (const [kind, name, collection] of [
     const store = app.load(`store/${name}.ts`)[name];
     runtime.activate("A", 1);
     const oldInit = store.getState().init();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(loadCalls, 1, "the old request must have started before the account changes");
     runtime.activate("B", 2);
     store.getState().resetForPrincipal();
     await store.getState().init();
@@ -260,4 +272,99 @@ for (const [kind, name, collection] of [
     });
     assert.equal(store.getState()[collection].length, 0);
   });
+
+  test(`${kind}: concurrent initialization shares one load and leaves both callers ready`, async () => {
+    const pending = deferred();
+    let loads = 0;
+    const app = fixture({
+      [`load${kind}`]: () => {
+        loads++;
+        return pending.promise;
+      },
+    });
+    const store = app.load(`store/${name}.ts`)[name];
+    const panel = store.getState().init();
+    const cloud = store.getState().init();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(loads, 1);
+    assert.equal(store.getState().loaded, false);
+    pending.resolve(null);
+    await Promise.all([panel, cloud]);
+    assert.equal(store.getState().loaded, true);
+    assert.equal((kind === "Calendar" ? app.saved.calendar : app.saved.tasks).length, 1);
+  });
 }
+
+test("failed new-account loads stay unavailable to cloud sync and can retry", async () => {
+  let account = "A";
+  let failLoads = false;
+  const uploads = [];
+  let cleanup = () => {};
+  const getCalendar = () => ({
+    calendars: [{ id: account, name: account, color: "#123456" }],
+    events: [],
+  });
+  const getTasks = () => ({
+    lists: [{ id: account, name: account, color: "#123456", isInbox: true }],
+    tasks: [],
+    memos: [],
+  });
+  const app = fixture(
+    {
+      loadCalendar: async () => {
+        if (failLoads) throw new Error("fixture read failure");
+        return getCalendar();
+      },
+      loadTasks: async () => {
+        if (failLoads) throw new Error("fixture read failure");
+        return getTasks();
+      },
+    },
+    {
+      react: {
+        useEffect(fn) {
+          cleanup = fn();
+        },
+      },
+      "@/store/useChatStore": {
+        useChatStore: (selector) =>
+          selector({
+            identity: { serverUrl: "http://fixture.invalid", username: account, token: account },
+          }),
+      },
+      "@/lib/wsBus": { wsBus: { subscribe: () => () => {} } },
+      fetch: async (_url, options) => {
+        if (options.method === "PUT") uploads.push(JSON.parse(options.body).data);
+        return {
+          ok: true,
+          json: async () => ({ rev: options.method === "PUT" ? 1 : 0, data: null }),
+        };
+      },
+    },
+  );
+  const runtime = app.load("lib/settingsPrincipalRuntime.ts").settingsPrincipalRuntime;
+  const calendar = app.load("store/useCalendarStore.ts").useCalendarStore;
+  const tasks = app.load("store/useTasksStore.ts").useTasksStore;
+  runtime.activate("A", 1);
+  await Promise.all([calendar.getState().init(), tasks.getState().init()]);
+  account = "B";
+  failLoads = true;
+  runtime.activate("B", 2);
+  const hook = app.load("hooks/useCloudSync.ts");
+  hook.useCloudSync();
+  for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calendar.getState().loaded, false);
+  assert.equal(tasks.getState().loaded, false);
+  assert.equal(uploads.length, 0);
+  cleanup();
+  failLoads = false;
+  hook.useCloudSync();
+  for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calendar.getState().loaded, true);
+  assert.equal(tasks.getState().loaded, true);
+  assert.equal(calendar.getState().calendars[0].id, "B");
+  assert.equal(tasks.getState().lists[0].id, "B");
+  assert.equal(uploads.length, 2);
+  assert.equal(JSON.stringify(uploads).includes('"A"'), false);
+  cleanup();
+});

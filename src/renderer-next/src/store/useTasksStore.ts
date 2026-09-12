@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { addDays, addMonths, addWeeks, addYears, format, parseISO, startOfDay } from 'date-fns'
 import { api } from '@/lib/api'
+import { coalesceInFlight } from '@/lib/inFlightRequest'
 import type { TasksStoreFile } from '@/types/api'
 import { createPrincipalDebouncedSave } from '@/lib/principalDebouncedSave'
 import {
@@ -256,6 +257,7 @@ interface TasksState {
 export const useTasksStore = create<TasksState>((set, get) => {
   let owner: SettingsPrincipalSnapshot | null = null
   let loadEpoch = 0
+  const initializations = new Map<string, Promise<void>>()
   const persistence = createPrincipalDebouncedSave<TasksStoreFile & { deleted: StoreDeletions }>(
     (payload) => api.saveTasks(payload),
   )
@@ -283,6 +285,7 @@ export const useTasksStore = create<TasksState>((set, get) => {
       loadEpoch += 1
       owner = null
       persistence.cancel()
+      initializations.clear()
       set({ lists: [], tasks: [], memos: [], deleted: {}, loaded: false })
     },
     flushPending: () => persistence.flushPending(),
@@ -295,52 +298,67 @@ export const useTasksStore = create<TasksState>((set, get) => {
         owner?.generation === snapshot.generation
       )
         return
-      owner = snapshot
-      const epoch = ++loadEpoch
-      const isCurrent = () => {
-        const current = settingsPrincipalRuntime.current()
-        return (
-          epoch === loadEpoch &&
-          current.principalId === snapshot.principalId &&
-          current.generation === snapshot.generation
-        )
-      }
-      let file: TasksStoreFile | null
-      try {
-        file = await api.loadTasks()
-      } catch {
-        if (isCurrent()) console.error('个人数据读取失败，请重试')
-        return
-      }
-      if (!isCurrent()) return
-      const deleted = mergeDeletions((file as { deleted?: unknown } | null)?.deleted)
-      const lists = filterDeleted(
-        (file?.lists ?? []).map((v, i) => parseList(v, i)).filter((l): l is TaskList => l !== null),
-        deleted,
-        'lists',
-      )
-      const tasks = filterDeleted(
-        (file?.tasks ?? []).map((v, i) => parseTask(v, i)).filter((t): t is Task => t !== null),
-        deleted,
-        'tasks',
-      )
-      const memos = filterDeleted(
-        (file?.memos ?? []).map(parseMemo).filter((m): m is Memo => m !== null),
-        deleted,
-        'memos',
-      )
+      set({ loaded: false })
+      return coalesceInFlight(
+        initializations,
+        JSON.stringify([snapshot.principalId, snapshot.generation]),
+        async () => {
+          const starting = settingsPrincipalRuntime.current()
+          if (
+            starting.principalId !== snapshot.principalId ||
+            starting.generation !== snapshot.generation
+          )
+            return
+          owner = snapshot
+          const epoch = ++loadEpoch
+          const isCurrent = () => {
+            const current = settingsPrincipalRuntime.current()
+            return (
+              epoch === loadEpoch &&
+              current.principalId === snapshot.principalId &&
+              current.generation === snapshot.generation
+            )
+          }
+          let file: TasksStoreFile | null
+          try {
+            file = await api.loadTasks()
+          } catch {
+            if (isCurrent()) console.error('个人数据读取失败，请重试')
+            return
+          }
+          if (!isCurrent()) return
+          const deleted = mergeDeletions((file as { deleted?: unknown } | null)?.deleted)
+          const lists = filterDeleted(
+            (file?.lists ?? [])
+              .map((v, i) => parseList(v, i))
+              .filter((l): l is TaskList => l !== null),
+            deleted,
+            'lists',
+          )
+          const tasks = filterDeleted(
+            (file?.tasks ?? []).map((v, i) => parseTask(v, i)).filter((t): t is Task => t !== null),
+            deleted,
+            'tasks',
+          )
+          const memos = filterDeleted(
+            (file?.memos ?? []).map(parseMemo).filter((m): m is Memo => m !== null),
+            deleted,
+            'memos',
+          )
 
-      // 没有任何清单 (或没有收件箱) -> 播种默认并落盘。
-      if (lists.length === 0) {
-        const seeded = seedDefaults()
-        const data = { lists: seeded.lists, tasks, memos, deleted }
-        set({ ...data, loaded: true })
-        scheduleSave()
-        await persistence.flushPending()
-        return
-      }
+          // 没有任何清单 (或没有收件箱) -> 播种默认并落盘。
+          if (lists.length === 0) {
+            const seeded = seedDefaults()
+            const data = { lists: seeded.lists, tasks, memos, deleted }
+            set({ ...data, loaded: true })
+            scheduleSave()
+            await persistence.flushPending()
+            return
+          }
 
-      set({ lists, tasks, memos, deleted, loaded: true })
+          set({ lists, tasks, memos, deleted, loaded: true })
+        },
+      )
     },
 
     inboxId: () => {

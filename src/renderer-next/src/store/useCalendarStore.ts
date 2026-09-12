@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
+import { coalesceInFlight } from '@/lib/inFlightRequest'
 import type { CalendarStoreFile } from '@/types/api'
 import { createPrincipalDebouncedSave } from '@/lib/principalDebouncedSave'
 import {
@@ -178,6 +179,7 @@ function parseEvent(v: unknown): CalendarEvent | null {
 export const useCalendarStore = create<CalendarState>((set, get) => {
   let owner: SettingsPrincipalSnapshot | null = null
   let loadEpoch = 0
+  const initializations = new Map<string, Promise<void>>()
   const persistence = createPrincipalDebouncedSave<CalendarStoreFile & { deleted: StoreDeletions }>(
     (payload) => api.saveCalendar(payload),
   )
@@ -205,6 +207,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => {
       loadEpoch += 1
       owner = null
       persistence.cancel()
+      initializations.clear()
       set({ calendars: [], events: [], deleted: {}, loaded: false })
     },
     flushPending: () => persistence.flushPending(),
@@ -217,47 +220,60 @@ export const useCalendarStore = create<CalendarState>((set, get) => {
         owner?.generation === snapshot.generation
       )
         return
-      owner = snapshot
-      const epoch = ++loadEpoch
-      const isCurrent = () => {
-        const current = settingsPrincipalRuntime.current()
-        return (
-          epoch === loadEpoch &&
-          current.principalId === snapshot.principalId &&
-          current.generation === snapshot.generation
-        )
-      }
-      let file: CalendarStoreFile | null
-      try {
-        file = await api.loadCalendar()
-      } catch {
-        if (isCurrent()) console.error('个人数据读取失败，请重试')
-        return
-      }
-      if (!isCurrent()) return
-      const deleted = mergeDeletions((file as { deleted?: unknown } | null)?.deleted)
-      const calendars = filterDeleted(
-        (file?.calendars ?? []).map(parseCalendar).filter((c): c is Calendar => c !== null),
-        deleted,
-        'calendars',
+      set({ loaded: false })
+      return coalesceInFlight(
+        initializations,
+        JSON.stringify([snapshot.principalId, snapshot.generation]),
+        async () => {
+          const starting = settingsPrincipalRuntime.current()
+          if (
+            starting.principalId !== snapshot.principalId ||
+            starting.generation !== snapshot.generation
+          )
+            return
+          owner = snapshot
+          const epoch = ++loadEpoch
+          const isCurrent = () => {
+            const current = settingsPrincipalRuntime.current()
+            return (
+              epoch === loadEpoch &&
+              current.principalId === snapshot.principalId &&
+              current.generation === snapshot.generation
+            )
+          }
+          let file: CalendarStoreFile | null
+          try {
+            file = await api.loadCalendar()
+          } catch {
+            if (isCurrent()) console.error('个人数据读取失败，请重试')
+            return
+          }
+          if (!isCurrent()) return
+          const deleted = mergeDeletions((file as { deleted?: unknown } | null)?.deleted)
+          const calendars = filterDeleted(
+            (file?.calendars ?? []).map(parseCalendar).filter((c): c is Calendar => c !== null),
+            deleted,
+            'calendars',
+          )
+          const events = filterDeleted(
+            (file?.events ?? []).map(parseEvent).filter((e): e is CalendarEvent => e !== null),
+            deleted,
+            'events',
+          ).filter((event) => !isDeleted(deleted, 'calendars', event.calendarId))
+
+          // 本地无任何日历 -> 播种默认数据并立即落盘。
+          if (calendars.length === 0) {
+            const seeded = seedDefaults()
+            const data = { calendars: seeded.calendars, events, deleted }
+            set({ ...data, loaded: true })
+            scheduleSave()
+            await persistence.flushPending()
+            return
+          }
+
+          set({ calendars, events, deleted, loaded: true })
+        },
       )
-      const events = filterDeleted(
-        (file?.events ?? []).map(parseEvent).filter((e): e is CalendarEvent => e !== null),
-        deleted,
-        'events',
-      ).filter((event) => !isDeleted(deleted, 'calendars', event.calendarId))
-
-      // 本地无任何日历 -> 播种默认数据并立即落盘。
-      if (calendars.length === 0) {
-        const seeded = seedDefaults()
-        const data = { calendars: seeded.calendars, events, deleted }
-        set({ ...data, loaded: true })
-        scheduleSave()
-        await persistence.flushPending()
-        return
-      }
-
-      set({ calendars, events, deleted, loaded: true })
     },
 
     addCalendar: ({ name, color }) => {
