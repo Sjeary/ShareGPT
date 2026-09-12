@@ -93,3 +93,26 @@ test("disabling the last administrator does not reopen unauthenticated setup", a
   store.users[0].disabled = false;
   fs.writeFileSync(process.env.USERS_FILE, JSON.stringify(store));
 });
+
+test("administrator password attempts are limited independently of ordinary login", async () => {
+  const statuses = [];
+  for (let attempt = 0; attempt < 5; attempt++) {
+    statuses.push(
+      (await post("/api/admin/login", { username: "first-admin", password: "wrong" }).result)
+        .status,
+    );
+  }
+  assert.deepEqual(statuses, [401, 401, 401, 429, 429]);
+  const legacyLogin = await post("/api/login", {
+    username: "first-admin",
+    password: "test-password",
+  }).result;
+  assert.equal(legacyLogin.status, 200);
+  assert.ok(JSON.parse(legacyLogin.body).token);
+  // A successful ordinary login cannot reset the privileged login limiter.
+  assert.equal(
+    (await post("/api/admin/login", { username: "first-admin", password: "test-password" }).result)
+      .status,
+    429,
+  );
+});

@@ -2502,12 +2502,21 @@ async function handleRequest(req, res) {
       const payload = safeParseJson(body);
       const username = safeText(payload?.username);
       const password = String(payload?.password || "");
+      const attemptKey = `admin:${normalizeIp(req.socket?.remoteAddress)}`;
+      const lock = loginLockState(attemptKey);
+      if (lock.locked) {
+        res.setHeader("Retry-After", String(Math.ceil(lock.retryAfterMs / 1000)));
+        sendText(res, 429, `登录失败次数过多，请 ${Math.ceil(lock.retryAfterMs / 1000)} 秒后再试`);
+        return;
+      }
       const { user } = findUser(username);
 
       if (!user || !user.isAdmin || user.disabled || !verifyPassword(user, password)) {
+        recordLoginFail(attemptKey);
         sendText(res, 401, "管理员账号或密码错误");
         return;
       }
+      clearLoginFails(attemptKey);
 
       const token = makeToken();
       const now = Date.now();
