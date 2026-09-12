@@ -67,3 +67,29 @@ test("unreadable accounts do not reopen unauthenticated administrator setup", as
   assert.equal(fs.readFileSync(process.env.USERS_FILE, "utf8"), original);
   fs.unlinkSync(process.env.USERS_FILE);
 });
+
+test("concurrent first-admin requests create exactly one administrator", async () => {
+  const first = post("/api/admin/setup", null, true);
+  const second = post("/api/admin/setup", null, true);
+  first.req.end(JSON.stringify({ username: "first-admin", password: "test-password" }));
+  assert.equal((await first.result).status, 200);
+  second.req.end(JSON.stringify({ username: "second-admin", password: "test-password" }));
+  assert.equal((await second.result).status, 409);
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(process.env.USERS_FILE)).users.map((user) => user.username),
+    ["first-admin"],
+  );
+});
+
+test("disabling the last administrator does not reopen unauthenticated setup", async () => {
+  const store = JSON.parse(fs.readFileSync(process.env.USERS_FILE));
+  store.users[0].disabled = true;
+  fs.writeFileSync(process.env.USERS_FILE, JSON.stringify(store));
+  const response = await post("/api/admin/setup", {
+    username: "replacement",
+    password: "test-password",
+  }).result;
+  assert.equal(response.status, 409);
+  store.users[0].disabled = false;
+  fs.writeFileSync(process.env.USERS_FILE, JSON.stringify(store));
+});

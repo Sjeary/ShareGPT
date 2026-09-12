@@ -1279,9 +1279,9 @@ function findUser(username) {
   return { store, user };
 }
 
-function hasEnabledAdminUser() {
+function hasAdminUser() {
   const store = loadUserStore();
-  return store.users.some((item) => item.isAdmin && !item.disabled);
+  return store.users.some((item) => item.isAdmin);
 }
 
 function hashPassword(password, salt, iterations, digest) {
@@ -2531,7 +2531,7 @@ async function handleRequest(req, res) {
 
   if (req.method === "POST" && pathname === "/api/admin/setup") {
     try {
-      if (hasEnabledAdminUser()) {
+      if (hasAdminUser()) {
         sendText(res, 409, "服务器已经存在管理员账号");
         return;
       }
@@ -2542,6 +2542,12 @@ async function handleRequest(req, res) {
       const displayName = safeText(payload.displayName) || username;
 
       const store = loadUserStore();
+      // The body read yields. Recheck the same snapshot that is synchronously
+      // committed so two pending setup requests cannot both create an admin.
+      if (store.users.some((item) => item.isAdmin)) {
+        sendText(res, 409, "服务器已经存在管理员账号");
+        return;
+      }
       const existing = store.users.find((item) => item.username === username);
       if (existing) {
         sendText(res, 409, "该用户已存在");
