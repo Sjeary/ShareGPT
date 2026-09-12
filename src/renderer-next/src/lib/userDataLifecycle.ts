@@ -4,10 +4,13 @@ import { useFocusStore } from '@/store/useFocusStore'
 import { useVaultStore } from '@/store/useVaultStore'
 import { chatPersistence } from './chatPersistence'
 import { userDataTransitionState } from './userDataTransitionState'
+import type { LegacyDataCategory } from '@/types/api'
 
 let transitions: Promise<unknown> = Promise.resolve()
 
-export async function reloadUserDataRuntime() {
+export async function reloadUserDataRuntime(
+  categories: LegacyDataCategory[] = ['calendar', 'tasks', 'focus', 'notes', 'chat'],
+) {
   const loaded = {
     calendar: useCalendarStore.getState().loaded,
     tasks: useTasksStore.getState().loaded,
@@ -15,23 +18,25 @@ export async function reloadUserDataRuntime() {
     vault: useVaultStore.getState().loaded,
     chat: chatPersistence.isLoaded(),
   }
-  useCalendarStore.getState().resetForPrincipal()
-  useTasksStore.getState().resetForPrincipal()
-  useFocusStore.getState().resetForPrincipal()
-  useVaultStore.getState().resetForPrincipal()
-  chatPersistence.resetForPrincipal()
+  if (categories.includes('calendar')) useCalendarStore.getState().resetForPrincipal()
+  if (categories.includes('tasks')) useTasksStore.getState().resetForPrincipal()
+  if (categories.includes('focus')) useFocusStore.getState().resetForPrincipal()
+  if (categories.includes('notes')) useVaultStore.getState().resetForPrincipal()
+  if (categories.includes('chat')) chatPersistence.resetForPrincipal()
   await Promise.all([
-    loaded.calendar ? useCalendarStore.getState().init() : undefined,
-    loaded.tasks ? useTasksStore.getState().init() : undefined,
-    loaded.focus ? useFocusStore.getState().init() : undefined,
-    loaded.vault ? useVaultStore.getState().init() : undefined,
-    loaded.chat ? chatPersistence.init() : undefined,
+    loaded.calendar && categories.includes('calendar')
+      ? useCalendarStore.getState().init()
+      : undefined,
+    loaded.tasks && categories.includes('tasks') ? useTasksStore.getState().init() : undefined,
+    loaded.focus && categories.includes('focus') ? useFocusStore.getState().init() : undefined,
+    loaded.vault && categories.includes('notes') ? useVaultStore.getState().init() : undefined,
+    loaded.chat && categories.includes('chat') ? chatPersistence.init() : undefined,
   ])
 }
 
 export function withUserDataTransition<T>(
   operation: () => Promise<T>,
-  options: { reload?: boolean } = {},
+  options: { reload?: boolean | LegacyDataCategory[] } = {},
 ): Promise<T> {
   const pending = transitions
     .catch(() => undefined)
@@ -50,7 +55,8 @@ export function withUserDataTransition<T>(
         )
         if (failed) throw failed.reason
         const result = await operation()
-        if (options.reload) await reloadUserDataRuntime()
+        if (options.reload)
+          await reloadUserDataRuntime(Array.isArray(options.reload) ? options.reload : undefined)
         return result
       } finally {
         userDataTransitionState.setSuspended(false)

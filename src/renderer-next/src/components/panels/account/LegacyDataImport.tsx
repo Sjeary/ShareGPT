@@ -74,7 +74,7 @@ export function LegacyDataImport() {
             group: selected.group,
           })
         },
-        { reload: true },
+        { reload: [selected.category] },
       )
       toast.success(
         `${labels[selected.category]}已接续到${personal ? '个人工作区' : '当前账号'}，旧原件已保留`,

@@ -183,3 +183,33 @@ test("URL-prefixed chat buckets stay untouched and are never adopted by a new ac
     false,
   );
 });
+
+test("same-account calendar import preserves the active note and ongoing focus session", async () => {
+  const f = fixture();
+  const runtime = f.load("lib/settingsPrincipalRuntime").settingsPrincipalRuntime;
+  runtime.activate("A", 1);
+  f.files.set("A", { vault: { "note.md": "original" } });
+  const calendar = f.load("store/useCalendarStore").useCalendarStore;
+  const vault = f.load("store/useVaultStore").useVaultStore;
+  const focus = f.load("store/useFocusStore").useFocusStore;
+  await Promise.all([calendar.getState().init(), vault.getState().init(), focus.getState().init()]);
+  await vault.getState().openNote("note.md");
+  vault.getState().setDraft("current draft");
+  focus.getState().start();
+  const endAt = focus.getState().endAt;
+  await f.load("lib/userDataLifecycle").withUserDataTransition(
+    async () => {
+      f.files.get("A").Calendar = {
+        calendars: [{ id: "imported", name: "Imported", color: "#123456" }],
+        events: [],
+      };
+    },
+    { reload: ["calendar"] },
+  );
+  assert.equal(calendar.getState().calendars[0].id, "imported");
+  assert.equal(vault.getState().currentPath, "note.md");
+  assert.equal(vault.getState().draft, "current draft");
+  assert.equal(f.files.get("A").vault["note.md"], "current draft");
+  assert.equal(focus.getState().running, true);
+  assert.equal(focus.getState().endAt, endAt);
+});
