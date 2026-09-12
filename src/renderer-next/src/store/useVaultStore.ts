@@ -1,5 +1,11 @@
 import { create } from 'zustand'
-import { api } from '@/lib/api'
+import { userDataApiFor } from '@/lib/api'
+import {
+  settingsPrincipalRuntime,
+  type SettingsPrincipalSnapshot,
+} from '@/lib/settingsPrincipalRuntime'
+import { assertUserDataWritable, userDataTransitionState } from '@/lib/userDataTransitionState'
+import { coalesceInFlight } from '@/lib/inFlightRequest'
 import type { VaultChangeEvent, VaultFileMeta, VaultImportReport } from '@/types/api'
 import { dump as yamlDump } from 'js-yaml'
 import { NotesIndex } from '@/lib/notes'
@@ -23,6 +29,8 @@ interface VaultState {
   busy: boolean
 
   init: () => Promise<void>
+  flushPending: () => Promise<void>
+  resetForPrincipal: () => void
   reload: () => Promise<void>
   openNote: (path: string) => Promise<void>
   setDraft: (content: string) => void
@@ -48,15 +56,33 @@ function rebuild(notesByPath: Record<string, ParsedNote>): NotesIndex {
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export const useVaultStore = create<VaultState>((set, get) => {
+  let owner: SettingsPrincipalSnapshot | null = null
+  const loads = new Map<string, Promise<void>>()
+  const operations = new Set<Promise<unknown>>()
+  const snapshotForOperation = () => {
+    const snapshot = owner ?? settingsPrincipalRuntime.snapshot()
+    settingsPrincipalRuntime.assertCurrent(snapshot)
+    return snapshot
+  }
+  const track =
+    <T extends unknown[], R>(operation: (...args: T) => Promise<R>) =>
+    (...args: T): Promise<R> => {
+      const pending = operation(...args)
+      operations.add(pending)
+      void pending.finally(() => operations.delete(pending)).catch(() => undefined)
+      return pending
+    }
   const scheduleSave = () => {
     if (saveTimer) clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       saveTimer = null
-      void get().saveCurrent()
+      void get()
+        .saveCurrent()
+        .catch(() => console.error('笔记保存失败，草稿已保留'))
     }, 600)
   }
 
-  return {
+  const state: VaultState = {
     loaded: false,
     root: '',
     rawByPath: {},
@@ -69,25 +95,68 @@ export const useVaultStore = create<VaultState>((set, get) => {
     dirty: false,
     busy: false,
 
+    resetForPrincipal: () => {
+      owner = null
+      loads.clear()
+      if (saveTimer) clearTimeout(saveTimer)
+      saveTimer = null
+      set({
+        loaded: false,
+        root: '',
+        rawByPath: {},
+        notesByPath: {},
+        fileList: [],
+        index: null,
+        indexVersion: 0,
+        currentPath: null,
+        draft: '',
+        dirty: false,
+        busy: false,
+      })
+    },
+    flushPending: async () => {
+      if (saveTimer) clearTimeout(saveTimer)
+      saveTimer = null
+      const settled = await Promise.allSettled([...operations])
+      const failed = settled.find(
+        (entry): entry is PromiseRejectedResult => entry.status === 'rejected',
+      )
+      if (failed) throw failed.reason
+      if (get().dirty) await get().saveCurrent()
+    },
     init: async () => {
-      if (get().loaded) return
-      try {
-        await api.vault.start()
-      } catch {
-        /* 监听不可用不致命 */
-      }
-      let root = ''
-      try {
-        root = await api.vault.getRoot()
-      } catch {
-        /* 取不到 root 则保持空串 */
-      }
-      set({ root })
-      await get().reload()
-      set({ loaded: true })
+      const snapshot = settingsPrincipalRuntime.snapshot()
+      if (
+        get().loaded &&
+        owner?.principalId === snapshot.principalId &&
+        owner?.generation === snapshot.generation
+      )
+        return
+      owner = snapshot
+      return coalesceInFlight(loads, JSON.stringify(snapshot), async () => {
+        const api = userDataApiFor(snapshot)
+        try {
+          await api.vault.start()
+        } catch {
+          /* 监听不可用不致命 */
+        }
+        let root = ''
+        try {
+          root = await api.vault.getRoot()
+        } catch {
+          /* 取不到 root 则保持空串 */
+        }
+        settingsPrincipalRuntime.assertCurrent(snapshot)
+        set({ root })
+        await get().reload()
+        settingsPrincipalRuntime.assertCurrent(snapshot)
+        set({ loaded: true })
+      })
     },
 
     reload: async () => {
+      const snapshot = snapshotForOperation()
+      const api = userDataApiFor(snapshot)
       set({ busy: true })
       try {
         const [fileList, files] = await Promise.all([api.vault.list(), api.vault.readAll()])
@@ -112,11 +181,18 @@ export const useVaultStore = create<VaultState>((set, get) => {
           dirty: keepCur ? s.dirty : false,
         }))
       } finally {
-        set({ busy: false })
+        if (
+          settingsPrincipalRuntime.current().principalId === snapshot.principalId &&
+          settingsPrincipalRuntime.current().generation === snapshot.generation
+        )
+          set({ busy: false })
       }
     },
 
     openNote: async (path) => {
+      assertUserDataWritable()
+      const snapshot = snapshotForOperation()
+      const api = userDataApiFor(snapshot)
       // 保存上一篇未落盘的改动
       if (get().dirty && get().currentPath) await get().saveCurrent()
       let content = get().rawByPath[path]
@@ -126,6 +202,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
           content = f.content
           set((s) => ({ rawByPath: { ...s.rawByPath, [path]: content } }))
         } catch {
+          settingsPrincipalRuntime.assertCurrent(snapshot)
           content = ''
         }
       }
@@ -133,11 +210,15 @@ export const useVaultStore = create<VaultState>((set, get) => {
     },
 
     setDraft: (content) => {
+      assertUserDataWritable()
+      snapshotForOperation()
       set({ draft: content, dirty: true })
       scheduleSave()
     },
 
     saveCurrent: async () => {
+      const snapshot = snapshotForOperation()
+      const api = userDataApiFor(snapshot)
       const { currentPath, draft } = get()
       if (!currentPath) return
       await api.vault.write(currentPath, draft)
@@ -155,12 +236,15 @@ export const useVaultStore = create<VaultState>((set, get) => {
           rawByPath,
           index: rebuild(notesByPath),
           indexVersion: s.indexVersion + 1,
-          dirty: false,
+          dirty: s.currentPath !== currentPath || s.draft !== draft,
         }
       })
     },
 
     createNote: async (path, content = '') => {
+      assertUserDataWritable()
+      const snapshot = snapshotForOperation()
+      const api = userDataApiFor(snapshot)
       let p = path.trim()
       // 无扩展名才补 .md; 保留 .canvas / .base 等已有扩展。
       if (!/\.[a-z0-9]+$/i.test(p)) p += '.md'
@@ -181,6 +265,9 @@ export const useVaultStore = create<VaultState>((set, get) => {
     },
 
     renameNote: async (from, to) => {
+      assertUserDataWritable()
+      const snapshot = snapshotForOperation()
+      const api = userDataApiFor(snapshot)
       let target = to.trim()
       // 无扩展名才补 .md; 保留 .canvas/.base 等已有扩展。
       if (!/\.[a-z0-9]+$/i.test(target)) target += '.md'
@@ -205,6 +292,9 @@ export const useVaultStore = create<VaultState>((set, get) => {
     },
 
     deleteNote: async (path) => {
+      assertUserDataWritable()
+      const snapshot = snapshotForOperation()
+      const api = userDataApiFor(snapshot)
       await api.vault.remove(path)
       set((s) => {
         const rawByPath = { ...s.rawByPath }
@@ -225,6 +315,9 @@ export const useVaultStore = create<VaultState>((set, get) => {
     },
 
     setFrontmatter: async (path, data) => {
+      assertUserDataWritable()
+      const snapshot = snapshotForOperation()
+      const api = userDataApiFor(snapshot)
       const raw = get().rawByPath[path] ?? ''
       const { body } = splitFrontmatter(raw)
       const keys = Object.keys(data)
@@ -245,6 +338,9 @@ export const useVaultStore = create<VaultState>((set, get) => {
     },
 
     batchAppend: async (items) => {
+      assertUserDataWritable()
+      const snapshot = snapshotForOperation()
+      const api = userDataApiFor(snapshot)
       for (const { path, text } of items) {
         const raw = get().rawByPath[path] ?? ''
         if (raw.includes(text.trim())) continue
@@ -254,6 +350,9 @@ export const useVaultStore = create<VaultState>((set, get) => {
     },
 
     openToday: async () => {
+      assertUserDataWritable()
+      snapshotForOperation()
+
       const d = new Date()
       const pad = (n: number) => String(n).padStart(2, '0')
       const name = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
@@ -266,6 +365,9 @@ export const useVaultStore = create<VaultState>((set, get) => {
     },
 
     moveToFolder: async (from, folder) => {
+      assertUserDataWritable()
+      snapshotForOperation()
+
       const base = from.split('/').pop() as string
       const to = folder ? `${folder.replace(/\/$/, '')}/${base}` : base
       if (to === from) return
@@ -273,6 +375,9 @@ export const useVaultStore = create<VaultState>((set, get) => {
     },
 
     renameFolder: async (oldPrefix, newPrefix) => {
+      assertUserDataWritable()
+      const snapshot = snapshotForOperation()
+      const api = userDataApiFor(snapshot)
       const op = oldPrefix.replace(/\/$/, '')
       const np = newPrefix.replace(/\/$/, '')
       if (!np || np === op) return
@@ -288,6 +393,9 @@ export const useVaultStore = create<VaultState>((set, get) => {
     },
 
     deleteFolder: async (prefix) => {
+      assertUserDataWritable()
+      const snapshot = snapshotForOperation()
+      const api = userDataApiFor(snapshot)
       const pf = prefix.replace(/\/$/, '')
       const files = Object.keys(get().rawByPath).filter((p) => p.startsWith(pf + '/'))
       for (const p of files) {
@@ -301,6 +409,9 @@ export const useVaultStore = create<VaultState>((set, get) => {
     },
 
     setRootViaDialog: async () => {
+      assertUserDataWritable()
+      const snapshot = snapshotForOperation()
+      const api = userDataApiFor(snapshot)
       const picked = await api.vault.pickFolder()
       if (!picked) return false
       const res = await api.vault.setRoot(picked)
@@ -310,6 +421,9 @@ export const useVaultStore = create<VaultState>((set, get) => {
     },
 
     importVault: async () => {
+      assertUserDataWritable()
+      const snapshot = snapshotForOperation()
+      const api = userDataApiFor(snapshot)
       const picked = await api.vault.pickFolder()
       if (!picked) return null
       set({ busy: true })
@@ -323,6 +437,14 @@ export const useVaultStore = create<VaultState>((set, get) => {
     },
 
     applyExternalChanges: async (payload) => {
+      if (userDataTransitionState.isSuspended() || !payload?.snapshot) return
+      const snapshot = payload.snapshot
+      try {
+        settingsPrincipalRuntime.assertCurrent(snapshot)
+      } catch {
+        return
+      }
+      const api = userDataApiFor(snapshot)
       const events = payload?.events ?? []
       if (!events.length) return
       const { currentPath, dirty } = get()
@@ -349,6 +471,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
           }
         }
       }
+      settingsPrincipalRuntime.assertCurrent(snapshot)
       if (!changed) return
       set((s) => ({
         rawByPath,
@@ -362,4 +485,27 @@ export const useVaultStore = create<VaultState>((set, get) => {
       }))
     },
   }
+  for (const name of [
+    'init',
+    'reload',
+    'openNote',
+    'saveCurrent',
+    'createNote',
+    'renameNote',
+    'deleteNote',
+    'setFrontmatter',
+    'batchAppend',
+    'openToday',
+    'moveToFolder',
+    'renameFolder',
+    'deleteFolder',
+    'setRootViaDialog',
+    'importVault',
+    'applyExternalChanges',
+  ]) {
+    const key = name as keyof VaultState
+    const original = state[key] as (...args: unknown[]) => Promise<unknown>
+    Object.assign(state, { [key]: track(original) })
+  }
+  return state
 })

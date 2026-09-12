@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { addDays, addMonths, addWeeks, addYears, format, parseISO, startOfDay } from 'date-fns'
-import { api } from '@/lib/api'
+import { userDataApiFor } from '@/lib/api'
+import { assertUserDataWritable } from '@/lib/userDataTransitionState'
 import { coalesceInFlight } from '@/lib/inFlightRequest'
 import type { TasksStoreFile } from '@/types/api'
 import { createPrincipalDebouncedSave } from '@/lib/principalDebouncedSave'
@@ -261,7 +262,7 @@ export const useTasksStore = create<TasksState>((set, get) => {
   let loadEpoch = 0
   const initializations = new Map<string, Promise<void>>()
   const persistence = createPrincipalDebouncedSave<TasksStoreFile & { deleted: StoreDeletions }>(
-    (payload) => api.saveTasks(payload),
+    (payload, snapshot) => userDataApiFor(snapshot).saveTasks(payload),
   )
   const scheduleSave = () => {
     if (!owner) return
@@ -271,6 +272,7 @@ export const useTasksStore = create<TasksState>((set, get) => {
   }
 
   const commit = (partial: Partial<Pick<TasksState, 'lists' | 'tasks' | 'memos' | 'deleted'>>) => {
+    assertUserDataWritable()
     if (owner) settingsPrincipalRuntime.assertCurrent(owner)
     set(partial)
     scheduleSave()
@@ -333,7 +335,7 @@ export const useTasksStore = create<TasksState>((set, get) => {
           }
           let file: TasksStoreFile | null
           try {
-            file = await api.loadTasks()
+            file = await userDataApiFor(snapshot).loadTasks()
           } catch {
             if (isCurrent())
               set({

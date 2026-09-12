@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { api } from '@/lib/api'
+import { userDataApiFor } from '@/lib/api'
+import { assertUserDataWritable } from '@/lib/userDataTransitionState'
 import { coalesceInFlight } from '@/lib/inFlightRequest'
 import type { CalendarStoreFile } from '@/types/api'
 import { createPrincipalDebouncedSave } from '@/lib/principalDebouncedSave'
@@ -183,7 +184,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => {
   let loadEpoch = 0
   const initializations = new Map<string, Promise<void>>()
   const persistence = createPrincipalDebouncedSave<CalendarStoreFile & { deleted: StoreDeletions }>(
-    (payload) => api.saveCalendar(payload),
+    (payload, snapshot) => userDataApiFor(snapshot).saveCalendar(payload),
   )
   const scheduleSave = () => {
     if (!owner) return
@@ -194,6 +195,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => {
 
   // 任一变更后: 触发落盘。
   const commit = (partial: Partial<Pick<CalendarState, 'calendars' | 'events' | 'deleted'>>) => {
+    assertUserDataWritable()
     if (owner) settingsPrincipalRuntime.assertCurrent(owner)
     set(partial)
     scheduleSave()
@@ -247,7 +249,7 @@ export const useCalendarStore = create<CalendarState>((set, get) => {
           }
           let file: CalendarStoreFile | null
           try {
-            file = await api.loadCalendar()
+            file = await userDataApiFor(snapshot).loadCalendar()
           } catch {
             if (isCurrent())
               set({

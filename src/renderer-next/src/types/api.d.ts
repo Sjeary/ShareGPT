@@ -147,6 +147,7 @@ export interface VaultImportReport {
   root: string
 }
 export interface VaultChangeEvent {
+  snapshot?: { principalId: string; generation: number }
   events: { type: 'add' | 'change' | 'unlink'; path: string }[]
 }
 export interface VaultApi {

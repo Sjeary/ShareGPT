@@ -42,7 +42,13 @@ function fixture(apiOverrides = {}, runtimeOverrides = {}) {
         exports: module.exports,
         require(name) {
           if (Object.hasOwn(runtimeOverrides, name)) return runtimeOverrides[name];
-          if (name === "@/lib/api") return { api };
+          if (name === "@/lib/api") return { api, userDataApiFor: () => api };
+          if (name === "@/lib/userDataTransitionState")
+            return {
+              assertUserDataWritable() {},
+              useUserDataTransition: () => false,
+              userDataTransitionState: { isSuspended: () => false },
+            };
           if (name.startsWith("@/")) return load(`${name.slice(2)}.ts`);
           if (name.startsWith("."))
             return load(

@@ -4,7 +4,9 @@ import {
   type SettingsPrincipalSnapshot,
 } from './settingsPrincipalRuntime'
 
-export function createPrincipalDebouncedSave<T>(save: (payload: T) => Promise<unknown>) {
+export function createPrincipalDebouncedSave<T>(
+  save: (payload: T, snapshot: SettingsPrincipalSnapshot) => Promise<unknown>,
+) {
   let timer: ReturnType<typeof setTimeout> | null = null
   let pending: { payload: T; snapshot: SettingsPrincipalSnapshot } | null = null
   let tail: Promise<void> = Promise.resolve()
@@ -20,7 +22,7 @@ export function createPrincipalDebouncedSave<T>(save: (payload: T) => Promise<un
         .then(async () => {
           try {
             settingsPrincipalRuntime.assertCurrent(operation.snapshot)
-            await save(operation.payload)
+            await save(operation.payload, operation.snapshot)
             settingsPrincipalRuntime.assertCurrent(operation.snapshot)
           } catch (error) {
             const current = settingsPrincipalRuntime.current()
@@ -30,6 +32,7 @@ export function createPrincipalDebouncedSave<T>(save: (payload: T) => Promise<un
             )
               return
             if (error instanceof StaleSettingsPrincipalError) return
+            if (!pending) pending = operation
             throw error
           }
         })
