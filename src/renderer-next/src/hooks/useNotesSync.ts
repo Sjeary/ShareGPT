@@ -4,6 +4,7 @@ import { api } from '@/lib/api'
 import { useChatStore } from '@/store/useChatStore'
 import { useVaultStore } from '@/store/useVaultStore'
 import { wsBus } from '@/lib/wsBus'
+import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
 import { mergeVault, type MergeReport, type VaultFiles } from '@/lib/notes/merge'
 
 // 知识库云端同步 (单会话顺序模型, 无实时强依赖):
@@ -84,6 +85,19 @@ export function useNotesSync(): void {
       return
     }
     let cancelled = false
+    const snapshot = settingsPrincipalRuntime.current()
+    const controller = new AbortController()
+    const isCurrent = () => {
+      const current = settingsPrincipalRuntime.current()
+      return (
+        !cancelled &&
+        current.principalId === snapshot.principalId &&
+        current.generation === snapshot.generation
+      )
+    }
+    const assertCurrent = () => {
+      if (!isCurrent()) throw new Error('同步账号已切换')
+    }
     let supported = false
     let lastSynced = ''
     let pushTimer: number | null = null
@@ -93,6 +107,7 @@ export function useNotesSync(): void {
     const authFetch = (path: string, init?: RequestInit) =>
       fetch(`${serverUrl}${path}`, {
         ...init,
+        signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
@@ -100,12 +115,20 @@ export function useNotesSync(): void {
         },
       })
 
-    const ours = (): VaultFiles => ({ ...useVaultStore.getState().rawByPath })
+    const ours = (): VaultFiles => {
+      assertCurrent()
+      return { ...useVaultStore.getState().rawByPath }
+    }
 
     // 串行化同步操作, 避免 poll / ws / 409 重试 触发的合并相互交叠。
     let syncChain: Promise<void> = Promise.resolve()
     const enqueue = (fn: () => Promise<void>): Promise<void> => {
-      syncChain = syncChain.then(fn).catch(() => undefined)
+      syncChain = syncChain
+        .then(() => {
+          assertCurrent()
+          return fn()
+        })
+        .catch(() => undefined)
       return syncChain
     }
 
@@ -113,46 +136,55 @@ export function useNotesSync(): void {
     async function applyMerged(merged: VaultFiles): Promise<void> {
       const cur = ours()
       for (const [p, content] of Object.entries(merged)) {
+        assertCurrent()
         if (cur[p] !== content) await api.vault.write(p, content)
       }
       for (const p of Object.keys(cur)) {
+        assertCurrent()
         if (merged[p] === undefined) await api.vault.remove(p)
       }
+      assertCurrent()
       await useVaultStore.getState().reload()
+      assertCurrent()
     }
 
     async function push(baseRev: number, depth = 0): Promise<void> {
+      if (!isCurrent()) return
       const data = ours()
       try {
         const res = await authFetch('/api/user-store/notes', {
           method: 'PUT',
           body: JSON.stringify({ baseRev, data: { files: data } }),
         })
+        assertCurrent()
         if (res.ok) {
           const j = (await res.json()) as { rev: number }
+          assertCurrent()
           saveRev(serverUrl, username, j.rev)
           saveBase(serverUrl, username, data)
           lastSynced = stable(data)
-          if (!cancelled) setState('synced')
+          if (isCurrent()) setState('synced')
           return
         }
         if (res.status === 409 && depth < 2) {
           await pullAndMerge(true)
+          assertCurrent()
           await push(loadRev(serverUrl, username), depth + 1)
           return
         }
-        if (!cancelled) setState('error')
+        if (isCurrent()) setState('error')
       } catch {
-        if (!cancelled) setState('error')
+        if (isCurrent()) setState('error')
       }
     }
 
     async function pullAndMerge(silent = false): Promise<void> {
       try {
         const res = await authFetch('/api/user-store/notes', { method: 'GET' })
+        assertCurrent()
         if (!res.ok) {
           supported = false
-          if (!cancelled) setState('local')
+          if (isCurrent()) setState('local')
           return
         }
         supported = true
@@ -160,7 +192,7 @@ export function useNotesSync(): void {
           rev: number
           data: { files?: VaultFiles } | null
         }
-        if (cancelled) return
+        if (!isCurrent()) return
         const theirs = remote.data?.files ?? {}
         const storedRev = loadRev(serverUrl, username)
         const base = loadBase(serverUrl, username)
@@ -171,33 +203,35 @@ export function useNotesSync(): void {
           if (report.changed) {
             await applyMerged(report.merged)
           }
+          assertCurrent()
           saveBase(serverUrl, username, report.merged)
           saveRev(serverUrl, username, remote.rev)
           lastSynced = stable(report.merged)
           // 回推合并结果, 拿到新 rev (保持服务器与本地一致)。
           await push(remote.rev)
+          assertCurrent()
           const incoming = report.fromCloud.length + report.conflicts.length + report.deleted.length
           if (!silent && incoming > 0) useNotesSyncStore.getState().showReport(report)
         } else {
           // 云端无新内容: 本地若有改动则推送。
           if (stable(local) !== lastSynced) await push(storedRev)
-          else if (!cancelled) setState('synced')
+          else if (isCurrent()) setState('synced')
         }
       } catch {
-        if (!cancelled) setState('error')
+        if (isCurrent()) setState('error')
       }
     }
 
     function watchLocal(): void {
       const handler = () => {
-        if (cancelled || !supported) return
+        if (!isCurrent() || !supported) return
         const data = ours()
         if (stable(data) === lastSynced) return
-        if (!cancelled) setState('syncing')
+        if (isCurrent()) setState('syncing')
         if (pushTimer) window.clearTimeout(pushTimer)
         pushTimer = window.setTimeout(() => {
           pushTimer = null
-          if (cancelled || !supported) return
+          if (!isCurrent() || !supported) return
           if (stable(ours()) === lastSynced) {
             setState('synced')
             return
@@ -211,7 +245,7 @@ export function useNotesSync(): void {
     function subscribeRealtime(): void {
       unsubs.push(
         wsBus.subscribe((p) => {
-          if (cancelled || p.type !== 'user_store_updated' || p.kind !== 'notes') return
+          if (!isCurrent() || p.type !== 'user_store_updated' || p.kind !== 'notes') return
           if (typeof p.rev === 'number' && p.rev > loadRev(serverUrl, username)) {
             void enqueue(() => pullAndMerge())
           }
@@ -223,23 +257,28 @@ export function useNotesSync(): void {
       // 等 vault 就绪
       for (let i = 0; i < 100 && !useVaultStore.getState().loaded; i++) {
         await new Promise((r) => setTimeout(r, 100))
-        if (cancelled) return
+        if (!isCurrent()) return
       }
-      if (cancelled) return
+      if (!isCurrent()) return
+      if (!useVaultStore.getState().loaded) {
+        setState('error')
+        return
+      }
       setState('syncing')
       await enqueue(() => pullAndMerge(false))
-      if (cancelled) return
+      if (!isCurrent()) return
       watchLocal()
       subscribeRealtime()
-      if (!cancelled && supported) {
+      if (isCurrent() && supported) {
         pollTimer = window.setInterval(() => {
-          if (!cancelled) void enqueue(() => pullAndMerge())
+          if (isCurrent()) void enqueue(() => pullAndMerge())
         }, POLL_MS)
       }
     })()
 
     return () => {
       cancelled = true
+      controller.abort()
       if (pushTimer) window.clearTimeout(pushTimer)
       if (pollTimer) window.clearInterval(pollTimer)
       for (const fn of unsubs) {

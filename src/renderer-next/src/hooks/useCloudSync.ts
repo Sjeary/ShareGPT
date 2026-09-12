@@ -3,6 +3,7 @@ import { useChatStore } from '@/store/useChatStore'
 import { useCalendarStore } from '@/store/useCalendarStore'
 import { useTasksStore } from '@/store/useTasksStore'
 import { wsBus } from '@/lib/wsBus'
+import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
 import {
   KIND_CONFIGS,
   getStoredRev,
@@ -34,6 +35,19 @@ export function useCloudSync(): void {
     }
 
     let cancelled = false
+    const snapshot = settingsPrincipalRuntime.current()
+    const controller = new AbortController()
+    const isCurrent = () => {
+      const current = settingsPrincipalRuntime.current()
+      return (
+        !cancelled &&
+        current.principalId === snapshot.principalId &&
+        current.generation === snapshot.generation
+      )
+    }
+    const assertCurrent = () => {
+      if (!isCurrent()) throw new Error('同步账号已切换')
+    }
     const lastSynced: Record<SyncKind, string> = { calendar: '', tasks: '' }
     const supported: Record<SyncKind, boolean> = { calendar: false, tasks: false }
     const pushTimers: Record<SyncKind, number | null> = { calendar: null, tasks: null }
@@ -43,6 +57,7 @@ export function useCloudSync(): void {
     const authFetch = (path: string, init?: RequestInit) =>
       fetch(`${serverUrl}${path}`, {
         ...init,
+        signal: controller.signal,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
@@ -52,32 +67,37 @@ export function useCloudSync(): void {
 
     // 推送本地数据; 409(版本落后) -> 合并服务器最新后重试 (最多 2 次)。
     async function push(kind: SyncKind, data: unknown, baseRev: number, depth = 0): Promise<void> {
+      if (!isCurrent()) return
       const cfg = KIND_CONFIGS[kind]
       try {
         const res = await authFetch(`/api/user-store/${kind}`, {
           method: 'PUT',
           body: JSON.stringify({ baseRev, data }),
         })
+        assertCurrent()
         if (res.ok) {
-          const j = (await res.json()) as { rev: number }
+          const j = (await res.json()) as { rev: number; data?: unknown }
+          assertCurrent()
           setStoredRev(serverUrl, username, kind, j.rev)
-          lastSynced[kind] = stable(data)
-          if (!cancelled) setStatus(kind, 'synced')
+          if (j.data) cfg.apply(cfg.merge(cfg.getLocal() as never, j.data) as never, snapshot)
+          lastSynced[kind] = stable(j.data ?? data)
+          if (isCurrent()) setStatus(kind, 'synced')
           return
         }
         if (res.status === 409 && depth < 2) {
           const j = (await res.json()) as { rev: number; data: unknown }
+          assertCurrent()
           // 合并服务器最新 + 本地, 应用后带新 rev 重试。
           const merged = cfg.merge(cfg.getLocal() as never, j.data) as never
-          cfg.apply(merged)
+          cfg.apply(merged, snapshot)
           lastSynced[kind] = stable(merged)
           setStoredRev(serverUrl, username, kind, j.rev)
           await push(kind, merged, j.rev, depth + 1)
           return
         }
-        if (!cancelled) setStatus(kind, 'error')
+        if (isCurrent()) setStatus(kind, 'error')
       } catch {
-        if (!cancelled) setStatus(kind, 'error')
+        if (isCurrent()) setStatus(kind, 'error')
       }
     }
 
@@ -89,20 +109,20 @@ export function useCloudSync(): void {
         const res = await authFetch(`/api/user-store/${kind}`, { method: 'GET' })
         if (!res.ok) {
           supported[kind] = false
-          if (!cancelled) setStatus(kind, 'local')
+          if (isCurrent()) setStatus(kind, 'local')
           return
         }
         supported[kind] = true
         const remote = (await res.json()) as { rev: number; data: unknown }
-        if (cancelled) return
+        if (!isCurrent()) return
         if (remote.rev > 0 && remote.data) {
           const merged = cfg.merge(cfg.getLocal() as never, remote.data) as never
-          cfg.apply(merged)
+          cfg.apply(merged, snapshot)
           lastSynced[kind] = stable(merged)
           setStoredRev(serverUrl, username, kind, remote.rev)
           if (stable(merged) !== stable(remote.data)) {
             await push(kind, merged, remote.rev)
-          } else if (!cancelled) {
+          } else if (isCurrent()) {
             setStatus(kind, 'synced')
           }
         } else {
@@ -111,7 +131,7 @@ export function useCloudSync(): void {
         }
       } catch {
         supported[kind] = false
-        if (!cancelled) setStatus(kind, 'error')
+        if (isCurrent()) setStatus(kind, 'error')
       }
     }
 
@@ -119,13 +139,13 @@ export function useCloudSync(): void {
     function watchLocal(kind: SyncKind): void {
       const cfg = KIND_CONFIGS[kind]
       const handler = () => {
-        if (cancelled || !supported[kind]) return
+        if (!isCurrent() || !supported[kind]) return
         if (stable(cfg.getLocal()) === lastSynced[kind]) return
         setStatus(kind, 'syncing')
         if (pushTimers[kind]) window.clearTimeout(pushTimers[kind] as number)
         pushTimers[kind] = window.setTimeout(() => {
           pushTimers[kind] = null
-          if (cancelled || !supported[kind]) return
+          if (!isCurrent() || !supported[kind]) return
           const data = cfg.getLocal()
           if (stable(data) === lastSynced[kind]) {
             setStatus(kind, 'synced')
@@ -139,12 +159,12 @@ export function useCloudSync(): void {
 
     // 应用来自服务器的某 kind 更新 (rev 更新时才合并)。realtime 与 poll 共用。
     function applyRemote(kind: SyncKind, rev: number, data: unknown): void {
-      if (cancelled) return
+      if (!isCurrent()) return
       if (rev <= getStoredRev(serverUrl, username, kind)) return
       supported[kind] = true
       const cfg = KIND_CONFIGS[kind]
       const merged = cfg.merge(cfg.getLocal() as never, data) as never
-      cfg.apply(merged)
+      cfg.apply(merged, snapshot)
       lastSynced[kind] = stable(merged)
       setStoredRev(serverUrl, username, kind, rev)
       // 合并后若本地仍有服务器没有的条目, 推回去保持一致。
@@ -156,7 +176,7 @@ export function useCloudSync(): void {
     function subscribeRealtime(): void {
       unsubs.push(
         wsBus.subscribe((p) => {
-          if (cancelled || p.type !== 'user_store_updated') return
+          if (!isCurrent() || p.type !== 'user_store_updated') return
           const kind = p.kind as SyncKind
           if (kind !== 'calendar' && kind !== 'tasks') return
           applyRemote(kind, typeof p.rev === 'number' ? p.rev : 0, p.data)
@@ -167,7 +187,7 @@ export function useCloudSync(): void {
     // 轮询兜底: WS 断连/漏推时, 定期 GET 比对 rev, 拉取较新数据。
     async function pollOnce(): Promise<void> {
       for (const kind of KINDS) {
-        if (cancelled || !supported[kind]) continue
+        if (!isCurrent() || !supported[kind]) continue
         try {
           const res = await authFetch(`/api/user-store/${kind}`, { method: 'GET' })
           if (!res.ok) continue
@@ -187,21 +207,26 @@ export function useCloudSync(): void {
         useCalendarStore.getState().init(),
         useTasksStore.getState().init(),
       ]).catch(() => undefined)
-      if (cancelled) return
+      if (!isCurrent()) return
       subscribeRealtime()
       for (const kind of KINDS) {
+        if (!KIND_CONFIGS[kind].isLoaded()) {
+          setStatus(kind, 'error')
+          continue
+        }
         await initialSync(kind)
-        if (cancelled) return
+        if (!isCurrent()) return
         watchLocal(kind)
       }
       // 仅当服务器支持时才轮询。
-      if (!cancelled && (supported.calendar || supported.tasks)) {
+      if (isCurrent() && (supported.calendar || supported.tasks)) {
         pollTimer = window.setInterval(() => void pollOnce(), POLL_INTERVAL_MS)
       }
     })()
 
     return () => {
       cancelled = true
+      controller.abort()
       for (const kind of KINDS) {
         if (pushTimers[kind]) window.clearTimeout(pushTimers[kind] as number)
       }
