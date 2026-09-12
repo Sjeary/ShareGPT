@@ -334,3 +334,48 @@ test("pending account writes stop when the administrator logs out", async () => 
     assert.equal(fs.readFileSync(process.env.USERS_FILE, "utf8"), before);
   }
 });
+
+test("last administrator cannot be demoted but role transfer remains available", async () => {
+  const login = JSON.parse(
+    (await post("/api/admin/login", { username: "first-admin", password: "test-password" }).result)
+      .body,
+  );
+  const headers = { authorization: `Bearer ${login.token}` };
+  const before = fs.readFileSync(process.env.USERS_FILE, "utf8");
+  const denied = await post("/api/admin/users/first-admin", { isAdmin: false }, false, {
+    method: "PATCH",
+    headers,
+  }).result;
+  assert.equal(denied.status, 409);
+  assert.match(denied.body, /其他启用账号/);
+  assert.equal(fs.readFileSync(process.env.USERS_FILE, "utf8"), before);
+  assert.equal(
+    (await post("/api/admin/setup", { username: "replacement", password: "test-password" }).result)
+      .status,
+    409,
+  );
+  assert.equal(
+    (
+      await post(
+        "/api/admin/users",
+        { username: "next-admin", password: "test-password", isAdmin: true },
+        false,
+        { headers },
+      ).result
+    ).status,
+    200,
+  );
+  const transferred = await post("/api/admin/users/first-admin", { isAdmin: false }, false, {
+    method: "PATCH",
+    headers,
+  }).result;
+  assert.equal(transferred.status, 200);
+  const saved = JSON.parse(fs.readFileSync(process.env.USERS_FILE)).users;
+  assert.equal(saved.find((user) => user.username === "first-admin").isAdmin, false);
+  assert.equal(saved.find((user) => user.username === "next-admin").isAdmin, true);
+  assert.equal(
+    (await post("/api/admin/setup", { username: "replacement", password: "test-password" }).result)
+      .status,
+    409,
+  );
+});

@@ -204,6 +204,17 @@ function createAdminAccountHandler({
           sendText(res, 404, "用户不存在");
           return true;
         }
+        if (
+          user.isAdmin &&
+          typeof payload.isAdmin !== "undefined" &&
+          !Boolean(payload.isAdmin) &&
+          !store.users.some(
+            (other) => other.username !== user.username && other.isAdmin && !other.disabled,
+          )
+        ) {
+          sendText(res, 409, "请先为其他启用账号授予管理员权限，再移除此账号的管理员权限");
+          return true;
+        }
 
         const nextPassword = String(payload.password || "");
         let securityChanged = false;
