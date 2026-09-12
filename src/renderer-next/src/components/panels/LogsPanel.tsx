@@ -30,11 +30,9 @@ export function LogsPanel() {
   }, [entries])
 
   // 选中的来源若已消失 (清空后), 回退到「全部」。
-  useEffect(() => {
-    if (activeSource !== null && !sources.includes(activeSource)) {
-      setActiveSource(null)
-    }
-  }, [sources, activeSource])
+  if (activeSource !== null && !sources.includes(activeSource)) {
+    setActiveSource(null)
+  }
 
   const visible = useMemo(
     () => (activeSource === null ? entries : entries.filter((e) => e.source === activeSource)),

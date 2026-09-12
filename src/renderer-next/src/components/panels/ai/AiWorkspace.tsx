@@ -147,7 +147,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const activeEnvironment = advancedMode
     ? environments.find((environment) => environment.id === advancedAi.activeByKind[kind]) || null
     : null
-  const environmentId = activeEnvironment?.id || ''
+  const environmentId = String(activeEnvironment?.id || '')
   const activeRoute = routeForEnvironment(availableRoutes, activeEnvironment)
   const activeRouteIds = new Set(
     Array.isArray(status.aiProxyRoutes) ? status.aiProxyRoutes.map((route) => route.id) : [],
@@ -305,9 +305,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const [addressValue, setAddressValue] = useState('')
   const [webAddressOpen, setWebAddressOpen] = useState(false)
 
-  useEffect(() => {
-    if (!networkReady) setWebAddressOpen(false)
-  }, [networkReady])
+  if (!networkReady && webAddressOpen) setWebAddressOpen(false)
 
   useEffect(() => {
     if (kind !== 'claude' || document.activeElement === addressInputRef.current) return
@@ -373,12 +371,10 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   }, [kind, activeTabId])
 
   const toggleProxyPanel = useCallback(() => {
-    setProxyOpen((open) => {
-      const next = !open
-      if (next) void runProxyCheck()
-      return next
-    })
-  }, [runProxyCheck])
+    const next = !proxyOpen
+    setProxyOpen(next)
+    if (next) void runProxyCheck()
+  }, [proxyOpen, runProxyCheck, setProxyOpen])
 
   // 自动巡检: 代理运行 + 页面已初始化时, 周期性跑代理检测, 让"有域名没走代理"能自动爆红,
   // 不必每次手点。(检测只是被动读取已记录的主机, 开销很小。)
@@ -650,7 +646,15 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     } catch (err) {
       reportWorkspaceError(err)
     }
-  }, [kind, addressValue, environmentId, setFeedback, reportWorkspaceError])
+  }, [
+    kind,
+    addressValue,
+    environmentId,
+    setFeedback,
+    reportWorkspaceError,
+    setAddressValue,
+    setWebAddressOpen,
+  ])
 
   const switchTab = useCallback(
     async (tabId: string) => {

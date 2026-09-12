@@ -64,8 +64,10 @@ export function useChatReading(
   const resolvedUnreadId = availableUnreadId(messages, firstUnreadId)
   const requestedUnreadRef = useRef(firstUnreadId)
   const resolvedUnreadRef = useRef(resolvedUnreadId)
-  requestedUnreadRef.current = firstUnreadId
-  resolvedUnreadRef.current = resolvedUnreadId
+  useLayoutEffect(() => {
+    requestedUnreadRef.current = firstUnreadId
+    resolvedUnreadRef.current = resolvedUnreadId
+  }, [firstUnreadId, resolvedUnreadId])
   const activeViewRef = useRef('')
   const pendingUnreadRef = useRef<{ key: string; id: string } | null>(null)
   // Pixel offsets are retained in the store without re-rendering every message on every scroll event.

@@ -77,7 +77,7 @@ export function registerAcceptedAiSend(kind: AiKind, usageId: string): void {
   for (const [key, expiresAt] of acceptedUsageIds) {
     if (expiresAt <= now) acceptedUsageIds.delete(key)
   }
-  let principalId = ''
+  let principalId: string
   try {
     principalId = settingsPrincipalRuntime.snapshot().principalId
   } catch {

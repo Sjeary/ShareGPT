@@ -11,6 +11,10 @@ const PAD = 6 // 高亮框相对目标的外扩
 
 export function Onboarding() {
   const open = useAppStore((s) => s.tourOpen)
+  return open ? <OnboardingSteps /> : null
+}
+
+function OnboardingSteps() {
   const setTourOpen = useAppStore((s) => s.setTourOpen)
   const patchSection = useAppStore((s) => s.patchSection)
   const sidebarSide = useAppStore((s) => s.sidebarSide)
@@ -38,14 +42,8 @@ export function Onboarding() {
     setRect(el ? el.getBoundingClientRect() : null)
   }, [targetSel])
 
-  // 打开时从第一步开始。
-  useEffect(() => {
-    if (open) setIndex(0)
-  }, [open])
-
   // 步骤变化/窗口尺寸变化时重新测量; rAF 双跳过等待布局稳定 (侧栏宽度等过渡)。
   useLayoutEffect(() => {
-    if (!open) return
     let raf = 0
     const run = () => {
       raf = requestAnimationFrame(() => {
@@ -58,7 +56,7 @@ export function Onboarding() {
       cancelAnimationFrame(raf)
       window.removeEventListener('resize', measure)
     }
-  }, [open, index, measure])
+  }, [index, measure])
 
   const finish = useCallback(() => {
     setTourOpen(false)
@@ -66,20 +64,14 @@ export function Onboarding() {
   }, [setTourOpen, patchSection])
 
   const next = useCallback(() => {
-    setIndex((i) => {
-      if (i >= steps.length - 1) {
-        finish()
-        return i
-      }
-      return i + 1
-    })
-  }, [steps.length, finish])
+    if (index >= steps.length - 1) finish()
+    else setIndex(index + 1)
+  }, [index, steps.length, finish])
 
   const prev = useCallback(() => setIndex((i) => Math.max(0, i - 1)), [])
 
   // 键盘: Esc 跳过, →/Enter 下一步, ← 上一步。
   useEffect(() => {
-    if (!open) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') finish()
       else if (e.key === 'ArrowRight' || e.key === 'Enter') next()
@@ -87,9 +79,9 @@ export function Onboarding() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, finish, next, prev])
+  }, [finish, next, prev])
 
-  if (!open || !step) return null
+  if (!step) return null
 
   const last = index === steps.length - 1
   const counter = `${index + 1} / ${steps.length}`

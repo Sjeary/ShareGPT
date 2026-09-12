@@ -45,11 +45,12 @@ export function MonthView({
   const days = eachDayOfInterval({ start: gridStart, end: gridEnd })
 
   // 展开重复事件到网格区间, 仅保留可见日历。
+  const gridStartTime = Number(gridStart.getTime())
+  const gridEndTime = Number(gridEnd.getTime())
   const occurrences = useMemo(() => {
     const visible = events.filter((e) => visibleIds.has(e.calendarId))
-    return expandEvents(visible, gridStart, addDays(gridEnd, 1))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [events, visibleIds, gridStart.getTime(), gridEnd.getTime()])
+    return expandEvents(visible, new Date(gridStartTime), addDays(new Date(gridEndTime), 1))
+  }, [events, visibleIds, gridStartTime, gridEndTime])
 
   // 按天分桶 (全天/跨天优先, 然后按开始时间)。
   const byDay = useMemo(() => {

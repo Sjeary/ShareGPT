@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { MapPin, FileText, Link2, Trash2, Repeat, Check, Users } from 'lucide-react'
 import { shareEventToTeam } from '@/lib/integrations'
 import {
@@ -84,38 +84,41 @@ export function EventEditorDialog({
   const [recurrence, setRecurrence] = useState<RecurrencePreset>('none')
 
   // 打开时按 target 初始化表单。
-  useEffect(() => {
-    if (!target) return
-    const defaultCal = calendars.find((c) => c.isDefault)?.id ?? calendars[0]?.id ?? ''
-    if (existing) {
-      setTitle(existing.title)
-      setCalendarId(existing.calendarId)
-      setAllDay(existing.allDay)
-      setStartDate(isoToDateInput(existing.start))
-      setStartTime(isoToTimeInput(existing.start))
-      setEndDate(isoToDateInput(existing.end))
-      setEndTime(isoToTimeInput(existing.end))
-      setLocation(existing.location ?? '')
-      setNotes(existing.notes ?? '')
-      setUrl(existing.url ?? '')
-      setRecurrence(existing.recurrence?.freq ?? 'none')
-    } else {
-      const s = target.draftStart ? new Date(target.draftStart) : new Date()
-      const e = target.draftEnd ? new Date(target.draftEnd) : new Date(s.getTime() + 3600_000)
-      setTitle('')
-      setCalendarId(defaultCal)
-      setAllDay(target.draftAllDay ?? false)
-      setStartDate(isoToDateInput(s.toISOString()))
-      setStartTime(isoToTimeInput(s.toISOString()))
-      setEndDate(isoToDateInput(e.toISOString()))
-      setEndTime(isoToTimeInput(e.toISOString()))
-      setLocation('')
-      setNotes('')
-      setUrl('')
-      setRecurrence('none')
+  const targetKey = JSON.stringify([target?.eventId, target?.draftStart, target?.draftEnd, open])
+  const [previousTargetKey, setPreviousTargetKey] = useState('')
+  if (targetKey !== previousTargetKey) {
+    setPreviousTargetKey(targetKey)
+    if (target) {
+      const defaultCal = calendars.find((c) => c.isDefault)?.id ?? calendars[0]?.id ?? ''
+      if (existing) {
+        setTitle(existing.title)
+        setCalendarId(existing.calendarId)
+        setAllDay(existing.allDay)
+        setStartDate(isoToDateInput(existing.start))
+        setStartTime(isoToTimeInput(existing.start))
+        setEndDate(isoToDateInput(existing.end))
+        setEndTime(isoToTimeInput(existing.end))
+        setLocation(existing.location ?? '')
+        setNotes(existing.notes ?? '')
+        setUrl(existing.url ?? '')
+        setRecurrence(existing.recurrence?.freq ?? 'none')
+      } else {
+        const s = target.draftStart ? new Date(target.draftStart) : new Date()
+        const e = target.draftEnd ? new Date(target.draftEnd) : new Date(s.getTime() + 3600_000)
+        setTitle('')
+        setCalendarId(defaultCal)
+        setAllDay(target.draftAllDay ?? false)
+        setStartDate(isoToDateInput(s.toISOString()))
+        setStartTime(isoToTimeInput(s.toISOString()))
+        setEndDate(isoToDateInput(e.toISOString()))
+        setEndTime(isoToTimeInput(e.toISOString()))
+        setLocation('')
+        setNotes('')
+        setUrl('')
+        setRecurrence('none')
+      }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target?.eventId, target?.draftStart, target?.draftEnd, open])
+  }
 
   // 由表单计算起止 ISO (保存与「共享到团队」共用)。
   const computeTimes = (): { startIso: string; endIso: string } => {

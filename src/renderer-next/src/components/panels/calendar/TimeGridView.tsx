@@ -54,11 +54,12 @@ export function TimeGridView({
   const rangeStart = startOfDay(days[0])
   const rangeEnd = addDays(startOfDay(days[days.length - 1]), 1)
 
+  const rangeStartTime = rangeStart.getTime()
+  const rangeEndTime = rangeEnd.getTime()
   const occurrences = useMemo(() => {
     const visible = events.filter((e) => visibleIds.has(e.calendarId))
-    return expandEvents(visible, rangeStart, rangeEnd)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [events, visibleIds, rangeStart.getTime(), rangeEnd.getTime()])
+    return expandEvents(visible, new Date(rangeStartTime), new Date(rangeEndTime))
+  }, [events, visibleIds, rangeStartTime, rangeEndTime])
 
   // 分流: 全天 / 定时。
   const { allDayByDay, timedByDay } = useMemo(() => {
@@ -80,8 +81,7 @@ export function TimeGridView({
       }
     }
     return { allDayByDay, timedByDay }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [occurrences, days.map((d) => d.getTime()).join(',')])
+  }, [occurrences, days])
 
   const colWidth = `${100 / days.length}%`
   // 全天行高度: 取最多全天事件的天数, 至少一行。
@@ -215,11 +215,14 @@ function DayColumn({
   const calendars = useCalendarStore((s) => s.calendars)
 
   // 计算布局 + 重叠分列。
+  const dayTime = day.getTime()
   const positioned = useMemo(() => {
-    const withLayout = occurrences.map((occ) => ({ occ, layout: layoutInDay(occ, day) }))
+    const withLayout = occurrences.map((occ) => ({
+      occ,
+      layout: layoutInDay(occ, new Date(dayTime)),
+    }))
     return packDayColumns(withLayout)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [occurrences, day.getTime()])
+  }, [occurrences, dayTime])
 
   // 点击空白: 按 y 像素换算成整点/半点。
   const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
