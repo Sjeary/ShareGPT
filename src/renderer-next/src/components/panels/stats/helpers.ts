@@ -128,12 +128,13 @@ async function fetchWithFriendlyError(
   } catch (err) {
     const e = err as { name?: string; message?: string }
     if (e?.name === 'AbortError') {
-      throw new Error(`连接超时：${url}`)
+      throw new Error(`连接超时：${url}`, { cause: err })
     }
     const message = String(e?.message || err || '')
     if (/failed to fetch/i.test(message)) {
       throw new Error(
         `无法连接到服务地址：${url}。请确认服务已经启动，地址和端口填写正确，并且网络可以访问。`,
+        { cause: err },
       )
     }
     throw err instanceof Error ? err : new Error(message || '请求失败')
