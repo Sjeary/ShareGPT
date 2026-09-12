@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { Loader2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/store/useAppStore'
 import { DEFAULT_TARGET_DOMAINS } from '@/components/panels/service/helpers'
 import { Titlebar } from '@/components/layout/Titlebar'
@@ -13,6 +14,8 @@ export default function App() {
   const settings = useAppStore((s) => s.settings)
   const meta = useAppStore((s) => s.meta)
   const init = useAppStore((s) => s.init)
+  const initializing = useAppStore((s) => s.initializing)
+  const initializationError = useAppStore((s) => s.initializationError)
 
   useEffect(() => {
     void init()
@@ -40,7 +43,25 @@ export default function App() {
       <div className="flex h-full flex-col bg-background text-foreground">
         <Titlebar />
         <div className="grid min-h-0 flex-1 place-items-center">
-          <Loader2 className="size-6 animate-spin text-muted-foreground" />
+          {initializationError ? (
+            <div className="flex max-w-md flex-col items-center gap-3 p-6 text-center">
+              <h1 className="text-lg font-semibold">暂时无法打开 ShareGPT</h1>
+              <p role="alert" className="break-words text-sm text-destructive">
+                {initializationError}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                本机资料已保留。请检查文件访问权限或恢复有效备份后，再重新尝试。
+              </p>
+              <Button onClick={() => void init()} disabled={initializing}>
+                重新尝试
+              </Button>
+            </div>
+          ) : (
+            <Loader2
+              aria-label="正在加载 ShareGPT"
+              className="size-6 animate-spin text-muted-foreground"
+            />
+          )}
         </div>
       </div>
     )

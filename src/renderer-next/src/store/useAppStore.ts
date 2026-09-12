@@ -63,6 +63,8 @@ interface AppState {
 
   // 数据
   settings: AppSettings | null
+  initializing: boolean
+  initializationError: string
   status: StatusPayload
 
   // 协作登录态 (true = 已登录到协作服务器)
@@ -384,6 +386,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   mode: '',
   meta: {},
   settings: null,
+  initializing: false,
+  initializationError: '',
   status: {},
   authed: false,
   setAuthed: (v) => {
@@ -408,63 +412,75 @@ export const useAppStore = create<AppState>((set, get) => ({
   init: () => {
     if (get().settings) return Promise.resolve()
     return appStoreInitialization.run(async () => {
-      const principal = requireSettingsPrincipalSnapshot(await api.getSettingsPrincipal())
-      settingsPrincipalRuntime.activate(principal.principalId, principal.generation)
-      const principalSnapshot = settingsPrincipalRuntime.snapshot()
-      const [settings, mode, meta, status] = await Promise.all([
-        api.loadSettings({
-          expectedPrincipalId: principalSnapshot.principalId,
-          expectedPrincipalGeneration: principalSnapshot.generation,
-        }),
-        api.getMode().catch(() => 'all'),
-        api.getAppMeta().catch(() => ({})),
-        api.getStatus().catch(() => ({})),
-      ])
-      settingsPrincipalRuntime.assertCurrent(principalSnapshot)
-      const mergedSettings = { ...EMPTY_SETTINGS, ...(settings as unknown as AppSettings) }
-      set({
-        settings: mergedSettings,
-        mode: String(mode || ''),
-        meta: meta as Record<string, unknown>,
-        status: status as StatusPayload,
-      })
-      // [LOW] 主题优先取磁盘 settings.ui.theme (跨设备/资料包一致), 无则回退 localStorage 现值。
-      const savedTheme = mergedSettings.ui?.theme
-      if (savedTheme === 'dark' || savedTheme === 'light') {
-        const dark = savedTheme === 'dark'
-        applyTheme(dark)
-        set({ dark })
-      } else {
-        // 无磁盘设置: 用启动时 localStorage 推断的 dark 重新落实到 DOM (确保 class 同步)。
-        applyTheme(get().dark)
-      }
-      // 启动时同步内嵌网页明暗 = 当前 app 主题。
-      void api.setThemeSource(get().dark ? 'dark' : 'light').catch(() => undefined)
-      // 侧栏左右位置同样优先取磁盘设置 (跨设备一致), 无则保留 localStorage 现值。
-      const savedSide = mergedSettings.ui?.sidebarSide
-      if (savedSide === 'left' || savedSide === 'right') {
-        set({ sidebarSide: savedSide })
-      }
-      // 是否展示 Gemini 同样优先取磁盘设置, 无则保留 localStorage 现值。
-      const savedShowGemini = mergedSettings.ui?.showGemini
-      if (typeof savedShowGemini === 'boolean') {
-        set({ showGemini: savedShowGemini })
-        if (!savedShowGemini && get().active === 'gemini') set({ active: 'service' })
-      }
-      const savedHidden = mergedSettings.ui?.hiddenNav
-      if (Array.isArray(savedHidden)) set({ hiddenNav: savedHidden as NavKey[] })
+      set({ initializing: true, initializationError: '' })
+      try {
+        const principal = requireSettingsPrincipalSnapshot(await api.getSettingsPrincipal())
+        settingsPrincipalRuntime.activate(principal.principalId, principal.generation)
+        const principalSnapshot = settingsPrincipalRuntime.snapshot()
+        const [settings, mode, meta, status] = await Promise.all([
+          api.loadSettings({
+            expectedPrincipalId: principalSnapshot.principalId,
+            expectedPrincipalGeneration: principalSnapshot.generation,
+          }),
+          api.getMode().catch(() => 'all'),
+          api.getAppMeta().catch(() => ({})),
+          api.getStatus().catch(() => ({})),
+        ])
+        settingsPrincipalRuntime.assertCurrent(principalSnapshot)
+        const mergedSettings = { ...EMPTY_SETTINGS, ...(settings as unknown as AppSettings) }
+        set({
+          settings: mergedSettings,
+          mode: String(mode || ''),
+          meta: meta as Record<string, unknown>,
+          status: status as StatusPayload,
+        })
+        // [LOW] 主题优先取磁盘 settings.ui.theme (跨设备/资料包一致), 无则回退 localStorage 现值。
+        const savedTheme = mergedSettings.ui?.theme
+        if (savedTheme === 'dark' || savedTheme === 'light') {
+          const dark = savedTheme === 'dark'
+          applyTheme(dark)
+          set({ dark })
+        } else {
+          // 无磁盘设置: 用启动时 localStorage 推断的 dark 重新落实到 DOM (确保 class 同步)。
+          applyTheme(get().dark)
+        }
+        // 启动时同步内嵌网页明暗 = 当前 app 主题。
+        void api.setThemeSource(get().dark ? 'dark' : 'light').catch(() => undefined)
+        // 侧栏左右位置同样优先取磁盘设置 (跨设备一致), 无则保留 localStorage 现值。
+        const savedSide = mergedSettings.ui?.sidebarSide
+        if (savedSide === 'left' || savedSide === 'right') {
+          set({ sidebarSide: savedSide })
+        }
+        // 是否展示 Gemini 同样优先取磁盘设置, 无则保留 localStorage 现值。
+        const savedShowGemini = mergedSettings.ui?.showGemini
+        if (typeof savedShowGemini === 'boolean') {
+          set({ showGemini: savedShowGemini })
+          if (!savedShowGemini && get().active === 'gemini') set({ active: 'service' })
+        }
+        const savedHidden = mergedSettings.ui?.hiddenNav
+        if (Array.isArray(savedHidden)) set({ hiddenNav: savedHidden as NavKey[] })
 
-      const savedOrder = mergedSettings.ui?.navOrder
-      if (Array.isArray(savedOrder)) set({ navOrder: savedOrder as NavKey[] })
+        const savedOrder = mergedSettings.ui?.navOrder
+        if (Array.isArray(savedOrder)) set({ navOrder: savedOrder as NavKey[] })
 
-      const savedShowClaude = mergedSettings.ui?.showClaude
-      if (typeof savedShowClaude === 'boolean') {
-        set({ showClaude: savedShowClaude })
-        if (!savedShowClaude && get().active === 'claude') set({ active: 'service' })
-      }
-      if (!statusSubscriptionInstalled) {
-        api.onStatus((payload) => set({ status: payload as StatusPayload }))
-        statusSubscriptionInstalled = true
+        const savedShowClaude = mergedSettings.ui?.showClaude
+        if (typeof savedShowClaude === 'boolean') {
+          set({ showClaude: savedShowClaude })
+          if (!savedShowClaude && get().active === 'claude') set({ active: 'service' })
+        }
+        if (!statusSubscriptionInstalled) {
+          api.onStatus((payload) => set({ status: payload as StatusPayload }))
+          statusSubscriptionInstalled = true
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '本机设置暂时无法读取，请重试。'
+        set({
+          initializationError: message
+            .replace(/^Error invoking remote method '[^']+': Error:\s*/i, '')
+            .replace(/^Error:\s*/i, ''),
+        })
+      } finally {
+        set({ initializing: false })
       }
     })
   },
