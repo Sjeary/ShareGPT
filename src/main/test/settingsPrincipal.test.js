@@ -102,6 +102,23 @@ function principalId(backend) {
   return backend.getPrincipalContext().principalId;
 }
 
+test("a lone damaged chat backup does not abort startup or permit replacement", (t) => {
+  const backend = createBackend(t);
+  const backup = `${backend.chatHistoryFile}.bak`;
+  fs.writeFileSync(backup, "{damaged-history");
+  assert.doesNotThrow(() => backend.init());
+  assert.equal(fs.existsSync(backend.chatHistoryFile), false);
+  assert.throws(() => backend.loadChatHistory(), { code: "LOCAL_STORE_UNAVAILABLE" });
+  assert.throws(() => backend.saveChatHistory({ conversations: {} }), {
+    code: "LOCAL_STORE_UNAVAILABLE",
+  });
+  assert.equal(fs.readFileSync(backup, "utf8"), "{damaged-history");
+  const recovered = { version: 1, conversations: {} };
+  fs.writeFileSync(backup, JSON.stringify(recovered));
+  assert.deepEqual(backend.loadChatHistory().conversations, {});
+  assert.equal(fs.readFileSync(backend.chatHistoryFile, "utf8"), JSON.stringify(recovered));
+});
+
 test("isolated development keeps update downloads and backup recovery inside its profile", (t) => {
   const original = process.env.SHAREGPT_USER_DATA;
   t.after(() => {

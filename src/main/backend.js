@@ -1724,14 +1724,14 @@ class Backend {
   }
 
   ensureChatHistoryFile() {
-    if (!fs.existsSync(this.chatHistoryFile)) {
-      const data = readLocalJson(this.chatHistoryFile, {
-        version: 1,
-        updatedAt: new Date().toISOString(),
-        conversations: {},
-      });
-      if (!fs.existsSync(this.chatHistoryFile)) writeLocalJson(this.chatHistoryFile, data);
-    }
+    // Existing data (including a lone backup) is validated by loadChatHistory.
+    // An unreadable history backup must not prevent creating the application window.
+    if (fs.existsSync(this.chatHistoryFile) || fs.existsSync(`${this.chatHistoryFile}.bak`)) return;
+    writeLocalJson(this.chatHistoryFile, {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      conversations: {},
+    });
   }
 
   loadChatHistory() {
