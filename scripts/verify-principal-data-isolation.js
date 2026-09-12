@@ -346,6 +346,15 @@ async function main() {
         await window.getByText("当前：个人工作区", { exact: true }).waitFor();
         scopes.local = await readWorkspaceScope(window);
         assert.equal(scopes.local.principal.principalId, "local-device");
+        await window.getByTestId("legacy-data-open").click();
+        await window.getByRole("dialog").waitFor({ state: "visible" });
+        assert.equal(
+          await window.getByTestId("legacy-data-chat").count(),
+          0,
+          "personal workspace must not offer unusable team chat imports",
+        );
+        await window.keyboard.press("Escape");
+        await window.getByRole("dialog").waitFor({ state: "hidden" });
         assertUnassigned(await readData(window));
         await writeData(window, "local");
         await cookieSentinels(electronApp, scopes.local, "local", storageUrl, true);

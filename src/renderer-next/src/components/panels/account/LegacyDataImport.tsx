@@ -40,6 +40,7 @@ export function LegacyDataImport() {
   const [confirmed, setConfirmed] = useState(false)
   const [error, setError] = useState('')
   const target = personal ? '个人工作区（仅本机）' : `${username} · ${server}`
+  const visibleItems = items.filter((item) => !personal || item.category !== 'chat')
 
   async function inspect() {
     setBusy(true)
@@ -168,7 +169,7 @@ export function LegacyDataImport() {
             </div>
           ) : (
             <div className="grid gap-3">
-              {items.map((item) => (
+              {visibleItems.map((item) => (
                 <div key={item.category} className="rounded-md border p-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
@@ -218,6 +219,11 @@ export function LegacyDataImport() {
               <p className="text-xs text-muted-foreground">
                 暂不接续也可以继续使用。之后可随时回到账户页查看。
               </p>
+              {personal && (
+                <p className="text-xs text-muted-foreground">
+                  旧团队聊天历史请登录对应团队账号后接续。
+                </p>
+              )}
             </div>
           )}
         </DialogContent>
