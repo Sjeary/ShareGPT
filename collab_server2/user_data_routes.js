@@ -41,6 +41,10 @@ function createUserDataHandler({
       if (req.method === "PUT") {
         try {
           const payload = safeParseJson(await readBody(req, 8 * 1024 * 1024)) || {};
+          if (resolveSessionByToken(token) !== session) {
+            sendText(res, 401, "登录已失效，请重新登录");
+            return true;
+          }
           const baseRev = Number.isInteger(payload.baseRev) ? payload.baseRev : 0;
           const data = payload.data;
           if (!data || typeof data !== "object") {

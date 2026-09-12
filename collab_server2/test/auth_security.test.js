@@ -401,3 +401,34 @@ test("corrupt personal server storage blocks reads and writes while preserving o
   assert.equal(fs.readFileSync(process.env.USER_STORES_FILE, "utf8"), original);
   fs.unlinkSync(process.env.USER_STORES_FILE);
 });
+
+test("personal data request cannot write after its original token is revoked", async () => {
+  for (const revoke of ["logout", "replacement-login"]) {
+    const login = JSON.parse(
+      (await post("/api/login", { username: "first-admin", password: "test-password" }).result)
+        .body,
+    );
+    const headers = { authorization: `Bearer ${login.token}` };
+    const request = post("/api/user-store/calendar", null, true, { method: "PUT", headers });
+    // Let routing reach readBody before revocation; the suspended request already has a session.
+    await new Promise((resolve) => setImmediate(resolve));
+    if (revoke === "logout") {
+      assert.equal((await post("/api/logout", {}, false, { headers }).result).status, 200);
+    } else {
+      assert.equal(
+        (await post("/api/login", { username: "first-admin", password: "test-password" }).result)
+          .status,
+        200,
+      );
+    }
+    const before = fs.existsSync(process.env.USER_STORES_FILE)
+      ? fs.readFileSync(process.env.USER_STORES_FILE, "utf8")
+      : null;
+    request.req.end(JSON.stringify({ baseRev: 0, data: { calendars: [], events: [] } }));
+    assert.equal((await request.result).status, 401);
+    const after = fs.existsSync(process.env.USER_STORES_FILE)
+      ? fs.readFileSync(process.env.USER_STORES_FILE, "utf8")
+      : null;
+    assert.equal(after, before);
+  }
+});
