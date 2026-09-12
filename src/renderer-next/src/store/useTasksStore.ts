@@ -2,6 +2,11 @@ import { create } from 'zustand'
 import { addDays, addMonths, addWeeks, addYears, format, parseISO, startOfDay } from 'date-fns'
 import { api } from '@/lib/api'
 import type { TasksStoreFile } from '@/types/api'
+import { createPrincipalDebouncedSave } from '@/lib/principalDebouncedSave'
+import {
+  settingsPrincipalRuntime,
+  type SettingsPrincipalSnapshot,
+} from '@/lib/settingsPrincipalRuntime'
 import {
   filterDeleted,
   isDeleted,
@@ -201,25 +206,6 @@ function advanceDate(dateStr: string, repeat: Repeat): string {
   return format(next, 'yyyy-MM-dd')
 }
 
-// —— debounce 落盘 ——
-let saveTimer: ReturnType<typeof setTimeout> | null = null
-function scheduleSave(get: () => TasksState) {
-  if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    saveTimer = null
-    const { lists, tasks, memos, deleted } = get()
-    const payload: TasksStoreFile & { deleted: StoreDeletions } = {
-      version: 1,
-      updatedAt: nowIso(),
-      lists,
-      tasks,
-      memos,
-      deleted,
-    }
-    void api.saveTasks(payload)
-  }, 300)
-}
-
 interface TasksState {
   lists: TaskList[]
   tasks: Task[]
@@ -228,6 +214,8 @@ interface TasksState {
   loaded: boolean
 
   init: () => Promise<void>
+  resetForPrincipal: () => void
+  flushPending: () => Promise<void>
 
   // 清单 CRUD
   addList: (input: { name: string; color: string }) => TaskList
@@ -254,18 +242,34 @@ interface TasksState {
   toggleMemoPin: (id: string) => void
 
   // 用(云端合并后的)整组数据替换本地 (云同步用); 会触发本地落盘。
-  replaceAll: (data: {
-    lists: TaskList[]
-    tasks: Task[]
-    memos: Memo[]
-    deleted?: StoreDeletions
-  }) => void
+  replaceAll: (
+    data: {
+      lists: TaskList[]
+      tasks: Task[]
+      memos: Memo[]
+      deleted?: StoreDeletions
+    },
+    snapshot?: SettingsPrincipalSnapshot,
+  ) => void
 }
 
 export const useTasksStore = create<TasksState>((set, get) => {
+  let owner: SettingsPrincipalSnapshot | null = null
+  let loadEpoch = 0
+  const persistence = createPrincipalDebouncedSave<TasksStoreFile & { deleted: StoreDeletions }>(
+    (payload) => api.saveTasks(payload),
+  )
+  const scheduleSave = () => {
+    if (!owner) return
+    settingsPrincipalRuntime.assertCurrent(owner)
+    const { lists, tasks, memos, deleted } = get()
+    persistence.schedule({ version: 1, updatedAt: nowIso(), lists, tasks, memos, deleted }, owner)
+  }
+
   const commit = (partial: Partial<Pick<TasksState, 'lists' | 'tasks' | 'memos' | 'deleted'>>) => {
+    if (owner) settingsPrincipalRuntime.assertCurrent(owner)
     set(partial)
-    scheduleSave(get)
+    scheduleSave()
   }
 
   return {
@@ -275,14 +279,40 @@ export const useTasksStore = create<TasksState>((set, get) => {
     deleted: {},
     loaded: false,
 
+    resetForPrincipal: () => {
+      loadEpoch += 1
+      owner = null
+      persistence.cancel()
+      set({ lists: [], tasks: [], memos: [], deleted: {}, loaded: false })
+    },
+    flushPending: () => persistence.flushPending(),
+
     init: async () => {
-      if (get().loaded) return
+      const snapshot = settingsPrincipalRuntime.snapshot()
+      if (
+        get().loaded &&
+        owner?.principalId === snapshot.principalId &&
+        owner?.generation === snapshot.generation
+      )
+        return
+      owner = snapshot
+      const epoch = ++loadEpoch
+      const isCurrent = () => {
+        const current = settingsPrincipalRuntime.current()
+        return (
+          epoch === loadEpoch &&
+          current.principalId === snapshot.principalId &&
+          current.generation === snapshot.generation
+        )
+      }
       let file: TasksStoreFile | null
       try {
         file = await api.loadTasks()
       } catch {
-        file = null
+        if (isCurrent()) console.error('个人数据读取失败，请重试')
+        return
       }
+      if (!isCurrent()) return
       const deleted = mergeDeletions((file as { deleted?: unknown } | null)?.deleted)
       const lists = filterDeleted(
         (file?.lists ?? []).map((v, i) => parseList(v, i)).filter((l): l is TaskList => l !== null),
@@ -305,7 +335,8 @@ export const useTasksStore = create<TasksState>((set, get) => {
         const seeded = seedDefaults()
         const data = { lists: seeded.lists, tasks, memos, deleted }
         set({ ...data, loaded: true })
-        void api.saveTasks({ version: 1, updatedAt: nowIso(), ...data })
+        scheduleSave()
+        await persistence.flushPending()
         return
       }
 
@@ -515,7 +546,9 @@ export const useTasksStore = create<TasksState>((set, get) => {
       })
     },
 
-    replaceAll: (data) => {
+    replaceAll: (data, snapshot = settingsPrincipalRuntime.snapshot()) => {
+      settingsPrincipalRuntime.assertCurrent(snapshot)
+      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
       const deleted = mergeDeletions(get().deleted, data.deleted)
       const lists = filterDeleted(Array.isArray(data.lists) ? data.lists : [], deleted, 'lists')
       const fallback = lists.find((list) => list.isInbox)?.id ?? lists[0]?.id

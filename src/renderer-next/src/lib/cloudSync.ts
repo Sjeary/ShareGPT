@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { useCalendarStore, type Calendar, type CalendarEvent } from '@/store/useCalendarStore'
 import { useTasksStore, type Memo, type Task, type TaskList } from '@/store/useTasksStore'
 import { filterDeleted, isDeleted, mergeDeletions, type StoreDeletions } from './storeDeletions'
+import type { SettingsPrincipalSnapshot } from './settingsPrincipalRuntime'
 
 // 个人数据云端同步 (个人日历 calendar / 待办备忘 tasks):
 //  - 多端实时: 写入经服务器后, 服务器把更新推给同一用户的其它在线端。
@@ -69,7 +70,7 @@ function asArr<T>(v: unknown): T[] {
 // —— 每种数据的本地读取 / 应用 / 合并 / 订阅 ——
 export interface KindConfig<D> {
   getLocal: () => D
-  apply: (data: D) => void
+  apply: (data: D, snapshot?: SettingsPrincipalSnapshot) => void
   merge: (local: D, remote: unknown) => D
   subscribe: (fn: () => void) => () => void
   isLoaded: () => boolean
@@ -81,7 +82,7 @@ export const KIND_CONFIGS: { calendar: KindConfig<CalendarData>; tasks: KindConf
       const s = useCalendarStore.getState()
       return { calendars: s.calendars, events: s.events, deleted: s.deleted }
     },
-    apply: (data) => useCalendarStore.getState().replaceAll(data),
+    apply: (data, snapshot) => useCalendarStore.getState().replaceAll(data, snapshot),
     merge: (local, remote) => {
       const r = (remote ?? {}) as Partial<CalendarData>
       const deleted = mergeDeletions(local.deleted, r.deleted)
@@ -107,7 +108,7 @@ export const KIND_CONFIGS: { calendar: KindConfig<CalendarData>; tasks: KindConf
       const s = useTasksStore.getState()
       return { lists: s.lists, tasks: s.tasks, memos: s.memos, deleted: s.deleted }
     },
-    apply: (data) => useTasksStore.getState().replaceAll(data),
+    apply: (data, snapshot) => useTasksStore.getState().replaceAll(data, snapshot),
     merge: (local, remote) => {
       const r = (remote ?? {}) as Partial<TasksData>
       const deleted = mergeDeletions(local.deleted, r.deleted)

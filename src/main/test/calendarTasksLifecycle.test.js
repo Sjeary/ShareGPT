@@ -53,6 +53,7 @@ function fixture(apiOverrides = {}) {
           return requireRenderer(name);
         },
         crypto,
+        structuredClone,
         console,
         setTimeout(callback) {
           timers.set(++timerId, callback);
@@ -98,15 +99,13 @@ test("calendar removal persists child tombstones and stale cloud snapshots canno
   const store = app.load("store/useCalendarStore.ts").useCalendarStore;
   await store.getState().init();
   const calendar = store.getState().addCalendar({ name: "trip", color: "#123456" });
-  const event = store
-    .getState()
-    .addEvent({
-      calendarId: calendar.id,
-      title: "booking",
-      start: "2026-01-02",
-      end: "2026-01-03",
-      allDay: true,
-    });
+  const event = store.getState().addEvent({
+    calendarId: calendar.id,
+    title: "booking",
+    start: "2026-01-02",
+    end: "2026-01-03",
+    allDay: true,
+  });
   const stale = { calendars: store.getState().calendars, events: store.getState().events };
   store.getState().removeCalendar(calendar.id);
   const sync = app.load("lib/cloudSync.ts").KIND_CONFIGS.calendar;
@@ -151,3 +150,114 @@ test("list removal preserves tasks in the inbox while explicit tasks and memos s
   assert.ok(saved.deleted.tasks[removed.id]);
   assert.ok(saved.deleted.memos[memo.id]);
 });
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+test("personal save queue captures payloads and never starts queued writes after an account switch", async () => {
+  const app = fixture();
+  const runtime = app.load("lib/settingsPrincipalRuntime.ts").settingsPrincipalRuntime;
+  const { createPrincipalDebouncedSave } = app.load("lib/principalDebouncedSave.ts");
+  const pending = deferred();
+  const writes = [];
+  const queue = createPrincipalDebouncedSave((payload) => {
+    writes.push(payload);
+    return pending.promise;
+  });
+  const snapshot = runtime.activate("A", 1);
+  const first = { title: "first" };
+  queue.schedule(first, snapshot);
+  first.title = "mutated after scheduling";
+  const firstFlush = queue.flushPending();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(writes[0].title, "first");
+  queue.schedule({ title: "queued" }, snapshot);
+  const secondFlush = queue.flushPending();
+  runtime.activate("B", 2);
+  pending.resolve();
+  await Promise.all([firstFlush, secondFlush]);
+  assert.equal(writes.length, 1);
+});
+
+for (const [kind, name, collection] of [
+  ["Calendar", "useCalendarStore", "calendars"],
+  ["Tasks", "useTasksStore", "lists"],
+]) {
+  test(`${kind}: delayed old-account initialization cannot replace the new account`, async () => {
+    const first = deferred();
+    let loadCalls = 0;
+    const fixtureData =
+      kind === "Calendar"
+        ? { calendars: [{ id: "b", name: "B", color: "#123456" }], events: [] }
+        : {
+            lists: [{ id: "b", name: "B", color: "#123456", isInbox: true }],
+            tasks: [],
+            memos: [],
+          };
+    const app = fixture({
+      [`load${kind}`]: () => (++loadCalls === 1 ? first.promise : Promise.resolve(fixtureData)),
+    });
+    const runtime = app.load("lib/settingsPrincipalRuntime.ts").settingsPrincipalRuntime;
+    const store = app.load(`store/${name}.ts`)[name];
+    runtime.activate("A", 1);
+    const oldInit = store.getState().init();
+    runtime.activate("B", 2);
+    store.getState().resetForPrincipal();
+    await store.getState().init();
+    first.resolve(null);
+    await oldInit;
+    assert.equal(store.getState()[collection][0].id, "b");
+    assert.equal(app.saved.calendar.length + app.saved.tasks.length, 0);
+  });
+
+  test(`${kind}: flush owns one save and reset cancels old-account pending writes`, async () => {
+    const app = fixture();
+    const runtime = app.load("lib/settingsPrincipalRuntime.ts").settingsPrincipalRuntime;
+    const store = app.load(`store/${name}.ts`)[name];
+    runtime.activate("A", 1);
+    await store.getState().init();
+    const saves = kind === "Calendar" ? app.saved.calendar : app.saved.tasks;
+    saves.length = 0;
+    const add = () =>
+      kind === "Calendar"
+        ? store.getState().addCalendar({ name: "A", color: "#123456" })
+        : store.getState().addList({ name: "A", color: "#123456" });
+    add();
+    await Promise.all([store.getState().flushPending(), store.getState().flushPending()]);
+    assert.equal(saves.length, 1);
+    assert.equal(saves[0][collection].length, 2);
+    add();
+    runtime.activate("B", 2);
+    store.getState().resetForPrincipal();
+    await app.drain();
+    assert.equal(saves.length, 1);
+    assert.equal(store.getState()[collection].length, 0);
+    assert.equal(store.getState().loaded, false);
+  });
+
+  test(`${kind}: old cloud apply and failed reads never seed replacement data`, async () => {
+    const app = fixture({
+      [`load${kind}`]: async () => {
+        throw new Error("test load failed");
+      },
+    });
+    const runtime = app.load("lib/settingsPrincipalRuntime.ts").settingsPrincipalRuntime;
+    const store = app.load(`store/${name}.ts`)[name];
+    const snapshot = runtime.activate("A", 1);
+    await store.getState().init();
+    assert.equal(store.getState().loaded, false);
+    assert.equal(app.saved.calendar.length + app.saved.tasks.length, 0);
+    runtime.activate("A", 2);
+    store.getState().resetForPrincipal();
+    const sync = app.load("lib/cloudSync.ts").KIND_CONFIGS[kind.toLowerCase()];
+    assert.throws(() => sync.apply(sync.getLocal(), snapshot), {
+      name: "StaleSettingsPrincipalError",
+    });
+    assert.equal(store.getState()[collection].length, 0);
+  });
+}

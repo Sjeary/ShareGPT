@@ -1,6 +1,11 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
 import type { CalendarStoreFile } from '@/types/api'
+import { createPrincipalDebouncedSave } from '@/lib/principalDebouncedSave'
+import {
+  settingsPrincipalRuntime,
+  type SettingsPrincipalSnapshot,
+} from '@/lib/settingsPrincipalRuntime'
 import {
   filterDeleted,
   isDeleted,
@@ -58,6 +63,8 @@ interface CalendarState {
 
   // 生命周期
   init: () => Promise<void>
+  resetForPrincipal: () => void
+  flushPending: () => Promise<void>
 
   // 日历 CRUD
   addCalendar: (input: { name: string; color: string }) => Calendar
@@ -83,11 +90,14 @@ interface CalendarState {
   ) => number
 
   // 用(云端合并后的)整组数据替换本地 (云同步用); 会触发本地落盘。
-  replaceAll: (data: {
-    calendars: Calendar[]
-    events: CalendarEvent[]
-    deleted?: StoreDeletions
-  }) => void
+  replaceAll: (
+    data: {
+      calendars: Calendar[]
+      events: CalendarEvent[]
+      deleted?: StoreDeletions
+    },
+    snapshot?: SettingsPrincipalSnapshot,
+  ) => void
 }
 
 // 专用「导入」日历的固定名称与颜色 (青色, 与其它默认日历区分)。
@@ -165,29 +175,24 @@ function parseEvent(v: unknown): CalendarEvent | null {
   }
 }
 
-// —— debounce 落盘 ——
-let saveTimer: ReturnType<typeof setTimeout> | null = null
-function scheduleSave(get: () => CalendarState) {
-  if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    saveTimer = null
-    const { calendars, events, deleted } = get()
-    const payload: CalendarStoreFile & { deleted: StoreDeletions } = {
-      version: 1,
-      updatedAt: nowIso(),
-      calendars,
-      events,
-      deleted,
-    }
-    void api.saveCalendar(payload)
-  }, 300)
-}
-
 export const useCalendarStore = create<CalendarState>((set, get) => {
+  let owner: SettingsPrincipalSnapshot | null = null
+  let loadEpoch = 0
+  const persistence = createPrincipalDebouncedSave<CalendarStoreFile & { deleted: StoreDeletions }>(
+    (payload) => api.saveCalendar(payload),
+  )
+  const scheduleSave = () => {
+    if (!owner) return
+    settingsPrincipalRuntime.assertCurrent(owner)
+    const { calendars, events, deleted } = get()
+    persistence.schedule({ version: 1, updatedAt: nowIso(), calendars, events, deleted }, owner)
+  }
+
   // 任一变更后: 触发落盘。
   const commit = (partial: Partial<Pick<CalendarState, 'calendars' | 'events' | 'deleted'>>) => {
+    if (owner) settingsPrincipalRuntime.assertCurrent(owner)
     set(partial)
-    scheduleSave(get)
+    scheduleSave()
   }
 
   return {
@@ -196,14 +201,40 @@ export const useCalendarStore = create<CalendarState>((set, get) => {
     deleted: {},
     loaded: false,
 
+    resetForPrincipal: () => {
+      loadEpoch += 1
+      owner = null
+      persistence.cancel()
+      set({ calendars: [], events: [], deleted: {}, loaded: false })
+    },
+    flushPending: () => persistence.flushPending(),
+
     init: async () => {
-      if (get().loaded) return
+      const snapshot = settingsPrincipalRuntime.snapshot()
+      if (
+        get().loaded &&
+        owner?.principalId === snapshot.principalId &&
+        owner?.generation === snapshot.generation
+      )
+        return
+      owner = snapshot
+      const epoch = ++loadEpoch
+      const isCurrent = () => {
+        const current = settingsPrincipalRuntime.current()
+        return (
+          epoch === loadEpoch &&
+          current.principalId === snapshot.principalId &&
+          current.generation === snapshot.generation
+        )
+      }
       let file: CalendarStoreFile | null
       try {
         file = await api.loadCalendar()
       } catch {
-        file = null
+        if (isCurrent()) console.error('个人数据读取失败，请重试')
+        return
       }
+      if (!isCurrent()) return
       const deleted = mergeDeletions((file as { deleted?: unknown } | null)?.deleted)
       const calendars = filterDeleted(
         (file?.calendars ?? []).map(parseCalendar).filter((c): c is Calendar => c !== null),
@@ -221,7 +252,8 @@ export const useCalendarStore = create<CalendarState>((set, get) => {
         const seeded = seedDefaults()
         const data = { calendars: seeded.calendars, events, deleted }
         set({ ...data, loaded: true })
-        void api.saveCalendar({ version: 1, updatedAt: nowIso(), ...data })
+        scheduleSave()
+        await persistence.flushPending()
         return
       }
 
@@ -324,7 +356,9 @@ export const useCalendarStore = create<CalendarState>((set, get) => {
       return newEvents.length
     },
 
-    replaceAll: (data) => {
+    replaceAll: (data, snapshot = settingsPrincipalRuntime.snapshot()) => {
+      settingsPrincipalRuntime.assertCurrent(snapshot)
+      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
       const deleted = mergeDeletions(get().deleted, data.deleted)
       commit({
         calendars: filterDeleted(
