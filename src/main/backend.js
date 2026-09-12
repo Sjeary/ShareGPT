@@ -1940,7 +1940,7 @@ class Backend {
 
   async importUserData() {
     const principal = this.getPrincipalContext();
-    const { dialog } = require("electron");
+    const dialog = this.dialog || require("electron").dialog;
     const window = this.getWindow();
     if (!window) return null;
 
@@ -1955,6 +1955,9 @@ class Backend {
     try {
       const filePath = result.filePaths[0];
       const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      if (Object.keys(raw?.chatHistory?.conversations || {}).some((key) => key.includes("\0"))) {
+        throw new Error("资料包包含旧聊天分组，请先使用旧资料接续确认来源；本次未导入");
+      }
       const settings = this.saveImportedSettingsForPrincipal(raw?.settings, principal);
       this.assertSettingsPrincipalSnapshot(principal);
       const chatHistory = this.saveChatHistory(raw?.chatHistory || {});
@@ -2056,6 +2059,14 @@ class Backend {
       ...imported,
       settingsRevision: current.settingsRevision,
     };
+    if (principal.principalId !== LOCAL_PRINCIPAL_ID) {
+      // Importing preferences must not redirect a signed-in account's existing token/sync traffic.
+      scoped.collab = { ...imported.collab };
+      for (const field of ["last_avatar", "remember_password", "auto_login", "saved_password"])
+        scoped.collab[field] = current.collab[field];
+      scoped.collab.server_url = this.activePrincipalServerUrl;
+      scoped.collab.last_username = this.activePrincipalUsername;
+    }
     for (const kind of ["gpt", "gemini", "claude"]) {
       scoped[kind] = {
         ...(imported[kind] && typeof imported[kind] === "object" ? imported[kind] : {}),

@@ -153,3 +153,45 @@ test("failed account switches and imports resume the original notes watcher", as
   assert.equal(watching, true);
   assert.equal(restarts, 1);
 });
+
+test("imported preferences cannot redirect an active team's identity or remembered credentials", (t) => {
+  const { backend } = fixture(t);
+  backend.activatePrincipal("https://team-a.example", "Alice");
+  const before = backend.loadSettings().collab;
+  const imported = backend.saveImportedSettingsForPrincipal(
+    {
+      collab: {
+        server_url: "https://team-b.example",
+        last_username: "Bob",
+        saved_password: "foreign-secret",
+        auto_login: true,
+      },
+      ui: { theme: "light" },
+    },
+    backend.getPrincipalContext(),
+  );
+  assert.equal(imported.collab.server_url, "https://team-a.example");
+  assert.equal(imported.collab.last_username, "Alice");
+  assert.equal(imported.collab.saved_password, before.saved_password);
+  assert.equal(imported.collab.auto_login, before.auto_login);
+  assert.equal(imported.ui.theme, "light");
+});
+
+test("ambiguous old chat archives fail before changing settings or current history", async (t) => {
+  const { backend, root } = fixture(t);
+  backend.activatePrincipal("https://team.example", "Alice");
+  const file = path.join(root, "archive.json");
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      settings: { ui: { theme: "light" } },
+      chatHistory: { conversations: { "https://other.example\0room": [{ id: "old" }] } },
+    }),
+  );
+  backend.dialog = { showOpenDialog: async () => ({ canceled: false, filePaths: [file] }) };
+  backend.getWindow = () => ({});
+  const settings = fs.readFileSync(backend.settingsFile);
+  await assert.rejects(backend.importUserData(), /旧聊天分组/);
+  assert.deepEqual(fs.readFileSync(backend.settingsFile), settings);
+  assert.equal(fs.existsSync(backend.chatHistoryFile), false);
+});
