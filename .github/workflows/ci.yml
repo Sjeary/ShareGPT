@@ -66,6 +66,9 @@ jobs:
       - name: 单元测试 (collab_server2)
         run: npm test
 
+      - name: Verify released client protocol compatibility with current server
+        run: node scripts/verify-legacy-client-server.js
+
       - name: 格式检查 (prettier)
         run: npm run format:check
 
