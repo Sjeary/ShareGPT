@@ -12,6 +12,7 @@ const { signLoginIdentity } = require("./server_identity");
 const { createUserStore } = require("./user_store");
 const { mergeUserStoreData } = require("./user_store_merge");
 const { createAdminAccountHandler } = require("./admin_accounts");
+const { createUserDataHandler } = require("./user_data_routes");
 
 process.on("uncaughtException", (err) => {
   try {
@@ -2077,7 +2078,6 @@ function eventsForSubnet(subnetKey) {
 }
 
 // 个人云端存储 (按用户隔离: calendar / tasks)。rev 单调递增, 写入须带 baseRev=当前 rev, 防止老版本覆盖新版本。
-const USER_STORE_KINDS = new Set(["calendar", "tasks", "notes", "browser-privacy"]);
 
 function loadUserStores() {
   try {
@@ -2225,6 +2225,20 @@ const handleAdminAccountRequest = createAdminAccountHandler({
   nowIso,
   revokeUserSessions,
   normalizeUserRecord,
+});
+
+const handleUserDataRequest = createUserDataHandler({
+  extractBearer,
+  resolveSessionByToken,
+  sendText,
+  sendJson,
+  getUserStoreEntry,
+  loadUserStores,
+  safeParseJson,
+  readBody,
+  putUserStore,
+  saveUserStores,
+  broadcastToUser,
 });
 
 async function handleRequest(req, res) {
@@ -3323,68 +3337,7 @@ async function handleRequest(req, res) {
   }
 
   // 个人云端存储 (按用户隔离, 多端同步 + 乐观并发防覆盖)。/api/user-store/:kind  kind=calendar|tasks
-  if (pathname.startsWith("/api/user-store/")) {
-    const token = extractBearer(req);
-    const session = resolveSessionByToken(token);
-    if (!session) {
-      sendText(res, 401, "未授权");
-      return;
-    }
-    const kind = decodeURIComponent(pathname.slice("/api/user-store/".length));
-    if (!USER_STORE_KINDS.has(kind)) {
-      sendText(res, 404, "Not Found");
-      return;
-    }
-
-    if (req.method === "GET") {
-      const entry = getUserStoreEntry(loadUserStores(), session.username, kind);
-      sendJson(res, 200, {
-        rev: entry.rev,
-        updatedAt: entry.updatedAt,
-        data: entry.data,
-      });
-      return;
-    }
-
-    if (req.method === "PUT") {
-      try {
-        const payload = safeParseJson(await readBody(req, 8 * 1024 * 1024)) || {};
-        const baseRev = Number.isInteger(payload.baseRev) ? payload.baseRev : 0;
-        const data = payload.data;
-        if (!data || typeof data !== "object") {
-          sendText(res, 400, "data 必填");
-          return;
-        }
-        const stores = loadUserStores();
-        const result = putUserStore(stores, session.username, kind, baseRev, data);
-        if (!result.ok) {
-          sendJson(res, 409, result);
-          return;
-        }
-        saveUserStores(stores);
-        broadcastToUser(
-          session.username,
-          {
-            type: "user_store_updated",
-            kind,
-            rev: result.rev,
-            updatedAt: result.updatedAt,
-            data: result.data,
-          },
-          token,
-        );
-        sendJson(res, 200, {
-          ok: true,
-          rev: result.rev,
-          updatedAt: result.updatedAt,
-          data: result.data,
-        });
-      } catch (err) {
-        sendText(res, 500, err.message || "保存失败");
-      }
-      return;
-    }
-  }
+  if (await handleUserDataRequest(req, res, pathname)) return;
 
   // 团队专注(番茄钟)排名。
   if (pathname === "/api/focus/report" && req.method === "POST") {
