@@ -128,3 +128,28 @@ test("custom vault choices stay account-owned and explicit legacy import preserv
   );
   assert.deepEqual(backend.loadTasks().tasks, []);
 });
+
+test("failed account switches and imports resume the original notes watcher", async (t) => {
+  const { backend } = fixture(t);
+  backend.activatePrincipal("https://team.example", "Alice");
+  const vault = backend.vault;
+  let watching = true,
+    restarts = 0;
+  Reflect.set(vault, "watcher", {
+    close: async () => {
+      watching = false;
+    },
+  });
+  t.mock.method(vault, "startWatch", async () => {
+    watching = true;
+    restarts++;
+  });
+  await assert.rejects(
+    backend.withDataWatchersPaused(() => {
+      throw new Error("fixture failed login");
+    }),
+    /fixture failed login/,
+  );
+  assert.equal(watching, true);
+  assert.equal(restarts, 1);
+});

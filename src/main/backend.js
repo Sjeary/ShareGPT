@@ -891,20 +891,40 @@ class Backend {
     await Promise.all([...this.vaults.values()].map((vault) => vault.stopWatch()));
   }
 
+  async withDataWatchersPaused(operation) {
+    const id = this.activePrincipalId;
+    const generation = this.activePrincipalGeneration;
+    const previous = this.vaults.get(id);
+    const watching = Boolean(previous?.watcher);
+    await this.stopDataWatchers();
+    try {
+      return await operation();
+    } finally {
+      // Failed switches and same-account imports must not leave an active note editor unwatched.
+      if (
+        watching &&
+        this.activePrincipalId === id &&
+        this.activePrincipalGeneration === generation
+      )
+        await previous.startWatch();
+    }
+  }
+
   inspectLegacyUserData() {
     return this.principalData.inspectLegacy(this.activePrincipalId);
   }
 
   async importLegacyUserData(payload) {
     const snapshot = this.getPrincipalContext();
-    await this.stopDataWatchers();
-    this.assertSettingsPrincipalSnapshot(snapshot);
-    return this.principalData.importLegacy(
-      snapshot.principalId,
-      payload?.category,
-      payload?.fingerprint,
-      { group: payload?.group },
-    );
+    return this.withDataWatchersPaused(() => {
+      this.assertSettingsPrincipalSnapshot(snapshot);
+      return this.principalData.importLegacy(
+        snapshot.principalId,
+        payload?.category,
+        payload?.fingerprint,
+        { group: payload?.group },
+      );
+    });
   }
 
   // 当前发送端配置里「走代理(梯子)」的域名后缀集合。路由规则(buildSenderConfig)与

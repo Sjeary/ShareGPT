@@ -599,16 +599,17 @@ function createElectronApp(baseMode = "all") {
   }
 
   async function runPrincipalTransition(transition) {
-    await backend.stopDataWatchers();
-    return runSettingsPrincipalTransition(
-      {
-        invalidate: cancelPrincipalRuntime,
-        activate: () => {
-          backend?.notesAi?.activatePrincipal?.();
-          retryPendingEnvironmentCleanup();
+    return backend.withDataWatchersPaused(() =>
+      runSettingsPrincipalTransition(
+        {
+          invalidate: cancelPrincipalRuntime,
+          activate: () => {
+            backend?.notesAi?.activatePrincipal?.();
+            retryPendingEnvironmentCleanup();
+          },
         },
-      },
-      transition,
+        transition,
+      ),
     );
   }
 
