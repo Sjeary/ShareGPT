@@ -493,6 +493,7 @@ function createElectronApp(baseMode = "all") {
     ipcMain,
     openExternal: openExternalUrl,
     assertPrincipal: (snapshot) => backend.assertSettingsPrincipalSnapshot(snapshot),
+    serializeData: true,
   });
   // electron-updater: 仅 Windows 打包版启用「原地无感更新」(NSIS)。
   // mac 未签名无法走 Squirrel 自动更新, 仍用下载 dmg 的方式; dev/未打包也不启用。

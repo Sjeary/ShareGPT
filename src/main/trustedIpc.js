@@ -14,8 +14,14 @@ function documentIdentity(rawUrl) {
 
 // Window creation owns the windows. This boundary owns only their IPC grants, bound to
 // the exact bundled (or explicitly selected development) document and its main frame.
-function createTrustedIpc({ ipcMain, openExternal, assertPrincipal = null }) {
+function createTrustedIpc({
+  ipcMain,
+  openExternal,
+  assertPrincipal = null,
+  serializeData = false,
+}) {
   const grants = new Map();
+  let dataTail = Promise.resolve();
   function allowedRoles(channel) {
     if (["profile:theme", "profile:updated"].includes(channel)) return ["profile"];
     if (
@@ -74,15 +80,30 @@ function createTrustedIpc({ ipcMain, openExternal, assertPrincipal = null }) {
     handle(channel, handler, roles = allowedRoles(channel)) {
       ipcMain.handle(channel, (event, ...args) => {
         assertSender(event, roles);
-        const scoped = /^(?:chat-history|calendar|tasks|focus|vault):/.test(channel);
+        const scoped = /^(?:chat-history|calendar|tasks|focus|vault|user-data):/.test(channel);
         if (scoped && assertPrincipal) assertPrincipal(args[1]);
-        const result = handler(event, ...args);
-        if (scoped && assertPrincipal && result && typeof result.then === "function") {
-          return result.then((value) => {
-            assertPrincipal(args[1]);
-            return value;
-          });
-        }
+        const invoke = () => {
+          // A queued request must still belong to the same document and account when it starts.
+          assertSender(event, roles);
+          if (scoped && assertPrincipal) assertPrincipal(args[1]);
+          const result = handler(event, ...args);
+          if (scoped && assertPrincipal && result && typeof result.then === "function") {
+            return result.then((value) => {
+              assertPrincipal(args[1]);
+              return value;
+            });
+          }
+          return result;
+        };
+        const transition = ["settings:principal-activate", "settings:principal-clear"].includes(
+          channel,
+        );
+        if (!serializeData || (!scoped && !transition)) return invoke();
+        const result = dataTail.then(invoke);
+        dataTail = result.then(
+          () => undefined,
+          () => undefined,
+        );
         return result;
       });
     },

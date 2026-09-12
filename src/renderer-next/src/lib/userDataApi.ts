@@ -10,6 +10,8 @@ const stores = [
   'saveTasks',
   'loadFocus',
   'saveFocus',
+  'exportUserData',
+  'importUserData',
 ] as const
 
 // Captured requests cannot mutate a later account in main or publish late results in renderer.

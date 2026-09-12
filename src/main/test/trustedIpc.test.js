@@ -5,7 +5,7 @@ const { pathToFileURL } = require("node:url");
 const path = require("node:path");
 const { createTrustedIpc } = require("../trustedIpc");
 
-function setup(assertPrincipal = null) {
+function setup(assertPrincipal = null, serializeData = false) {
   const handles = new Map();
   const listeners = new Map();
   const ipc = createTrustedIpc({
@@ -15,6 +15,7 @@ function setup(assertPrincipal = null) {
     },
     openExternal: async () => {},
     assertPrincipal,
+    serializeData,
   });
   let nextId = 0;
   function windowFor(role, file = path.resolve(`${role}.html`)) {
@@ -46,6 +47,39 @@ test("privileged IPC accepts the registered main document and rejects subframes,
   main.contents.mainFrame.url = pathToFileURL(path.resolve("untrusted.html")).href;
   assert.throws(() => write(main.event));
   assert.equal(writes, 2);
+});
+
+test("account activation waits for ongoing file IO and queued retired writes never start", async () => {
+  let generation = 1;
+  const { ipc, handles, windowFor } = setup((snapshot) => {
+    if (snapshot?.generation !== generation) throw new Error("stale");
+  }, true);
+  const main = windowFor("main");
+  const events = [];
+  let release = () => {};
+  ipc.handle("vault:write", async (_event, payload) => {
+    events.push(`start:${payload}`);
+    if (payload === "first")
+      await new Promise((resolve) => {
+        release = () => resolve(undefined);
+      });
+    events.push(`end:${payload}`);
+  });
+  ipc.handle("settings:principal-activate", () => {
+    generation++;
+    events.push("switch");
+  });
+  const first = handles.get("vault:write")(main.event, "first", { generation: 1 });
+  const switched = handles.get("settings:principal-activate")(main.event);
+  const retired = handles.get("vault:write")(main.event, "retired", { generation: 1 });
+  const rejected = assert.rejects(retired, /stale/);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(events, ["start:first"]);
+  release();
+  await Promise.all([first, switched, rejected]);
+  assert.deepEqual(events, ["start:first", "end:first", "switch"]);
+  await handles.get("vault:write")(main.event, "current", { generation: 2 });
+  assert.deepEqual(events.slice(-2), ["start:current", "end:current"]);
 });
 
 test("every data IPC keeps its existing payload and rejects stale generations", async () => {

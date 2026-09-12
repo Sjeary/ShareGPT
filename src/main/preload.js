@@ -71,8 +71,8 @@ contextBridge.exposeInMainWorld("api", {
   syncAiComposerGuard: () => ipcRenderer.invoke("translation:composer-guard-sync"),
   resolveAiComposerConfirmation: (payload) =>
     ipcRenderer.invoke("translation:composer-confirmation-resolve", payload),
-  exportUserData: () => ipcRenderer.invoke("user-data:export"),
-  importUserData: () => ipcRenderer.invoke("user-data:import"),
+  exportUserData: (snapshot) => dataInvoke("user-data:export", undefined, snapshot),
+  importUserData: (snapshot) => dataInvoke("user-data:import", undefined, snapshot),
   readClipboardAttachment: () => ipcRenderer.invoke("clipboard:read-attachment"),
 
   getStatus: () => ipcRenderer.invoke("service:status"),
