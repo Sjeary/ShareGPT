@@ -102,7 +102,9 @@ export function AiEnvironmentPanel({
       try {
         settingsPrincipalRuntime.assertCurrent(snapshot)
         setCleaning(false)
-      } catch {}
+      } catch {
+        /* A newer account owns the controls. */
+      }
     }
   }
 
@@ -185,7 +187,9 @@ export function AiEnvironmentPanel({
       try {
         settingsPrincipalRuntime.assertCurrent(snapshot)
         setSavingId('')
-      } catch {}
+      } catch {
+        /* A newer account owns the controls. */
+      }
     }
   }
 
