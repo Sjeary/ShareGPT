@@ -72,6 +72,10 @@ jobs:
       - name: 代码规范检查 (eslint — Node 端)
         run: npm run lint
 
+      - name: 代码规范检查 (eslint — 渲染层)
+        run: npm run lint
+        working-directory: src/renderer-next
+
       - name: 主进程类型检查 (checkJs)
         run: npm run typecheck:main
 
@@ -134,6 +138,9 @@ jobs:
           npm run prepare:release-mac-assets
           npm run verify:personal-workspace
 
+      - name: Verify local editor drafts and onboarding restart
+        run: npm run verify:local-editor-state
+
       - name: Verify v1.0.9 legacy Mac packaging and real packaged startup
         env:
           SHAREGPT_RELEASE_TAG: v1.0.9
@@ -184,6 +191,7 @@ jobs:
             "verify:managed-proxy-readonly",
             "verify:advanced-environment-recreate",
             "verify:personal-workspace",
+            "verify:local-editor-state",
             "verify:ai-workspace-lifecycle",
             "verify:ai-composer"
           )
