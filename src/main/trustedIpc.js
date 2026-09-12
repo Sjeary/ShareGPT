@@ -14,7 +14,7 @@ function documentIdentity(rawUrl) {
 
 // Window creation owns the windows. This boundary owns only their IPC grants, bound to
 // the exact bundled (or explicitly selected development) document and its main frame.
-function createTrustedIpc({ ipcMain, openExternal }) {
+function createTrustedIpc({ ipcMain, openExternal, assertPrincipal = null }) {
   const grants = new Map();
   function allowedRoles(channel) {
     if (["profile:theme", "profile:updated"].includes(channel)) return ["profile"];
@@ -74,7 +74,16 @@ function createTrustedIpc({ ipcMain, openExternal }) {
     handle(channel, handler, roles = allowedRoles(channel)) {
       ipcMain.handle(channel, (event, ...args) => {
         assertSender(event, roles);
-        return handler(event, ...args);
+        const scoped = /^(?:chat-history|calendar|tasks|focus|vault):/.test(channel);
+        if (scoped && assertPrincipal) assertPrincipal(args[1]);
+        const result = handler(event, ...args);
+        if (scoped && assertPrincipal && result && typeof result.then === "function") {
+          return result.then((value) => {
+            assertPrincipal(args[1]);
+            return value;
+          });
+        }
+        return result;
       });
     },
     on(channel, handler, roles = allowedRoles(channel)) {

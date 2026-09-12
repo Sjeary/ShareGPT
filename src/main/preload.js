@@ -1,5 +1,10 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+async function dataInvoke(channel, payload, expected) {
+  const snapshot = expected || (await ipcRenderer.invoke("settings:principal-context"));
+  return ipcRenderer.invoke(channel, payload, snapshot);
+}
+
 contextBridge.exposeInMainWorld("api", {
   platform: process.platform,
   setThemeSource: (source) => ipcRenderer.invoke("app:set-theme-source", source),
@@ -14,29 +19,29 @@ contextBridge.exposeInMainWorld("api", {
   patchSettings: (payload) => ipcRenderer.invoke("settings:patch", payload),
   operateSettings: (payload) => ipcRenderer.invoke("settings:operate", payload),
   importSettings: () => ipcRenderer.invoke("settings:import"),
-  loadChatHistory: () => ipcRenderer.invoke("chat-history:load"),
-  saveChatHistory: (payload) => ipcRenderer.invoke("chat-history:save", payload),
-  loadCalendar: () => ipcRenderer.invoke("calendar:load"),
-  saveCalendar: (payload) => ipcRenderer.invoke("calendar:save", payload),
-  loadTasks: () => ipcRenderer.invoke("tasks:load"),
-  saveTasks: (payload) => ipcRenderer.invoke("tasks:save", payload),
-  loadFocus: () => ipcRenderer.invoke("focus:load"),
-  saveFocus: (payload) => ipcRenderer.invoke("focus:save", payload),
+  loadChatHistory: (snapshot) => dataInvoke("chat-history:load", undefined, snapshot),
+  saveChatHistory: (payload, snapshot) => dataInvoke("chat-history:save", payload, snapshot),
+  loadCalendar: (snapshot) => dataInvoke("calendar:load", undefined, snapshot),
+  saveCalendar: (payload, snapshot) => dataInvoke("calendar:save", payload, snapshot),
+  loadTasks: (snapshot) => dataInvoke("tasks:load", undefined, snapshot),
+  saveTasks: (payload, snapshot) => dataInvoke("tasks:save", payload, snapshot),
+  loadFocus: (snapshot) => dataInvoke("focus:load", undefined, snapshot),
+  saveFocus: (payload, snapshot) => dataInvoke("focus:save", payload, snapshot),
   // 知识库 vault (笔记文件 IO)。
   vault: {
-    start: () => ipcRenderer.invoke("vault:start"),
-    getRoot: () => ipcRenderer.invoke("vault:get-root"),
-    setRoot: (absPath) => ipcRenderer.invoke("vault:set-root", absPath),
-    pickFolder: () => ipcRenderer.invoke("vault:pick-folder"),
-    list: () => ipcRenderer.invoke("vault:list"),
-    readAll: () => ipcRenderer.invoke("vault:read-all"),
-    read: (p) => ipcRenderer.invoke("vault:read", p),
-    readBinary: (p) => ipcRenderer.invoke("vault:read-binary", p),
-    write: (p, content) => ipcRenderer.invoke("vault:write", { path: p, content }),
-    create: (p, content) => ipcRenderer.invoke("vault:create", { path: p, content }),
-    rename: (from, to) => ipcRenderer.invoke("vault:rename", { from, to }),
-    remove: (p) => ipcRenderer.invoke("vault:remove", p),
-    importFrom: (src) => ipcRenderer.invoke("vault:import", src),
+    start: (snapshot) => dataInvoke("vault:start", undefined, snapshot),
+    getRoot: (snapshot) => dataInvoke("vault:get-root", undefined, snapshot),
+    setRoot: (absPath, snapshot) => dataInvoke("vault:set-root", absPath, snapshot),
+    pickFolder: (snapshot) => dataInvoke("vault:pick-folder", undefined, snapshot),
+    list: (snapshot) => dataInvoke("vault:list", undefined, snapshot),
+    readAll: (snapshot) => dataInvoke("vault:read-all", undefined, snapshot),
+    read: (p, snapshot) => dataInvoke("vault:read", p, snapshot),
+    readBinary: (p, snapshot) => dataInvoke("vault:read-binary", p, snapshot),
+    write: (p, content, snapshot) => dataInvoke("vault:write", { path: p, content }, snapshot),
+    create: (p, content, snapshot) => dataInvoke("vault:create", { path: p, content }, snapshot),
+    rename: (from, to, snapshot) => dataInvoke("vault:rename", { from, to }, snapshot),
+    remove: (p, snapshot) => dataInvoke("vault:remove", p, snapshot),
+    importFrom: (src, snapshot) => dataInvoke("vault:import", src, snapshot),
   },
   onVaultChanged: (handler) => {
     const listener = (_event, payload) => handler(payload);

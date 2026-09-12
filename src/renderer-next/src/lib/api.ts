@@ -1,4 +1,5 @@
 import type { ShareGptApi } from '@/types/api'
+import { scopedUserDataApi } from './userDataApi'
 
 // 主进程 IPC 桥。dev 在浏览器(无 preload)时给出空安全实现, 便于纯前端调试。
 const noop = () => undefined
@@ -80,7 +81,7 @@ const fallback = {
   getMode: async () => 'all',
   checkAppUpdate: async () => null,
   isUpdateSupported: async () => false,
-  installAppUpdate: async (_payload: { version: string; fileName: string }) => ({ updated: false }),
+  installAppUpdate: async () => ({ updated: false }),
   downloadAppUpdate: async () => undefined,
   openAppUpdate: async () => undefined,
   showSystemNotification: async () => undefined,
@@ -140,6 +141,7 @@ const fallback = {
   onAppUpdateProgress: () => noop,
 } as unknown as ShareGptApi
 
-export const api: ShareGptApi = typeof window !== 'undefined' && window.api ? window.api : fallback
+export const api: ShareGptApi =
+  typeof window !== 'undefined' && window.api ? scopedUserDataApi(window.api) : fallback
 
 export const hasNativeBridge = typeof window !== 'undefined' && Boolean(window.api)

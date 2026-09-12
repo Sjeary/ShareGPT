@@ -5,7 +5,7 @@ const { pathToFileURL } = require("node:url");
 const path = require("node:path");
 const { createTrustedIpc } = require("../trustedIpc");
 
-function setup() {
+function setup(assertPrincipal = null) {
   const handles = new Map();
   const listeners = new Map();
   const ipc = createTrustedIpc({
@@ -14,6 +14,7 @@ function setup() {
       on: (name, fn) => listeners.set(name, fn),
     },
     openExternal: async () => {},
+    assertPrincipal,
   });
   let nextId = 0;
   function windowFor(role, file = path.resolve(`${role}.html`)) {
@@ -45,6 +46,62 @@ test("privileged IPC accepts the registered main document and rejects subframes,
   main.contents.mainFrame.url = pathToFileURL(path.resolve("untrusted.html")).href;
   assert.throws(() => write(main.event));
   assert.equal(writes, 2);
+});
+
+test("every data IPC keeps its existing payload and rejects stale generations", async () => {
+  let generation = 1;
+  const { ipc, handles, windowFor } = setup((snapshot) => {
+    if (snapshot?.principalId !== "A" || snapshot.generation !== generation)
+      throw new Error("stale");
+  });
+  const main = windowFor("main");
+  const channels = [
+    "chat-history:load",
+    "chat-history:save",
+    "calendar:load",
+    "calendar:save",
+    "tasks:load",
+    "tasks:save",
+    "focus:load",
+    "focus:save",
+    "vault:start",
+    "vault:get-root",
+    "vault:set-root",
+    "vault:pick-folder",
+    "vault:list",
+    "vault:read-all",
+    "vault:read",
+    "vault:read-binary",
+    "vault:write",
+    "vault:create",
+    "vault:rename",
+    "vault:remove",
+    "vault:import",
+  ];
+  for (const channel of channels) {
+    let calls = 0;
+    let complete = (_value) => {};
+    const input = { value: channel };
+    ipc.handle(channel, (_event, payload) => {
+      assert.equal(payload, input);
+      calls++;
+      return new Promise((resolve) => {
+        complete = resolve;
+      });
+    });
+    const handler = handles.get(channel);
+    assert.throws(() => handler(main.event, input), /stale/);
+    const snapshot = { principalId: "A", generation };
+    const pending = handler(main.event, input, snapshot);
+    generation++;
+    assert.throws(() => handler(main.event, input, snapshot), /stale/);
+    complete("old result");
+    await assert.rejects(pending, /stale/);
+    assert.equal(calls, 1);
+    const valid = handler(main.event, input, { principalId: "A", generation });
+    complete("current");
+    assert.equal(await valid, "current");
+  }
 });
 
 test("profile has only explicit grants and destroyed windows lose authorization", () => {
