@@ -300,6 +300,7 @@ test("failed new-account loads stay unavailable to cloud sync and can retry", as
   let failLoads = false;
   const uploads = [];
   let cleanup = () => {};
+  let receiveRealtime = (_payload) => {};
   const getCalendar = () => ({
     calendars: [{ id: account, name: account, color: "#123456" }],
     events: [],
@@ -332,7 +333,16 @@ test("failed new-account loads stay unavailable to cloud sync and can retry", as
             identity: { serverUrl: "http://fixture.invalid", username: account, token: account },
           }),
       },
-      "@/lib/wsBus": { wsBus: { subscribe: () => () => {} } },
+      "@/lib/wsBus": {
+        wsBus: {
+          subscribe: (handler) => {
+            receiveRealtime = handler;
+            return () => {
+              receiveRealtime = () => {};
+            };
+          },
+        },
+      },
       fetch: async (_url, options) => {
         if (options.method === "PUT") uploads.push(JSON.parse(options.body).data);
         return {
@@ -355,6 +365,15 @@ test("failed new-account loads stay unavailable to cloud sync and can retry", as
   for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
   assert.equal(calendar.getState().loaded, false);
   assert.equal(tasks.getState().loaded, false);
+  assert.equal(uploads.length, 0);
+  const calendarBeforeRealtime = JSON.stringify(calendar.getState().calendars);
+  const tasksBeforeRealtime = JSON.stringify(tasks.getState().lists);
+  receiveRealtime({ type: "user_store_updated", kind: "calendar", rev: 7, data: getCalendar() });
+  receiveRealtime({ type: "user_store_updated", kind: "tasks", rev: 7, data: getTasks() });
+  assert.equal(calendar.getState().loaded, false);
+  assert.equal(tasks.getState().loaded, false);
+  assert.equal(JSON.stringify(calendar.getState().calendars), calendarBeforeRealtime);
+  assert.equal(JSON.stringify(tasks.getState().lists), tasksBeforeRealtime);
   assert.equal(uploads.length, 0);
   failLoads = false;
   await Promise.all([calendar.getState().init(), tasks.getState().init()]);

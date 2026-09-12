@@ -169,9 +169,10 @@ export function useCloudSync(): void {
     // 应用来自服务器的某 kind 更新 (rev 更新时才合并)。realtime 与 poll 共用。
     function applyRemote(kind: SyncKind, rev: number, data: unknown): void {
       if (!isCurrent()) return
+      const cfg = KIND_CONFIGS[kind]
+      if (!cfg.isLoaded()) return
       if (rev <= getStoredRev(serverUrl, username, kind)) return
       supported[kind] = true
-      const cfg = KIND_CONFIGS[kind]
       const merged = cfg.merge(cfg.getLocal() as never, data) as never
       cfg.apply(merged, snapshot)
       lastSynced[kind] = stable(merged)
