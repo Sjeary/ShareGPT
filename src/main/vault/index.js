@@ -5,6 +5,7 @@
 const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
+const { randomUUID } = require("node:crypto");
 
 // 纳入 vault 的文本类扩展 (其余文件视为附件, 仅在导入时按需复制, 不进笔记列表)。
 const TEXT_EXT = new Set([".md", ".markdown", ".canvas", ".base", ".txt"]);
@@ -57,19 +58,44 @@ class VaultManager {
     fs.mkdirSync(this.root, { recursive: true });
   }
 
-  // 把相对路径解析成绝对路径, 校验不越界。
+  // The selected root may itself be a symlink (for example a user-managed vault alias).
+  // Descendant links/junctions are excluded, as in list/import, so no file operation can
+  // cross into another directory through an attachment or a pre-existing destination.
   #abs(relPath) {
-    const clean = String(relPath || "").replace(/^[/\\]+/, "");
-    const abs = path.resolve(this.root, clean);
-    const rootResolved = path.resolve(this.root);
-    if (abs !== rootResolved && !abs.startsWith(rootResolved + path.sep)) {
+    const clean = String(relPath || "").replace(/\\/g, "/");
+    if (!clean || path.isAbsolute(clean) || /^[A-Za-z]:/.test(clean) || clean.includes("\0")) {
+      throw new Error("非法知识库相对路径");
+    }
+    this.#ensureRoot();
+    const rootResolved = fs.realpathSync(this.root);
+    const abs = path.resolve(rootResolved, clean);
+    if (abs === rootResolved || !abs.startsWith(rootResolved + path.sep)) {
       throw new Error("非法路径 (越出 vault 根): " + relPath);
+    }
+    let current = rootResolved;
+    for (const segment of path.relative(rootResolved, abs).split(path.sep)) {
+      if (process.platform === "win32" && segment.includes(":")) {
+        throw new Error("不支持知识库文件的备用数据流");
+      }
+      current = path.join(current, segment);
+      try {
+        if (fs.lstatSync(current).isSymbolicLink()) {
+          throw new Error("知识库内的符号链接或目录联接不能作为文件操作目标");
+        }
+      } catch (error) {
+        if (error.code === "ENOENT") break;
+        throw error;
+      }
     }
     return abs;
   }
 
   getRoot() {
     return this.root;
+  }
+
+  #relative(absPath) {
+    return toPosix(path.relative(fs.realpathSync(this.root), absPath));
   }
 
   async setRoot(absPath) {
@@ -152,7 +178,7 @@ class VaultManager {
     const st = await fsp.stat(abs);
     const content = await fsp.readFile(abs, "utf-8");
     return {
-      path: toPosix(path.relative(this.root, abs)),
+      path: this.#relative(abs),
       content,
       mtime: st.mtimeMs,
       ctime: st.birthtimeMs || st.ctimeMs,
@@ -211,12 +237,17 @@ class VaultManager {
   async write(relPath, content) {
     const abs = this.#abs(relPath);
     await fsp.mkdir(path.dirname(abs), { recursive: true });
-    const tmp = `${abs}.tmp-${process.pid}-${Date.now()}`;
-    await fsp.writeFile(tmp, String(content ?? ""), "utf-8");
-    await fsp.rename(tmp, abs);
+    const tmp = `${abs}.tmp-${randomUUID()}`;
+    try {
+      await fsp.writeFile(tmp, String(content ?? ""), { encoding: "utf-8", flag: "wx" });
+      this.#abs(relPath);
+      await fsp.rename(tmp, abs);
+    } finally {
+      await fsp.unlink(tmp).catch(() => {});
+    }
     this.#markWrite(abs);
     const st = await fsp.stat(abs);
-    return { path: toPosix(path.relative(this.root, abs)), mtime: st.mtimeMs };
+    return { path: this.#relative(abs), mtime: st.mtimeMs };
   }
 
   async create(relPath, content = "") {
@@ -305,6 +336,7 @@ class VaultManager {
     }
     this.watcher = this.chokidar.watch(this.root, {
       ignoreInitial: true,
+      followSymlinks: false,
       depth: 12,
       awaitWriteFinish: { stabilityThreshold: 250, pollInterval: 50 },
       ignored: (p) => {
