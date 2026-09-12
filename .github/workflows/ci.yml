@@ -147,6 +147,9 @@ jobs:
       - name: Verify unreadable settings recovery
         run: npm run verify:startup-recovery
 
+      - name: Verify account data isolation and explicit legacy imports
+        run: npm run verify:principal-data
+
       - name: Verify v1.0.9 legacy Mac packaging and real packaged startup
         env:
           SHAREGPT_RELEASE_TAG: v1.0.9
@@ -199,6 +202,7 @@ jobs:
             "verify:personal-workspace",
             "verify:local-editor-state",
             "verify:startup-recovery",
+            "verify:principal-data",
             "verify:ai-workspace-lifecycle",
             "verify:ai-composer"
           )

@@ -318,6 +318,8 @@ async function main() {
       username: "modern-routes",
       profileDirectory,
       exercise: async ({ window, electronApp }) => {
+        const rendererErrors = [];
+        window.on("pageerror", (error) => rendererErrors.push(String(error)));
         await electronApp.evaluate(({ BrowserWindow }) =>
           BrowserWindow.getAllWindows()[0].setBounds({ width: 900, height: 760 }),
         );
@@ -362,6 +364,11 @@ async function main() {
             gemini: { cookie: label, localStorage: label },
           });
         verifyOriginal(profileDirectory, original);
+        assert.deepEqual(
+          rendererErrors,
+          [],
+          "data import and switching must not throw in the renderer",
+        );
         return {
           explicitImports: ["calendar", "tasks", "focus", "chat", "notes"],
           accountIsolation: true,
@@ -379,6 +386,8 @@ async function main() {
       username: "modern-routes",
       profileDirectory,
       exercise: async ({ window, electronApp }) => {
+        const rendererErrors = [];
+        window.on("pageerror", (error) => rendererErrors.push(String(error)));
         assertMarker(await readData(window), "A");
         await logout(window);
         await loginThroughForm(window, fixture.baseUrl, "legacy-admin");
@@ -395,6 +404,11 @@ async function main() {
             gemini: { cookie: label, localStorage: label },
           });
         verifyOriginal(profileDirectory, original);
+        assert.deepEqual(
+          rendererErrors,
+          [],
+          "restored account scopes must not throw in the renderer",
+        );
         return {
           allThreeDataScopesPersisted: true,
           browserCookiesPersisted: true,
