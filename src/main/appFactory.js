@@ -598,7 +598,8 @@ function createElectronApp(baseMode = "all") {
     disposeAiWorkspaces({ incrementEpoch: false });
   }
 
-  function runPrincipalTransition(transition) {
+  async function runPrincipalTransition(transition) {
+    await backend.stopDataWatchers();
     return runSettingsPrincipalTransition(
       {
         invalidate: cancelPrincipalRuntime,
@@ -2588,6 +2589,10 @@ function createElectronApp(baseMode = "all") {
     );
     trustedIpc.handle("user-data:export", () => backend.exportUserData());
     trustedIpc.handle("user-data:import", () => backend.importUserData());
+    trustedIpc.handle("user-data:legacy-list", () => backend.inspectLegacyUserData());
+    trustedIpc.handle("user-data:legacy-import", (_event, payload) =>
+      backend.importLegacyUserData(payload),
+    );
     trustedIpc.handle("clipboard:read-attachment", () => buildClipboardAttachmentPayload());
     trustedIpc.handle("service:status", () => backend.getStatus());
     trustedIpc.handle("app:paths", () => backend.getPaths());

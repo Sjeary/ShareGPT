@@ -339,6 +339,12 @@ export interface ShareGptApi {
   }) => Promise<{ ok: boolean; sent: boolean }>
   exportUserData: () => Promise<unknown>
   importUserData: () => Promise<unknown>
+  inspectLegacyUserData: () => Promise<LegacyDataSummary[]>
+  importLegacyUserData: (payload: {
+    category: LegacyDataCategory
+    fingerprint: string
+    group?: string
+  }) => Promise<{ imported: boolean }>
   readClipboardAttachment: () => Promise<unknown>
 
   // 应用 / 状态
@@ -454,3 +460,16 @@ declare global {
 }
 
 export {}
+export type LegacyDataCategory = 'calendar' | 'tasks' | 'focus' | 'chat' | 'notes'
+export interface LegacyDataSummary {
+  category: LegacyDataCategory
+  available: boolean
+  canImport: boolean
+  bytes: number
+  fileCount: number
+  fingerprint: string
+  reason: string
+  message?: string
+  sourcePath?: string
+  groups?: Array<LegacyDataSummary & { group: string; label: string }>
+}

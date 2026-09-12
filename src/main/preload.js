@@ -73,6 +73,9 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("translation:composer-confirmation-resolve", payload),
   exportUserData: (snapshot) => dataInvoke("user-data:export", undefined, snapshot),
   importUserData: (snapshot) => dataInvoke("user-data:import", undefined, snapshot),
+  inspectLegacyUserData: (snapshot) => dataInvoke("user-data:legacy-list", undefined, snapshot),
+  importLegacyUserData: (payload, snapshot) =>
+    dataInvoke("user-data:legacy-import", payload, snapshot),
   readClipboardAttachment: () => ipcRenderer.invoke("clipboard:read-attachment"),
 
   getStatus: () => ipcRenderer.invoke("service:status"),

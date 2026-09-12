@@ -105,6 +105,7 @@ function principalId(backend) {
 test("a lone damaged chat backup does not abort startup or permit replacement", (t) => {
   const backend = createBackend(t);
   const backup = `${backend.chatHistoryFile}.bak`;
+  fs.mkdirSync(path.dirname(backup), { recursive: true });
   fs.writeFileSync(backup, "{damaged-history");
   assert.doesNotThrow(() => backend.init());
   assert.equal(fs.existsSync(backend.chatHistoryFile), false);

@@ -29,6 +29,7 @@ const { buildUpdateReleaseInfo } = require("./updateRelease");
 const { copyMissingChromiumPartitions } = require("./userDataPath");
 const { resolvePrincipalIdentity } = require("./principalIdentity");
 const { readLocalJson, writeLocalJson } = require("./localJsonStore");
+const { PrincipalData } = require("./principalData");
 const {
   LOCAL_SECRET_KEYS,
   LEGACY_SECRET_DECRYPTION_FAILED,
@@ -227,6 +228,9 @@ const UPDATE_BACKUP_ENTRIES = [
   "focus.json",
   "ai-environment-cleanup.json",
   "ai-environment-cleanup.json.bak",
+  "PrincipalData",
+  "legacy-data-imports.json",
+  "legacy-data-imports.json.bak",
   "private.defaults.local.json",
   "ShareGPT-Vault",
   "Partitions",
@@ -780,13 +784,10 @@ class Backend {
     this.legacyEncryptedSecrets = [];
 
     this.settingsFile = path.join(this.app.getPath("userData"), "settings.json");
-    this.chatHistoryFile = path.join(this.app.getPath("userData"), "chat_history.json");
+    this.principalData = new PrincipalData(this.app.getPath("userData"));
     // 新增本地功能存储 (个人日历 / 任务+备忘录): 纯本机 JSON, 结构由渲染层维护, 后端只做读写与轻量兜底。
-    this.calendarFile = path.join(this.app.getPath("userData"), "calendar.json");
-    this.tasksFile = path.join(this.app.getPath("userData"), "tasks.json");
-    this.focusFile = path.join(this.app.getPath("userData"), "focus.json");
     // 知识库 vault 管理器 (笔记真源 = 磁盘 .md 文件夹; 仅做文件 IO + 监听, 解析/索引在渲染层)。
-    this.vault = new VaultManager(this.app, this.getWindow);
+    this.vaults = new Map();
     // 知识库 AI 助手 (OpenAI Responses / Codex 中转, 流式; provider 由渲染层传入, 不持久化密钥)。
     this.notesAi = createNotesAi({
       getWindow: this.getWindow,
@@ -817,6 +818,93 @@ class Backend {
     this.activePrincipalServerUrl = "";
     this.activePrincipalUsername = "";
     this.activePrincipalGeneration = 0;
+  }
+
+  get chatHistoryFile() {
+    return this.principalData.file(this.activePrincipalId, "chat");
+  }
+  get calendarFile() {
+    return this.principalData.file(this.activePrincipalId, "calendar");
+  }
+  get tasksFile() {
+    return this.principalData.file(this.activePrincipalId, "tasks");
+  }
+  get focusFile() {
+    return this.principalData.file(this.activePrincipalId, "focus");
+  }
+
+  get vault() {
+    const principalId = this.activePrincipalId;
+    if (!this.vaults.has(principalId)) {
+      const dataRoot = this.principalData.directory(principalId);
+      const vault = new VaultManager(this.app, this.getWindow, {
+        dataRoot,
+        getSnapshot: () => ({ principalId, generation: this.activePrincipalGeneration }),
+        isCurrent: (snapshot) =>
+          snapshot?.principalId === this.activePrincipalId &&
+          snapshot?.generation === this.activePrincipalGeneration,
+        validateRoot: (root) => this.assertVaultRoot(principalId, root),
+      });
+      this.vaults.set(principalId, vault);
+    }
+    return this.vaults.get(principalId);
+  }
+
+  assertVaultRoot(principalId, root) {
+    const canonical = (input) => {
+      let cursor = path.resolve(input);
+      const suffix = [];
+      while (!fs.existsSync(cursor)) {
+        suffix.unshift(path.basename(cursor));
+        const parent = path.dirname(cursor);
+        if (parent === cursor) throw new Error("知识库目录不可用");
+        cursor = parent;
+      }
+      const resolved = path.join(fs.realpathSync(cursor), ...suffix);
+      return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+    };
+    const overlaps = (a, b) => a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
+    const next = canonical(root);
+    if (next === canonical(this.principalData.vaultDirectory(principalId))) return;
+    // A custom folder remains supported, but no account may bind another scope or legacy source.
+    const userData = canonical(this.app.getPath("userData"));
+    if (overlaps(next, userData)) throw new Error("请选择独立的知识库文件夹；旧资料请使用接续入口");
+    const oldMeta = path.join(userData, "vault-meta.json");
+    if (fs.existsSync(oldMeta)) {
+      const old = JSON.parse(fs.readFileSync(oldMeta, "utf8"));
+      if (old?.root && overlaps(next, canonical(old.root)))
+        throw new Error("旧知识库请先通过旧资料接续复制，原件会保留");
+    }
+    const base = path.join(userData, "PrincipalData");
+    if (!fs.existsSync(base)) return;
+    for (const id of fs.readdirSync(base)) {
+      if (id === principalId || !normalizePrincipalId(id, { allowLocal: true })) continue;
+      const meta = path.join(this.principalData.directory(id), "vault-meta.json");
+      if (!fs.existsSync(meta)) continue;
+      const other = JSON.parse(fs.readFileSync(meta, "utf8"));
+      if (other?.root && overlaps(next, canonical(other.root)))
+        throw new Error("此知识库目录已属于其他工作区，请选择独立文件夹");
+    }
+  }
+
+  async stopDataWatchers() {
+    await Promise.all([...this.vaults.values()].map((vault) => vault.stopWatch()));
+  }
+
+  inspectLegacyUserData() {
+    return this.principalData.inspectLegacy(this.activePrincipalId);
+  }
+
+  async importLegacyUserData(payload) {
+    const snapshot = this.getPrincipalContext();
+    await this.stopDataWatchers();
+    this.assertSettingsPrincipalSnapshot(snapshot);
+    return this.principalData.importLegacy(
+      snapshot.principalId,
+      payload?.category,
+      payload?.fingerprint,
+      { group: payload?.group },
+    );
   }
 
   // 当前发送端配置里「走代理(梯子)」的域名后缀集合。路由规则(buildSenderConfig)与

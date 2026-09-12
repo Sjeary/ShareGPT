@@ -12,6 +12,8 @@ const stores = [
   'saveFocus',
   'exportUserData',
   'importUserData',
+  'inspectLegacyUserData',
+  'importLegacyUserData',
 ] as const
 
 // Captured requests cannot mutate a later account in main or publish late results in renderer.
