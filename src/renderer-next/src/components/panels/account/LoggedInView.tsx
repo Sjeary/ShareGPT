@@ -20,6 +20,7 @@ import type { CollabSettings } from '@/types/settings'
 import { BrowserPrivacySection } from './BrowserPrivacySection'
 import { InterfaceSettings } from './InterfaceSettings'
 import { SessionRecoveryForm } from './SessionRecoveryForm'
+import { ImportActions } from './ImportActions'
 
 // 协作通知开关项 (对应 collab.notify_* 字段)。
 const NOTIFY_FIELDS: ReadonlyArray<{
@@ -594,6 +595,14 @@ export function LoggedInView() {
       <BrowserPrivacySection />
 
       <InterfaceSettings />
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">本机资料</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ImportActions />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

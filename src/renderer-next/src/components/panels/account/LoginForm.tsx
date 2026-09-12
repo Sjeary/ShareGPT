@@ -572,12 +572,17 @@ export function LoginForm() {
                     </Button>
                   </form>
 
-                  <Separator className="my-4" />
-
-                  <div className="grid gap-2">
-                    <p className="text-xs text-muted-foreground">从备份文件恢复本机配置或资料包</p>
-                    <ImportActions />
-                  </div>
+                  {showWorkspaceEntry && (
+                    <>
+                      <Separator className="my-4" />
+                      <div className="grid gap-2">
+                        <p className="text-xs text-muted-foreground">
+                          从备份文件恢复本机配置或资料包
+                        </p>
+                        <ImportActions />
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
             ) : (
@@ -609,6 +614,14 @@ export function LoginForm() {
           {!showWorkspaceEntry && (
             <>
               <InterfaceSettings />
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">本机资料</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ImportActions />
+                </CardContent>
+              </Card>
               <BrowserPrivacySection />
             </>
           )}

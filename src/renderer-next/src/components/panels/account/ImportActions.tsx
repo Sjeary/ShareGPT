@@ -4,14 +4,16 @@ import { FileDown, FileUp, FolderInput } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
-import { useChatStore, type ChatMessage } from '@/store/useChatStore'
+import type { ChatMessage } from '@/store/useChatStore'
+import { LegacyDataImport } from './LegacyDataImport'
+import { withUserDataTransition } from '@/lib/userDataLifecycle'
 
 // 导入配置 / 导入本机资料包。
 // 移植自旧 renderer.js handleImportConfig (~5462) / handleImportUserData (~5479):
 //   - importSettings(): 选择 settings.json 导入, 成功后写入 state.settings 并刷新表单。
 //   - importUserData(): 导入本机资料包 { settings, chatHistory }, 刷新设置并重灌聊天历史。
 // 这里成功后统一调 useAppStore.reloadSettings() 让新渲染层各面板重新读取设置;
-// 资料包额外把 chatHistory.conversations 灌进 useChatStore (对齐旧 hydrateConversationStore reset)。
+// 资料通过同一生命周期入口完成保存与重载，不另建聊天缓存写入者。
 
 interface ImportUserDataPayload {
   settings?: unknown
@@ -47,15 +49,12 @@ export function ImportActions() {
     if (busy) return
     setBusy('userData')
     try {
-      const payload = (await api.importUserData()) as ImportUserDataPayload | undefined | null
+      const payload = (await withUserDataTransition(() => api.importUserData(), {
+        reload: true,
+      })) as ImportUserDataPayload | undefined | null
       if (!payload) return
       // 设置部分: 资料包内含 settings 时也以磁盘为准重新加载, 保证各面板同步。
       await reloadSettings()
-      // 聊天历史部分: 对齐旧 hydrateConversationStore(payload.chatHistory, { reset: true })。
-      const conversations = payload.chatHistory?.conversations
-      if (conversations && typeof conversations === 'object') {
-        useChatStore.getState().hydrate(conversations)
-      }
       toast.success('本机资料包已导入')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '导入资料包失败')
@@ -70,7 +69,10 @@ export function ImportActions() {
     if (busy) return
     setBusy('export')
     try {
-      const payload = (await api.exportUserData()) as ExportUserDataPayload | undefined | null
+      const payload = (await withUserDataTransition(() => api.exportUserData())) as
+        | ExportUserDataPayload
+        | undefined
+        | null
       const filePath = payload?.filePath
       if (!filePath) return
       toast.success(`本机资料包已导出：${filePath}`)
@@ -83,6 +85,7 @@ export function ImportActions() {
 
   return (
     <div className="grid gap-2">
+      <LegacyDataImport />
       <Button
         type="button"
         variant="outline"
