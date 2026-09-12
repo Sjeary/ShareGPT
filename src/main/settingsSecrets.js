@@ -19,20 +19,33 @@ function resolveLegacySecretStorage(storageOverride) {
   }
 }
 
-function decodeLegacyEncryptedSettings(value, storageOverride, decodedSecrets = []) {
+function decodeLegacyEncryptedSettings(
+  value,
+  storageOverride,
+  decodedSecrets = [],
+  cachedSecrets = [],
+) {
   if (!legacyEncryptedSettingsPresent(value)) return structuredClone(value);
-  const storage = resolveLegacySecretStorage(storageOverride);
-  if (!storage || typeof storage.decryptString !== "function") {
-    throw Object.assign(new Error("旧版加密设置暂时无法解密，原文件未修改"), {
-      code: LEGACY_SECRET_DECRYPTION_FAILED,
-    });
-  }
+  let storage;
 
   const decode = (current, key = "") => {
     if (typeof current === "string" && current.startsWith(LEGACY_ENCRYPTED_SECRET_PREFIX)) {
+      const cached = cachedSecrets.find(
+        (record) => record.key === key && record.ciphertext === current,
+      );
+      if (cached) {
+        decodedSecrets.push(cached);
+        return cached.plaintext;
+      }
       const encoded = current.slice(LEGACY_ENCRYPTED_SECRET_PREFIX.length);
       if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
         throw new Error("旧版加密设置内容不合法");
+      }
+      storage ||= resolveLegacySecretStorage(storageOverride);
+      if (!storage || typeof storage.decryptString !== "function") {
+        throw Object.assign(new Error("旧版加密设置暂时无法解密，原文件未修改"), {
+          code: LEGACY_SECRET_DECRYPTION_FAILED,
+        });
       }
       const plaintext = storage.decryptString(Buffer.from(encoded, "base64"));
       decodedSecrets.push({ key, plaintext, ciphertext: current });

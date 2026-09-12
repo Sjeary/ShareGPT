@@ -1065,7 +1065,12 @@ class Backend {
     const defaultSettings = this.loadPrivateDefaults();
     const raw = readLocalJson(this.settingsFile, defaultSettings);
     const decodedSecrets = [];
-    const decoded = decodeLegacyEncryptedSettings(raw, this.legacySecretStorage, decodedSecrets);
+    const decoded = decodeLegacyEncryptedSettings(
+      raw,
+      this.legacySecretStorage,
+      decodedSecrets,
+      this.legacyEncryptedSecrets,
+    );
     this.legacyEncryptedSecrets = decodedSecrets;
     return mergeSettings(defaultSettings, decoded);
   }

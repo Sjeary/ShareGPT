@@ -978,6 +978,44 @@ test("legacy sharegpt-safe values decrypt in memory and failures never replace t
   assert.equal(fs.readFileSync(failing.settingsFile, "utf8"), raw);
 });
 
+test("unchanged protected settings reuse verified memory after the keychain becomes unavailable", (t) => {
+  let decryptCalls = 0;
+  const backend = createBackend(t, {
+    legacySecretStorage: {
+      isEncryptionAvailable: () => true,
+      encryptString: () => Buffer.from("protected-password"),
+      decryptString: () => {
+        decryptCalls++;
+        return "kept-password";
+      },
+    },
+  });
+  backend.activatePrincipal("https://collab.example", "Alice");
+  const original = backend.loadSettings();
+  backend.saveSettings({
+    ...original,
+    collab: { ...original.collab, saved_password: "kept-password" },
+  });
+  backend.legacyEncryptedSecrets = [];
+  assert.equal(backend.loadSettings().collab.saved_password, "kept-password");
+  assert.equal(decryptCalls, 1);
+  const unavailable = {
+    isEncryptionAvailable: () => false,
+    decryptString() {
+      throw new Error("unexpected keychain access");
+    },
+  };
+  backend.legacySecretStorage = unavailable;
+  const current = backend.loadSettings();
+  backend.saveSettings({ ...current, ui: { ...current.ui, theme: "light" } });
+  assert.equal(backend.loadSettings().collab.saved_password, "kept-password");
+  assert.equal(decryptCalls, 1);
+  const before = fs.readFileSync(backend.settingsFile, "utf8");
+  const cold = new Backend(backend.app, () => null, "all", { legacySecretStorage: unavailable });
+  assert.throws(() => cold.loadSettings(), /原文件未修改/);
+  assert.equal(fs.readFileSync(backend.settingsFile, "utf8"), before);
+});
+
 test("update backup includes every local data store and browser partition", (t) => {
   const backend = createBackend(t);
   const fixtures = {
