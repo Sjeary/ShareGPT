@@ -51,7 +51,7 @@
     "verify:admin-console": "npm --prefix admin_console/ui run build && node scripts/verify-admin-console.js",
     "verify:personal-workspace": "npm run build:next && node scripts/verify-personal-workspace.js",
     "verify:local-editor-state": "npm run build:next && node scripts/verify-local-editor-state.js",
-    "verify:startup-recovery": "npm run build:next && node scripts/verify-startup-recovery.js",
+    "verify:startup-recovery": "npm run build:next && node scripts/verify-startup-recovery.js && node scripts/verify-local-data-recovery.js",
     "verify:release-win": "node scripts/verify-win-release.js",
     "verify:release-contract": "node scripts/verify-release-contract.mjs",
     "verify:release-source": "node scripts/verify-release-source.mjs",
