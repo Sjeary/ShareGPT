@@ -139,6 +139,7 @@ async function createFixtureServer() {
   const bootstrapCounts = new Map();
   const passwords = new Map();
   const failNextLogin = new Set();
+  const aliasServers = [];
   let tokenSequence = 0;
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url || "/", "http://127.0.0.1");
@@ -358,6 +359,13 @@ async function createFixtureServer() {
     events,
     setPassword: (username, password) => passwords.set(username, password),
     failNextLogin: (username) => failNextLogin.add(username),
+    async createAlias() {
+      const alias = http.createServer(server.listeners("request")[0]);
+      alias.on("upgrade", server.listeners("upgrade")[0]);
+      await listen(alias);
+      aliasServers.push(alias);
+      return `http://127.0.0.1:${alias.address().port}`;
+    },
     closeUserSocket(username, reason = "fixture authorization revoked", code = 4002) {
       const socket = [...sockets]
         .reverse()
@@ -370,7 +378,9 @@ async function createFixtureServer() {
     close: () =>
       new Promise((resolve) => {
         for (const socket of sockets) socket.destroy();
-        server.close(resolve);
+        Promise.all(
+          [server, ...aliasServers].map((listener) => new Promise((done) => listener.close(done))),
+        ).then(resolve);
       }),
   };
 }
@@ -478,6 +488,7 @@ async function readWorkspaceScope(window) {
       senderHost: settings.sender?.proxy_server || "",
       personalProxyHost: settings.sender?.personal_proxy_host || "",
       gptPartition: settings.gpt?.partition || "",
+      geminiPartition: settings.gemini?.partition || "",
       claudePartition: settings.claude?.partition || "",
       claudeClearedAt: settings.browserPrivacy?.lastClearedAt?.claude || "",
     };
@@ -512,8 +523,12 @@ async function launchCase({
   mode = "all",
   waitForSilentRelogin = false,
   exercise,
+  profileDirectory,
+  prepareUserData,
 }) {
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-login-compat-"));
+  const userDataDir =
+    profileDirectory || fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-login-compat-"));
+  if (prepareUserData) await prepareUserData(userDataDir);
   const args = mode === "all" ? [ROOT] : [ROOT, `--mode=${mode}`];
   const electronApp = await electron.launch({
     args,
@@ -596,7 +611,7 @@ async function launchCase({
     return { authed: true, ...state, exerciseResult, blockedRequests };
   } finally {
     await electronApp.close().catch(() => undefined);
-    fs.rmSync(userDataDir, { recursive: true, force: true });
+    if (!profileDirectory) fs.rmSync(userDataDir, { recursive: true, force: true });
   }
 }
 
@@ -1391,7 +1406,16 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error && error.stack ? error.stack : error);
-  process.exitCode = 1;
-});
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error && error.stack ? error.stack : error);
+    process.exitCode = 1;
+  });
+
+module.exports = {
+  createFixtureServer,
+  launchCase,
+  loginThroughForm,
+  dismissFirstRunGuides,
+  readWorkspaceScope,
+};
