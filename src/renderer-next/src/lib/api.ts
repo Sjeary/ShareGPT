@@ -1,5 +1,6 @@
 import type { ShareGptApi } from '@/types/api'
 import { scopedUserDataApi } from './userDataApi'
+import type { SettingsPrincipalSnapshot } from './settingsPrincipalRuntime'
 
 // 主进程 IPC 桥。dev 在浏览器(无 preload)时给出空安全实现, 便于纯前端调试。
 const noop = () => undefined
@@ -147,3 +148,6 @@ export const api: ShareGptApi =
   typeof window !== 'undefined' && window.api ? scopedUserDataApi(window.api) : fallback
 
 export const hasNativeBridge = typeof window !== 'undefined' && Boolean(window.api)
+
+export const userDataApiFor = (snapshot: SettingsPrincipalSnapshot): ShareGptApi =>
+  scopedUserDataApi(typeof window !== 'undefined' && window.api ? window.api : fallback, snapshot)

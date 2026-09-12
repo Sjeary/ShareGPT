@@ -1,5 +1,8 @@
 import type { ShareGptApi } from '@/types/api'
-import { settingsPrincipalRuntime } from './settingsPrincipalRuntime'
+import {
+  settingsPrincipalRuntime,
+  type SettingsPrincipalSnapshot,
+} from './settingsPrincipalRuntime'
 
 const stores = [
   'loadChatHistory',
@@ -17,11 +20,15 @@ const stores = [
 ] as const
 
 // Captured requests cannot mutate a later account in main or publish late results in renderer.
-export function scopedUserDataApi(bridge: ShareGptApi): ShareGptApi {
+export function scopedUserDataApi(
+  bridge: ShareGptApi,
+  expected?: SettingsPrincipalSnapshot,
+): ShareGptApi {
   const wrap =
     (fn: (...args: unknown[]) => unknown) =>
     async (...args: unknown[]) => {
-      const snapshot = settingsPrincipalRuntime.snapshot()
+      const snapshot = expected ?? settingsPrincipalRuntime.snapshot()
+      settingsPrincipalRuntime.assertCurrent(snapshot)
       const result = await fn(...args, snapshot)
       settingsPrincipalRuntime.assertCurrent(snapshot)
       return result

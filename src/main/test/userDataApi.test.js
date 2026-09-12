@@ -31,6 +31,7 @@ test("data wrapper preserves optional blank-note content and rejects retired rea
       }),
   };
   const api = exports.scopedUserDataApi(bridge);
+  const bound = exports.scopedUserDataApi(bridge, { principalId: "A", generation: 1 });
   await api.vault.create("blank.md");
   await api.vault.create("text.md", "body");
   assert.deepEqual(calls, [
@@ -41,4 +42,6 @@ test("data wrapper preserves optional blank-note content and rejects retired rea
   generation++;
   resolveRead({ tasks: ["A"] });
   await assert.rejects(pending, /stale/);
+  await assert.rejects(bound.vault.create("retired.md"), /stale/);
+  assert.equal(calls.length, 2, "a captured retired adapter cannot call the native writer");
 });
