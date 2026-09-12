@@ -7,9 +7,11 @@ const ROOT = path.resolve(__dirname, "..");
 
 async function main() {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-local-data-recovery-"));
+  const localData = path.join(profile, "PrincipalData", "local-device");
+  fs.mkdirSync(localData, { recursive: true });
   const invalid = '{"interrupted":';
-  fs.writeFileSync(path.join(profile, "calendar.json"), invalid);
-  fs.writeFileSync(path.join(profile, "tasks.json"), invalid);
+  fs.writeFileSync(path.join(localData, "calendar.json"), invalid);
+  fs.writeFileSync(path.join(localData, "tasks.json"), invalid);
   const app = await electron.launch({
     args: [ROOT],
     cwd: ROOT,
@@ -33,11 +35,11 @@ async function main() {
     const retry = page.getByRole("button", { name: "重新加载", exact: true });
     await retry.waitFor({ state: "visible" });
     assert.equal(await page.getByRole("button", { name: "新建", exact: true }).count(), 0);
-    assert.equal(fs.readFileSync(path.join(profile, "calendar.json"), "utf8"), invalid);
+    assert.equal(fs.readFileSync(path.join(localData, "calendar.json"), "utf8"), invalid);
     await retry.click();
     await retry.waitFor({ state: "visible" });
     fs.writeFileSync(
-      path.join(profile, "calendar.json"),
+      path.join(localData, "calendar.json"),
       JSON.stringify({
         calendars: [
           {
@@ -64,9 +66,9 @@ async function main() {
     await page.locator('[data-tour="nav-todo"]').click();
     await retry.waitFor({ state: "visible" });
     assert.equal(await page.getByPlaceholder(/添加任务/).count(), 0);
-    assert.equal(fs.readFileSync(path.join(profile, "tasks.json"), "utf8"), invalid);
+    assert.equal(fs.readFileSync(path.join(localData, "tasks.json"), "utf8"), invalid);
     fs.writeFileSync(
-      path.join(profile, "tasks.json"),
+      path.join(localData, "tasks.json"),
       JSON.stringify({
         lists: [{ id: "restored-inbox", name: "Recovered inbox", color: "#123456", isInbox: true }],
         tasks: [],
