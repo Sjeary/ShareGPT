@@ -25,10 +25,20 @@ function writeJsonAtomic(file, value) {
   }
 }
 
+function storeShape(field) {
+  return typeof field === "string"
+    ? {
+        valid: (value) => Boolean(value && Array.isArray(value[field])),
+        empty: () => ({ [field]: [] }),
+      }
+    : field;
+}
+
 function readJsonStore(file, field, onRecovery = console.warn) {
+  const shape = storeShape(field);
   function read(candidate) {
     const value = JSON.parse(fs.readFileSync(candidate, "utf8"));
-    if (!value || !Array.isArray(value[field])) throw new Error("Invalid store schema");
+    if (!shape.valid(value)) throw new Error("Invalid store schema");
     return value;
   }
   try {
@@ -36,7 +46,7 @@ function readJsonStore(file, field, onRecovery = console.warn) {
   } catch (error) {
     if (error.code && error.code !== "ENOENT") throw error;
     const backup = `${file}.backup`;
-    if (error.code === "ENOENT" && !fs.existsSync(backup)) return { [field]: [] };
+    if (error.code === "ENOENT" && !fs.existsSync(backup)) return shape.empty();
     let recovered;
     try {
       recovered = read(backup);
@@ -55,7 +65,7 @@ function readJsonStore(file, field, onRecovery = console.warn) {
 }
 
 function saveJsonStore(file, value, field) {
-  if (!value || !Array.isArray(value[field])) throw new Error("Invalid store schema");
+  if (!storeShape(field).valid(value)) throw new Error("Invalid store schema");
   const previous = readJsonStore(file, field);
   const backup = `${file}.backup`;
   if (!fs.existsSync(file)) {

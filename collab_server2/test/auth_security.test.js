@@ -379,3 +379,25 @@ test("last administrator cannot be demoted but role transfer remains available",
     409,
   );
 });
+
+test("corrupt personal server storage blocks reads and writes while preserving original data", async () => {
+  const login = JSON.parse(
+    (await post("/api/login", { username: "first-admin", password: "test-password" }).result).body,
+  );
+  const headers = { authorization: `Bearer ${login.token}` };
+  const original = "{truncated-personal-data";
+  const backup = `${process.env.USER_STORES_FILE}.backup`;
+  if (fs.existsSync(backup)) fs.unlinkSync(backup);
+  fs.writeFileSync(process.env.USER_STORES_FILE, original);
+  const read = await post("/api/user-store/calendar", {}, false, { method: "GET", headers }).result;
+  assert.equal(read.status, 503);
+  const write = await post(
+    "/api/user-store/calendar",
+    { baseRev: 0, data: { calendars: [], events: [] } },
+    false,
+    { method: "PUT", headers },
+  ).result;
+  assert.equal(write.status, 500);
+  assert.equal(fs.readFileSync(process.env.USER_STORES_FILE, "utf8"), original);
+  fs.unlinkSync(process.env.USER_STORES_FILE);
+});

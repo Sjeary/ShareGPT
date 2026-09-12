@@ -7,7 +7,12 @@ const { WebSocketServer } = require("ws");
 const { createTranslationProfileService } = require("./translation_profiles");
 const { createTranslationUsageService } = require("./translation_usage");
 const { createTranslationRequestRegistry } = require("./translation_requests");
-const { writeJsonAtomic, readJsonStore, saveJsonStoreAsync } = require("./json_store");
+const {
+  writeJsonAtomic,
+  readJsonStore,
+  saveJsonStore,
+  saveJsonStoreAsync,
+} = require("./json_store");
 const { signLoginIdentity } = require("./server_identity");
 const { createUserStore } = require("./user_store");
 const { mergeUserStoreData } = require("./user_store_merge");
@@ -2078,19 +2083,35 @@ function eventsForSubnet(subnetKey) {
 }
 
 // 个人云端存储 (按用户隔离: calendar / tasks)。rev 单调递增, 写入须带 baseRev=当前 rev, 防止老版本覆盖新版本。
+const personalStoresShape = {
+  empty: () => ({ stores: {} }),
+  valid: (value) => {
+    const object = (candidate) =>
+      candidate && typeof candidate === "object" && !Array.isArray(candidate);
+    return Boolean(
+      object(value) &&
+      object(value.stores) &&
+      Object.values(value.stores).every(
+        (account) =>
+          object(account) &&
+          Object.values(account).every(
+            (entry) =>
+              object(entry) &&
+              Number.isInteger(entry.rev) &&
+              entry.rev >= 0 &&
+              (entry.data === null || typeof entry.data === "object"),
+          ),
+      ),
+    );
+  },
+};
 
 function loadUserStores() {
-  try {
-    if (!fs.existsSync(USER_STORES_FILE)) return { stores: {} };
-    const raw = JSON.parse(fs.readFileSync(USER_STORES_FILE, "utf8"));
-    return raw && typeof raw.stores === "object" && raw.stores ? raw : { stores: {} };
-  } catch {
-    return { stores: {} };
-  }
+  return readJsonStore(USER_STORES_FILE, personalStoresShape);
 }
 
 function saveUserStores(store) {
-  writeJsonAtomic(USER_STORES_FILE, { stores: store?.stores || {} });
+  saveJsonStore(USER_STORES_FILE, store, personalStoresShape);
 }
 
 function getUserStoreEntry(stores, username, kind) {
