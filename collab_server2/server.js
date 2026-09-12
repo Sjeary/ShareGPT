@@ -9,6 +9,7 @@ const { createTranslationUsageService } = require("./translation_usage");
 const { createTranslationRequestRegistry } = require("./translation_requests");
 const { writeJsonAtomic, readJsonStore, saveJsonStoreAsync } = require("./json_store");
 const { signLoginIdentity } = require("./server_identity");
+const { createUserStore } = require("./user_store");
 
 process.on("uncaughtException", (err) => {
   try {
@@ -33,6 +34,7 @@ const PORT = Number.parseInt(process.env.PORT || "8088", 10);
 const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, "data", "users.json");
 const SERVER_IDENTITY_FILE =
   process.env.SERVER_IDENTITY_FILE || path.join(path.dirname(USERS_FILE), "server_identity.json");
+const userStore = createUserStore(USERS_FILE, { identityFile: SERVER_IDENTITY_FILE });
 const GPT_USAGE_FILE = process.env.GPT_USAGE_FILE || path.join(__dirname, "data", "gpt_usage.json");
 const CHAT_HISTORY_FILE =
   process.env.CHAT_HISTORY_FILE || path.join(__dirname, "data", "chat_history.json");
@@ -265,42 +267,30 @@ function normalizeUserRecord(record) {
   };
 }
 
-function ensureUsersFile() {
-  fs.mkdirSync(path.dirname(USERS_FILE), { recursive: true });
-  if (!fs.existsSync(USERS_FILE)) {
-    fs.writeFileSync(USERS_FILE, JSON.stringify({ users: [] }, null, 2), "utf-8");
-  }
-}
-
 function loadUserStore() {
-  ensureUsersFile();
-  try {
-    const raw = JSON.parse(fs.readFileSync(USERS_FILE, "utf-8"));
-    const rawUsers = Array.isArray(raw.users) ? raw.users : [];
-    const users = rawUsers.map(normalizeUserRecord);
-    const needsLegacyEntitlementMigration = rawUsers.some(
-      (record) =>
-        record &&
-        typeof record === "object" &&
-        !Object.prototype.hasOwnProperty.call(record, "advancedAiAllowed") &&
-        !Object.prototype.hasOwnProperty.call(record, "allowedProxyRouteIds") &&
-        !Object.prototype.hasOwnProperty.call(record, "legacyProxyEntitled"),
-    );
-    if (needsLegacyEntitlementMigration) {
-      try {
-        saveUserStore({ users });
-      } catch (error) {
-        console.error("[collab] 旧账号代理权限标记持久化失败:", error.message || error);
-      }
+  const raw = userStore.load();
+  const rawUsers = raw.users;
+  const users = rawUsers.map(normalizeUserRecord);
+  const needsLegacyEntitlementMigration = rawUsers.some(
+    (record) =>
+      record &&
+      typeof record === "object" &&
+      !Object.prototype.hasOwnProperty.call(record, "advancedAiAllowed") &&
+      !Object.prototype.hasOwnProperty.call(record, "allowedProxyRouteIds") &&
+      !Object.prototype.hasOwnProperty.call(record, "legacyProxyEntitled"),
+  );
+  if (needsLegacyEntitlementMigration) {
+    try {
+      saveUserStore({ users });
+    } catch (error) {
+      console.error("[collab] 旧账号代理权限标记持久化失败:", error.message || error);
     }
-    return { users };
-  } catch {
-    return { users: [] };
   }
+  return { users };
 }
 
 function saveUserStore(store) {
-  writeJsonAtomic(USERS_FILE, store);
+  userStore.save(store);
 }
 
 function normalizeUsageEvent(record) {
@@ -2196,7 +2186,7 @@ function focusLeaderboard(range) {
   return rows.slice(0, 50);
 }
 
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": CORS_ORIGIN,
@@ -3603,6 +3593,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   sendText(res, 404, "Not Found");
+}
+
+const server = http.createServer((req, res) => {
+  void handleRequest(req, res).catch((error) => {
+    console.error("[collab] HTTP request failed:", error.message);
+    if (res.headersSent) res.destroy();
+    else sendText(res, 503, "服务暂时不可用，请稍后重试或联系管理员");
+  });
 });
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_CHAT_PAYLOAD_BYTES });

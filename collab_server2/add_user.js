@@ -1,32 +1,22 @@
-const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { createUserStore } = require("./user_store");
 
 const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, "data", "users.json");
+const userStore = createUserStore(USERS_FILE, {
+  identityFile:
+    process.env.SERVER_IDENTITY_FILE || path.join(path.dirname(USERS_FILE), "server_identity.json"),
+});
 const ITERATIONS = 120000;
 const KEY_LENGTH = 32;
 const DIGEST = "sha256";
 
-function ensureUserFile() {
-  fs.mkdirSync(path.dirname(USERS_FILE), { recursive: true });
-  if (!fs.existsSync(USERS_FILE)) {
-    fs.writeFileSync(USERS_FILE, JSON.stringify({ users: [] }, null, 2), "utf-8");
-  }
-}
-
 function loadUsers() {
-  ensureUserFile();
-  try {
-    const raw = JSON.parse(fs.readFileSync(USERS_FILE, "utf-8"));
-    if (!Array.isArray(raw.users)) return { users: [] };
-    return raw;
-  } catch {
-    return { users: [] };
-  }
+  return userStore.load();
 }
 
 function saveUsers(data) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2), "utf-8");
+  userStore.save(data);
 }
 
 function hashPassword(password, salt) {
