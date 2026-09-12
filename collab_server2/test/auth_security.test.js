@@ -4,6 +4,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { PassThrough } = require("node:stream");
+const { once } = require("node:events");
+const WebSocket = require("ws");
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-auth-security-"));
 for (const name of [
@@ -28,7 +30,7 @@ for (const name of [
 process.env.RELEASE_STORE = path.join(directory, "release-store");
 process.env.RELEASES_DIR = path.join(directory, "releases");
 process.env.LOGIN_MAX_FAILS = "3";
-const { server } = require("../server");
+const { server, createUserRecord } = require("../server");
 test.after(() => fs.rmSync(directory, { recursive: true, force: true }));
 
 function post(url, body, hold = false) {
@@ -115,4 +117,83 @@ test("administrator password attempts are limited independently of ordinary logi
       .status,
     429,
   );
+});
+
+async function openClient(url, token) {
+  const ws = new WebSocket(`${url}/ws?token=${encodeURIComponent(token)}`);
+  const messages = [];
+  ws.on("message", (raw) => messages.push(JSON.parse(String(raw))));
+  await once(ws, "open");
+  return { ws, messages };
+}
+
+async function waitFor(predicate) {
+  const deadline = Date.now() + 3000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error("Expected server message was not delivered");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+test("chat-disabled accounts retain legacy login and proxy access but cannot read or send chat", async (t) => {
+  const accounts = JSON.parse(fs.readFileSync(process.env.USERS_FILE));
+  accounts.users.push(createUserRecord("chat-disabled", "test-password", { chatDisabled: true }));
+  fs.writeFileSync(process.env.USERS_FILE, JSON.stringify(accounts));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const httpBase = `http://127.0.0.1:${server.address().port}`;
+  const wsBase = httpBase.replace("http:", "ws:");
+  const clients = [];
+  t.after(async () => {
+    for (const client of clients) client.ws.terminate();
+    await new Promise((resolve) => server.close(resolve));
+  });
+  const normalLogin = JSON.parse(
+    (await post("/api/login", { username: "first-admin", password: "test-password" }).result).body,
+  );
+  const disabledLogin = JSON.parse(
+    (await post("/api/login", { username: "chat-disabled", password: "test-password" }).result)
+      .body,
+  );
+  assert.ok(disabledLogin.token);
+  const normal = await openClient(wsBase, normalLogin.token);
+  clients.push(normal);
+  const disabled = await openClient(wsBase, disabledLogin.token);
+  clients.push(disabled);
+  normal.ws.send(JSON.stringify({ type: "chat", text: "allowed room message" }));
+  await waitFor(() => normal.messages.some((message) => message.type === "chat"));
+  const messageId = normal.messages.find((message) => message.type === "chat").id;
+  const commands = [
+    { type: "chat", text: "forbidden room message" },
+    { type: "history_sync" },
+    { type: "chat_typing", active: true },
+    { type: "chat_react", messageId, emoji: "👍" },
+    { type: "chat_read", scope: "subnet", messageIds: [messageId] },
+  ];
+  for (const command of commands) disabled.ws.send(JSON.stringify(command));
+  await waitFor(
+    () =>
+      disabled.messages.filter((message) => message.type === "error").length === commands.length,
+  );
+  normal.ws.send(JSON.stringify({ type: "chat_react", messageId, emoji: "👍" }));
+  await waitFor(() => normal.messages.some((message) => message.type === "chat_reaction"));
+  const history = JSON.parse(fs.readFileSync(process.env.CHAT_HISTORY_FILE)).history;
+  assert.equal(history.length, 1);
+  assert.deepEqual(history[0].reactions, { "👍": ["first-admin"] });
+  assert.deepEqual(history[0].readBy, []);
+  assert.equal(
+    disabled.messages.some((message) =>
+      ["history", "history_sync", "chat", "chat_reaction"].includes(message.type),
+    ),
+    false,
+  );
+  const bootstrap = await fetch(`${httpBase}/api/client/bootstrap`, {
+    headers: { Authorization: `Bearer ${disabledLogin.token}` },
+  });
+  assert.equal(bootstrap.status, 200);
+  assert.ok((await bootstrap.json()).sender);
+  const relogin = JSON.parse(
+    (await post("/api/login", { username: "chat-disabled", password: "test-password" }).result)
+      .body,
+  );
+  assert.deepEqual(relogin.history, []);
 });

@@ -1503,6 +1503,7 @@ const CHAT_DISABLED_BLOCK_TYPES = new Set([
   "chat_read",
   "chat_recall",
   "chat_edit",
+  "chat_reaction",
   "history",
   "history_sync",
 ]);
@@ -2295,7 +2296,7 @@ async function handleRequest(req, res) {
         profile: getPublicProfile(username),
         roomScope: subnetLabel,
         users: buildUserDirectory(),
-        history: visibleHistoryForIdentity(username, subnetKey),
+        history: user.chatDisabled ? [] : visibleHistoryForIdentity(username, subnetKey),
       });
     } catch (err) {
       sendText(res, 500, err.message || "登录失败");
@@ -3697,6 +3698,24 @@ wss.on("connection", (ws) => {
   broadcastPresence();
 
   const handleMessage = async (payload) => {
+    const currentSession = resolveSessionByToken(ws.token);
+    if (!currentSession || !hasCurrentProxyAuthorization(currentSession)) {
+      ws.close(4002, "session_expired");
+      return;
+    }
+    if (
+      ws.chatDisabled &&
+      (HISTORY_MUTATING_MESSAGE_TYPES.has(payload?.type) ||
+        payload?.type === "history_sync" ||
+        payload?.type === "chat_typing")
+    ) {
+      sendToClient(ws, {
+        type: "error",
+        text: "聊天功能已被管理员关闭",
+        timestamp: nowIso(),
+      });
+      return;
+    }
     if (payload?.type === "history_sync") {
       sendToClient(ws, buildHistorySyncPayload(ws, payload?.since));
       return;
