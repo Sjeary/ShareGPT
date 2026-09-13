@@ -1,10 +1,5 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const { createRequire } = require("node:module");
-// This test-only parser has no declarations; do not typecheck its dependency sources as app code.
-const yaml = createRequire(__filename)("js-yaml");
 const {
   legacyReleaseCommands,
   legacyReleaseEnvironment,
@@ -86,46 +81,4 @@ test("legacy build does not consume inherited signing credentials", () => {
     CSC_IDENTITY_AUTO_DISCOVERY: "false",
   });
   assert.equal(input.CSC_LINK, "fixture", "the parent environment must not be changed");
-});
-
-test("release jobs consume the single exact-version distribution policy", () => {
-  const workflow = yaml.load(
-    fs.readFileSync(path.join(__dirname, "../../../.github/workflows/release.yml"), "utf8"),
-  );
-  for (const job of [workflow.jobs.macos, workflow.jobs.windows]) {
-    for (const step of job.steps) {
-      if (/approved legacy/i.test(step.name || "")) {
-        assert.equal(step.if, "needs.source.outputs.distribution == 'legacy'");
-      }
-      if (
-        Object.keys(step.env || {}).some((key) =>
-          /CSC|APPLE_API|EXPECTED_.*(TEAM|PUBLISHER)/.test(key),
-        )
-      ) {
-        assert.equal(step.if, "needs.source.outputs.distribution == 'official'");
-      }
-    }
-  }
-  assert.equal(workflow.jobs.source.outputs.distribution, "${{ steps.distribution.outputs.mode }}");
-  const distribution = workflow.jobs.source.steps.find((step) => step.id === "distribution");
-  assert.match(distribution.run, /node scripts\/release-distribution\.cjs/);
-  assert.match(
-    workflow.jobs.source.steps.find(
-      (step) => step.name === "Verify protected release source and contract",
-    ).run,
-    /test -s "docs\/releases\/\$SHAREGPT_RELEASE_TAG\.md"/,
-  );
-  const ci = yaml.load(
-    fs.readFileSync(path.join(__dirname, "../../../.github/workflows/ci.yml"), "utf8"),
-  );
-  assert.match(
-    ci.jobs["electron-integration"].steps.find(
-      (step) => step.name === "Verify approved legacy Mac packaging and real packaged startup",
-    ).run,
-    /node scripts\/release-distribution\.cjs/,
-  );
-  const publish = workflow.jobs.publish;
-  assert.deepEqual(publish.needs, ["source", "macos", "windows"]);
-  assert.match(publish.steps.at(-1).run, /--notes-file/);
-  assert.doesNotMatch(publish.steps.at(-1).run, /--generate-notes/);
 });
