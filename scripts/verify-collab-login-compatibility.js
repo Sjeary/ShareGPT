@@ -1110,6 +1110,11 @@ async function verifyRecoveryBackoff(fixture) {
     events: fixture.events,
     username,
     exercise: async ({ window }) => {
+      // Exercise a manual retry during backoff, not a race against the real 1.5s timer.
+      // Automatic recovery is covered separately; advance time after the manual success
+      // to prove the cancelled retry cannot issue a second login.
+      await window.clock.install();
+      await window.clock.pauseAt(Date.now() + 1000);
       fixture.failNextLogin(username);
       assert.equal(fixture.closeUserSocket(username, "fixture manual recovery", 4003), true);
       const retry = window.locator("header").getByRole("button", { name: "重新登录", exact: true });
@@ -1120,7 +1125,7 @@ async function verifyRecoveryBackoff(fixture) {
       assert.equal(await retry.isEnabled(), true, "backoff must leave manual recovery available");
       await retry.click();
       await waitFor(() => countEvents(fixture.events, "ws", username) === 2);
-      await new Promise((resolve) => setTimeout(resolve, 1700));
+      await window.clock.runFor(3000);
       return {
         loginCount: countEvents(fixture.events, "login", username),
         wsCount: countEvents(fixture.events, "ws", username),
