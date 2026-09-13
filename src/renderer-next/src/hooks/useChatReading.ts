@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useChatStore, type ChatMessage, type ChatReadingPosition } from '@/store/useChatStore'
+import { useAppStore } from '@/store/useAppStore'
 
 function messageNode(root: HTMLElement, id: string) {
   return Array.from(root.querySelectorAll<HTMLElement>('[data-message-id]')).find(
@@ -111,6 +112,15 @@ export function useChatReading(
       if (old?.anchorId && !root.querySelector('[data-message-id]')) return
       useChatStore.getState().saveReadingPosition(viewKey, capture(root, resolvedUnreadRef.current))
     }
+    // Native scroll events may still be queued when navigation replaces/hides the DOM.
+    // Store notifications run before that React commit, while this viewport still belongs
+    // to the outgoing conversation. Effect cleanup is too late to capture its geometry.
+    const stopConversationSubscription = useChatStore.subscribe((state, previous) => {
+      if (state.activeKey !== previous.activeKey || state.roomScope !== previous.roomScope) save()
+    })
+    const stopPanelSubscription = useAppStore.subscribe((state, previous) => {
+      if (previous.active === 'chat' && state.active !== 'chat') save()
+    })
     const reconcile = () => {
       if (!root.clientHeight) return
       const pending = pendingUnreadRef.current
@@ -137,6 +147,8 @@ export function useChatReading(
     root.addEventListener('scroll', save, { passive: true })
     reconcile()
     return () => {
+      stopConversationSubscription()
+      stopPanelSubscription()
       observer.disconnect()
       cancelAnimationFrame(frame)
       clearTimeout(highlightTimer.current)

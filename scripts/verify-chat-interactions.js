@@ -29,7 +29,13 @@ window.switchPrincipal = (username) => {
 };
 window.switchPrincipal('Alice');
 const root = createRoot(document.getElementById('root'));
-window.mountChat = () => flushSync(() => root.render(<main className="bg-background text-foreground" style={{display:'flex',height:'100vh'}}><ChatPanel /></main>));
+function Fixture() {
+  const active = useAppStore(state => state.active);
+  return <main className="bg-background text-foreground" style={{display:'flex',height:'100vh'}}><div className={active === 'chat' ? 'contents' : 'hidden'}><ChatPanel /></div></main>;
+}
+window.selectConversation = key => flushSync(() => useChatStore.getState().setActiveKey(key));
+window.selectPanel = active => flushSync(() => useAppStore.setState({ active }));
+window.mountChat = () => flushSync(() => root.render(<Fixture />));
 window.unmountChat = () => flushSync(() => root.render(null));
 const send = WebSocket.prototype.send;
 window.failNextChat = false;
@@ -252,6 +258,66 @@ async function run() {
     });
     assert.ok(received.some((m) => m.type === "chat_read" && m.messageIds?.includes("live-1")));
     await page.screenshot({ path: path.join(directory, "reading-latest.png") });
+
+    // A completed read must survive both conversation changes and Shell's hidden panel.
+    await page.evaluate(() => window.selectConversation("user:Bob"));
+    await page.evaluate(() => window.selectConversation(""));
+    assert.ok(
+      await viewport.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight < 2),
+      "returning to a read conversation must stay at latest",
+    );
+    await page.evaluate(() => window.appStore.setState({ active: "service" }));
+    await page.evaluate(() => window.appStore.setState({ active: "chat" }));
+    assert.ok(
+      await viewport.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight < 2),
+      "returning from another panel must stay at latest",
+    );
+
+    // Scroll delivery is asynchronous: navigating immediately must not keep the old anchor.
+    await viewport.evaluate((node) => {
+      node.scrollTop = 300;
+    });
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
+    await page.evaluate(() => {
+      const node = document.querySelector("[data-chat-scroll-viewport]");
+      node.scrollTop = node.scrollHeight;
+      window.selectConversation("user:Bob");
+    });
+    await page.evaluate(() => window.selectConversation(""));
+    assert.ok(
+      await viewport.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight < 2),
+      "read-to-bottom followed immediately by navigation must retain latest intent",
+    );
+    await viewport.evaluate((node) => {
+      node.scrollTop = 300;
+    });
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
+    await page.evaluate(() => {
+      const node = document.querySelector("[data-chat-scroll-viewport]");
+      node.scrollTop = node.scrollHeight;
+      window.selectPanel("service");
+    });
+    await page.evaluate(() => window.selectPanel("chat"));
+    assert.ok(
+      await viewport.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight < 2),
+      "read-to-bottom followed immediately by hiding the panel must retain latest intent",
+    );
+
+    // The inverse transition must retain intentional history reading, not force the bottom.
+    await page.evaluate(() => {
+      document.querySelector("[data-chat-scroll-viewport]").scrollTop = 300;
+      window.selectConversation("user:Bob");
+    });
+    await page.evaluate(() => window.selectConversation(""));
+    assert.ok(
+      Math.abs((await viewport.evaluate((node) => node.scrollTop)) - 300) < 2,
+      "an immediate history scroll must keep its actual anchor",
+    );
+    await page.getByRole("button", { name: "回到最新", exact: true }).click();
 
     const privateUnread = Array.from({ length: 30 }, (_, i) => ({
       id: "private-unread-" + i,
