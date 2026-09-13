@@ -167,6 +167,10 @@ async function run() {
     await app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].loadURL("data:text/html,<title>Untrusted fixture</title>"),
     );
+    // Wait for Playwright's renderer frame to observe the main-process navigation
+    // before exercising the new document's IPC boundary (without retrying the IPC).
+    await page.waitForURL("data:text/html,<title>Untrusted fixture</title>");
+    await expect(page).toHaveTitle("Untrusted fixture");
     const rejection = await page.evaluate(async () => {
       window.api.emitProfileUpdated({ profile: { username: "untrusted" } });
       try {
