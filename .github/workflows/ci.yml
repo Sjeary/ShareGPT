@@ -150,11 +150,12 @@ jobs:
       - name: Verify account data isolation and explicit legacy imports
         run: npm run verify:principal-data
 
-      - name: Verify v1.0.9 legacy Mac packaging and real packaged startup
-        env:
-          SHAREGPT_RELEASE_TAG: v1.0.9
+      - name: Verify approved legacy Mac packaging and real packaged startup
         run: |
-          if [ "$(node -p "require('./package.json').version")" = "1.0.9" ]; then
+          VERSION="$(node -p "require('./package.json').version")"
+          export SHAREGPT_RELEASE_TAG="v$VERSION"
+          MODE="$(node scripts/release-distribution.cjs)"
+          if [ "$MODE" = "legacy" ]; then
             npm run prepare:release-mac-assets
             node scripts/build-legacy-release.cjs
             node scripts/verify-packaged-startup.cjs release_sender/mac-arm64/ShareGPT.app/Contents/MacOS/ShareGPT
