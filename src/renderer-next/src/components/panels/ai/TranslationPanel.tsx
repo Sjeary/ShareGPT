@@ -594,6 +594,7 @@ export function TranslationPanel({
 
           {state.reader.phase === 'translating' ? (
             <Button
+              key="stop-reader"
               variant="outline"
               className="w-full gap-2 text-destructive hover:text-destructive"
               onClick={() => cancelActiveTranslation(true)}
@@ -603,6 +604,7 @@ export function TranslationPanel({
             </Button>
           ) : (
             <Button
+              key="start-reader"
               className="w-full gap-2"
               disabled={!state.reader.sourceText.trim()}
               onClick={() => void translateReader()}
@@ -723,6 +725,7 @@ export function TranslationPanel({
 
             {state.composer.phase === 'translating' ? (
               <Button
+                key="stop-composer"
                 variant="outline"
                 className="w-full gap-2 text-destructive hover:text-destructive"
                 onClick={() => cancelActiveTranslation(true)}
@@ -732,6 +735,7 @@ export function TranslationPanel({
               </Button>
             ) : (
               <Button
+                key="start-composer"
                 className="w-full gap-2"
                 disabled={!state.composer.sourceText.trim()}
                 onClick={() => void translateComposer()}

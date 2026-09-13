@@ -180,6 +180,14 @@ function createCertificate(directory) {
 }
 
 async function startFixtureServers(directory) {
+  const translations = {
+    requests: [],
+    release(text) {
+      const entry = this.requests.findLast((item) => item.text === text);
+      assert.ok(entry, `missing translation request: ${text}`);
+      entry.complete();
+    },
+  };
   const handler = async (request, response) => {
     const fixtureUrl = new URL(request.url || "/", "http://127.0.0.1");
     if (request.method === "POST" && fixtureUrl.pathname === "/api/login") {
@@ -208,11 +216,22 @@ async function startFixtureServers(directory) {
     if (request.method === "POST" && fixtureUrl.pathname === "/translate") {
       const body = JSON.parse((await readBody(request)) || "{}");
       const translatedText = `Translated: ${String(body.q || "")}`;
+      const entry = {
+        text: String(body.q || ""),
+        closed: false,
+        complete: () => {
+          if (!response.destroyed) json(response, 200, { translatedText });
+        },
+      };
+      translations.requests.push(entry);
+      response.once("close", () => {
+        entry.closed = true;
+      });
       if (String(body.q || "").startsWith("slow:")) {
-        const timer = setTimeout(() => json(response, 200, { translatedText }), 1_500);
-        response.once("close", () => clearTimeout(timer));
+        // The test releases the response explicitly: a slow UI must not turn cancellation
+        // into a race against a fixed wall-clock delay.
       } else {
-        json(response, 200, { translatedText });
+        entry.complete();
       }
       return;
     }
@@ -250,7 +269,7 @@ async function startFixtureServers(directory) {
     await new Promise((resolve) => httpServer.close(resolve));
     throw error;
   }
-  return { httpServer, httpsServer };
+  return { httpServer, httpsServer, translations };
 }
 
 function parseSocksRequest(buffer) {
@@ -365,6 +384,7 @@ async function verifyTranslationWorkbench({
   tabId,
   translationBaseUrl,
   screenshotPath,
+  translations,
 }) {
   const urlPattern = "chatgpt\\.com/gpt/a";
   await page.getByRole("button", { name: /^ChatGPT/ }).click();
@@ -536,7 +556,11 @@ async function verifyTranslationWorkbench({
   await stopReader.click();
   await panel.getByText("已停止翻译", { exact: true }).waitFor({ state: "visible" });
   assert.equal(await source.isEnabled(), true);
-  await page.waitForTimeout(1_600);
+  await waitUntil(
+    () => translations.requests.findLast((item) => item.text === "slow: reader stop")?.closed,
+    "reader request cancelled",
+  );
+  translations.release("slow: reader stop");
   assert.equal(await result.textContent(), "译文将在这里显示");
   await source.fill("changed workbench");
   await panel.getByRole("button", { name: "翻译", exact: true }).click();
@@ -553,7 +577,11 @@ async function verifyTranslationWorkbench({
   });
   await panel.getByRole("button", { name: "关闭翻译侧栏" }).click();
   await panel.waitFor({ state: "hidden" });
-  await page.waitForTimeout(1_600);
+  await waitUntil(
+    () => translations.requests.findLast((item) => item.text === "slow: reader close")?.closed,
+    "closed reader request cancelled",
+  );
+  translations.release("slow: reader close");
   await openButton.click();
   await panel.waitFor({ state: "visible" });
   assert.equal(await panel.getByRole("button", { name: "停止翻译", exact: true }).count(), 0);
@@ -564,6 +592,44 @@ async function verifyTranslationWorkbench({
   await waitUntil(
     async () => (await result.textContent()) === "Translated: translation after close",
     "reading translation after closing an active run",
+  );
+
+  process.stdout.write(
+    "[verify] completing while Stop is pressed cannot start another translation\n",
+  );
+  async function completionDuringStop(sourceInput, startLabel, text, readResult) {
+    await sourceInput.fill(text);
+    await panel.getByRole("button", { name: startLabel, exact: true }).click();
+    await waitUntil(
+      () => translations.requests.some((item) => item.text === text),
+      "held translation request",
+    );
+    const stop = panel.getByRole("button", { name: "停止翻译", exact: true });
+    await stop.hover();
+    const bounds = await stop.boundingBox();
+    assert.ok(bounds);
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    try {
+      translations.release(text);
+      await waitUntil(
+        async () => (await readResult()) === `Translated: ${text}`,
+        "completion while Stop pressed",
+      );
+      await panel.getByRole("button", { name: startLabel, exact: true }).waitFor();
+    } finally {
+      await page.mouse.up();
+    }
+    await page.waitForTimeout(150);
+    assert.equal(
+      translations.requests.filter((item) => item.text === text).length,
+      1,
+      "releasing Stop must not start a second request",
+    );
+    assert.equal(await readResult(), `Translated: ${text}`);
+  }
+  await completionDuringStop(source, "翻译", "slow: reader pointer completion", () =>
+    result.textContent(),
   );
 
   process.stdout.write(
@@ -589,8 +655,18 @@ async function verifyTranslationWorkbench({
     .waitFor({ state: "visible" });
   assert.equal(await preview.inputValue(), "Translated: compose workbench");
   assert.equal(await panel.getByRole("button", { name: "插入 ChatGPT" }).isDisabled(), true);
-  await page.waitForTimeout(1_600);
+  await waitUntil(
+    () => translations.requests.findLast((item) => item.text === "slow: composer stop")?.closed,
+    "composer request cancelled",
+  );
+  translations.release("slow: composer stop");
   assert.equal(await preview.inputValue(), "Translated: compose workbench");
+  await completionDuringStop(
+    outgoingSource,
+    "生成发送预览",
+    "slow: composer pointer completion",
+    () => preview.inputValue(),
+  );
   await outgoingSource.fill("changed compose");
   assert.equal(await panel.getByRole("button", { name: "插入 ChatGPT" }).isDisabled(), true);
   await panel
@@ -642,8 +718,11 @@ async function verifyTranslationWorkbench({
 
   process.stdout.write("[verify] reading and writing drafts survive mode switches independently\n");
   await panel.getByRole("tab", { name: "阅读翻译" }).click();
-  assert.equal(await panel.getByLabel("待翻译原文").inputValue(), "translation after close");
-  assert.equal(await result.textContent(), "Translated: translation after close");
+  assert.equal(
+    await panel.getByLabel("待翻译原文").inputValue(),
+    "slow: reader pointer completion",
+  );
+  assert.equal(await result.textContent(), "Translated: slow: reader pointer completion");
   assert.equal(await panel.getByRole("button", { name: "插入 ChatGPT" }).count(), 0);
   await panel.getByRole("tab", { name: "写给 AI" }).click();
   assert.equal(await outgoingSource.inputValue(), "changed compose");
@@ -1258,7 +1337,7 @@ async function verifyConcurrentTabUsage({ electronApp, page, principalId, gptAId
 async function main() {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-app-lifecycle-"));
   const userData = path.join(temporaryRoot, "user-data");
-  const { httpServer, httpsServer } = await startFixtureServers(temporaryRoot);
+  const { httpServer, httpsServer, translations } = await startFixtureServers(temporaryRoot);
   const socksServer = await startFixtureSocks({
     httpPort: httpServer.address().port,
     httpsPort: httpsServer.address().port,
@@ -1350,6 +1429,7 @@ async function main() {
       tabId: gptAId,
       translationBaseUrl: fixtureBaseUrl,
       screenshotPath: path.join(temporaryRoot, "translation-workbench.png"),
+      translations,
     });
 
     process.stdout.write("[verify] Claude loading pulse keeps the ready composer document\n");
