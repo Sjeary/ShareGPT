@@ -401,6 +401,40 @@ async function run() {
       "live-2",
     );
     await page.screenshot({ path: path.join(directory, "new-message-indicator.png") });
+    // Delayed delivery must put the one boundary at the oldest unread in display order.
+    broadcast({
+      ...laterMessage,
+      id: "delayed-unread",
+      text: "Earlier unread delivered later",
+      timestamp: new Date(Date.parse(laterMessage.timestamp) - 1000).toISOString(),
+    });
+    await page.getByRole("button", { name: "2 条新消息", exact: true }).waitFor();
+    assert.equal(await marker.count(), 1);
+    assert.equal(
+      await marker.evaluate(
+        (node) => node.parentElement.querySelector("[data-message-id]")?.dataset.messageId,
+      ),
+      "delayed-unread",
+      "the boundary belongs to the oldest unread, not the first delivery",
+    );
+    await page.getByRole("button", { name: "2 条新消息", exact: true }).click();
+    await marker.waitFor({ state: "hidden" });
+    for (let i = 0; i < 6; i++) {
+      broadcast({
+        type: "system",
+        scope: "subnet",
+        text: `Fixture ${i} ${i % 2 ? "已上线" : "已离线"}`,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    await viewport.getByText("Fixture 5 已上线", { exact: true }).waitFor();
+    await page.evaluate(() => window.chatStore.getState().setActiveKey("user:Bob"));
+    await page.evaluate(() => window.chatStore.getState().setActiveKey(""));
+    assert.equal(
+      await marker.count(),
+      0,
+      "read boundaries must not return with presence or navigation",
+    );
     assert.deepEqual(errors, []);
     process.stdout.write(
       JSON.stringify({

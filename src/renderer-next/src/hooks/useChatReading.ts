@@ -9,13 +9,6 @@ function messageNode(root: HTMLElement, id: string) {
 
 const UNREAD_TOP_CONTEXT_PX = 56
 
-function availableUnreadId(messages: ChatMessage[], requestedId: string): string {
-  if (!requestedId) return ''
-  if (messages.some((message) => message.id === requestedId)) return requestedId
-  // 超过本地 300 条上限时，最早未读可能已被裁掉；定位到仍可见的最早一条。
-  return messages.find((message) => message.id)?.id ?? ''
-}
-
 function positionUnread(root: HTMLElement, id: string): boolean {
   const node = messageNode(root, id)
   if (!node) return false
@@ -61,7 +54,7 @@ export function useChatReading(
 ) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const resolvedUnreadId = availableUnreadId(messages, firstUnreadId)
+  const resolvedUnreadId = firstUnreadId
   const requestedUnreadRef = useRef(firstUnreadId)
   const resolvedUnreadRef = useRef(resolvedUnreadId)
   useLayoutEffect(() => {
@@ -72,9 +65,6 @@ export function useChatReading(
   const pendingUnreadRef = useRef<{ key: string; id: string } | null>(null)
   // Pixel offsets are retained in the store without re-rendering every message on every scroll event.
   const atBottom = useChatStore((state) => state.readingPositions[viewKey]?.atBottom ?? true)
-  const unreadMarkerId = useChatStore(
-    (state) => state.readingPositions[viewKey]?.unreadMarkerId ?? '',
-  )
   const [returnTarget, setReturnTarget] = useState<{
     key: string
     position: ChatReadingPosition
@@ -196,9 +186,9 @@ export function useChatReading(
     const node = root && messageNode(root, id)
     if (!root || !node) return false
     if (returnTarget?.key !== viewKey)
-      setReturnTarget({ key: viewKey, position: capture(root, unreadMarkerId) })
+      setReturnTarget({ key: viewKey, position: capture(root, resolvedUnreadId) })
     node.scrollIntoView({ block: 'center', behavior: 'instant' })
-    useChatStore.getState().saveReadingPosition(viewKey, capture(root, unreadMarkerId))
+    useChatStore.getState().saveReadingPosition(viewKey, capture(root, resolvedUnreadId))
     highlighted.current?.classList.remove('chat-jump-target')
     highlighted.current = node
     node.classList.add('chat-jump-target')
@@ -219,7 +209,6 @@ export function useChatReading(
     scrollRef,
     contentRef,
     atBottom,
-    unreadMarkerId,
     focused,
     toLatest,
     jumpToMessage,

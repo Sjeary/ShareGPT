@@ -107,10 +107,31 @@ test('reading positions stay isolated and unread marker advances after clearing 
   assert.equal(useChatStore.getState().readingPositions[b].scrollTop, 50)
   useChatStore.getState().incrementUnread('room:team', 'one')
   useChatStore.getState().incrementUnread('room:team', 'two')
-  assert.equal(useChatStore.getState().firstUnreadByKey['room:team'], 'one')
+  useChatStore.getState().incrementUnread('room:team', 'one')
+  assert.deepEqual(useChatStore.getState().unreadMessageIdsByKey['room:team'], ['one', 'two'])
+  assert.equal(useChatStore.getState().unreadByKey['room:team'], 2)
   useChatStore.getState().clearUnread('room:team')
   useChatStore.getState().incrementUnread('room:team', 'three')
-  assert.equal(useChatStore.getState().firstUnreadByKey['room:team'], 'three')
+  assert.deepEqual(useChatStore.getState().unreadMessageIdsByKey['room:team'], ['three'])
+  useChatStore.getState().reset()
+  assert.deepEqual(useChatStore.getState().unreadMessageIdsByKey, {})
+})
+
+test('unread anchors stay within retained history without losing the total unread count', () => {
+  const key = roomConversationKey('team')
+  const store = useChatStore.getState()
+  store.setRoomScope('team')
+  for (let index = 0; index < 305; index++) {
+    const message = roomMessage(`unread-${index}`, new Date(1000 + index).toISOString())
+    store.upsertMessage(message)
+    store.incrementUnread(key, message.id)
+  }
+  assert.equal(useChatStore.getState().unreadByKey[key], 305)
+  assert.equal(useChatStore.getState().unreadMessageIdsByKey[key].length, 300)
+  assert.equal(useChatStore.getState().unreadMessageIdsByKey[key][0], 'unread-5')
+  store.clearUnread(key)
+  assert.equal(useChatStore.getState().unreadMessageIdsByKey[key], undefined)
+  assert.equal(useChatStore.getState().unreadByKey[key], undefined)
 })
 
 test('public room stays in server order when cached, history, and live messages arrive out of order', () => {

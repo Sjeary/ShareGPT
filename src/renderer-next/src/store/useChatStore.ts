@@ -175,7 +175,7 @@ interface ChatState {
 
   // 未读计数 (旧 unreadByConversation): 仅实时入站消息累加, 历史加载不计。
   unreadByKey: Record<string, number>
-  firstUnreadByKey: Record<string, string>
+  unreadMessageIdsByKey: Record<string, string[]>
 
   // 动作
   setIdentity: (identity: Partial<ChatIdentity>) => void
@@ -327,7 +327,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeKey: '', // 默认房间
   filter: '',
   unreadByKey: {},
-  firstUnreadByKey: {},
+  unreadMessageIdsByKey: {},
 
   setIdentity: (identity) => set((s) => ({ identity: { ...s.identity, ...identity } })),
   setConnection: (connection) => set({ connection }),
@@ -339,12 +339,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   incrementUnread: (key, messageId) =>
     set((s) => {
       if (!key) return s
+      const ids = s.unreadMessageIdsByKey[key] ?? []
+      if (messageId && ids.includes(messageId)) return s
+      // Keep anchors within the retained message window; the count still includes older unread.
+      const retained = s.messagesByConversation[key]
+      const retainedIds = retained ? new Set(retained.map((message) => message.id)) : null
+      const anchors = retainedIds ? ids.filter((id) => retainedIds.has(id)) : ids
       return {
         unreadByKey: { ...s.unreadByKey, [key]: (s.unreadByKey[key] ?? 0) + 1 },
-        firstUnreadByKey:
-          messageId && !s.firstUnreadByKey[key]
-            ? { ...s.firstUnreadByKey, [key]: messageId }
-            : s.firstUnreadByKey,
+        unreadMessageIdsByKey: messageId
+          ? { ...s.unreadMessageIdsByKey, [key]: [...anchors, messageId] }
+          : s.unreadMessageIdsByKey,
       }
     }),
   clearUnread: (key) =>
@@ -352,9 +357,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (!key || !s.unreadByKey[key]) return s
       const next = { ...s.unreadByKey }
       delete next[key]
-      const firstUnreadByKey = { ...s.firstUnreadByKey }
-      delete firstUnreadByKey[key]
-      return { unreadByKey: next, firstUnreadByKey }
+      const unreadMessageIdsByKey = { ...s.unreadMessageIdsByKey }
+      delete unreadMessageIdsByKey[key]
+      return { unreadByKey: next, unreadMessageIdsByKey }
     }),
 
   setTyping: (key, meta) =>
@@ -476,7 +481,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeKey: '',
       filter: '',
       unreadByKey: {},
-      firstUnreadByKey: {},
+      unreadMessageIdsByKey: {},
       readingActiveView: '',
       roomScope: '-',
     }),
@@ -498,7 +503,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeKey: '',
       filter: '',
       unreadByKey: {},
-      firstUnreadByKey: {},
+      unreadMessageIdsByKey: {},
       readingActiveView: '',
     }),
 }))

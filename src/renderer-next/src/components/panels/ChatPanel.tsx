@@ -28,7 +28,7 @@ import { Composer } from './chat/Composer'
 import { ImageLightbox, type LightboxTarget } from './chat/ImageLightbox'
 import { activeConversationMessages, buildConversations } from './chat/conversations'
 import { avatarMark, formatDateLabel, isSameDay, messagePreview } from './chat/format'
-import { shouldShowUnreadMarker } from '@/lib/chatUnreadMarker'
+import { unreadMarkerIndex } from '@/lib/chatUnreadMarker'
 
 // 由消息派生回复草稿 (旧 createReplyDraftFromMessage ~394)。
 function replyDraftFromMessage(m: ChatMessage) {
@@ -110,7 +110,7 @@ export function ChatPanel() {
   const unreadByKey = useChatStore((s) => s.unreadByKey)
   const clearUnread = useChatStore((s) => s.clearUnread)
   const activeStoreKey = storeKeyForActive(activeKey, roomScope)
-  const firstUnreadId = useChatStore((s) => s.firstUnreadByKey[activeStoreKey] ?? '')
+  const unreadIds = useChatStore((s) => s.unreadMessageIdsByKey[activeStoreKey])
   const appActive = useAppStore((s) => s.active)
 
   const collab = (settings?.collab ?? {}) as Partial<CollabSettings>
@@ -153,12 +153,14 @@ export function ChatPanel() {
     [messagesByConversation, activeKey, roomScope],
   )
 
+  const markerIndex = useMemo(() => unreadMarkerIndex(messages, unreadIds), [messages, unreadIds])
+  const firstUnreadId = messages[markerIndex]?.id ?? ''
+
   const {
     scrollRef,
     contentRef,
     atBottom,
     focused,
-    unreadMarkerId,
     canReturn,
     toLatest,
     returnToReading,
@@ -438,7 +440,7 @@ export function ChatPanel() {
                       !mine && (!prev || prev.system || prev.from !== message.from || showDate)
                     return (
                       <div key={message.id || `${message.timestamp}-${i}`}>
-                        {shouldShowUnreadMarker(message.id, unreadMarkerId) && (
+                        {i === markerIndex && (
                           <div
                             className="my-3 flex items-center gap-3 text-xs text-primary"
                             role="separator"
