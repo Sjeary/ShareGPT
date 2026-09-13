@@ -204,7 +204,7 @@ export function EventEditorDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="text-xl">{existing ? '编辑事件' : '新建事件'}</DialogTitle>
         </DialogHeader>

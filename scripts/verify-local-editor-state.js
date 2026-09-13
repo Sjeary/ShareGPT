@@ -6,6 +6,33 @@ const { _electron: electron } = require("playwright");
 
 const ROOT = path.resolve(__dirname, "..");
 
+async function saveCalendarInShortWindow(app, page) {
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(900, 620));
+  const dialog = page.getByRole("dialog");
+  await page.waitForFunction(
+    () => {
+      const box = document.querySelector('[role="dialog"]')?.getBoundingClientRect();
+      return (
+        box && box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth
+      );
+    },
+    null,
+    { timeout: 3000 },
+  );
+  const save = dialog.getByRole("button", { name: "保存", exact: true });
+  await save.scrollIntoViewIfNeeded();
+  assert.ok(
+    await save.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      return box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth;
+    }),
+    "calendar save button must fit the short viewport",
+  );
+  await save.click();
+  await dialog.waitFor({ state: "hidden" });
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900));
+}
+
 async function main() {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-editor-state-"));
   const app = await electron.launch({
@@ -19,6 +46,7 @@ async function main() {
   });
   try {
     const page = await app.firstWindow();
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1280, 900));
     await page.getByRole("button", { name: "开始设置", exact: true }).click();
     await page.getByRole("button", { name: /仅在本机使用/ }).click();
     await page.getByRole("button", { name: "进入个人工作区", exact: true }).click();
@@ -35,7 +63,7 @@ async function main() {
     await page.getByRole("button", { name: "新建", exact: true }).click();
     let dialog = page.getByRole("dialog");
     await dialog.getByPlaceholder("标题", { exact: true }).fill("Audit calendar event");
-    await dialog.getByRole("button", { name: "保存", exact: true }).click();
+    await saveCalendarInShortWindow(app, page);
     await page.getByText("Audit calendar event", { exact: true }).first().click();
     dialog = page.getByRole("dialog");
     assert.equal(
@@ -43,7 +71,13 @@ async function main() {
       "Audit calendar event",
     );
     await dialog.getByPlaceholder("标题", { exact: true }).fill("Audit calendar revised");
-    await dialog.getByRole("button", { name: "保存", exact: true }).click();
+    await saveCalendarInShortWindow(app, page);
+    await page.getByText("Audit calendar revised", { exact: true }).first().click();
+    assert.equal(
+      await page.getByRole("dialog").getByPlaceholder("标题", { exact: true }).inputValue(),
+      "Audit calendar revised",
+    );
+    await page.getByRole("dialog").getByRole("button", { name: "取消", exact: true }).click();
     await page.getByRole("button", { name: "新建", exact: true }).click();
     assert.equal(
       await page.getByRole("dialog").getByPlaceholder("标题", { exact: true }).inputValue(),
@@ -91,7 +125,7 @@ async function main() {
     await page.getByRole("button", { name: "新手引导", exact: true }).click();
     assert.equal(await page.getByText(/1 \/ /).textContent(), firstStep);
     process.stdout.write(
-      `${JSON.stringify({ ok: true, calendar: "edit-and-new", task: "save-and-reopen", memo: "save-and-reopen", onboarding: "restart-at-first-step" })}\n`,
+      `${JSON.stringify({ ok: true, calendar: "short-window-create-edit-and-reopen", task: "save-and-reopen", memo: "save-and-reopen", onboarding: "restart-at-first-step" })}\n`,
     );
   } finally {
     await app.close();
