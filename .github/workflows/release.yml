@@ -232,6 +232,10 @@ jobs:
           npm run typecheck:main
           npm run lint
 
+      - name: Download pinned Windows binaries
+        shell: pwsh
+        run: ./scripts/prepare-windows-release-assets.ps1
+
       - name: Verify Windows desktop behavior parity
         shell: pwsh
         run: |
@@ -249,10 +253,6 @@ jobs:
             npm run $check
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-
-      - name: Download pinned Windows binaries
-        shell: pwsh
-        run: ./scripts/prepare-windows-release-assets.ps1
 
       - name: Build signed NSIS installer
         if: needs.source.outputs.distribution == 'official'

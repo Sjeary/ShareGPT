@@ -43,6 +43,12 @@ test("release jobs consume the single exact-version distribution policy", () => 
     ).run,
     /node scripts\/release-distribution\.cjs/,
   );
+  const windowsSteps = workflow.jobs.windows.steps.map((step) => step.name || "");
+  assert.ok(
+    windowsSteps.indexOf("Download pinned Windows binaries") <
+      windowsSteps.indexOf("Verify Windows desktop behavior parity"),
+    "Windows desktop parity must run after the pinned proxy binaries are available",
+  );
   const publish = workflow.jobs.publish;
   assert.deepEqual(publish.needs, ["source", "macos", "windows"]);
   assert.match(publish.steps.at(-1).run, /--notes-file/);
