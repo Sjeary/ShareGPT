@@ -5,7 +5,7 @@
 格式基于 [Keep a Changelog 1.1.0](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.0.10] - 待发布
+## [1.0.10] - 2026-09-13
 
 > **更可靠的聊天、独立资料与连接恢复**。本次重点改善日常使用中的消息定位、翻译停止、环境重建和多设备同步，并让个人与团队资料的归属更清楚。
 
@@ -338,7 +338,8 @@
 
 - 更早的 5.x 为测试版本，不在此正式记录。
 
-[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.9...HEAD
+[Unreleased]: https://github.com/Sjeary/ShareGPT/compare/v1.0.10...HEAD
+[1.0.10]: https://github.com/Sjeary/ShareGPT/compare/v1.0.9...v1.0.10
 [1.0.9]: https://github.com/Sjeary/ShareGPT/compare/v1.0.8...v1.0.9
 [1.0.8]: https://github.com/Sjeary/ShareGPT/compare/v1.0.7...v1.0.8
 [1.0.7]: https://github.com/Sjeary/ShareGPT/compare/v1.0.6...v1.0.7

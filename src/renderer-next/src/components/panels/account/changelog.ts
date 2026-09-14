@@ -11,7 +11,7 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     version: '1.0.10',
-    date: '待发布',
+    date: '2026-09-13',
     highlights: [
       '聊天只保留一条最早未读分隔线，读到最新后消失；已读到底再进入仍停在最新，翻看历史时保留原位置。',
       '双表情组合加载失败后可点击重试；停止翻译或发送预览时，不再因任务恰好完成而误发第二次请求。',
