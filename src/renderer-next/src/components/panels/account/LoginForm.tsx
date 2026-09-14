@@ -614,7 +614,7 @@ export function LoginForm() {
           {!showWorkspaceEntry && (
             <>
               <InterfaceSettings />
-              <Card>
+              <Card className="w-full">
                 <CardHeader>
                   <CardTitle className="text-base">本机资料</CardTitle>
                 </CardHeader>

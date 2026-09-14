@@ -177,6 +177,19 @@ async function main() {
     assert.doesNotMatch(await serviceNav.getAttribute("class"), /text-sidebar-accent-foreground/);
     assert.equal(await page.getByText("当前：个人工作区", { exact: true }).count(), 1);
     assert.equal(await page.locator("#account-server").count(), 0);
+    const interfaceCard = page
+      .getByText("界面设置", { exact: true })
+      .locator("xpath=ancestor::*[@data-slot='card'][1]");
+    const localDataCard = page
+      .getByText("本机资料", { exact: true })
+      .locator("xpath=ancestor::*[@data-slot='card'][1]");
+    const [interfaceBounds, localDataBounds] = await Promise.all([
+      interfaceCard.boundingBox(),
+      localDataCard.boundingBox(),
+    ]);
+    assert.ok(interfaceBounds && localDataBounds);
+    assert.ok(Math.abs(interfaceBounds.x - localDataBounds.x) < 1);
+    assert.ok(Math.abs(interfaceBounds.width - localDataBounds.width) < 1);
     assert.equal(await page.getByRole("button", { name: "清除", exact: true }).count(), 3);
     assert.equal(await page.getByRole("button", { name: "重建资料环境", exact: true }).count(), 3);
     assert.equal(await page.locator("#browser-privacy-sync").count(), 0);
