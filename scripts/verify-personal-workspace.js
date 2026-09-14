@@ -149,6 +149,16 @@ async function main() {
     assert.equal(await page.getByText("账号身份尚未准备好", { exact: true }).count(), 0);
     await page.evaluate(() => window.api.setActiveAiKind(""));
 
+    await page.locator('[data-tour="nav-account"]').click();
+    await page.locator("#browser-environment-mode").selectOption("proxy");
+    const activeExitSync = page.getByRole("button", {
+      name: "从当前出口同步",
+      exact: true,
+    });
+    await activeExitSync.waitFor({ state: "visible" });
+    assert.equal(await activeExitSync.isEnabled(), true);
+    await page.locator('[data-tour="nav-service"]').click();
+
     await page.getByRole("button", { name: "停止代理" }).click();
     await page.getByRole("button", { name: "开启代理" }).waitFor({ state: "visible" });
     await page.screenshot({ path: screenshot });
@@ -192,6 +202,11 @@ async function main() {
     assert.ok(Math.abs(interfaceBounds.width - localDataBounds.width) < 1);
     assert.equal(await page.getByRole("button", { name: "清除", exact: true }).count(), 3);
     assert.equal(await page.getByRole("button", { name: "重建资料环境", exact: true }).count(), 3);
+    assert.equal(
+      await page.getByRole("button", { name: "代理未开启", exact: true }).isDisabled(),
+      true,
+    );
+    assert.equal(await page.getByText(/请先到“网络 \/ 代理”开启个人代理/).count(), 1);
     assert.equal(await page.locator("#browser-privacy-sync").count(), 0);
     await page.getByText("界面设置", { exact: true }).waitFor({ state: "visible" });
     assert.equal(await page.locator("#ui-show-calendar").getAttribute("aria-checked"), "false");

@@ -65,6 +65,7 @@ function trimServerUrl(value: string): string {
 
 export function BrowserPrivacySection() {
   const privacy = useAppStore((state) => state.settings?.browserPrivacy)
+  const status = useAppStore((state) => state.status)
   const workspaceMode = useAppStore((state) => state.workspaceMode)
   const personalWorkspace = workspaceMode === 'personal'
   const advancedAiConfigured = useAppStore((state) => state.settings?.advancedAi?.enabled === true)
@@ -86,6 +87,13 @@ export function BrowserPrivacySection() {
   if (!privacy) return null
 
   const environment = privacy.environment
+  const activeProxyPort = Number(status.senderSocksPort)
+  const proxyReady = Boolean(
+    status.senderRunning &&
+    Number.isInteger(activeProxyPort) &&
+    activeProxyPort >= 1 &&
+    activeProxyPort <= 65535,
+  )
 
   async function savePrivacy(next: BrowserPrivacySettings, apply = true): Promise<void> {
     await patchSection('browserPrivacy', next)
@@ -363,18 +371,31 @@ export function BrowserPrivacySection() {
               <div className="grid gap-3 rounded-md border border-border bg-muted/30 p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-sm font-medium">当前出口环境</p>
+                    <p className="text-sm font-medium">
+                      {environment.sourceUpdatedAt ? '已同步的出口环境' : '出口环境'}
+                    </p>
                     <p className="break-all text-xs text-muted-foreground">
                       {environment.sourceUpdatedAt
                         ? `${locationLabel || '未知地区'} · ${environment.timezone}${environment.sourceIp ? ` · ${environment.sourceIp}` : ''}`
                         : '尚未同步；未同步前不会启用环境覆盖。'}
                     </p>
                   </div>
-                  <Button size="sm" variant="outline" onClick={syncFromExit} disabled={syncingExit}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={syncFromExit}
+                    disabled={syncingExit || !proxyReady}
+                  >
                     {syncingExit ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                    {syncingExit ? '检测中…' : '从当前出口同步'}
+                    {syncingExit ? '检测中…' : proxyReady ? '从当前出口同步' : '代理未开启'}
                   </Button>
                 </div>
+
+                {!proxyReady && (
+                  <p role="status" className="text-xs text-muted-foreground">
+                    请先到“网络 / 代理”开启个人代理，再从当前出口同步；已有结果会继续保留。
+                  </p>
+                )}
 
                 <div className="flex items-center justify-between gap-3">
                   <div>
