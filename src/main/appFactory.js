@@ -586,6 +586,14 @@ function createElectronApp(baseMode = "all") {
     return activeAiKind;
   }
 
+  function isBackgroundAcceptanceWindow() {
+    return Boolean(
+      !app.isPackaged &&
+      process.env.SHAREGPT_BACKGROUND_TEST === "1" &&
+      process.env.SHAREGPT_USER_DATA,
+    );
+  }
+
   function cancelPrincipalRuntime() {
     aiRuntimeEpoch += 1;
     composerConfirmations.clear();
@@ -1580,7 +1588,7 @@ function createElectronApp(baseMode = "all") {
       !target.tabId ||
       !mainWindow ||
       mainWindow.isDestroyed() ||
-      !mainWindow.isVisible() ||
+      (!mainWindow.isVisible() && !isBackgroundAcceptanceWindow()) ||
       mainWindow.isMinimized()
     ) {
       return false;
@@ -2335,10 +2343,7 @@ function createElectronApp(baseMode = "all") {
 
   function createWindow() {
     // Isolated development acceptance only; packaged applications always show normally.
-    const backgroundTest =
-      !app.isPackaged &&
-      process.env.SHAREGPT_BACKGROUND_TEST === "1" &&
-      Boolean(process.env.SHAREGPT_USER_DATA);
+    const backgroundTest = isBackgroundAcceptanceWindow();
     if (backgroundTest && process.platform === "darwin") app.dock.hide();
     mainWindow = new BrowserWindow({
       show: !backgroundTest,

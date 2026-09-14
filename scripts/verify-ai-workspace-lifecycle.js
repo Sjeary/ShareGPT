@@ -43,6 +43,32 @@ function waitUntil(predicate, label, timeoutMs = 15_000) {
   });
 }
 
+async function setMainWindowSize(electronApp, width, height) {
+  let contextError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const size = await electronApp.evaluate(
+        ({ BrowserWindow }, target) => {
+          const window = BrowserWindow.getAllWindows().find(
+            (candidate) => !candidate.isDestroyed(),
+          );
+          if (!window) throw new Error("main window is unavailable");
+          window.setSize(target.width, target.height);
+          return window.getSize();
+        },
+        { width, height },
+      );
+      assert.deepEqual(size, [width, height]);
+      return;
+    } catch (error) {
+      if (!/Execution context was destroyed/i.test(String(error))) throw error;
+      contextError = error;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+  throw contextError;
+}
+
 function closeServer(server) {
   if (!server) return Promise.resolve();
   return new Promise((resolve) => server.close(resolve));
@@ -388,7 +414,7 @@ async function verifyTranslationWorkbench({
 }) {
   const urlPattern = "chatgpt\\.com/gpt/a";
   await page.getByRole("button", { name: /^ChatGPT/ }).click();
-  await activateTab(page, "gpt", tabId);
+  await activateVisibleTab(page, "gpt", tabId);
   const openButton = page.getByRole("button", { name: "打开翻译侧栏" });
   await openButton.waitFor({ state: "visible" });
   await openButton.click();
@@ -434,16 +460,33 @@ async function verifyTranslationWorkbench({
     );
     const attachedHostBounds = await nativeHost.boundingBox();
     assert.ok(attachedHostBounds);
-    await api(page, "syncAiViewHost", {
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve(undefined))),
+        ),
+    );
+    const active = await activateKind(page, "gpt");
+    assert.equal(active.target.tabId, tabId);
+    const attached = await api(page, "syncAiViewHost", {
       kind: "gpt",
       tabId,
+      environmentId: active.target.environmentId,
       visible: true,
       bounds: attachedHostBounds,
     });
-    await waitUntil(
-      async () => visibleFixture(await appSnapshot(electronApp)).length === 1,
-      "fixture native host attach before narrow layout",
-    );
+    assert.equal(attached, true, "settled GPT host sync must be accepted");
+    await waitUntil(async () => {
+      const visible = visibleFixture(await appSnapshot(electronApp));
+      if (visible.length !== 1) return false;
+      const actual = visible[0].bounds;
+      return (
+        Math.abs(actual.x - attachedHostBounds.x) < 2 &&
+        Math.abs(actual.y - attachedHostBounds.y) < 2 &&
+        Math.abs(actual.width - attachedHostBounds.width) < 2 &&
+        Math.abs(actual.height - attachedHostBounds.height) < 2
+      );
+    }, "fixture native host attach and exact resize before narrow layout");
   } else {
     assert.equal(await separator.count(), 0);
     assert.equal(await nativeHost.boundingBox(), null);
@@ -452,10 +495,7 @@ async function verifyTranslationWorkbench({
       "fixture native host detach in initial narrow layout",
     );
   }
-  await electronApp.evaluate(({ BrowserWindow }) => {
-    const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-    window.setSize(860, Math.max(620, window.getSize()[1]));
-  });
+  await setMainWindowSize(electronApp, 860, Math.max(620, originalWindowSize[1]));
   await panel.locator("xpath=self::*[@data-layout='replace']").waitFor({ state: "visible" });
   await waitUntil(
     async () => visibleFixture(await appSnapshot(electronApp)).length === 0,
@@ -473,10 +513,7 @@ async function verifyTranslationWorkbench({
   );
   fs.writeFileSync(narrowScreenshotPath, Buffer.from(narrowScreenshot, "base64"));
   process.stdout.write(`[verify] narrow translation screenshot: ${narrowScreenshotPath}\n`);
-  await electronApp.evaluate(({ BrowserWindow }, size) => {
-    const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-    window.setSize(size[0], size[1]);
-  }, originalWindowSize);
+  await setMainWindowSize(electronApp, originalWindowSize[0], originalWindowSize[1]);
   await panel
     .locator(`xpath=self::*[@data-layout='${initialLayout}']`)
     .waitFor({ state: "visible" });
@@ -841,6 +878,29 @@ async function activateTab(page, kind, tabId) {
   await activateKind(page, kind);
   await switchTab(page, kind, tabId);
   await syncHost(page, kind, tabId);
+}
+
+async function activateVisibleTab(page, kind, tabId) {
+  const initialActivation = await activateKind(page, kind);
+  assert.equal(initialActivation.activeKind, kind);
+  const payload = await api(page, "listAiViews", kind);
+  const targetIndex = payload.tabs.findIndex((tab) => tab.id === tabId);
+  assert.notEqual(targetIndex, -1, `visible ${kind} tab must exist`);
+  const title = payload.tabs[targetIndex].title;
+  const sameTitleIndex = payload.tabs
+    .slice(0, targetIndex)
+    .filter((tab) => tab.title === title).length;
+  const button = page.getByRole("button", { name: title, exact: true }).nth(sameTitleIndex);
+  await button.waitFor({ state: "visible" });
+  await button.click();
+  await waitUntil(
+    async () => (await api(page, "listAiViews", kind)).activeTabId === tabId,
+    `visible ${kind} tab activation`,
+  );
+  const confirmed = await activateKind(page, kind);
+  assert.equal(confirmed.target.kind, kind);
+  assert.equal(confirmed.target.tabId, tabId);
+  return confirmed.target;
 }
 
 async function ensureTab(page, { kind, tabId, url, socksPort, allowExternalBrowsing = false }) {
