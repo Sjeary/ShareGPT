@@ -112,3 +112,31 @@ test("async saves stay ordered and let the main event loop continue", async (con
   assert.deepEqual(readJsonStore(file, "history"), second);
   assert.deepEqual(readJsonStore(`${file}.backup`, "history"), first);
 });
+
+test("object stores use the same backup owner without changing their on-disk schema", (context) => {
+  const file = fixture(context);
+  const shape = {
+    empty: () => ({ stores: {} }),
+    valid: (value) =>
+      Boolean(value?.stores && typeof value.stores === "object" && !Array.isArray(value.stores)),
+  };
+  assert.deepEqual(readJsonStore(file, shape), { stores: {} });
+  const first = { stores: { Alice: { calendar: { rev: 8, data: { events: [{ id: "kept" }] } } } } };
+  const second = { stores: { Alice: { calendar: { rev: 9, data: { events: [] } } } } };
+  writeJsonAtomic(file, first);
+  saveJsonStore(file, second, shape);
+  fs.writeFileSync(file, "{truncated");
+  assert.deepEqual(
+    readJsonStore(file, shape, () => {}),
+    first,
+  );
+  assert.ok(fs.readdirSync(path.dirname(file)).some((name) => name.includes(".corrupt-")));
+  fs.unlinkSync(file);
+  assert.deepEqual(
+    readJsonStore(file, shape, () => {}),
+    first,
+  );
+  fs.unlinkSync(`${file}.backup`);
+  fs.writeFileSync(file, JSON.stringify({ stores: [] }));
+  assert.throws(() => saveJsonStore(file, second, shape), /原件保留/);
+});

@@ -142,6 +142,7 @@ async function uploadReleaseFile(payload = {}, onProgress = null) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
+    show: process.env.SHAREGPT_ADMIN_TEST_HIDDEN !== "1",
     width: 1380,
     height: 900,
     minWidth: 1180,
@@ -168,10 +169,8 @@ function createWindow() {
   });
 }
 
-// UI 加载策略 (对齐 sender):
-// - 开发热更新: ADMIN_UI_DEV_URL 指向 Vite dev server。
-// - 默认: 加载重构后的 ui/dist 构建产物 (新版 React UI)。
-// - 回退: ADMIN_UI_LEGACY=1 或缺产物时, 加载旧的原生 HTML 渲染层。
+// UI 加载策略: 开发热更新使用 Vite，安装包只使用经过构建验证的 React UI。
+// 缺少 ui/dist 属于打包错误，必须明确失败，不能静默退回功能不完整的旧管理界面。
 function loadRenderer(win) {
   const devUrl = process.env.ADMIN_UI_DEV_URL;
   if (devUrl && !app.isPackaged) {
@@ -179,18 +178,28 @@ function loadRenderer(win) {
     return;
   }
   const builtUi = path.join(__dirname, "../../ui/dist/index.html");
-  if (process.env.ADMIN_UI_LEGACY !== "1" && fs.existsSync(builtUi)) {
+  if (fs.existsSync(builtUi)) {
     win.loadFile(builtUi);
     return;
   }
-  win.loadFile(path.join(__dirname, "../renderer/index.html"));
+  dialog.showErrorBox(
+    "ShareGPT Admin 资源缺失",
+    "没有找到已构建的管理界面。请重新安装完整版本，开发环境请先运行 npm run build:ui。",
+  );
+  app.quit();
 }
 
 app.whenReady().then(() => {
   app.setName("ShareGPT Admin");
-  app.setPath("userData", path.join(app.getPath("appData"), "ShareGPT Admin"));
+  app.setPath(
+    "userData",
+    process.env.SHAREGPT_ADMIN_TEST_USER_DATA
+      ? path.resolve(process.env.SHAREGPT_ADMIN_TEST_USER_DATA)
+      : path.join(app.getPath("appData"), "ShareGPT Admin"),
+  );
   ipcMain.handle("prefs:load", () => loadPrefs());
   ipcMain.handle("prefs:save", (_event, data) => savePrefs(data || {}));
+  ipcMain.handle("app:version", () => app.getVersion());
   ipcMain.handle("window:minimize", (event) => {
     getEventWindow(event)?.minimize();
     return true;

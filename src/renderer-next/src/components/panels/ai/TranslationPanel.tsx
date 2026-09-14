@@ -19,13 +19,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
 import {
-  cancelManagedTranslation,
-  createManagedTranslationRequestId,
   fetchManagedTranslationProfiles,
-  managedTranslate,
   type ManagedTranslationCatalog,
 } from '@/lib/managedTranslation'
-import { runAi } from '@/lib/notes/aiClient'
+import { startTranslation } from './translationRun'
+import { LANGUAGES } from './translationLanguages'
 import { REMOTE_HTTP_WARNING, usesRemoteHttp } from '@/lib/remoteHttp'
 import type { ComposerTranslationSnapshot } from '@/lib/translationWorkflow'
 import { cn } from '@/lib/utils'
@@ -36,19 +34,6 @@ import type { AiKind } from '@/store/useAiStore'
 import type { AiComposerTarget } from '@/types/api'
 import type { TranslationProvider, TranslationSettings, TranslationStyle } from '@/types/settings'
 
-const LANGUAGES = [
-  ['auto', '自动检测'],
-  ['zh', '中文'],
-  ['en', 'English'],
-  ['ja', '日本語'],
-  ['ko', '한국어'],
-  ['fr', 'Français'],
-  ['de', 'Deutsch'],
-  ['es', 'Español'],
-  ['ru', 'Русский'],
-] as const
-
-const TARGET_LABELS = Object.fromEntries(LANGUAGES) as Record<string, string>
 const PROVIDERS: Array<{ id: TranslationProvider; label: string }> = [
   { id: 'managed', label: '团队配置' },
   { id: 'ai', label: 'AI' },
@@ -72,11 +57,6 @@ interface TranslationPanelProps {
   replacement: boolean
 }
 
-interface TranslationRun {
-  promise: Promise<string>
-  cancel: () => void
-}
-
 interface ActiveTranslationRun {
   generation: number
   mode: 'read' | 'compose'
@@ -92,120 +72,6 @@ function cleanError(error: unknown): string {
   return raw
     .replace(/^Error invoking remote method '[^']+': Error:\s*/i, '')
     .replace(/^Error:\s*/i, '')
-}
-
-function startTranslation(
-  config: TranslationSettings,
-  text: string,
-  sourceLanguage: string,
-  targetLanguage: string,
-  callbacks: { onDelta?: (text: string) => void; onStatus?: (status: string) => void } = {},
-  managedContext?: { serverUrl: string; token: string },
-): TranslationRun {
-  if (config.provider === 'managed') {
-    const controller = new AbortController()
-    const requestId = createManagedTranslationRequestId()
-    const promise = managedTranslate(
-      managedContext?.serverUrl || '',
-      managedContext?.token || '',
-      {
-        profileId: config.managed.profileId || undefined,
-        text,
-        source: sourceLanguage,
-        target: targetLanguage,
-        style: config.style,
-        glossary: config.glossary,
-        requestId,
-      },
-      { signal: controller.signal },
-    ).then((response) => response.translatedText)
-    return {
-      promise,
-      cancel: () => {
-        controller.abort()
-        void cancelManagedTranslation(
-          managedContext?.serverUrl || '',
-          managedContext?.token || '',
-          requestId,
-        ).catch(() => undefined)
-      },
-    }
-  }
-
-  if (config.provider !== 'ai') {
-    const requestId = createManagedTranslationRequestId()
-    const provider = config.provider
-    const providerConfig = provider === 'offline' ? config.offline : config.api
-    const promise = api
-      .translateText({
-        requestId,
-        mode: provider,
-        baseUrl: providerConfig.baseUrl,
-        apiKey: provider === 'api' ? config.api.apiKey : undefined,
-        text,
-        source: sourceLanguage,
-        target: targetLanguage,
-      })
-      .then((response) => response.translatedText.trim())
-    return {
-      promise,
-      cancel: () => {
-        void api.cancelTranslation(requestId).catch(() => undefined)
-      },
-    }
-  }
-
-  if (!config.ai.baseUrl || !config.ai.apiKey) {
-    return {
-      promise: Promise.reject(new Error('请先配置 AI 接口地址和密钥')),
-      cancel: () => undefined,
-    }
-  }
-
-  let cancel: () => void = () => undefined
-  const promise = new Promise<string>((resolve, reject) => {
-    let settled = false
-    let accumulated = ''
-    const finish = (callback: (value: string) => void, value: string) => {
-      if (settled) return
-      settled = true
-      callback(value)
-    }
-    const stop = runAi(
-      {
-        provider: config.ai,
-        mode: 'translate',
-        text,
-        ctx: {
-          targetLanguage: TARGET_LABELS[targetLanguage] || targetLanguage,
-          translationStyle: config.style,
-          glossary: config.glossary,
-        },
-      },
-      {
-        onDelta: (delta) => {
-          accumulated += delta
-          callbacks.onDelta?.(delta)
-        },
-        onStatus: (status) => callbacks.onStatus?.(status),
-        onDone: () => finish(resolve, accumulated.trim()),
-        onError: (message) => finish((value) => reject(new Error(value)), message),
-        onCancelled: () =>
-          finish(
-            (value) => reject(Object.assign(new Error(value), { name: 'AbortError' })),
-            '账号已切换',
-          ),
-      },
-    )
-    cancel = () => {
-      stop()
-      finish(
-        (value) => reject(Object.assign(new Error(value), { name: 'AbortError' })),
-        '操作已取消',
-      )
-    }
-  })
-  return { promise, cancel: () => cancel() }
 }
 
 export function TranslationPanel({
@@ -728,6 +594,7 @@ export function TranslationPanel({
 
           {state.reader.phase === 'translating' ? (
             <Button
+              key="stop-reader"
               variant="outline"
               className="w-full gap-2 text-destructive hover:text-destructive"
               onClick={() => cancelActiveTranslation(true)}
@@ -737,6 +604,7 @@ export function TranslationPanel({
             </Button>
           ) : (
             <Button
+              key="start-reader"
               className="w-full gap-2"
               disabled={!state.reader.sourceText.trim()}
               onClick={() => void translateReader()}
@@ -857,6 +725,7 @@ export function TranslationPanel({
 
             {state.composer.phase === 'translating' ? (
               <Button
+                key="stop-composer"
                 variant="outline"
                 className="w-full gap-2 text-destructive hover:text-destructive"
                 onClick={() => cancelActiveTranslation(true)}
@@ -866,6 +735,7 @@ export function TranslationPanel({
               </Button>
             ) : (
               <Button
+                key="start-composer"
                 className="w-full gap-2"
                 disabled={!state.composer.sourceText.trim()}
                 onClick={() => void translateComposer()}

@@ -46,6 +46,14 @@ async function run() {
         { file: path.join(ROOT, "src/renderer-next/dist/profile.html"), token },
       );
     await load();
+    assert.deepEqual(
+      await page.evaluate(() => ({
+        vault: typeof window.api.vault,
+        sender: typeof window.api.startSender,
+        update: typeof window.api.installAppUpdate,
+      })),
+      { vault: "undefined", sender: "undefined", update: "undefined" },
+    );
     const name = page.getByLabel("显示昵称", { exact: true });
     const bio = page.getByLabel("个人简介", { exact: true });
     const avatar = page.getByLabel("头像文字", { exact: true });
@@ -153,34 +161,49 @@ async function run() {
     await expect(page.getByRole("alert")).toContainText("登录信息已失效");
     await expect(save).toBeDisabled();
     assert.deepEqual(errors, []);
+    // A main-process navigation can bypass will-navigate. Even then the actual preload
+    // must not grant a different document IPC access or forward its profile events.
+    const previousEmissions = await app.evaluate(() => global.profileEmissions.length);
+    await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].loadURL("data:text/html,<title>Untrusted fixture</title>"),
+    );
+    // Wait for Playwright's renderer frame to observe the main-process navigation
+    // before exercising the new document's IPC boundary (without retrying the IPC).
+    await page.waitForURL("data:text/html,<title>Untrusted fixture</title>");
+    await expect(page).toHaveTitle("Untrusted fixture");
+    const rejection = await page.evaluate(async () => {
+      window.api.emitProfileUpdated({ profile: { username: "untrusted" } });
+      try {
+        await window.api.loadSettings();
+        return "allowed";
+      } catch (error) {
+        return String(error);
+      }
+    });
+    assert.match(rejection, /此页面无权调用该桌面功能/);
+    assert.equal(await app.evaluate(() => global.profileEmissions.length), previousEmissions);
     console.log(JSON.stringify({ ok: true, directory, updates: updates.length }));
   } finally {
     await app.close();
   }
 }
 
-if (process.type === "renderer") {
-  const { contextBridge, ipcRenderer } = require("electron");
-  contextBridge.exposeInMainWorld("api", {
-    platform: process.platform,
-    getSettingsPrincipal: async () => ({ principalId: "fixture", generation: 1 }),
-    loadSettings: () => ipcRenderer.invoke("profile-fixture:settings"),
-    emitProfileUpdated: (payload) => ipcRenderer.send("profile-fixture:updated", payload),
-    isWindowMaximized: async () => false,
-    isWindowFullScreen: async () => false,
-    onAppEvent: () => () => {},
-    minimizeWindow: async () => {},
-    toggleMaximizeWindow: async () => {},
-    closeWindow: async () => {},
-  });
-} else if (process.versions.electron) {
+if (process.versions.electron) {
   const { app, BrowserWindow, ipcMain } = require("electron");
+  const { createTrustedIpc } = require("../src/main/trustedIpc");
+  const trustedIpc = createTrustedIpc({ ipcMain, openExternal: async () => {} });
   global.profileEmissions = [];
   global.profileDark = true;
-  ipcMain.handle("profile-fixture:settings", () => ({
+  trustedIpc.handle("profile:theme", () => ({
     ui: { theme: global.profileDark ? "dark" : "light" },
   }));
-  ipcMain.on("profile-fixture:updated", (_, payload) => global.profileEmissions.push(payload));
+  trustedIpc.handle("settings:principal-context", () => ({
+    principalId: "fixture",
+    generation: 1,
+  }));
+  trustedIpc.handle("window:is-maximized", () => false);
+  trustedIpc.handle("window:is-fullscreen", () => false);
+  trustedIpc.on("profile:updated", (_, payload) => global.profileEmissions.push(payload));
   app.setPath("userData", process.env.SHAREGPT_USER_DATA);
   app.whenReady().then(() => {
     if (process.platform === "darwin") app.dock.hide();
@@ -191,13 +214,18 @@ if (process.type === "renderer") {
       frame: false,
       titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
       webPreferences: {
-        preload: __filename,
+        preload: path.join(ROOT, "src/main/profilePreload.js"),
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false,
+        sandbox: true,
         backgroundThrottling: false,
       },
     });
+    trustedIpc.registerWindow(
+      window,
+      { type: "file", target: path.join(ROOT, "src/renderer-next/dist/profile.html") },
+      "profile",
+    );
     return window.loadURL("about:blank");
   });
 } else {

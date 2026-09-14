@@ -435,11 +435,9 @@ async function clearAiSessionData(targetSession, options = {}) {
       "indexdb",
       "localstorage",
       "shadercache",
-      "websql",
       "serviceworkers",
       "cachestorage",
     ],
-    quotas: ["temporary", "syncable"],
   });
 
   /** @type {Array<[string, () => Promise<any>]>} */

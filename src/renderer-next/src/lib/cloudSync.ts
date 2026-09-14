@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { useCalendarStore, type Calendar, type CalendarEvent } from '@/store/useCalendarStore'
 import { useTasksStore, type Memo, type Task, type TaskList } from '@/store/useTasksStore'
+import { filterDeleted, isDeleted, mergeDeletions, type StoreDeletions } from './storeDeletions'
+import type { SettingsPrincipalSnapshot } from './settingsPrincipalRuntime'
 
 // 个人数据云端同步 (个人日历 calendar / 待办备忘 tasks):
 //  - 多端实时: 写入经服务器后, 服务器把更新推给同一用户的其它在线端。
@@ -52,11 +54,13 @@ function mergeByIdKeepLocal<T extends { id: string }>(local: T[], remote: T[]): 
 export interface CalendarData {
   calendars: Calendar[]
   events: CalendarEvent[]
+  deleted?: StoreDeletions
 }
 export interface TasksData {
   lists: TaskList[]
   tasks: Task[]
   memos: Memo[]
+  deleted?: StoreDeletions
 }
 
 function asArr<T>(v: unknown): T[] {
@@ -66,7 +70,7 @@ function asArr<T>(v: unknown): T[] {
 // —— 每种数据的本地读取 / 应用 / 合并 / 订阅 ——
 export interface KindConfig<D> {
   getLocal: () => D
-  apply: (data: D) => void
+  apply: (data: D, snapshot?: SettingsPrincipalSnapshot) => void
   merge: (local: D, remote: unknown) => D
   subscribe: (fn: () => void) => () => void
   isLoaded: () => boolean
@@ -76,14 +80,24 @@ export const KIND_CONFIGS: { calendar: KindConfig<CalendarData>; tasks: KindConf
   calendar: {
     getLocal: () => {
       const s = useCalendarStore.getState()
-      return { calendars: s.calendars, events: s.events }
+      return { calendars: s.calendars, events: s.events, deleted: s.deleted }
     },
-    apply: (data) => useCalendarStore.getState().replaceAll(data),
+    apply: (data, snapshot) => useCalendarStore.getState().replaceAll(data, snapshot),
     merge: (local, remote) => {
       const r = (remote ?? {}) as Partial<CalendarData>
+      const deleted = mergeDeletions(local.deleted, r.deleted)
       return {
-        calendars: mergeByIdKeepLocal(local.calendars, asArr<Calendar>(r.calendars)),
-        events: mergeByIdNewer(local.events, asArr<CalendarEvent>(r.events)),
+        calendars: filterDeleted(
+          mergeByIdKeepLocal(local.calendars, asArr<Calendar>(r.calendars)),
+          deleted,
+          'calendars',
+        ),
+        events: filterDeleted(
+          mergeByIdNewer(local.events, asArr<CalendarEvent>(r.events)),
+          deleted,
+          'events',
+        ).filter((event) => !isDeleted(deleted, 'calendars', event.calendarId)),
+        deleted,
       }
     },
     subscribe: (fn) => useCalendarStore.subscribe(fn),
@@ -92,15 +106,31 @@ export const KIND_CONFIGS: { calendar: KindConfig<CalendarData>; tasks: KindConf
   tasks: {
     getLocal: () => {
       const s = useTasksStore.getState()
-      return { lists: s.lists, tasks: s.tasks, memos: s.memos }
+      return { lists: s.lists, tasks: s.tasks, memos: s.memos, deleted: s.deleted }
     },
-    apply: (data) => useTasksStore.getState().replaceAll(data),
+    apply: (data, snapshot) => useTasksStore.getState().replaceAll(data, snapshot),
     merge: (local, remote) => {
       const r = (remote ?? {}) as Partial<TasksData>
+      const deleted = mergeDeletions(local.deleted, r.deleted)
+      const lists = filterDeleted(
+        mergeByIdKeepLocal(local.lists, asArr<TaskList>(r.lists)),
+        deleted,
+        'lists',
+      )
+      const fallback = lists.find((list) => list.isInbox)?.id ?? lists[0]?.id
       return {
-        lists: mergeByIdKeepLocal(local.lists, asArr<TaskList>(r.lists)),
-        tasks: mergeByIdNewer(local.tasks, asArr<Task>(r.tasks)),
-        memos: mergeByIdNewer(local.memos, asArr<Memo>(r.memos)),
+        lists,
+        tasks: filterDeleted(
+          mergeByIdNewer(local.tasks, asArr<Task>(r.tasks)),
+          deleted,
+          'tasks',
+        ).map((task) =>
+          fallback && isDeleted(deleted, 'lists', task.listId)
+            ? { ...task, listId: fallback }
+            : task,
+        ),
+        memos: filterDeleted(mergeByIdNewer(local.memos, asArr<Memo>(r.memos)), deleted, 'memos'),
+        deleted,
       }
     },
     subscribe: (fn) => useTasksStore.subscribe(fn),
@@ -118,25 +148,20 @@ export function stable(data: unknown): string {
 }
 
 // rev 持久化 (按 服务器+用户+kind), 跨重启记住上次版本, 减少冲突。
-export function revKey(serverUrl: string, username: string, kind: SyncKind): string {
-  return `cloudsync:rev:${serverUrl}:${username}:${kind}`
+export function revKey(principalId: string, kind: SyncKind): string {
+  return `cloudsync:rev:principal:${principalId}:${kind}`
 }
-export function getStoredRev(serverUrl: string, username: string, kind: SyncKind): number {
+export function getStoredRev(principalId: string, kind: SyncKind): number {
   try {
-    const v = Number(localStorage.getItem(revKey(serverUrl, username, kind)))
+    const v = Number(localStorage.getItem(revKey(principalId, kind)))
     return Number.isInteger(v) && v >= 0 ? v : 0
   } catch {
     return 0
   }
 }
-export function setStoredRev(
-  serverUrl: string,
-  username: string,
-  kind: SyncKind,
-  rev: number,
-): void {
+export function setStoredRev(principalId: string, kind: SyncKind, rev: number): void {
   try {
-    localStorage.setItem(revKey(serverUrl, username, kind), String(rev))
+    localStorage.setItem(revKey(principalId, kind), String(rev))
   } catch {
     /* ignore */
   }

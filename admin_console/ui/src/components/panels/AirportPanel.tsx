@@ -11,6 +11,9 @@ import type { ProxyRoute } from '@/types/admin'
 import { parseClashProxies, clashNodeToSingbox, type ClashNode } from '@/lib/clash'
 import { PanelScaffold } from './PanelScaffold'
 
+const EMPTY_ROUTE_DEFAULTS = { gpt: '', gemini: '', claude: '' }
+const AI_LABELS = { gpt: 'ChatGPT', claude: 'Claude', gemini: 'Gemini' } as const
+
 function newRouteId(): string {
   const random = globalThis.crypto?.randomUUID?.().replace(/-/g, '').slice(0, 12)
   return `route-${random || Date.now().toString(36)}`
@@ -23,23 +26,53 @@ export function AirportPanel() {
   const health = useAdminStore((s) => s.proxyRouteHealth)
   const loadHealth = useAdminStore((s) => s.loadProxyRouteHealth)
   const save = useAdminStore((s) => s.saveProxyRoutes)
+  const bootstrap = useAdminStore((s) => s.bootstrap)
+  const loadBootstrap = useAdminStore((s) => s.loadBootstrap)
+  const saveBootstrap = useAdminStore((s) => s.saveBootstrap)
   const [routes, setRoutes] = useState<ProxyRoute[]>([])
+  const [routeDefaults, setRouteDefaults] = useState({ ...EMPTY_ROUTE_DEFAULTS })
   const [text, setText] = useState('')
   const [nodes, setNodes] = useState<ClashNode[]>([])
   const [selected, setSelected] = useState(-1)
   const [saving, setSaving] = useState(false)
+  const [routingSaving, setRoutingSaving] = useState(false)
 
   useEffect(() => {
-    void Promise.all([load({ silent: true }), loadHealth({ silent: true })])
-  }, [load, loadHealth])
+    void Promise.all([
+      load({ silent: true }),
+      loadHealth({ silent: true }),
+      loadBootstrap({ silent: true }),
+    ])
+  }, [load, loadHealth, loadBootstrap])
   useEffect(() => {
     setRoutes(catalog.map((route) => ({ ...route, expected: { ...route.expected } })))
   }, [catalog])
+  useEffect(() => {
+    setRouteDefaults({
+      gpt: String(bootstrap?.aiRouting?.defaultRouteByKind?.gpt || ''),
+      claude: String(bootstrap?.aiRouting?.defaultRouteByKind?.claude || ''),
+      gemini: String(bootstrap?.aiRouting?.defaultRouteByKind?.gemini || ''),
+    })
+  }, [bootstrap?.aiRouting])
 
   const preview = useMemo(
     () => (selected >= 0 && nodes[selected] ? clashNodeToSingbox(nodes[selected]) : null),
     [selected, nodes],
   )
+  const routeOptions = useMemo(() => {
+    const sender = bootstrap?.sender || {}
+    const unifiedReady = Boolean(
+      String(sender.proxy_server || '').trim() &&
+      String(sender.proxy_port || '').trim() &&
+      String(sender.proxy_uuid || '').trim(),
+    )
+    return [
+      ...(unifiedReady ? [{ id: 'internal-unified', name: '团队统一代理' }] : []),
+      ...catalog
+        .filter((route) => route.enabled)
+        .map((route) => ({ id: route.id, name: route.name })),
+    ]
+  }, [bootstrap?.sender, catalog])
 
   function parseNodes() {
     const parsed = parseClashProxies(text)
@@ -84,6 +117,35 @@ export function AirportPanel() {
     }
   }
 
+  async function saveRouteDefaults() {
+    const availableIds = new Set(routeOptions.map((route) => route.id))
+    const unavailableKind = (Object.keys(AI_LABELS) as Array<keyof typeof AI_LABELS>).find(
+      (kind) => routeDefaults[kind] && !availableIds.has(routeDefaults[kind]),
+    )
+    if (unavailableKind) {
+      toast.error(`${AI_LABELS[unavailableKind]} 当前选择的线路已停用或不存在，请重新选择`)
+      return
+    }
+    setRoutingSaving(true)
+    try {
+      await saveBootstrap({
+        sender: bootstrap?.sender || {},
+        update: bootstrap?.update || {},
+        aiRouting: {
+          version: 1,
+          defaultRouteByKind: routeDefaults,
+          updatedAt: bootstrap?.aiRouting?.updatedAt || '',
+        },
+        extra: bootstrap?.extra || {},
+      })
+      toast.success('各 AI 默认出口已保存并下发')
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error))
+    } finally {
+      setRoutingSaving(false)
+    }
+  }
+
   return (
     <PanelScaffold
       icon={Network}
@@ -94,7 +156,7 @@ export function AirportPanel() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => void Promise.all([load(), loadHealth()])}
+            onClick={() => void Promise.all([load(), loadHealth(), loadBootstrap()])}
             disabled={loading}
           >
             <RotateCw className={loading ? 'animate-spin' : ''} />
@@ -108,6 +170,41 @@ export function AirportPanel() {
       }
     >
       <div className="mx-auto grid max-w-4xl gap-6 p-6">
+        <section className="grid gap-4 rounded-md border border-border p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold">各 AI 默认出口</h3>
+              <p className="text-xs text-muted-foreground">
+                为 ChatGPT、Claude 和 Gemini 分别指定团队推荐线路。
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={routingSaving}
+              onClick={() => void saveRouteDefaults()}
+            >
+              <Save />
+              {routingSaving ? '保存中' : '保存默认出口'}
+            </Button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {(Object.keys(AI_LABELS) as Array<keyof typeof AI_LABELS>).map((kind) => (
+              <ExpectedField
+                key={kind}
+                label={AI_LABELS[kind]}
+                value={routeDefaults[kind]}
+                options={routeOptions}
+                onChange={(value) => setRouteDefaults((current) => ({ ...current, [kind]: value }))}
+              />
+            ))}
+          </div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            普通成员直接跟随这里的设置；管理员和高级用户创建独立环境时优先采用该线路，
+            仍可在本人获授权的线路中调整。线路配置和成员授权分别在本页下方与“成员与权限”中维护。
+          </p>
+        </section>
+
         <section className="grid gap-3">
           <div className="flex items-center justify-between">
             <div>
@@ -275,23 +372,45 @@ function ExpectedField({
   value,
   placeholder,
   maxLength,
+  options,
   onChange,
 }: {
   label: string
   value: string
-  placeholder: string
+  placeholder?: string
   maxLength?: number
+  options?: Array<{ id: string; name: string }>
   onChange: (value: string) => void
 }) {
   return (
     <div className="grid gap-1">
       <Label className="text-xs text-muted-foreground">{label}</Label>
-      <Input
-        value={value}
-        placeholder={placeholder}
-        maxLength={maxLength}
-        onChange={(event) => onChange(event.target.value)}
-      />
+      {options ? (
+        <select
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          <option value="">沿用团队当前默认代理</option>
+          {!options.some((option) => option.id === value) && value && (
+            <option value={value} disabled>
+              原线路不可用
+            </option>
+          )}
+          {options.map((option) => (
+            <option key={option.id} value={option.id}>
+              {option.name}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <Input
+          value={value}
+          placeholder={placeholder}
+          maxLength={maxLength}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      )}
     </div>
   )
 }

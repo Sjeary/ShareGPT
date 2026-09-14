@@ -85,7 +85,8 @@ async function applySenderBootstrapConfig(
 
   await patchSenderForBootstrap(
     {
-      ...(options.managedConfigEditable === true ? {} : { proxy_mode: 'unified' as const }),
+      // Connection fields are managed; proxy_mode remains this Principal's selection.
+      // Revoked routes are blocked by authorization, not silently replaced by another route.
       proxy_server: serverSender.proxy_server || current.proxy_server || '',
       proxy_port: serverSender.proxy_port || current.proxy_port || '',
       proxy_uuid: serverSender.proxy_uuid || current.proxy_uuid || '',

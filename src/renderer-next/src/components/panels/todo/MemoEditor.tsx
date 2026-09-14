@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Pin, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -40,13 +40,16 @@ export function MemoEditor({
   const ph = light ? 'placeholder:text-neutral-500' : 'placeholder:text-neutral-400'
   const borderCls = light ? 'border-black/10' : 'border-white/10'
 
-  useEffect(() => {
-    if (!memo) return
-    setTitle(memo.title ?? '')
-    setBody(memo.body)
-    setColor(memo.color)
-    setPinned(memo.pinned)
-  }, [memo])
+  const [previousMemo, setPreviousMemo] = useState<Memo | null>(null)
+  if (memo !== previousMemo) {
+    setPreviousMemo(memo)
+    if (memo) {
+      setTitle(memo.title ?? '')
+      setBody(memo.body)
+      setColor(memo.color)
+      setPinned(memo.pinned)
+    }
+  }
 
   if (!memo) return null
 

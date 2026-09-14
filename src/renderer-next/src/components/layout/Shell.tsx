@@ -23,6 +23,7 @@ import { FocusPanel } from '@/components/panels/FocusPanel'
 import { useFocusTimer, useFocusSync } from '@/hooks/useFocusTimer'
 import { SetupGuide } from '@/components/SetupGuide'
 import { Onboarding } from '@/components/Onboarding'
+import { useUserDataTransition } from '@/lib/userDataTransitionState'
 import { Toaster } from '@/components/ui/sonner'
 import { openChatNotificationRoute } from '@/lib/notify'
 
@@ -31,6 +32,7 @@ function safeText(value: unknown): string {
 }
 
 export function Shell() {
+  const dataSuspended = useUserDataTransition()
   const active = useAppStore((s) => s.active)
   const dark = useAppStore((s) => s.dark)
   const sidebarHidden = useAppStore((s) => s.sidebarHidden)
@@ -41,7 +43,10 @@ export function Shell() {
 
   // 原生 AI 视图始终浮在 DOM 之上；导航变化时再次同步当前 kind，覆盖任何异步卸载竞态。
   useEffect(() => {
-    const aiKind = active === 'gpt' || active === 'gemini' || active === 'claude' ? active : ''
+    const aiKind =
+      !dataSuspended && (active === 'gpt' || active === 'gemini' || active === 'claude')
+        ? active
+        : ''
     let cancelled = false
     const synchronization = async () => {
       try {
@@ -55,7 +60,7 @@ export function Shell() {
     return () => {
       cancelled = true
     }
-  }, [active])
+  }, [active, dataSuspended])
 
   // [MEDIUM] 全局日志订阅: 应用级单次挂载 (登录后 Shell 常驻),
   // 启动即采集, 早期/后台日志不因 LogsPanel 未挂载而丢失。订阅实现见 logs 域 useLogStream。
@@ -97,7 +102,15 @@ export function Shell() {
   }, [])
 
   return (
-    <div className="flex h-full flex-col bg-background text-foreground">
+    <div className="relative flex h-full flex-col bg-background text-foreground">
+      {dataSuspended && (
+        <div
+          className="absolute inset-0 z-[100] grid place-items-center bg-background/90"
+          role="status"
+        >
+          正在保存并切换资料…
+        </div>
+      )}
       <Titlebar />
       <div
         className={

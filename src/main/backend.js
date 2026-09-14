@@ -27,6 +27,16 @@ const {
 } = require("./principal");
 const { buildUpdateReleaseInfo } = require("./updateRelease");
 const { copyMissingChromiumPartitions } = require("./userDataPath");
+const { resolvePrincipalIdentity } = require("./principalIdentity");
+const { readLocalJson, writeLocalJson } = require("./localJsonStore");
+const { PrincipalData } = require("./principalData");
+const {
+  LOCAL_SECRET_KEYS,
+  LEGACY_SECRET_DECRYPTION_FAILED,
+  decodeLegacyEncryptedSettings,
+  protectSettingsSecrets,
+  portableSettings,
+} = require("./settingsSecrets");
 
 // 自动更新源 = GitHub Releases (参考 cc-switch 的做法)。仓库地址从 package.json 推导,
 // fork 的人只要改 package.json 的 homepage/repository 就指向自己的仓库, 不写死任何自建服务器。
@@ -191,6 +201,21 @@ const PUBLIC_DEFAULT_SETTINGS = {
   },
 };
 
+// Materialize these preferences only when a profile creates its local defaults file for the
+// first time. Keeping them separate preserves the legacy fallback for existing profiles whose
+// older settings intentionally omit one of these fields.
+const FRESH_INSTALL_DEFAULT_SETTINGS = {
+  collab: {
+    notify_message_popup: false,
+    notify_system_notification: false,
+    notify_sound_play: false,
+    notify_user_online: false,
+  },
+  ui: {
+    hiddenNav: ["calendar", "team", "todo", "notes", "focus"],
+  },
+};
+
 const LOCAL_CHAT_HISTORY_MAX_PER_CONVERSATION = 800;
 const LOCAL_CHAT_HISTORY_MAX_TOTAL = 6000;
 const UPDATE_BACKUP_KEEP = 5;
@@ -201,6 +226,11 @@ const UPDATE_BACKUP_ENTRIES = [
   "calendar.json",
   "tasks.json",
   "focus.json",
+  "ai-environment-cleanup.json",
+  "ai-environment-cleanup.json.bak",
+  "PrincipalData",
+  "legacy-data-imports.json",
+  "legacy-data-imports.json.bak",
   "private.defaults.local.json",
   "ShareGPT-Vault",
   "Partitions",
@@ -320,104 +350,6 @@ function prepareImportedSettings(value) {
     });
   }
   return settings;
-}
-
-const LEGACY_ENCRYPTED_SECRET_PREFIX = "sharegpt-safe:v1:";
-const LEGACY_SECRET_DECRYPTION_FAILED = "LEGACY_SECRET_DECRYPTION_FAILED";
-
-function legacyEncryptedSettingsPresent(value) {
-  if (typeof value === "string") return value.startsWith(LEGACY_ENCRYPTED_SECRET_PREFIX);
-  if (Array.isArray(value)) return value.some(legacyEncryptedSettingsPresent);
-  if (!value || typeof value !== "object") return false;
-  return Object.values(value).some(legacyEncryptedSettingsPresent);
-}
-
-function resolveLegacySecretStorage(storageOverride) {
-  if (storageOverride !== undefined) return storageOverride;
-  try {
-    const electron = require("electron");
-    const storage = electron?.safeStorage;
-    return storage?.isEncryptionAvailable?.() ? storage : null;
-  } catch {
-    return null;
-  }
-}
-
-function decodeLegacyEncryptedSettings(value, storageOverride, decodedSecrets = []) {
-  if (!legacyEncryptedSettingsPresent(value)) return structuredClone(value);
-  const storage = resolveLegacySecretStorage(storageOverride);
-  if (!storage || typeof storage.decryptString !== "function") {
-    throw Object.assign(new Error("旧版加密设置暂时无法解密，原文件未修改"), {
-      code: LEGACY_SECRET_DECRYPTION_FAILED,
-    });
-  }
-
-  const decode = (current, key = "") => {
-    if (typeof current === "string" && current.startsWith(LEGACY_ENCRYPTED_SECRET_PREFIX)) {
-      const encoded = current.slice(LEGACY_ENCRYPTED_SECRET_PREFIX.length);
-      if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
-        throw new Error("旧版加密设置内容不合法");
-      }
-      const plaintext = storage.decryptString(Buffer.from(encoded, "base64"));
-      decodedSecrets.push({ key, plaintext, ciphertext: current });
-      return plaintext;
-    }
-    if (Array.isArray(current)) return current.map((nested) => decode(nested, key));
-    if (!current || typeof current !== "object") return current;
-    return Object.fromEntries(
-      Object.entries(current).map(([nestedKey, nested]) => [nestedKey, decode(nested, nestedKey)]),
-    );
-  };
-
-  try {
-    return decode(value);
-  } catch (error) {
-    if (error?.code === LEGACY_SECRET_DECRYPTION_FAILED) throw error;
-    throw Object.assign(
-      new Error(`旧版加密设置解密失败，原文件未修改：${error.message || error}`),
-      {
-        code: LEGACY_SECRET_DECRYPTION_FAILED,
-        cause: error,
-      },
-    );
-  }
-}
-
-function preserveLegacyEncryptedSettings(value, decodedSecrets, key = "") {
-  if (typeof value === "string") {
-    const match = decodedSecrets.find((record) => record.key === key && record.plaintext === value);
-    return match ? match.ciphertext : value;
-  }
-  if (Array.isArray(value)) {
-    return value.map((nested) => preserveLegacyEncryptedSettings(nested, decodedSecrets, key));
-  }
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([nestedKey, nested]) => [
-      nestedKey,
-      preserveLegacyEncryptedSettings(nested, decodedSecrets, nestedKey),
-    ]),
-  );
-}
-
-function writeJsonAtomic(file, payload) {
-  const dir = path.dirname(file);
-  const temp = path.join(dir, `.${path.basename(file)}.${process.pid}.${Date.now()}.tmp`);
-  const backup = `${file}.bak`;
-  fs.mkdirSync(dir, { recursive: true });
-  const fd = fs.openSync(temp, "w");
-  try {
-    fs.writeFileSync(fd, JSON.stringify(payload, null, 2), "utf-8");
-    fs.fsyncSync(fd);
-  } finally {
-    fs.closeSync(fd);
-  }
-  try {
-    if (fs.existsSync(file)) fs.copyFileSync(file, backup);
-    fs.renameSync(temp, file);
-  } finally {
-    if (fs.existsSync(temp)) fs.unlinkSync(temp);
-  }
 }
 
 function mergeSettings(base, override = {}) {
@@ -842,6 +774,7 @@ class Backend {
     this.app = app;
     this.getWindow = getWindow;
     this.appMode = appMode;
+    this.dialog = dependencies.dialog;
     this.legacySecretStorage = Object.prototype.hasOwnProperty.call(
       dependencies,
       "legacySecretStorage",
@@ -851,13 +784,10 @@ class Backend {
     this.legacyEncryptedSecrets = [];
 
     this.settingsFile = path.join(this.app.getPath("userData"), "settings.json");
-    this.chatHistoryFile = path.join(this.app.getPath("userData"), "chat_history.json");
+    this.principalData = new PrincipalData(this.app.getPath("userData"));
     // 新增本地功能存储 (个人日历 / 任务+备忘录): 纯本机 JSON, 结构由渲染层维护, 后端只做读写与轻量兜底。
-    this.calendarFile = path.join(this.app.getPath("userData"), "calendar.json");
-    this.tasksFile = path.join(this.app.getPath("userData"), "tasks.json");
-    this.focusFile = path.join(this.app.getPath("userData"), "focus.json");
     // 知识库 vault 管理器 (笔记真源 = 磁盘 .md 文件夹; 仅做文件 IO + 监听, 解析/索引在渲染层)。
-    this.vault = new VaultManager(this.app, this.getWindow);
+    this.vaults = new Map();
     // 知识库 AI 助手 (OpenAI Responses / Codex 中转, 流式; provider 由渲染层传入, 不持久化密钥)。
     this.notesAi = createNotesAi({
       getWindow: this.getWindow,
@@ -865,8 +795,17 @@ class Backend {
       requirePrincipalContext: true,
     });
     this.runtimeDir = path.join(this.app.getPath("userData"), "runtime");
-    this.updatesDir = path.join(this.app.getPath("downloads"), "ShareGPT Updates");
-    this.updateBackupsDir = path.join(this.app.getPath("appData"), "ShareGPT Backups");
+    const isolatedDevelopment = !this.app.isPackaged && Boolean(process.env.SHAREGPT_USER_DATA);
+    this.updatesDir = path.join(
+      this.app.getPath(isolatedDevelopment ? "userData" : "downloads"),
+      "ShareGPT Updates",
+    );
+    // An explicitly isolated development profile must not import the user's
+    // installed-app backups (including saved login and browser state).
+    this.updateBackupsDir = path.join(
+      this.app.getPath(isolatedDevelopment ? "userData" : "appData"),
+      "ShareGPT Backups",
+    );
 
     this.senderProcess = null;
     this.receiverFrpc = null;
@@ -879,6 +818,113 @@ class Backend {
     this.activePrincipalServerUrl = "";
     this.activePrincipalUsername = "";
     this.activePrincipalGeneration = 0;
+  }
+
+  get chatHistoryFile() {
+    return this.principalData.file(this.activePrincipalId, "chat");
+  }
+  get calendarFile() {
+    return this.principalData.file(this.activePrincipalId, "calendar");
+  }
+  get tasksFile() {
+    return this.principalData.file(this.activePrincipalId, "tasks");
+  }
+  get focusFile() {
+    return this.principalData.file(this.activePrincipalId, "focus");
+  }
+
+  get vault() {
+    const principalId = this.activePrincipalId;
+    if (!this.vaults.has(principalId)) {
+      const dataRoot = this.principalData.directory(principalId);
+      const vault = new VaultManager(this.app, this.getWindow, {
+        dataRoot,
+        getSnapshot: () => ({ principalId, generation: this.activePrincipalGeneration }),
+        isCurrent: (snapshot) =>
+          snapshot?.principalId === this.activePrincipalId &&
+          snapshot?.generation === this.activePrincipalGeneration,
+        validateRoot: (root) => this.assertVaultRoot(principalId, root),
+      });
+      this.vaults.set(principalId, vault);
+    }
+    return this.vaults.get(principalId);
+  }
+
+  assertVaultRoot(principalId, root) {
+    const canonical = (input) => {
+      let cursor = path.resolve(input);
+      const suffix = [];
+      while (!fs.existsSync(cursor)) {
+        suffix.unshift(path.basename(cursor));
+        const parent = path.dirname(cursor);
+        if (parent === cursor) throw new Error("知识库目录不可用");
+        cursor = parent;
+      }
+      const resolved = path.join(fs.realpathSync(cursor), ...suffix);
+      return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+    };
+    const overlaps = (a, b) => a === b || a.startsWith(b + path.sep) || b.startsWith(a + path.sep);
+    const next = canonical(root);
+    if (next === canonical(this.principalData.vaultDirectory(principalId))) return;
+    // A custom folder remains supported, but no account may bind another scope or legacy source.
+    const userData = canonical(this.app.getPath("userData"));
+    if (overlaps(next, userData)) throw new Error("请选择独立的知识库文件夹；旧资料请使用接续入口");
+    const oldMeta = path.join(userData, "vault-meta.json");
+    if (fs.existsSync(oldMeta)) {
+      const old = JSON.parse(fs.readFileSync(oldMeta, "utf8"));
+      if (old?.root && overlaps(next, canonical(old.root)))
+        throw new Error("旧知识库请先通过旧资料接续复制，原件会保留");
+    }
+    const base = path.join(userData, "PrincipalData");
+    if (!fs.existsSync(base)) return;
+    for (const id of fs.readdirSync(base)) {
+      if (id === principalId || !normalizePrincipalId(id, { allowLocal: true })) continue;
+      const meta = path.join(this.principalData.directory(id), "vault-meta.json");
+      if (!fs.existsSync(meta)) continue;
+      const other = JSON.parse(fs.readFileSync(meta, "utf8"));
+      if (other?.root && overlaps(next, canonical(other.root)))
+        throw new Error("此知识库目录已属于其他工作区，请选择独立文件夹");
+    }
+  }
+
+  async stopDataWatchers() {
+    await Promise.all([...this.vaults.values()].map((vault) => vault.stopWatch()));
+  }
+
+  async withDataWatchersPaused(operation) {
+    const id = this.activePrincipalId;
+    const generation = this.activePrincipalGeneration;
+    const previous = this.vaults.get(id);
+    const watching = Boolean(previous?.watcher);
+    await this.stopDataWatchers();
+    try {
+      return await operation();
+    } finally {
+      // Failed switches and same-account imports must not leave an active note editor unwatched.
+      if (
+        watching &&
+        this.activePrincipalId === id &&
+        this.activePrincipalGeneration === generation
+      )
+        await previous.startWatch();
+    }
+  }
+
+  inspectLegacyUserData() {
+    return this.principalData.inspectLegacy(this.activePrincipalId);
+  }
+
+  async importLegacyUserData(payload) {
+    const snapshot = this.getPrincipalContext();
+    return this.withDataWatchersPaused(() => {
+      this.assertSettingsPrincipalSnapshot(snapshot);
+      return this.principalData.importLegacy(
+        snapshot.principalId,
+        payload?.category,
+        payload?.fingerprint,
+        { group: payload?.group },
+      );
+    });
   }
 
   // 当前发送端配置里「走代理(梯子)」的域名后缀集合。路由规则(buildSenderConfig)与
@@ -919,8 +965,12 @@ class Backend {
       if (!fs.existsSync(candidate)) continue;
       try {
         const raw = JSON.parse(fs.readFileSync(candidate, "utf-8"));
-        return mergeSettings(PUBLIC_DEFAULT_SETTINGS, raw);
-      } catch {
+        return mergeSettings(
+          PUBLIC_DEFAULT_SETTINGS,
+          decodeLegacyEncryptedSettings(raw, this.legacySecretStorage),
+        );
+      } catch (error) {
+        if (error?.code === LEGACY_SECRET_DECRYPTION_FAILED) throw error;
         return structuredClone(PUBLIC_DEFAULT_SETTINGS);
       }
     }
@@ -947,21 +997,34 @@ class Backend {
     if (existing) return;
 
     const userDataFile = path.join(this.app.getPath("userData"), "private.defaults.local.json");
-    let template = structuredClone(PUBLIC_DEFAULT_SETTINGS);
+    let template = mergeSettings(PUBLIC_DEFAULT_SETTINGS, FRESH_INSTALL_DEFAULT_SETTINGS);
 
     for (const candidate of this.resolveExampleDefaultsCandidates()) {
       if (!fs.existsSync(candidate)) continue;
       try {
         const raw = JSON.parse(fs.readFileSync(candidate, "utf-8"));
-        template = mergeSettings(PUBLIC_DEFAULT_SETTINGS, raw);
+        template = mergeSettings(template, raw);
         break;
       } catch {
-        template = structuredClone(PUBLIC_DEFAULT_SETTINGS);
+        template = mergeSettings(PUBLIC_DEFAULT_SETTINGS, FRESH_INSTALL_DEFAULT_SETTINGS);
         break;
       }
     }
 
-    fs.writeFileSync(userDataFile, JSON.stringify(template, null, 2), "utf-8");
+    // Default templates describe setup; credentials are entered and protected through settings.
+    // Never materialize a plaintext saved password/API key from a distributed example file.
+    const withoutExampleSecrets = (value, key = "") => {
+      if (LOCAL_SECRET_KEYS.has(key.toLowerCase())) return "";
+      if (Array.isArray(value)) return value.map((nested) => withoutExampleSecrets(nested, key));
+      if (!value || typeof value !== "object") return value;
+      return Object.fromEntries(
+        Object.entries(value).map(([nestedKey, nested]) => [
+          nestedKey,
+          withoutExampleSecrets(nested, nestedKey),
+        ]),
+      );
+    };
+    writeLocalJson(userDataFile, withoutExampleSecrets(template));
   }
 
   init() {
@@ -1110,42 +1173,16 @@ class Backend {
 
   readStoredSettings() {
     const defaultSettings = this.loadPrivateDefaults();
-    if (!fs.existsSync(this.settingsFile)) {
-      return structuredClone(defaultSettings);
-    }
-
-    try {
-      const raw = JSON.parse(fs.readFileSync(this.settingsFile, "utf-8"));
-      const decodedSecrets = [];
-      const decoded = decodeLegacyEncryptedSettings(raw, this.legacySecretStorage, decodedSecrets);
-      this.legacyEncryptedSecrets = decodedSecrets;
-      return mergeSettings(defaultSettings, decoded);
-    } catch (error) {
-      if (error?.code === LEGACY_SECRET_DECRYPTION_FAILED) {
-        this.log("app", error.message || String(error));
-        throw error;
-      }
-      const backupFile = `${this.settingsFile}.bak`;
-      try {
-        const backup = JSON.parse(fs.readFileSync(backupFile, "utf-8"));
-        const decodedSecrets = [];
-        const decodedBackup = decodeLegacyEncryptedSettings(
-          backup,
-          this.legacySecretStorage,
-          decodedSecrets,
-        );
-        this.legacyEncryptedSecrets = decodedSecrets;
-        this.log("app", `设置文件损坏，已从上一份有效备份恢复：${error.message || error}`);
-        return mergeSettings(defaultSettings, decodedBackup);
-      } catch (backupError) {
-        if (backupError?.code === LEGACY_SECRET_DECRYPTION_FAILED) {
-          this.log("app", backupError.message || String(backupError));
-          throw backupError;
-        }
-        this.log("app", `设置文件损坏且无有效备份，已保留原文件：${error.message || error}`);
-        return structuredClone(defaultSettings);
-      }
-    }
+    const raw = readLocalJson(this.settingsFile, defaultSettings);
+    const decodedSecrets = [];
+    const decoded = decodeLegacyEncryptedSettings(
+      raw,
+      this.legacySecretStorage,
+      decodedSecrets,
+      this.legacyEncryptedSecrets,
+    );
+    this.legacyEncryptedSecrets = decodedSecrets;
+    return mergeSettings(defaultSettings, decoded);
   }
 
   principalSettingsState(stored, owner = null) {
@@ -1343,10 +1380,15 @@ class Backend {
   }
 
   writeStoredSettings(payload) {
-    writeJsonAtomic(
-      this.settingsFile,
-      preserveLegacyEncryptedSettings(payload, this.legacyEncryptedSecrets),
-    );
+    const previous = readLocalJson(this.settingsFile, {});
+    const decodedSecrets = [...this.legacyEncryptedSecrets];
+    const options = { storageOverride: this.legacySecretStorage, decodedSecrets, previous };
+    const protectedSettings = protectSettingsSecrets(payload, options);
+    writeLocalJson(this.settingsFile, protectedSettings, undefined, {
+      transformPrevious: (stored) =>
+        protectSettingsSecrets(stored, { ...options, trustedCiphertext: true }),
+    });
+    this.legacyEncryptedSecrets = decodedSecrets;
   }
 
   materializePrincipalSettings(stored) {
@@ -1396,9 +1438,7 @@ class Backend {
     return this.materializePrincipalSettings(this.readStoredSettings());
   }
 
-  activatePrincipal(serverUrl, username) {
-    const principalId = principalIdFor(serverUrl, username);
-    if (!principalId) throw new Error("协作账号 principal 信息不合法");
+  activatePrincipal(serverUrl, username, identityOptions = {}) {
     const confirmedServer = normalizeServerBaseUrl(serverUrl);
     const confirmedUsername = normalizePrincipalUsername(username);
     const stored = this.readStoredSettings();
@@ -1406,7 +1446,14 @@ class Backend {
       serverUrl: confirmedServer,
       username: confirmedUsername,
     });
-    if (migrated) {
+    const resolved = resolvePrincipalIdentity(
+      state,
+      confirmedServer,
+      confirmedUsername,
+      identityOptions,
+    );
+    const principalId = resolved.principalId;
+    if (migrated || resolved.changed) {
       stored.principalSettings = state;
       stored.settingsRevision = Math.max(0, Number(stored.settingsRevision) || 0) + 1;
       this.writeStoredSettings(stored);
@@ -1456,6 +1503,22 @@ class Backend {
       this.activePrincipalGeneration = previous.generation;
       throw error;
     }
+  }
+
+  verifyPrincipalLogin(serverUrl, username, identityOptions, snapshot) {
+    this.assertSettingsPrincipalSnapshot(snapshot);
+    if (
+      normalizeServerBaseUrl(serverUrl) !== this.activePrincipalServerUrl ||
+      username !== this.activePrincipalUsername
+    ) {
+      throw new Error("登录入口或账号与当前会话不匹配");
+    }
+    const { state } = this.principalSettingsState(this.readStoredSettings());
+    const resolved = resolvePrincipalIdentity(state, serverUrl, username, identityOptions);
+    if (resolved.principalId !== this.activePrincipalId)
+      throw new Error("服务器身份与当前会话不匹配");
+    // Validation only: silent recovery must not create a second settings writer.
+    return true;
   }
 
   getPrincipalContext() {
@@ -1769,51 +1832,30 @@ class Backend {
   }
 
   ensureChatHistoryFile() {
-    if (!fs.existsSync(this.chatHistoryFile)) {
-      fs.writeFileSync(
-        this.chatHistoryFile,
-        JSON.stringify(
-          {
-            version: 1,
-            updatedAt: new Date().toISOString(),
-            conversations: {},
-          },
-          null,
-          2,
-        ),
-        "utf-8",
-      );
-    }
+    // Existing data (including a lone backup) is validated by loadChatHistory.
+    // An unreadable history backup must not prevent creating the application window.
+    if (fs.existsSync(this.chatHistoryFile) || fs.existsSync(`${this.chatHistoryFile}.bak`)) return;
+    writeLocalJson(this.chatHistoryFile, {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      conversations: {},
+    });
   }
 
   loadChatHistory() {
-    this.ensureChatHistoryFile();
-    try {
-      const raw = JSON.parse(fs.readFileSync(this.chatHistoryFile, "utf-8"));
-      return normalizeChatHistoryStore(raw);
-    } catch {
-      return normalizeChatHistoryStore({});
-    }
+    return normalizeChatHistoryStore(readLocalJson(this.chatHistoryFile, { conversations: {} }));
   }
 
   saveChatHistory(data) {
     const normalized = normalizeChatHistoryStore(data);
-    fs.writeFileSync(this.chatHistoryFile, JSON.stringify(normalized, null, 2), "utf-8");
+    writeLocalJson(this.chatHistoryFile, normalized);
     return normalized;
   }
 
-  // 通用本地 JSON 存储 (供日历/任务等新功能): 读不到或损坏则回退默认; 写入时盖上 updatedAt。
+  // Missing stores start empty; corrupt/unreadable stores block writes until recovered.
   // 结构由渲染层(store)负责, 后端不做强校验, 仅保证是对象、并防止整体过大(简单上限保护)。
   readLocalStore(file, fallback) {
-    try {
-      if (!fs.existsSync(file)) return structuredClone(fallback);
-      const raw = JSON.parse(fs.readFileSync(file, "utf-8"));
-      return raw && typeof raw === "object" && !Array.isArray(raw)
-        ? raw
-        : structuredClone(fallback);
-    } catch {
-      return structuredClone(fallback);
-    }
+    return readLocalJson(file, fallback);
   }
 
   writeLocalStore(file, data) {
@@ -1824,7 +1866,7 @@ class Backend {
     if (text.length > 16 * 1024 * 1024) {
       throw new Error("数据过大, 已拒绝写入");
     }
-    fs.writeFileSync(file, text, "utf-8");
+    writeLocalJson(file, payload);
     return payload;
   }
 
@@ -1853,9 +1895,24 @@ class Backend {
   }
 
   async exportUserData() {
-    const { dialog } = require("electron");
+    const dialog = this.dialog || require("electron").dialog;
     const window = this.getWindow();
     if (!window) return null;
+
+    const principal = this.getPrincipalContext();
+    const choice = await dialog.showMessageBox(window, {
+      type: "question",
+      title: "导出资料包",
+      message: "是否在资料包中包含登录密码、API 密钥和代理凭据？",
+      detail:
+        "不含凭据的资料包可用于迁移设置和聊天记录，导入后需重新配置凭据。包含凭据时，这些内容会以明文写入导出文件，请仅保存在可信位置。",
+      buttons: ["不含凭据", "包含密码和 API 密钥", "取消"],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    });
+    if (choice.response === 2) return null;
+    this.assertSettingsPrincipalSnapshot(principal);
 
     const result = await dialog.showSaveDialog(window, {
       title: "导出本机资料包",
@@ -1867,12 +1924,13 @@ class Backend {
     });
 
     if (result.canceled || !result.filePath) return null;
+    this.assertSettingsPrincipalSnapshot(principal);
 
     const payload = {
       format: "sharegpt-user-data",
       version: 1,
       exportedAt: new Date().toISOString(),
-      settings: this.loadSettings(),
+      settings: portableSettings(this.loadSettings(), choice.response === 1),
       chatHistory: this.loadChatHistory(),
     };
 
@@ -1882,7 +1940,7 @@ class Backend {
 
   async importUserData() {
     const principal = this.getPrincipalContext();
-    const { dialog } = require("electron");
+    const dialog = this.dialog || require("electron").dialog;
     const window = this.getWindow();
     if (!window) return null;
 
@@ -1897,6 +1955,9 @@ class Backend {
     try {
       const filePath = result.filePaths[0];
       const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+      if (Object.keys(raw?.chatHistory?.conversations || {}).some((key) => key.includes("\0"))) {
+        throw new Error("资料包包含旧聊天分组，请先使用旧资料接续确认来源；本次未导入");
+      }
       const settings = this.saveImportedSettingsForPrincipal(raw?.settings, principal);
       this.assertSettingsPrincipalSnapshot(principal);
       const chatHistory = this.saveChatHistory(raw?.chatHistory || {});
@@ -1918,6 +1979,23 @@ class Backend {
     for (const entryName of UPDATE_BACKUP_ENTRIES) {
       const sourcePath = path.join(userDataDir, entryName);
       const targetPath = path.join(backupDir, entryName);
+      if (
+        ["settings.json", "settings.json.bak", "private.defaults.local.json"].includes(entryName) &&
+        fs.existsSync(sourcePath)
+      ) {
+        try {
+          const stored = readLocalJson(sourcePath, {});
+          const protectedSnapshot = protectSettingsSecrets(stored, {
+            storageOverride: this.legacySecretStorage,
+            decodedSecrets: [...this.legacyEncryptedSecrets],
+            trustedCiphertext: true,
+          });
+          writeLocalJson(targetPath, protectedSnapshot);
+        } catch (error) {
+          errors.push(`${entryName}: ${error.message}`);
+        }
+        continue;
+      }
       copyImportantPath(sourcePath, targetPath, errors);
     }
 
@@ -1981,6 +2059,14 @@ class Backend {
       ...imported,
       settingsRevision: current.settingsRevision,
     };
+    if (principal.principalId !== LOCAL_PRINCIPAL_ID) {
+      // Importing preferences must not redirect a signed-in account's existing token/sync traffic.
+      scoped.collab = { ...imported.collab };
+      for (const field of ["last_avatar", "remember_password", "auto_login", "saved_password"])
+        scoped.collab[field] = current.collab[field];
+      scoped.collab.server_url = this.activePrincipalServerUrl;
+      scoped.collab.last_username = this.activePrincipalUsername;
+    }
     for (const kind of ["gpt", "gemini", "claude"]) {
       scoped[kind] = {
         ...(imported[kind] && typeof imported[kind] === "object" ? imported[kind] : {}),
@@ -2990,6 +3076,8 @@ class Backend {
 module.exports = {
   Backend,
   decodeLegacyEncryptedSettings,
+  protectSettingsSecrets,
+  portableSettings,
   DEFAULT_SETTINGS: PUBLIC_DEFAULT_SETTINGS,
   PUBLIC_DEFAULT_SETTINGS,
   DEFAULT_TARGET_DOMAINS,

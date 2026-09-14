@@ -68,6 +68,7 @@ export interface Bootstrap {
 
 export type AdminTab =
   | 'overview'
+  | 'ai-usage'
   | 'users'
   | 'bootstrap'
   | 'releases'
@@ -180,6 +181,25 @@ export interface TranslationUsageReport {
     costMicros: number
     currency: string
   }>
+}
+
+export type AiServiceKind = 'gpt' | 'gemini' | 'claude'
+
+export interface AiUsageUser {
+  username: string
+  displayName: string
+  count: number
+  ratio: number
+}
+
+export interface AiUsageReport {
+  service: AiServiceKind
+  from: string
+  to: string
+  totalQueries: number
+  userCount: number
+  users: AiUsageUser[]
+  serverTime: string
 }
 
 // 客户端上报的"会用到但没走代理"的域名 (聚合)。供维护内置代理清单。

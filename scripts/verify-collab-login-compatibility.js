@@ -5,6 +5,7 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const { _electron: electron } = require("playwright");
+const { partitionForAiEnvironment } = require("../src/main/aiEnvironments");
 
 const ROOT = path.resolve(__dirname, "..");
 const PASSWORD = "correct-password";
@@ -127,18 +128,29 @@ function legacyAdminBootstrap() {
 }
 
 async function createFixtureServer() {
+  const identityKey = crypto.generateKeyPairSync("ed25519");
+  const publicKey = identityKey.publicKey
+    .export({ format: "der", type: "spki" })
+    .toString("base64");
   const events = [];
   const tokens = new Map();
   const sockets = new Set();
   const socketUsers = new Map();
   const bootstrapCounts = new Map();
+  const passwords = new Map();
+  const failNextLogin = new Set();
+  const aliasServers = [];
   let tokenSequence = 0;
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url || "/", "http://127.0.0.1");
     if (request.method === "POST" && url.pathname === "/api/login") {
       const body = JSON.parse((await readBody(request)) || "{}");
       events.push({ type: "login", username: body.username });
-      if (body.password !== PASSWORD) {
+      if (failNextLogin.delete(body.username)) {
+        json(response, 503, { error: "temporarily unavailable" });
+        return;
+      }
+      if (body.password !== (passwords.get(body.username) || PASSWORD)) {
         response.writeHead(401, { "content-type": "text/plain; charset=utf-8" });
         response.end("密码错误");
         return;
@@ -148,8 +160,34 @@ async function createFixtureServer() {
           ? "fixture-reused-token"
           : `fixture-token-${++tokenSequence}`;
       tokens.set(token, body.username);
+      let identity;
+      if (body.username === "modern-routes" && body.identityNonce) {
+        identity = {
+          version: 1,
+          nonce: body.identityNonce,
+          username: body.username,
+          userId: "10000000-0000-4000-8000-000000000001",
+          publicKey,
+        };
+        identity.signature = crypto
+          .sign(
+            null,
+            Buffer.from(
+              JSON.stringify([
+                "sharegpt-login-identity-v1",
+                identity.nonce,
+                identity.username,
+                identity.userId,
+                publicKey,
+              ]),
+            ),
+            identityKey.privateKey,
+          )
+          .toString("base64");
+      }
       json(response, 200, {
         token,
+        ...(identity ? { identity } : {}),
         username: body.username,
         profile: {
           displayName: body.username,
@@ -158,6 +196,7 @@ async function createFixtureServer() {
             "silent-relogin-legacy-admin",
             "authorization-persist-failure",
             "workspace-isolation",
+            "environment-recreate",
           ].includes(body.username),
         },
         history: [],
@@ -207,7 +246,9 @@ async function createFixtureServer() {
         json(response, 200, unavailableBootstrap());
         return;
       }
-      if (["legacy-admin", "silent-relogin-legacy-admin"].includes(username)) {
+      if (
+        ["legacy-admin", "silent-relogin-legacy-admin", "environment-recreate"].includes(username)
+      ) {
         json(response, 200, legacyAdminBootstrap());
         return;
       }
@@ -316,19 +357,38 @@ async function createFixtureServer() {
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     events,
-    closeUserSocket(username, reason = "fixture authorization revoked") {
+    setPassword: (username, password) => passwords.set(username, password),
+    failNextLogin: (username) => failNextLogin.add(username),
+    async createAlias() {
+      const alias = http.createServer(server.listeners("request")[0]);
+      alias.on("upgrade", server.listeners("upgrade")[0]);
+      await listen(alias);
+      aliasServers.push(alias);
+      return `http://127.0.0.1:${alias.address().port}`;
+    },
+    sendUserMessage(username, message) {
+      const socket = [...sockets]
+        .reverse()
+        .find((candidate) => socketUsers.get(candidate) === username && !candidate.destroyed);
+      if (!socket) return false;
+      socket.write(websocketFrame(0x1, JSON.stringify(message)));
+      return true;
+    },
+    closeUserSocket(username, reason = "fixture authorization revoked", code = 4002) {
       const socket = [...sockets]
         .reverse()
         .find((candidate) => socketUsers.get(candidate) === username && !candidate.destroyed);
       if (!socket) return false;
       events.push({ type: "fixture-close", username });
-      socket.end(websocketCloseFrame(4002, reason));
+      socket.end(websocketCloseFrame(code, reason));
       return true;
     },
     close: () =>
       new Promise((resolve) => {
         for (const socket of sockets) socket.destroy();
-        server.close(resolve);
+        Promise.all(
+          [server, ...aliasServers].map((listener) => new Promise((done) => listener.close(done))),
+        ).then(resolve);
       }),
   };
 }
@@ -436,6 +496,7 @@ async function readWorkspaceScope(window) {
       senderHost: settings.sender?.proxy_server || "",
       personalProxyHost: settings.sender?.personal_proxy_host || "",
       gptPartition: settings.gpt?.partition || "",
+      geminiPartition: settings.gemini?.partition || "",
       claudePartition: settings.claude?.partition || "",
       claudeClearedAt: settings.browserPrivacy?.lastClearedAt?.claude || "",
     };
@@ -470,13 +531,17 @@ async function launchCase({
   mode = "all",
   waitForSilentRelogin = false,
   exercise,
+  profileDirectory,
+  prepareUserData,
 }) {
-  const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-login-compat-"));
+  const userDataDir =
+    profileDirectory || fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-login-compat-"));
+  if (prepareUserData) await prepareUserData(userDataDir);
   const args = mode === "all" ? [ROOT] : [ROOT, `--mode=${mode}`];
   const electronApp = await electron.launch({
     args,
     cwd: ROOT,
-    env: { ...process.env, SHAREGPT_USER_DATA: userDataDir },
+    env: { ...process.env, SHAREGPT_USER_DATA: userDataDir, SHAREGPT_BACKGROUND_TEST: "1" },
   });
   const blockedRequests = [];
   try {
@@ -492,6 +557,16 @@ async function launchCase({
     });
 
     const window = await electronApp.firstWindow();
+    if (username === "data-A")
+      await window.evaluate(() => {
+        const NativeSocket = window.WebSocket;
+        window.WebSocket = class extends NativeSocket {
+          constructor(...args) {
+            super(...args);
+            window.__dataLifecycleSocket = this;
+          }
+        };
+      });
     const startSetup = window.getByRole("button", { name: "开始设置", exact: true });
     if ((await window.locator("#account-server").count()) === 0) {
       await Promise.race([
@@ -554,7 +629,7 @@ async function launchCase({
     return { authed: true, ...state, exerciseResult, blockedRequests };
   } finally {
     await electronApp.close().catch(() => undefined);
-    fs.rmSync(userDataDir, { recursive: true, force: true });
+    if (!profileDirectory) fs.rmSync(userDataDir, { recursive: true, force: true });
   }
 }
 
@@ -900,9 +975,466 @@ async function verifySameTokenDoubleRevocation(fixture) {
   return events;
 }
 
+async function verifyManualRelogin(fixture) {
+  const username = "manual-relogin";
+  const before = fixture.events.length;
+  const result = await launchCase({
+    baseUrl: fixture.baseUrl,
+    events: fixture.events,
+    username,
+    exercise: async ({ window }) => {
+      await window.locator('[data-tour="nav-service"]').click();
+      const initialLoginCount = countEvents(fixture.events, "login", username);
+      assert.equal(
+        fixture.closeUserSocket(username, "fixture session replaced", 4003),
+        true,
+        "the collaboration socket must exist before manual recovery",
+      );
+
+      const retryButton = window.getByRole("button", { name: "重新登录", exact: true });
+      await retryButton.waitFor({ state: "visible", timeout: 8000 });
+      assert.equal(
+        await window
+          .locator("header")
+          .getByRole("button", { name: "重新登录", exact: true })
+          .count(),
+        1,
+      );
+      for (const panel of ["account", "gpt", "chat", "service"]) {
+        await window.locator(`[data-tour="nav-${panel}"]`).click();
+        await retryButton.waitFor({ state: "visible" });
+        assert.equal(await retryButton.count(), 1, "one global recovery control on every panel");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      assert.equal(
+        countEvents(fixture.events, "login", username),
+        initialLoginCount,
+        "a manual-login close reason must not start an automatic login",
+      );
+
+      await retryButton.click();
+      await waitFor(
+        () =>
+          countEvents(fixture.events, "login", username) === initialLoginCount + 1 &&
+          countEvents(fixture.events, "ws", username) === 2,
+        12000,
+      );
+      await retryButton.waitFor({ state: "hidden", timeout: 8000 });
+      return {
+        loginCount: countEvents(fixture.events, "login", username),
+        wsCount: countEvents(fixture.events, "ws", username),
+      };
+    },
+  });
+  const events = fixture.events.slice(before);
+  assert.equal(result.authed, true, "manual recovery must keep the account signed in");
+  assert.equal(
+    events.some((event) => event.type === "logout"),
+    false,
+    "manual recovery must not log out or clear the current account",
+  );
+  assert.deepEqual(result.exerciseResult, { loginCount: 2, wsCount: 2 });
+  assert.deepEqual(result.blockedRequests, []);
+  return events;
+}
+
+async function verifyRecoveryCredentials(fixture) {
+  const username = "credential-recovery";
+  const before = fixture.events.length;
+  const result = await launchCase({
+    baseUrl: fixture.baseUrl,
+    events: fixture.events,
+    username,
+    exercise: async ({ window }) => {
+      const beforePrincipal = await window.evaluate(() => window.api.getSettingsPrincipal());
+      fixture.setPassword(username, "changed-password");
+      assert.equal(fixture.closeUserSocket(username, "fixture password changed", 4003), true);
+      const retry = window.locator("header").getByRole("button", { name: "重新登录", exact: true });
+      await retry.waitFor({ state: "visible" });
+      await retry.click();
+      await waitFor(() => countEvents(fixture.events, "login", username) === 2);
+      await window.getByText("登录状态已失效，请输入当前账号密码。", { exact: true }).waitFor();
+      await retry.click();
+      await window.locator("#session-recovery-password").waitFor({ state: "visible" });
+      fixture.failNextLogin(username);
+      await window.locator("#session-recovery-password").fill("changed-password");
+      await window.getByRole("button", { name: "恢复连接", exact: true }).click();
+      await window.getByText("暂时无法连接服务器，请检查网络后重试。", { exact: true }).waitFor();
+      await new Promise((resolve) => setTimeout(resolve, 1700));
+      assert.equal(
+        countEvents(fixture.events, "login", username),
+        3,
+        "failed entered credentials must not retry the obsolete runtime password",
+      );
+      assert.equal(
+        await window.locator("#session-recovery-password").inputValue(),
+        "changed-password",
+      );
+      await window.locator("#session-recovery-password").fill("still-wrong");
+      await window.getByRole("button", { name: "恢复连接", exact: true }).click();
+      await waitFor(() => countEvents(fixture.events, "login", username) === 4);
+      await window
+        .getByRole("button", { name: "恢复连接", exact: true })
+        .waitFor({ state: "visible" });
+      await window.locator("#session-recovery-password").fill("changed-password");
+      await window.getByRole("button", { name: "恢复连接", exact: true }).click();
+      await waitFor(() => countEvents(fixture.events, "ws", username) === 2);
+      await window.locator("#session-recovery-password").waitFor({ state: "hidden" });
+      const afterPrincipal = await window.evaluate(() => window.api.getSettingsPrincipal());
+      assert.deepEqual(
+        afterPrincipal,
+        beforePrincipal,
+        "password recovery keeps the same Principal and generation",
+      );
+      return {
+        loginCount: countEvents(fixture.events, "login", username),
+        wsCount: countEvents(fixture.events, "ws", username),
+      };
+    },
+  });
+  const events = fixture.events.slice(before);
+  assert.equal(result.authed, true);
+  assert.deepEqual(result.exerciseResult, { loginCount: 5, wsCount: 2 });
+  assert.equal(
+    events.some((event) => event.type === "logout"),
+    false,
+  );
+  return events;
+}
+
+async function verifyRecoveryBackoff(fixture) {
+  const username = "backoff-recovery";
+  const before = fixture.events.length;
+  const result = await launchCase({
+    baseUrl: fixture.baseUrl,
+    events: fixture.events,
+    username,
+    exercise: async ({ window }) => {
+      // Exercise a manual retry during backoff, not a race against the real 1.5s timer.
+      // Automatic recovery is covered separately; advance time after the manual success
+      // to prove the cancelled retry cannot issue a second login.
+      await window.clock.install();
+      await window.clock.pauseAt(Date.now() + 1000);
+      fixture.failNextLogin(username);
+      assert.equal(fixture.closeUserSocket(username, "fixture manual recovery", 4003), true);
+      const retry = window.locator("header").getByRole("button", { name: "重新登录", exact: true });
+      await retry.waitFor({ state: "visible" });
+      await retry.click();
+      await waitFor(() => countEvents(fixture.events, "login", username) === 2);
+      await retry.waitFor({ state: "visible" });
+      assert.equal(await retry.isEnabled(), true, "backoff must leave manual recovery available");
+      await retry.click();
+      await waitFor(() => countEvents(fixture.events, "ws", username) === 2);
+      await window.clock.runFor(3000);
+      return {
+        loginCount: countEvents(fixture.events, "login", username),
+        wsCount: countEvents(fixture.events, "ws", username),
+      };
+    },
+  });
+  const events = fixture.events.slice(before);
+  assert.equal(result.authed, true);
+  assert.deepEqual(result.exerciseResult, { loginCount: 3, wsCount: 2 });
+  assert.equal(
+    events.some((event) => event.type === "logout"),
+    false,
+  );
+  return events;
+}
+
+async function verifyAdvancedEnvironmentRecreate(fixture) {
+  const username = "environment-recreate";
+  const before = fixture.events.length;
+  const result = await launchCase({
+    baseUrl: fixture.baseUrl,
+    events: fixture.events,
+    username,
+    exercise: async ({ electronApp, window, userDataDir }) => {
+      await window.locator('[data-tour="nav-gpt"]').click();
+      const environmentButton = window.getByTitle(/新建 AI 环境|管理环境与线路/);
+      await environmentButton.waitFor({ state: "visible", timeout: 8000 });
+      await environmentButton.click();
+
+      const createEnvironment = async (name) => {
+        const firstEnvironment = window.getByRole("button", {
+          name: "新建第一个独立环境",
+          exact: true,
+        });
+        if (await firstEnvironment.isVisible().catch(() => false)) {
+          await firstEnvironment.click();
+        } else {
+          await window.getByRole("button", { name: "新建", exact: true }).click();
+        }
+        await window.getByPlaceholder(/新环境名称/).fill(name);
+        await window.getByLabel("新环境内置网络线路").selectOption("internal-unified");
+        await window.getByRole("button", { name: "完成", exact: true }).click();
+        await window.getByLabel("当前 AI 环境").waitFor({ state: "visible", timeout: 8000 });
+        return window.evaluate(async (expectedName) => {
+          const principal = await window.api.getSettingsPrincipal();
+          const settings = await window.api.loadSettings({
+            expectedPrincipalId: principal.principalId,
+            expectedPrincipalGeneration: principal.generation,
+          });
+          const environment = settings.advancedAi.environments.find(
+            (candidate) => candidate.kind === "gpt" && candidate.name === expectedName,
+          );
+          return {
+            id: environment?.id || "",
+            routeId: environment?.routeId || "",
+            activeId: settings.advancedAi.activeByKind.gpt,
+          };
+        }, name);
+      };
+
+      const first = await createEnvironment("First Windows environment");
+      assert.ok(first.id, `the first environment must be persisted: ${JSON.stringify(first)}`);
+      assert.equal(first.routeId, "internal-unified");
+      assert.equal(first.activeId, first.id);
+
+      const principal = await window.evaluate(() => window.api.getSettingsPrincipal());
+      const oldPartition = partitionForAiEnvironment("gpt", first.id, principal);
+      await electronApp.evaluate(async ({ session }, partition) => {
+        const target = session.fromPartition(partition);
+        await target.cookies.set({
+          url: "https://example.com",
+          name: "old-environment",
+          value: "retained-until-retry",
+        });
+        const clear = target.clearStorageData.bind(target);
+        globalThis.__restoreEnvironmentClear = () => {
+          target.clearStorageData = clear;
+        };
+        target.clearStorageData = async () => {
+          throw new Error("fixture locked browser storage");
+        };
+      }, oldPartition);
+
+      window.once("dialog", (dialog) => dialog.accept());
+      await window.getByTitle("删除环境").click();
+      await window
+        .getByRole("button", { name: "新建第一个独立环境", exact: true })
+        .waitFor({ state: "visible", timeout: 8000 });
+
+      const afterDelete = await window.evaluate(async () => {
+        const principal = await window.api.getSettingsPrincipal();
+        const settings = await window.api.loadSettings({
+          expectedPrincipalId: principal.principalId,
+          expectedPrincipalGeneration: principal.generation,
+        });
+        return {
+          environmentIds: settings.advancedAi.environments
+            .filter((environment) => environment.kind === "gpt")
+            .map((environment) => environment.id),
+          activeId: settings.advancedAi.activeByKind.gpt,
+        };
+      });
+      assert.deepEqual(afterDelete, { environmentIds: [], activeId: "" });
+      await window
+        .getByRole("button", { name: "重试清理", exact: true })
+        .waitFor({ state: "visible" });
+      const pending = JSON.parse(
+        fs.readFileSync(path.join(userDataDir, "ai-environment-cleanup.json"), "utf8"),
+      );
+      assert.equal(pending.pending[0].partition, oldPartition);
+
+      const replacement = await createEnvironment("Replacement Windows environment");
+      assert.ok(replacement.id, "the replacement environment must be persisted");
+      assert.notEqual(replacement.id, first.id);
+      assert.equal(replacement.routeId, "internal-unified");
+      assert.equal(replacement.activeId, replacement.id);
+      const replacementPartition = partitionForAiEnvironment("gpt", replacement.id, principal);
+      await electronApp.evaluate(async ({ session }, partition) => {
+        await session
+          .fromPartition(partition)
+          .cookies.set({ url: "https://example.com", name: "replacement", value: "preserve" });
+        globalThis.__restoreEnvironmentClear();
+      }, replacementPartition);
+      await window.getByRole("button", { name: "重试清理", exact: true }).click();
+      await window.getByText("旧环境数据已清理", { exact: true }).waitFor({ state: "visible" });
+      await window
+        .getByRole("button", { name: "重试清理", exact: true })
+        .waitFor({ state: "hidden" });
+      const cookies = await electronApp.evaluate(
+        async ({ session }, partitions) => ({
+          old: await session.fromPartition(partitions.oldPartition).cookies.get({}),
+          replacement: await session.fromPartition(partitions.replacementPartition).cookies.get({}),
+        }),
+        { oldPartition, replacementPartition },
+      );
+      assert.equal(cookies.old.length, 0);
+      assert.equal(
+        cookies.replacement.find((cookie) => cookie.name === "replacement")?.value,
+        "preserve",
+      );
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(path.join(userDataDir, "ai-environment-cleanup.json"), "utf8"))
+          .pending,
+        [],
+      );
+      return {
+        first,
+        afterDelete,
+        replacement,
+        cleanupRetried: true,
+        replacementCookiePreserved: true,
+      };
+    },
+  });
+  assert.equal(result.authed, true);
+  assert.deepEqual(result.blockedRequests, []);
+  return { events: fixture.events.slice(before), lifecycle: result.exerciseResult };
+}
+
+async function verifyDataPrincipalLifecycle(fixture) {
+  return launchCase({
+    baseUrl: fixture.baseUrl,
+    events: fixture.events,
+    username: "data-A",
+    exercise: async ({ electronApp, window }) => {
+      const a = await window.evaluate(async () => {
+        const principal = await window.api.getSettingsPrincipal();
+        await window.api.vault.create("scope-a.md", "# A note\n");
+        return { principal, root: await window.api.vault.getRoot() };
+      });
+      assert.equal(
+        fixture.sendUserMessage("data-A", {
+          type: "chat",
+          id: "owned-chat-A",
+          scope: "subnet",
+          subnetKey: "fixture",
+          from: "peer",
+          displayName: "Peer",
+          text: "Private history A",
+          timestamp: new Date().toISOString(),
+        }),
+        true,
+      );
+      await window.locator('[data-tour="nav-chat"]').click();
+      await window.getByText("Private history A", { exact: true }).last().waitFor();
+      await window.locator('[data-tour="nav-account"]').click();
+      await window.locator("#ui-show-todo").click();
+      await window.locator("#ui-show-notes").click();
+      await window.locator('[data-tour="nav-todo"]').click();
+      await window.getByRole("button", { name: /^全部/ }).click();
+      await window.getByPlaceholder(/添加任务/).fill("Private task A");
+      await window.getByPlaceholder(/添加任务/).press("Enter");
+      await window.getByText("Private task A", { exact: true }).waitFor();
+      await window.locator('[data-tour="nav-notes"]').click();
+      await window.getByText("A note", { exact: true }).first().click();
+      await window.getByRole("button", { name: "编辑", exact: true }).click();
+      const editor = window.locator(".cm-content").first();
+      await editor.waitFor({ state: "visible" });
+      await electronApp.evaluate(({ ipcMain }) => {
+        globalThis.__restoreVaultWriter = ipcMain._invokeHandlers.get("vault:write");
+        ipcMain.removeHandler("vault:write");
+        ipcMain.handle("vault:write", () => {
+          throw new Error("fixture blocked vault write");
+        });
+      });
+      await editor.fill("# Unsaved private note A");
+      await window.locator('[data-tour="nav-account"]').click();
+      await window.evaluate(async () => {
+        const socket = window.__dataLifecycleSocket;
+        const queued = socket.onmessage;
+        [...document.querySelectorAll("button")]
+          .find((button) => button.textContent.trim() === "退出登录")
+          .click();
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+        queued?.call(
+          socket,
+          new MessageEvent("message", {
+            data: JSON.stringify({
+              type: "chat",
+              id: "retired-chat-A",
+              scope: "subnet",
+              subnetKey: "fixture",
+              from: "peer",
+              text: "Retired transition event",
+              timestamp: new Date().toISOString(),
+            }),
+          }),
+        );
+      });
+      await window
+        .getByText(/fixture blocked vault write/)
+        .first()
+        .waitFor();
+      const stillA = await window.evaluate(() => window.api.getSettingsPrincipal());
+      assert.equal(
+        stillA.principalId,
+        a.principal.principalId,
+        "failed note flush must cancel logout before changing account",
+      );
+      await electronApp.evaluate(({ ipcMain }) => {
+        ipcMain.removeHandler("vault:write");
+        ipcMain.handle("vault:write", globalThis.__restoreVaultWriter);
+      });
+      await window.getByRole("button", { name: "退出登录", exact: true }).click();
+      await window.locator("#account-server").waitFor({ state: "visible" });
+      assert.equal(
+        fs.readFileSync(path.join(a.root, "scope-a.md"), "utf8"),
+        "# Unsaved private note A",
+      );
+      await loginThroughForm(window, fixture.baseUrl, "data-B");
+      const b = await window.evaluate(async () => ({
+        history: await window.api.loadChatHistory(),
+        principal: await window.api.getSettingsPrincipal(),
+        tasks: await window.api.loadTasks(),
+        vault: await window.api.vault.readAll(),
+      }));
+      assert.notEqual(b.principal.principalId, a.principal.principalId);
+      assert.equal(b.tasks.tasks.length, 0);
+      assert.equal(b.vault.length, 0);
+      assert.equal(JSON.stringify(b.history).includes("owned-chat-A"), false);
+      assert.equal(JSON.stringify(b.history).includes("retired-chat-A"), false);
+      await window.getByRole("button", { name: "退出登录", exact: true }).click();
+      await window.locator("#account-server").waitFor({ state: "visible" });
+      await loginThroughForm(window, fixture.baseUrl, "data-A");
+      const restored = await window.evaluate(async () => ({
+        history: await window.api.loadChatHistory(),
+        principal: await window.api.getSettingsPrincipal(),
+        tasks: await window.api.loadTasks(),
+        vault: await window.api.vault.readAll(),
+      }));
+      assert.equal(restored.principal.principalId, a.principal.principalId);
+      assert.equal(restored.tasks.tasks[0].title, "Private task A");
+      assert.equal(JSON.stringify(restored.history).includes("owned-chat-A"), true);
+      assert.equal(JSON.stringify(restored.history).includes("retired-chat-A"), false);
+      assert.equal(
+        restored.vault.find((file) => file.path === "scope-a.md").content,
+        "# Unsaved private note A",
+      );
+      return { isolatedAccounts: true, failedFlushBlockedLogout: true, returnedDataRestored: true };
+    },
+  });
+}
+
 async function main() {
   const fixture = await createFixtureServer();
   try {
+    if (process.argv.includes("--case=data-principal-lifecycle")) {
+      const result = await verifyDataPrincipalLifecycle(fixture);
+      process.stdout.write(`${JSON.stringify({ ok: true, ...result.exerciseResult })}\n`);
+      return;
+    }
+    if (process.argv.includes("--case=session-recovery")) {
+      const manualRelogin = await verifyManualRelogin(fixture);
+      const credentials = await verifyRecoveryCredentials(fixture);
+      const backoff = await verifyRecoveryBackoff(fixture);
+      process.stdout.write(
+        `${JSON.stringify({ ok: true, manualRelogin, credentials, backoff }, null, 2)}\n`,
+      );
+      return;
+    }
+    if (process.argv.includes("--case=advanced-environment-recreate")) {
+      const advancedEnvironmentRecreate = await verifyAdvancedEnvironmentRecreate(fixture);
+      process.stdout.write(
+        `${JSON.stringify({ ok: true, advancedEnvironmentRecreate }, null, 2)}\n`,
+      );
+      return;
+    }
     const cases = [
       { username: "legacy-admin", expectedRoutes: ["internal-unified", "internal-airport"] },
       { username: "legacy-routes", expectedRoutes: ["route-legacy"] },
@@ -954,6 +1486,10 @@ async function main() {
     const personalOrganizationIsolation = await verifyPersonalOrganizationIsolation(fixture);
     const authorizationPersistenceFailure = await verifyAuthorizationPersistenceFailure(fixture);
     const sameTokenDoubleRevocation = await verifySameTokenDoubleRevocation(fixture);
+    const manualRelogin = await verifyManualRelogin(fixture);
+    const recoveryCredentials = await verifyRecoveryCredentials(fixture);
+    const recoveryBackoff = await verifyRecoveryBackoff(fixture);
+    const advancedEnvironmentRecreate = await verifyAdvancedEnvironmentRecreate(fixture);
 
     const beforeInvalid = fixture.events.length;
     const invalid = await launchCase({
@@ -1010,6 +1546,10 @@ async function main() {
           personalOrganizationIsolation,
           authorizationPersistenceFailure,
           sameTokenDoubleRevocation,
+          manualRelogin,
+          recoveryCredentials,
+          recoveryBackoff,
+          advancedEnvironmentRecreate,
         },
         null,
         2,
@@ -1020,7 +1560,16 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error && error.stack ? error.stack : error);
-  process.exitCode = 1;
-});
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error && error.stack ? error.stack : error);
+    process.exitCode = 1;
+  });
+
+module.exports = {
+  createFixtureServer,
+  launchCase,
+  loginThroughForm,
+  dismissFirstRunGuides,
+  readWorkspaceScope,
+};

@@ -25,6 +25,10 @@ const {
 
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-ai-composer-"));
 app.setPath("userData", userData);
+// This hidden fixture verifies trusted input and document/IPC contracts, not GPU
+// composition. Software rendering also works in Windows SSH/CI desktop sessions.
+// The full application lifecycle verifier retains the product's default GPU path.
+app.disableHardwareAcceleration();
 
 function startFixture() {
   const server = http.createServer((_request, response) => {

@@ -629,6 +629,7 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   });
   assert.strictEqual(login.status, 200);
   const loginBody = await login.json();
+  assert.strictEqual(loginBody.identity, undefined, "legacy login response remains compatible");
   const { token } = loginBody;
   assert.strictEqual(typeof loginBody.token, "string");
   assert.strictEqual(loginBody.username, "verify-user");
@@ -660,6 +661,8 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   assert.strictEqual(legacyChat.scope, "subnet");
   assert.strictEqual(typeof legacyChat.id, "string");
   assert.strictEqual(typeof legacyChat.timestamp, "string");
+  assert.ok(Number.isSafeInteger(legacyChat.serverSequence));
+  assert.ok(legacyChat.serverSequence > 0);
   const savedHistory = JSON.parse(fs.readFileSync(process.env.CHAT_HISTORY_FILE, "utf8"));
   assert.ok(savedHistory.history.some((message) => message.id === legacyChat.id));
   assert.ok(fs.existsSync(`${process.env.CHAT_HISTORY_FILE}.backup`));
@@ -697,6 +700,7 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
     (message) => message.type === "chat" && message.attachments?.[0]?.name === "actual-size.txt",
   );
   assert.strictEqual(validAttachment.attachments[0].size, 8);
+  assert.ok(validAttachment.serverSequence > legacyChat.serverSequence);
 
   const historySnapshot = fs.readFileSync(process.env.CHAT_HISTORY_FILE);
   const historyBackup = fs.readFileSync(`${process.env.CHAT_HISTORY_FILE}.backup`);
@@ -775,10 +779,41 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   const adminClientLogin = await fetch(`${baseUrl}/api/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "admin-user", password }),
+    body: JSON.stringify({ username: "admin-user", password, identityNonce: "a".repeat(64) }),
   });
   assert.strictEqual(adminClientLogin.status, 200);
-  const adminClientToken = (await adminClientLogin.json()).token;
+  const adminClientBody = await adminClientLogin.json();
+  const adminClientToken = adminClientBody.token;
+  const identity = adminClientBody.identity;
+  assert.strictEqual(identity.username, "admin-user");
+  assert.strictEqual(identity.nonce, "a".repeat(64));
+  const crypto = require("node:crypto");
+  assert.ok(
+    crypto.verify(
+      null,
+      Buffer.from(
+        JSON.stringify([
+          "sharegpt-login-identity-v1",
+          identity.nonce,
+          identity.username,
+          identity.userId,
+          identity.publicKey,
+        ]),
+      ),
+      crypto.createPublicKey({
+        key: Buffer.from(identity.publicKey, "base64"),
+        format: "der",
+        type: "spki",
+      }),
+      Buffer.from(identity.signature, "base64"),
+    ),
+  );
+  assert.strictEqual(
+    JSON.parse(fs.readFileSync(process.env.USERS_FILE, "utf8")).users.find(
+      (user) => user.username === "admin-user",
+    ).identityUserId,
+    identity.userId,
+  );
   const adminClientBootstrap = await fetch(`${baseUrl}/api/client/bootstrap`, {
     headers: { Authorization: `Bearer ${adminClientToken}` },
   });
@@ -1175,6 +1210,38 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   const statsBody = await stats.json();
   assert.strictEqual(statsBody.totalQueries, 4);
   assert.ok(Array.isArray(statsBody.users));
+
+  const geminiUsage = await fetch(`${baseUrl}/api/gemini/usage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ count: 2, usageId: "gemini-usage-once-1" }),
+  });
+  assert.strictEqual(geminiUsage.status, 200);
+
+  const unauthenticatedAdminUsage = await fetch(`${baseUrl}/api/admin/ai-usage`);
+  assert.strictEqual(unauthenticatedAdminUsage.status, 401);
+
+  const adminGptUsage = await fetch(`${baseUrl}/api/admin/ai-usage?service=gpt`, {
+    headers: adminHeaders,
+  });
+  assert.strictEqual(adminGptUsage.status, 200);
+  const adminGptUsageBody = await adminGptUsage.json();
+  assert.strictEqual(adminGptUsageBody.service, "gpt");
+  assert.strictEqual(adminGptUsageBody.totalQueries, 4);
+  assert.strictEqual(adminGptUsageBody.users[0].username, "verify-user");
+
+  const adminGeminiUsage = await fetch(`${baseUrl}/api/admin/ai-usage?service=gemini`, {
+    headers: adminHeaders,
+  });
+  assert.strictEqual(adminGeminiUsage.status, 200);
+  const adminGeminiUsageBody = await adminGeminiUsage.json();
+  assert.strictEqual(adminGeminiUsageBody.service, "gemini");
+  assert.strictEqual(adminGeminiUsageBody.totalQueries, 2);
+
+  const invalidAdminUsage = await fetch(`${baseUrl}/api/admin/ai-usage?service=unknown`, {
+    headers: adminHeaders,
+  });
+  assert.strictEqual(invalidAdminUsage.status, 400);
 
   const usageSnapshot = fs.readFileSync(process.env.GPT_USAGE_FILE);
   fs.copyFileSync(process.env.GPT_USAGE_FILE, `${process.env.GPT_USAGE_FILE}.backup`);

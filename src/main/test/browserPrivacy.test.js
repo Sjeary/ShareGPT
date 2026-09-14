@@ -244,9 +244,13 @@ test("AI 页面瞬时超时会重试，永久错误不会循环请求", async ()
 
 test("单个会话清理覆盖浏览数据、认证、网络、代码和 DNS 缓存", async () => {
   const calls = [];
+  let storageOptions = null;
   const targetSession = {
     closeAllConnections: async () => calls.push("connections"),
-    clearStorageData: async () => calls.push("storage"),
+    clearStorageData: async (options) => {
+      storageOptions = options;
+      calls.push("storage");
+    },
     clearAuthCache: async () => calls.push("auth"),
     clearCache: async () => calls.push("cache"),
     clearCodeCaches: async () => calls.push("code"),
@@ -258,4 +262,15 @@ test("单个会话清理覆盖浏览数据、认证、网络、代码和 DNS 缓
     new Set(calls),
     new Set(["connections", "storage", "auth", "cache", "code", "dns", "flush"]),
   );
+  assert.deepStrictEqual(storageOptions, {
+    storages: [
+      "cookies",
+      "filesystem",
+      "indexdb",
+      "localstorage",
+      "shadercache",
+      "serviceworkers",
+      "cachestorage",
+    ],
+  });
 });

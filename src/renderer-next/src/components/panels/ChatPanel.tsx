@@ -28,6 +28,7 @@ import { Composer } from './chat/Composer'
 import { ImageLightbox, type LightboxTarget } from './chat/ImageLightbox'
 import { activeConversationMessages, buildConversations } from './chat/conversations'
 import { avatarMark, formatDateLabel, isSameDay, messagePreview } from './chat/format'
+import { unreadMarkerIndex } from '@/lib/chatUnreadMarker'
 
 // 由消息派生回复草稿 (旧 createReplyDraftFromMessage ~394)。
 function replyDraftFromMessage(m: ChatMessage) {
@@ -109,7 +110,7 @@ export function ChatPanel() {
   const unreadByKey = useChatStore((s) => s.unreadByKey)
   const clearUnread = useChatStore((s) => s.clearUnread)
   const activeStoreKey = storeKeyForActive(activeKey, roomScope)
-  const firstUnreadId = useChatStore((s) => s.firstUnreadByKey[activeStoreKey] ?? '')
+  const unreadIds = useChatStore((s) => s.unreadMessageIdsByKey[activeStoreKey])
   const appActive = useAppStore((s) => s.active)
 
   const collab = (settings?.collab ?? {}) as Partial<CollabSettings>
@@ -152,12 +153,14 @@ export function ChatPanel() {
     [messagesByConversation, activeKey, roomScope],
   )
 
+  const markerIndex = useMemo(() => unreadMarkerIndex(messages, unreadIds), [messages, unreadIds])
+  const firstUnreadId = messages[markerIndex]?.id ?? ''
+
   const {
     scrollRef,
     contentRef,
     atBottom,
     focused,
-    unreadMarkerId,
     canReturn,
     toLatest,
     returnToReading,
@@ -382,25 +385,27 @@ export function ChatPanel() {
               {/* 右上仅在「与协作服务器的连接」异常时提示; 正常连接不显示, 避免被误解为对方在线。
                   对话方/房间的真实在线状态见标题下方副标题。 */}
               {connection !== 'online' && (
-                <span
-                  className={cn(
-                    'flex items-center gap-1.5 text-xs',
-                    connection === 'closed' || connection === 'error'
-                      ? 'text-destructive'
-                      : 'text-muted-foreground',
-                  )}
-                  title="与协作服务器的连接状态"
-                >
+                <div className="flex items-center gap-2">
                   <span
                     className={cn(
-                      'size-2 rounded-full',
+                      'flex items-center gap-1.5 text-xs',
                       connection === 'closed' || connection === 'error'
-                        ? 'bg-destructive'
-                        : 'animate-pulse bg-muted-foreground/50',
+                        ? 'text-destructive'
+                        : 'text-muted-foreground',
                     )}
-                  />
-                  {connectionLabel(connection)}
-                </span>
+                    title="与协作服务器的连接状态"
+                  >
+                    <span
+                      className={cn(
+                        'size-2 rounded-full',
+                        connection === 'closed' || connection === 'error'
+                          ? 'bg-destructive'
+                          : 'animate-pulse bg-muted-foreground/50',
+                      )}
+                    />
+                    {connectionLabel(connection)}
+                  </span>
+                </div>
               )}
             </>
           ) : (
@@ -435,7 +440,7 @@ export function ChatPanel() {
                       !mine && (!prev || prev.system || prev.from !== message.from || showDate)
                     return (
                       <div key={message.id || `${message.timestamp}-${i}`}>
-                        {message.id === unreadMarkerId && (
+                        {i === markerIndex && (
                           <div
                             className="my-3 flex items-center gap-3 text-xs text-primary"
                             role="separator"

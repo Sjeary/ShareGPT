@@ -237,7 +237,11 @@ test("个人代理运行中重启会复用自己持有的内部端口", async ()
 });
 
 test("bundled sing-box 接受个人代理候选配置", (t) => {
-  const binary = path.resolve(__dirname, "../../../build/bin/sing-box");
+  const binary = path.resolve(
+    __dirname,
+    "../../../build/bin",
+    process.platform === "win32" ? "sing-box.exe" : "sing-box",
+  );
   if (!fs.existsSync(binary)) {
     t.skip("当前平台未提供 bundled sing-box");
     return;
@@ -260,7 +264,11 @@ test("bundled sing-box 接受个人代理候选配置", (t) => {
 });
 
 test("bundled sing-box 接受多线路候选配置", (t) => {
-  const binary = path.resolve(__dirname, "../../../build/bin/sing-box");
+  const binary = path.resolve(
+    __dirname,
+    "../../../build/bin",
+    process.platform === "win32" ? "sing-box.exe" : "sing-box",
+  );
   if (!fs.existsSync(binary)) {
     t.skip("当前平台未提供 bundled sing-box");
     return;

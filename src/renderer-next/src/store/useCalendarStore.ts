@@ -1,10 +1,24 @@
 import { create } from 'zustand'
-import { api } from '@/lib/api'
+import { userDataApiFor } from '@/lib/api'
+import { assertUserDataWritable } from '@/lib/userDataTransitionState'
+import { coalesceInFlight } from '@/lib/inFlightRequest'
 import type { CalendarStoreFile } from '@/types/api'
+import { createPrincipalDebouncedSave } from '@/lib/principalDebouncedSave'
+import {
+  settingsPrincipalRuntime,
+  type SettingsPrincipalSnapshot,
+} from '@/lib/settingsPrincipalRuntime'
+import {
+  filterDeleted,
+  isDeleted,
+  markDeleted,
+  mergeDeletions,
+  type StoreDeletions,
+} from '@/lib/storeDeletions'
 
 // 个人日历 store。
 // 数据持久化: api.loadCalendar() / api.saveCalendar() (本地文件壳, 结构由本 store 维护)。
-//  - 初始化时 load 一次; 首次为空则播种默认日历 + 示例事件。
+//  - 初始化时 load 一次; 首次为空只创建默认个人日历。
 //  - 任何 calendars/events 变更后 debounce(~300ms) 落盘。
 // 视图层用 selectors (按区间展开重复事件) 拿数据, 不直接读裸 events。
 
@@ -46,10 +60,15 @@ export type NewEventInput = Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt'
 interface CalendarState {
   calendars: Calendar[]
   events: CalendarEvent[]
+  deleted: StoreDeletions
   loaded: boolean
+  loading: boolean
+  loadError: string
 
   // 生命周期
   init: () => Promise<void>
+  resetForPrincipal: () => void
+  flushPending: () => Promise<void>
 
   // 日历 CRUD
   addCalendar: (input: { name: string; color: string }) => Calendar
@@ -75,7 +94,14 @@ interface CalendarState {
   ) => number
 
   // 用(云端合并后的)整组数据替换本地 (云同步用); 会触发本地落盘。
-  replaceAll: (data: { calendars: Calendar[]; events: CalendarEvent[] }) => void
+  replaceAll: (
+    data: {
+      calendars: Calendar[]
+      events: CalendarEvent[]
+      deleted?: StoreDeletions
+    },
+    snapshot?: SettingsPrincipalSnapshot,
+  ) => void
 }
 
 // 专用「导入」日历的固定名称与颜色 (青色, 与其它默认日历区分)。
@@ -87,76 +113,13 @@ function nowIso(): string {
   return new Date().toISOString()
 }
 
-// 把 Date 设为今天某点钟, 返回 ISO (用于示例事件落在本周)。
-function atHour(base: Date, dayOffset: number, hour: number, minute = 0): string {
-  const d = new Date(base)
-  d.setDate(d.getDate() + dayOffset)
-  d.setHours(hour, minute, 0, 0)
-  return d.toISOString()
-}
-
 function seedDefaults(): { calendars: Calendar[]; events: CalendarEvent[] } {
-  const personalId = crypto.randomUUID()
-  const workId = crypto.randomUUID()
-  const birthdayId = crypto.randomUUID()
-  const created = nowIso()
-
-  const calendars: Calendar[] = [
-    { id: personalId, name: '个人', color: '#3b82f6', visible: true, isDefault: true },
-    { id: workId, name: '工作', color: '#ef4444', visible: true },
-    { id: birthdayId, name: '生日', color: '#f59e0b', visible: true },
-  ]
-
-  const today = new Date()
-  const events: CalendarEvent[] = [
-    {
-      id: crypto.randomUUID(),
-      calendarId: workId,
-      title: '周会',
-      start: atHour(today, 0, 10, 0),
-      end: atHour(today, 0, 11, 0),
-      allDay: false,
-      location: '会议室 A',
-      notes: '同步本周进度',
-      recurrence: { freq: 'WEEKLY', interval: 1 },
-      createdAt: created,
-      updatedAt: created,
-    },
-    {
-      id: crypto.randomUUID(),
-      calendarId: personalId,
-      title: '健身',
-      start: atHour(today, 1, 19, 0),
-      end: atHour(today, 1, 20, 30),
-      allDay: false,
-      createdAt: created,
-      updatedAt: created,
-    },
-    {
-      id: crypto.randomUUID(),
-      calendarId: personalId,
-      title: '看牙医',
-      start: atHour(today, 2, 14, 30),
-      end: atHour(today, 2, 15, 30),
-      allDay: false,
-      location: '口腔医院',
-      createdAt: created,
-      updatedAt: created,
-    },
-    {
-      id: crypto.randomUUID(),
-      calendarId: birthdayId,
-      title: '小明生日 🎂',
-      start: atHour(today, 3, 0, 0),
-      end: atHour(today, 3, 0, 0),
-      allDay: true,
-      recurrence: { freq: 'YEARLY', interval: 1 },
-      createdAt: created,
-      updatedAt: created,
-    },
-  ]
-
-  return { calendars, events }
+  return {
+    calendars: [
+      { id: 'default-personal', name: '个人', color: '#3b82f6', visible: true, isDefault: true },
+    ],
+    events: [],
+  }
 }
 
 // —— 反序列化 (宽松文件壳 -> 强类型, 丢弃脏数据) ——
@@ -216,59 +179,112 @@ function parseEvent(v: unknown): CalendarEvent | null {
   }
 }
 
-// —— debounce 落盘 ——
-let saveTimer: ReturnType<typeof setTimeout> | null = null
-function scheduleSave(get: () => CalendarState) {
-  if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    saveTimer = null
-    const { calendars, events } = get()
-    const payload: CalendarStoreFile = {
-      version: 1,
-      updatedAt: nowIso(),
-      calendars,
-      events,
-    }
-    void api.saveCalendar(payload)
-  }, 300)
-}
-
 export const useCalendarStore = create<CalendarState>((set, get) => {
+  let owner: SettingsPrincipalSnapshot | null = null
+  let loadEpoch = 0
+  const initializations = new Map<string, Promise<void>>()
+  const persistence = createPrincipalDebouncedSave<CalendarStoreFile & { deleted: StoreDeletions }>(
+    (payload, snapshot) => userDataApiFor(snapshot).saveCalendar(payload),
+  )
+  const scheduleSave = () => {
+    if (!owner) return
+    settingsPrincipalRuntime.assertCurrent(owner)
+    const { calendars, events, deleted } = get()
+    persistence.schedule({ version: 1, updatedAt: nowIso(), calendars, events, deleted }, owner)
+  }
+
   // 任一变更后: 触发落盘。
-  const commit = (partial: Partial<Pick<CalendarState, 'calendars' | 'events'>>) => {
+  const commit = (partial: Partial<Pick<CalendarState, 'calendars' | 'events' | 'deleted'>>) => {
+    assertUserDataWritable()
+    if (owner) settingsPrincipalRuntime.assertCurrent(owner)
     set(partial)
-    scheduleSave(get)
+    scheduleSave()
   }
 
   return {
     calendars: [],
     events: [],
+    deleted: {},
     loaded: false,
+    loading: false,
+    loadError: '',
+
+    resetForPrincipal: () => {
+      loadEpoch += 1
+      owner = null
+      persistence.cancel()
+      initializations.clear()
+      set({ calendars: [], events: [], deleted: {}, loaded: false, loading: false, loadError: '' })
+    },
+    flushPending: () => persistence.flushPending(),
 
     init: async () => {
-      if (get().loaded) return
-      let file: CalendarStoreFile | null = null
-      try {
-        file = await api.loadCalendar()
-      } catch {
-        file = null
-      }
-      const calendars = (file?.calendars ?? [])
-        .map(parseCalendar)
-        .filter((c): c is Calendar => c !== null)
-      const events = (file?.events ?? [])
-        .map(parseEvent)
-        .filter((e): e is CalendarEvent => e !== null)
-
-      // 本地无任何日历 -> 播种默认数据并立即落盘。
-      if (calendars.length === 0) {
-        const seeded = seedDefaults()
-        set({ calendars: seeded.calendars, events: seeded.events, loaded: true })
-        void api.saveCalendar({ version: 1, updatedAt: nowIso(), ...seeded })
+      const snapshot = settingsPrincipalRuntime.snapshot()
+      if (
+        get().loaded &&
+        owner?.principalId === snapshot.principalId &&
+        owner?.generation === snapshot.generation
+      )
         return
-      }
+      set({ loaded: false, loading: true, loadError: '' })
+      return coalesceInFlight(
+        initializations,
+        JSON.stringify([snapshot.principalId, snapshot.generation]),
+        async () => {
+          const starting = settingsPrincipalRuntime.current()
+          if (
+            starting.principalId !== snapshot.principalId ||
+            starting.generation !== snapshot.generation
+          )
+            return
+          owner = snapshot
+          const epoch = ++loadEpoch
+          const isCurrent = () => {
+            const current = settingsPrincipalRuntime.current()
+            return (
+              epoch === loadEpoch &&
+              current.principalId === snapshot.principalId &&
+              current.generation === snapshot.generation
+            )
+          }
+          let file: CalendarStoreFile | null
+          try {
+            file = await userDataApiFor(snapshot).loadCalendar()
+          } catch {
+            if (isCurrent())
+              set({
+                loading: false,
+                loadError:
+                  '无法读取个人日历，原有资料已保留。请检查文件访问权限或恢复有效备份后重试。',
+              })
+            return
+          }
+          if (!isCurrent()) return
+          const deleted = mergeDeletions((file as { deleted?: unknown } | null)?.deleted)
+          const calendars = filterDeleted(
+            (file?.calendars ?? []).map(parseCalendar).filter((c): c is Calendar => c !== null),
+            deleted,
+            'calendars',
+          )
+          const events = filterDeleted(
+            (file?.events ?? []).map(parseEvent).filter((e): e is CalendarEvent => e !== null),
+            deleted,
+            'events',
+          ).filter((event) => !isDeleted(deleted, 'calendars', event.calendarId))
 
-      set({ calendars, events, loaded: true })
+          // 本地无任何日历 -> 播种默认数据并立即落盘。
+          if (calendars.length === 0) {
+            const seeded = seedDefaults()
+            const data = { calendars: seeded.calendars, events, deleted }
+            set({ ...data, loaded: true, loading: false, loadError: '' })
+            scheduleSave()
+            await persistence.flushPending()
+            return
+          }
+
+          set({ calendars, events, deleted, loaded: true, loading: false, loadError: '' })
+        },
+      )
     },
 
     addCalendar: ({ name, color }) => {
@@ -287,7 +303,15 @@ export const useCalendarStore = create<CalendarState>((set, get) => {
       const target = get().calendars.find((c) => c.id === id)
       // 默认日历不允许删除 (与 Apple 行为一致, 至少保留一个归属)。
       if (!target || target.isDefault) return
+      const removedEvents = get()
+        .events.filter((event) => event.calendarId === id)
+        .map((event) => event.id)
       commit({
+        deleted: markDeleted(
+          markDeleted(get().deleted, 'calendars', [id]),
+          'events',
+          removedEvents,
+        ),
         calendars: get().calendars.filter((c) => c.id !== id),
         // 同时移除该日历下的所有事件。
         events: get().events.filter((e) => e.calendarId !== id),
@@ -316,7 +340,11 @@ export const useCalendarStore = create<CalendarState>((set, get) => {
     },
 
     removeEvent: (id) => {
-      commit({ events: get().events.filter((e) => e.id !== id) })
+      if (!get().events.some((event) => event.id === id)) return
+      commit({
+        events: get().events.filter((e) => e.id !== id),
+        deleted: markDeleted(get().deleted, 'events', [id]),
+      })
     },
 
     importEvents: (items) => {
@@ -355,10 +383,22 @@ export const useCalendarStore = create<CalendarState>((set, get) => {
       return newEvents.length
     },
 
-    replaceAll: (data) => {
+    replaceAll: (data, snapshot = settingsPrincipalRuntime.snapshot()) => {
+      settingsPrincipalRuntime.assertCurrent(snapshot)
+      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
+      const deleted = mergeDeletions(get().deleted, data.deleted)
       commit({
-        calendars: Array.isArray(data.calendars) ? data.calendars : [],
-        events: Array.isArray(data.events) ? data.events : [],
+        calendars: filterDeleted(
+          Array.isArray(data.calendars) ? data.calendars : [],
+          deleted,
+          'calendars',
+        ),
+        events: filterDeleted(
+          Array.isArray(data.events) ? data.events : [],
+          deleted,
+          'events',
+        ).filter((event) => !isDeleted(deleted, 'calendars', event.calendarId)),
+        deleted,
       })
     },
   }

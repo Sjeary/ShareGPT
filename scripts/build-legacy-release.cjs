@@ -1,9 +1,18 @@
 const { execFileSync } = require("node:child_process");
 const path = require("node:path");
+const { releaseDistribution } = require("./release-distribution.cjs");
+
+function legacyReleaseEnvironment(input) {
+  const env = { ...input, CSC_IDENTITY_AUTO_DISCOVERY: "false" };
+  for (const name of ["CSC_LINK", "CSC_KEY_PASSWORD", "WIN_CSC_LINK", "WIN_CSC_KEY_PASSWORD"]) {
+    delete env[name];
+  }
+  return env;
+}
 
 function legacyReleaseCommands({ version, tag, platform }) {
-  if (version !== "1.0.9" || tag !== "v1.0.9") {
-    throw new Error("The unsigned publication exception applies only to v1.0.9.");
+  if (releaseDistribution({ version, tag }) !== "legacy") {
+    throw new Error("Unsigned publication requires an explicitly approved exact release.");
   }
   if (platform !== "darwin" && platform !== "win32") {
     throw new Error("Legacy release supports only macOS and Windows.");
@@ -45,13 +54,14 @@ if (require.main === module) {
     tag: process.env.SHAREGPT_RELEASE_TAG || process.env.GITHUB_REF_NAME,
     platform: process.platform,
   });
+  const env = legacyReleaseEnvironment(process.env);
   for (const [command, args, relativeCwd] of commands) {
     execFileSync(command, args, {
       cwd: relativeCwd ? path.join(root, relativeCwd) : root,
       stdio: "inherit",
-      env: { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: "false" },
+      env,
     });
   }
 }
 
-module.exports = { legacyReleaseCommands };
+module.exports = { legacyReleaseCommands, legacyReleaseEnvironment };

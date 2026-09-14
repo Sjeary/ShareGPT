@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { listenFixture } = require("./lib/listen-fixture.cjs");
 const ROOT = path.resolve(__dirname, "..");
 
 // Production SenderForm with fixture identities; never starts a real proxy or changes user data.
@@ -14,19 +15,44 @@ import { useAppStore } from '/src/store/useAppStore.ts';
 import { useAuthStore } from '/src/store/useAuthStore.ts';
 import { useChatStore } from '/src/store/useChatStore.ts';
 import { api } from '/src/lib/api.ts';
+import { fetchAndApplyAuthoritativeClientBootstrap } from '/src/hooks/clientBootstrap.ts';
 import '/src/index.css';
 window.writes = []; window.starts = [];
-api.startSender = async (payload) => { window.starts.push(payload); return {}; };
+api.startSender = async (payload) => {
+  window.starts.push(payload);
+  useAppStore.setState({status: {senderRunning: true}});
+  return {};
+};
+api.stopSender = async () => { useAppStore.setState({status: {}}); };
+window.bootstrap = async (allowed = true, failure = false) => {
+  const originalFetch = window.fetch;
+  window.fetch = async () => {
+    if (failure) throw new Error('fixture network unavailable');
+    return new Response(JSON.stringify({sender: {
+      proxy_server: 'updated.example.test', proxy_port: '8443', proxy_uuid: 'updated-id',
+    }, proxyRoutes: [
+      {id: 'internal-unified', kind: 'unified', enabled: true},
+      ...(allowed ? [{id: 'internal-airport', kind: 'managed', enabled: true,
+        outbound: {type: 'socks', server: 'updated-node.example.test', server_port: 1080}}] : []),
+    ]}));
+  };
+  try {
+    await fetchAndApplyAuthoritativeClientBootstrap('https://team.example.test', 'fixture-token', {
+      managedConfigEditable: false,
+    });
+  } finally { window.fetch = originalFetch; }
+};
 window.setRole = (role) => {
   useAuthStore.setState({profile: role === 'personal' ? null : {
     username: role, isAdmin: role === 'admin', advancedAiAllowed: role === 'advanced'
   }});
   useChatStore.setState({connection: role === 'personal' ? 'offline' : 'online'});
   useAppStore.setState({workspaceMode: role === 'personal' ? 'personal' : 'organization',
-    mode: 'sender', status: {}, settings: { ui: { airport_notice_dismissed: true }, sender: {
+    mode: 'sender', status: {}, settings: { ui: { airport_notice_dismissed: false }, sender: {
       proxy_server: 'proxy.example.test', proxy_port: '443', proxy_uuid: 'fixture-uuid',
       socks_listen_port: '1080', fallback_mode: 'system_proxy', fallback_local_port: '7890',
       proxy_mode: 'unified', airport_outbound: { type: 'socks', server: 'node.example.test', server_port: 1080 },
+      airport_name: '团队节点二', authorized_proxy_route_ids: ['internal-unified', 'internal-airport'],
       personal_proxy_host: '127.0.0.1', personal_proxy_port: '7890',
     }}, patchSection: async (section, patch) => {
       window.writes.push({section, patch});
@@ -34,6 +60,10 @@ window.setRole = (role) => {
     }
   });
 };
+window.setRunning = (running) => useAppStore.setState({status: {senderRunning: running}});
+window.setAuthorization = (ids) => useAppStore.setState(state => ({settings: {
+  ...state.settings, sender: {...state.settings.sender, authorized_proxy_route_ids: ids}
+}}));
 window.setRole('advanced');
 createRoot(document.getElementById('root')).render(<main className="bg-background text-foreground p-6"><SenderForm /></main>);
 `;
@@ -69,7 +99,7 @@ async function run() {
   });
   let app;
   try {
-    await server.listen();
+    await listenFixture(server);
     app = await electron.launch({
       args: [__filename],
       env: {
@@ -92,8 +122,12 @@ async function run() {
     ];
     await page.locator("#s_proxy_server").waitFor();
     for (const id of fields) await expect(page.locator("#" + id)).toBeDisabled();
-    await expect(page.getByRole("button", { name: /统一梯子（默认）/ })).toBeDisabled();
-    await expect(page.getByRole("button", { name: /机场节点/ })).toBeDisabled();
+    const unified = page.getByRole("button", { name: /统一梯子（默认）/ });
+    const airport = page.getByRole("button", { name: /机场节点/ });
+    await expect(unified).toBeEnabled();
+    await expect(airport).toBeEnabled();
+    await expect(page.getByText(/机场节点.*不太稳定/)).toHaveCount(0);
+    await expect(page.getByText(/Cloudflare 人机验证/)).toHaveCount(0);
     await expect(page.locator("#s_target_domains")).toHaveJSProperty("readOnly", true);
     const start = page.getByRole("button", { name: "开启代理", exact: true });
     await expect(start).toBeEnabled();
@@ -107,9 +141,73 @@ async function run() {
     assert.equal(await page.evaluate(() => window.starts[0].proxy_server), "proxy.example.test");
 
     await page.evaluate(() => window.setRole("regular"));
-    await expect(page.getByText("团队托管配置", { exact: true })).toBeVisible();
-    await expect(page.locator("#s_proxy_server")).toHaveCount(0);
+    for (const id of fields) {
+      await expect(page.locator("#" + id)).toBeVisible();
+      await expect(page.locator("#" + id)).toBeDisabled();
+    }
+    await expect(unified).toBeEnabled();
+    await expect(airport).toBeEnabled();
     await expect(start).toBeEnabled();
+    await airport.click();
+    await expect(airport).toHaveAttribute("aria-pressed", "true");
+    assert.deepEqual(await page.evaluate(() => window.writes.at(-1)), {
+      section: "sender",
+      patch: { proxy_mode: "airport" },
+    });
+    await start.click();
+    assert.equal(await page.evaluate(() => window.starts.at(-1).proxy_mode), "airport");
+    await expect(unified).toBeDisabled();
+    await expect(airport).toBeDisabled();
+    await page.getByRole("button", { name: "停止代理", exact: true }).click();
+    await unified.click();
+    await start.click();
+    assert.equal(await page.evaluate(() => window.starts.at(-1).proxy_mode), "unified");
+    await page.getByRole("button", { name: "停止代理", exact: true }).click();
+    await airport.click();
+    await page.evaluate(() => window.bootstrap());
+    await expect(page.locator("#s_proxy_server")).toHaveValue("updated.example.test");
+    await expect(airport).toHaveAttribute("aria-pressed", "true");
+    await page.evaluate(() => window.bootstrap());
+    await expect(airport).toHaveAttribute("aria-pressed", "true");
+    await page.evaluate(() => window.bootstrap(true, true).catch(() => {}));
+    await expect(airport).toHaveAttribute("aria-pressed", "true");
+    // An authoritative revocation must block the retained choice, never start stale data.
+    await page.evaluate(() => window.bootstrap(false));
+    await expect(airport).toBeDisabled();
+    const beforeRevokedStart = await page.evaluate(() => window.starts.length);
+    await start.click();
+    assert.equal(await page.evaluate(() => window.starts.length), beforeRevokedStart);
+    await unified.click();
+    await expect(unified).toHaveAttribute("aria-pressed", "true");
+    await page.evaluate(() => window.setAuthorization([]));
+    await expect(unified).toBeDisabled();
+    await expect(airport).toBeDisabled();
+    await start.click();
+    assert.equal(await page.evaluate(() => window.starts.length), beforeRevokedStart);
+
+    // Capture the actual production component, with a regular-member fixture and no real secrets.
+    await page.evaluate(() => window.setRole("regular"));
+    await page.screenshot({
+      path: path.join(directory, "regular-member-light.png"),
+      animations: "disabled",
+    });
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
+    await page.screenshot({
+      path: path.join(directory, "regular-member-dark.png"),
+      animations: "disabled",
+    });
+    await page.setViewportSize({ width: 420, height: 900 });
+    await expect(airport).toBeVisible();
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      true,
+    );
+    await page.screenshot({
+      path: path.join(directory, "regular-member-narrow.png"),
+      fullPage: true,
+      animations: "disabled",
+    });
+    await page.setViewportSize({ width: 900, height: 820 });
 
     await page.evaluate(() => window.setRole("admin"));
     for (const id of fields) await expect(page.locator("#" + id)).toBeEnabled();

@@ -1,4 +1,6 @@
 import type { ShareGptApi } from '@/types/api'
+import { scopedUserDataApi } from './userDataApi'
+import type { SettingsPrincipalSnapshot } from './settingsPrincipalRuntime'
 
 // 主进程 IPC 桥。dev 在浏览器(无 preload)时给出空安全实现, 便于纯前端调试。
 const noop = () => undefined
@@ -17,6 +19,7 @@ const fallback = {
     settings: {},
   }),
   getSettingsPrincipal: async () => ({ principalId: 'local-device', generation: 0 }),
+  verifySettingsPrincipalLogin: async () => false,
   saveSettings: async () => undefined,
   patchSettings: async () => ({}),
   operateSettings: async () => ({}),
@@ -71,6 +74,8 @@ const fallback = {
   resolveAiComposerConfirmation: async () => ({ ok: false, sent: false }),
   exportUserData: async () => undefined,
   importUserData: async () => undefined,
+  inspectLegacyUserData: async () => [],
+  importLegacyUserData: async () => ({ imported: false }),
   readClipboardAttachment: async () => undefined,
   getStatus: async () => ({}),
   getPaths: async () => ({}),
@@ -79,7 +84,7 @@ const fallback = {
   getMode: async () => 'all',
   checkAppUpdate: async () => null,
   isUpdateSupported: async () => false,
-  installAppUpdate: async (_payload: { version: string; fileName: string }) => ({ updated: false }),
+  installAppUpdate: async () => ({ updated: false }),
   downloadAppUpdate: async () => undefined,
   openAppUpdate: async () => undefined,
   showSystemNotification: async () => undefined,
@@ -92,6 +97,8 @@ const fallback = {
   ensureAiWorkspace: async () => undefined,
   activateAiEnvironment: async () => ({ ok: true }),
   deleteAiEnvironment: async () => ({ ok: true }),
+  listAiEnvironmentCleanup: async () => ({ pendingCount: 0 }),
+  retryAiEnvironmentCleanup: async () => ({ cleared: 0, pendingCount: 0 }),
   checkAiEnvironmentEgress: async () => {
     throw new Error('仅桌面客户端支持出口检测')
   },
@@ -137,6 +144,10 @@ const fallback = {
   onAppUpdateProgress: () => noop,
 } as unknown as ShareGptApi
 
-export const api: ShareGptApi = typeof window !== 'undefined' && window.api ? window.api : fallback
+export const api: ShareGptApi =
+  typeof window !== 'undefined' && window.api ? scopedUserDataApi(window.api) : fallback
 
 export const hasNativeBridge = typeof window !== 'undefined' && Boolean(window.api)
+
+export const userDataApiFor = (snapshot: SettingsPrincipalSnapshot): ShareGptApi =>
+  scopedUserDataApi(typeof window !== 'undefined' && window.api ? window.api : fallback, snapshot)

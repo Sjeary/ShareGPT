@@ -94,6 +94,8 @@ export interface TypingMeta {
 
 export interface ChatMessage {
   id: string
+  // 服务端持久化顺序。旧服务器/旧本地缓存可能没有，客户端会回退到 timestamp。
+  serverSequence?: number
   type: string
   scope: ChatScope
   from: string
@@ -145,6 +147,10 @@ interface ChatState {
   // 身份 / 连接
   identity: ChatIdentity
   connection: ConnectionState
+  retryLogin: ((password?: string) => Promise<boolean>) | null
+  recoveryNeedsPassword: boolean
+  recoveryFormOpen: boolean
+  recoveryError: string
   roomScope: string
 
   // 数据
@@ -169,7 +175,7 @@ interface ChatState {
 
   // 未读计数 (旧 unreadByConversation): 仅实时入站消息累加, 历史加载不计。
   unreadByKey: Record<string, number>
-  firstUnreadByKey: Record<string, string>
+  unreadMessageIdsByKey: Record<string, string[]>
 
   // 动作
   setIdentity: (identity: Partial<ChatIdentity>) => void
@@ -247,6 +253,40 @@ function dedupeFingerprint(m: ChatMessage): string {
   return [m.scope, m.from, m.to, m.timestamp, m.text, m.recalled, m.attachments.length].join('|')
 }
 
+const MAX_MESSAGES_PER_CONVERSATION = 300
+
+function validServerSequence(message: ChatMessage): number | null {
+  const value = message.serverSequence
+  return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : null
+}
+
+// 服务端时间决定正常的时间线；同一毫秒内由持久化顺序消除多端到达先后的差异。
+// 旧消息或临时 system 消息没有序号时保留稳定的批次/实时到达顺序。
+export function compareChatMessages(a: ChatMessage, b: ChatMessage): number {
+  const aTime = Date.parse(a.timestamp)
+  const bTime = Date.parse(b.timestamp)
+  if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+    return aTime - bTime
+  }
+  if (Number.isFinite(aTime) !== Number.isFinite(bTime)) {
+    return Number.isFinite(aTime) ? -1 : 1
+  }
+
+  const aSequence = validServerSequence(a)
+  const bSequence = validServerSequence(b)
+  if (aSequence !== null && bSequence !== null && aSequence !== bSequence) {
+    return aSequence - bSequence
+  }
+  return 0
+}
+
+function orderAndLimitMessages(messages: ChatMessage[]): ChatMessage[] {
+  const ordered = [...messages].sort(compareChatMessages)
+  return ordered.length > MAX_MESSAGES_PER_CONVERSATION
+    ? ordered.slice(-MAX_MESSAGES_PER_CONVERSATION)
+    : ordered
+}
+
 const INITIAL_IDENTITY: ChatIdentity = {
   serverUrl: '',
   token: '',
@@ -258,6 +298,10 @@ const INITIAL_IDENTITY: ChatIdentity = {
 export const useChatStore = create<ChatState>((set, get) => ({
   identity: INITIAL_IDENTITY,
   connection: 'idle',
+  retryLogin: null,
+  recoveryNeedsPassword: false,
+  recoveryFormOpen: false,
+  recoveryError: '',
   roomScope: '-',
   messagesByConversation: {},
   directory: [],
@@ -283,7 +327,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeKey: '', // 默认房间
   filter: '',
   unreadByKey: {},
-  firstUnreadByKey: {},
+  unreadMessageIdsByKey: {},
 
   setIdentity: (identity) => set((s) => ({ identity: { ...s.identity, ...identity } })),
   setConnection: (connection) => set({ connection }),
@@ -295,12 +339,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
   incrementUnread: (key, messageId) =>
     set((s) => {
       if (!key) return s
+      const ids = s.unreadMessageIdsByKey[key] ?? []
+      if (messageId && ids.includes(messageId)) return s
+      // Keep anchors within the retained message window; the count still includes older unread.
+      const retained = s.messagesByConversation[key]
+      const retainedIds = retained ? new Set(retained.map((message) => message.id)) : null
+      const anchors = retainedIds ? ids.filter((id) => retainedIds.has(id)) : ids
       return {
         unreadByKey: { ...s.unreadByKey, [key]: (s.unreadByKey[key] ?? 0) + 1 },
-        firstUnreadByKey:
-          messageId && !s.firstUnreadByKey[key]
-            ? { ...s.firstUnreadByKey, [key]: messageId }
-            : s.firstUnreadByKey,
+        unreadMessageIdsByKey: messageId
+          ? { ...s.unreadMessageIdsByKey, [key]: [...anchors, messageId] }
+          : s.unreadMessageIdsByKey,
       }
     }),
   clearUnread: (key) =>
@@ -308,9 +357,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (!key || !s.unreadByKey[key]) return s
       const next = { ...s.unreadByKey }
       delete next[key]
-      const firstUnreadByKey = { ...s.firstUnreadByKey }
-      delete firstUnreadByKey[key]
-      return { unreadByKey: next, firstUnreadByKey }
+      const unreadMessageIdsByKey = { ...s.unreadMessageIdsByKey }
+      delete unreadMessageIdsByKey[key]
+      return { unreadByKey: next, unreadMessageIdsByKey }
     }),
 
   setTyping: (key, meta) =>
@@ -351,7 +400,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const cleaned: Record<string, ChatMessage[]> = {}
     for (const [key, items] of Object.entries(conversations || {})) {
       if (!Array.isArray(items) || !items.length) continue
-      cleaned[key] = items.slice(-300)
+      cleaned[key] = orderAndLimitMessages(items)
     }
     set({ messagesByConversation: cleaned })
   },
@@ -381,7 +430,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
             reactions: message.reactions ?? next[idx].reactions ?? {},
           }
           return {
-            messagesByConversation: { ...s.messagesByConversation, [key]: next },
+            messagesByConversation: {
+              ...s.messagesByConversation,
+              [key]: orderAndLimitMessages(next),
+            },
           }
         }
       }
@@ -391,9 +443,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return s
       }
       next.push(message)
-      if (next.length > 300) next.splice(0, next.length - 300)
       return {
-        messagesByConversation: { ...s.messagesByConversation, [key]: next },
+        messagesByConversation: {
+          ...s.messagesByConversation,
+          [key]: orderAndLimitMessages(next),
+        },
       }
     })
   },
@@ -427,7 +481,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeKey: '',
       filter: '',
       unreadByKey: {},
-      firstUnreadByKey: {},
+      unreadMessageIdsByKey: {},
       readingActiveView: '',
       roomScope: '-',
     }),
@@ -436,6 +490,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({
       identity: INITIAL_IDENTITY,
       connection: 'idle',
+      retryLogin: null,
+      recoveryNeedsPassword: false,
+      recoveryFormOpen: false,
+      recoveryError: '',
       roomScope: '-',
       messagesByConversation: {},
       directory: [],
@@ -445,7 +503,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       activeKey: '',
       filter: '',
       unreadByKey: {},
-      firstUnreadByKey: {},
+      unreadMessageIdsByKey: {},
       readingActiveView: '',
     }),
 }))

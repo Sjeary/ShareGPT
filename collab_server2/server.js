@@ -7,7 +7,17 @@ const { WebSocketServer } = require("ws");
 const { createTranslationProfileService } = require("./translation_profiles");
 const { createTranslationUsageService } = require("./translation_usage");
 const { createTranslationRequestRegistry } = require("./translation_requests");
-const { writeJsonAtomic, readJsonStore, saveJsonStoreAsync } = require("./json_store");
+const {
+  writeJsonAtomic,
+  readJsonStore,
+  saveJsonStore,
+  saveJsonStoreAsync,
+} = require("./json_store");
+const { signLoginIdentity } = require("./server_identity");
+const { createUserStore } = require("./user_store");
+const { mergeUserStoreData } = require("./user_store_merge");
+const { createAdminAccountHandler } = require("./admin_accounts");
+const { createUserDataHandler } = require("./user_data_routes");
 
 process.on("uncaughtException", (err) => {
   try {
@@ -30,6 +40,9 @@ function resolveHost(env = process.env) {
 const HOST = resolveHost();
 const PORT = Number.parseInt(process.env.PORT || "8088", 10);
 const USERS_FILE = process.env.USERS_FILE || path.join(__dirname, "data", "users.json");
+const SERVER_IDENTITY_FILE =
+  process.env.SERVER_IDENTITY_FILE || path.join(path.dirname(USERS_FILE), "server_identity.json");
+const userStore = createUserStore(USERS_FILE, { identityFile: SERVER_IDENTITY_FILE });
 const GPT_USAGE_FILE = process.env.GPT_USAGE_FILE || path.join(__dirname, "data", "gpt_usage.json");
 const CHAT_HISTORY_FILE =
   process.env.CHAT_HISTORY_FILE || path.join(__dirname, "data", "chat_history.json");
@@ -262,42 +275,30 @@ function normalizeUserRecord(record) {
   };
 }
 
-function ensureUsersFile() {
-  fs.mkdirSync(path.dirname(USERS_FILE), { recursive: true });
-  if (!fs.existsSync(USERS_FILE)) {
-    fs.writeFileSync(USERS_FILE, JSON.stringify({ users: [] }, null, 2), "utf-8");
-  }
-}
-
 function loadUserStore() {
-  ensureUsersFile();
-  try {
-    const raw = JSON.parse(fs.readFileSync(USERS_FILE, "utf-8"));
-    const rawUsers = Array.isArray(raw.users) ? raw.users : [];
-    const users = rawUsers.map(normalizeUserRecord);
-    const needsLegacyEntitlementMigration = rawUsers.some(
-      (record) =>
-        record &&
-        typeof record === "object" &&
-        !Object.prototype.hasOwnProperty.call(record, "advancedAiAllowed") &&
-        !Object.prototype.hasOwnProperty.call(record, "allowedProxyRouteIds") &&
-        !Object.prototype.hasOwnProperty.call(record, "legacyProxyEntitled"),
-    );
-    if (needsLegacyEntitlementMigration) {
-      try {
-        saveUserStore({ users });
-      } catch (error) {
-        console.error("[collab] 旧账号代理权限标记持久化失败:", error.message || error);
-      }
+  const raw = userStore.load();
+  const rawUsers = raw.users;
+  const users = rawUsers.map(normalizeUserRecord);
+  const needsLegacyEntitlementMigration = rawUsers.some(
+    (record) =>
+      record &&
+      typeof record === "object" &&
+      !Object.prototype.hasOwnProperty.call(record, "advancedAiAllowed") &&
+      !Object.prototype.hasOwnProperty.call(record, "allowedProxyRouteIds") &&
+      !Object.prototype.hasOwnProperty.call(record, "legacyProxyEntitled"),
+  );
+  if (needsLegacyEntitlementMigration) {
+    try {
+      saveUserStore({ users });
+    } catch (error) {
+      console.error("[collab] 旧账号代理权限标记持久化失败:", error.message || error);
     }
-    return { users };
-  } catch {
-    return { users: [] };
   }
+  return { users };
 }
 
 function saveUserStore(store) {
-  writeJsonAtomic(USERS_FILE, store);
+  userStore.save(store);
 }
 
 function normalizeUsageEvent(record) {
@@ -667,7 +668,7 @@ function stableMessageId(record) {
   return crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex").slice(0, 24);
 }
 
-function normalizeHistoryMessage(record) {
+function normalizeHistoryMessage(record, fallbackSequence = 0) {
   const recalled = Boolean(record?.recalled);
   const scope = safeText(record?.scope) === "private" ? "private" : "subnet";
   const text = recalled ? "" : String(record?.text || "").slice(0, 8000);
@@ -686,8 +687,17 @@ function normalizeHistoryMessage(record) {
     return null;
   }
 
+  const persistedSequence = Number(record?.serverSequence);
+  const serverSequence =
+    Number.isSafeInteger(persistedSequence) && persistedSequence > 0
+      ? persistedSequence
+      : Number.isSafeInteger(fallbackSequence) && fallbackSequence > 0
+        ? fallbackSequence
+        : 0;
+
   return {
     id: safeText(record?.id) || stableMessageId(record),
+    ...(serverSequence ? { serverSequence } : {}),
     type: "chat",
     scope,
     from: safeText(record?.from || record?.username),
@@ -731,7 +741,9 @@ function messageActivityTimestamp(record) {
 
 function loadChatHistoryStore() {
   const raw = readJsonStore(CHAT_HISTORY_FILE, "history");
-  const items = raw.history.map(normalizeHistoryMessage).filter(Boolean);
+  const items = raw.history
+    .map((record, index) => normalizeHistoryMessage(record, index + 1))
+    .filter(Boolean);
   if (items.length > HISTORY_MAX) {
     items.splice(0, items.length - HISTORY_MAX);
   }
@@ -747,8 +759,12 @@ async function saveChatHistoryStore(items) {
 }
 
 const history = loadChatHistoryStore();
+let nextChatServerSequence =
+  history.reduce((maximum, message) => Math.max(maximum, Number(message.serverSequence) || 0), 0) +
+  1;
 
 // 多服务 (gpt/gemini/claude) 使用统计: 各自独立存储文件, 与 GPT 同目录。
+const AI_SERVICE_KINDS = ["gpt", "gemini", "claude"];
 function serviceUsageFile(service) {
   if (service === "gpt") return GPT_USAGE_FILE;
   return path.join(path.dirname(GPT_USAGE_FILE), service + "_usage.json");
@@ -1271,9 +1287,9 @@ function findUser(username) {
   return { store, user };
 }
 
-function hasEnabledAdminUser() {
+function hasAdminUser() {
   const store = loadUserStore();
-  return store.users.some((item) => item.isAdmin && !item.disabled);
+  return store.users.some((item) => item.isAdmin);
 }
 
 function hashPassword(password, salt, iterations, digest) {
@@ -1495,6 +1511,7 @@ const CHAT_DISABLED_BLOCK_TYPES = new Set([
   "chat_read",
   "chat_recall",
   "chat_edit",
+  "chat_reaction",
   "history",
   "history_sync",
 ]);
@@ -1525,13 +1542,16 @@ function broadcastPresence() {
 }
 
 async function addHistory(message) {
-  const normalized = normalizeHistoryMessage(message);
-  if (!normalized) return;
+  const sequence = nextChatServerSequence;
+  const normalized = normalizeHistoryMessage({ ...message, serverSequence: sequence }, sequence);
+  if (!normalized) return null;
   const next = [...history, normalized];
   if (next.length > HISTORY_MAX) {
     next.splice(0, next.length - HISTORY_MAX);
   }
   await persistHistorySnapshot(next);
+  nextChatServerSequence = sequence + 1;
+  return normalized;
 }
 
 function resolveAdminSessionByToken(token) {
@@ -1720,13 +1740,15 @@ function buildHistorySyncPayload(client, sinceTimestamp = "") {
   };
 }
 
+function messageVisibleToIdentity(message, username, subnetKey) {
+  if (message.scope === "private") {
+    return message.from === username || message.to === username;
+  }
+  return message.subnetKey === subnetKey;
+}
+
 function visibleHistoryForIdentity(username, subnetKey) {
-  return history.filter((item) => {
-    if (item.scope === "private") {
-      return item.from === username || item.to === username;
-    }
-    return item.subnetKey === subnetKey;
-  });
+  return history.filter((message) => messageVisibleToIdentity(message, username, subnetKey));
 }
 
 function visibleHistoryForClient(client) {
@@ -2061,20 +2083,35 @@ function eventsForSubnet(subnetKey) {
 }
 
 // 个人云端存储 (按用户隔离: calendar / tasks)。rev 单调递增, 写入须带 baseRev=当前 rev, 防止老版本覆盖新版本。
-const USER_STORE_KINDS = new Set(["calendar", "tasks", "notes", "browser-privacy"]);
+const personalStoresShape = {
+  empty: () => ({ stores: {} }),
+  valid: (value) => {
+    const object = (candidate) =>
+      candidate && typeof candidate === "object" && !Array.isArray(candidate);
+    return Boolean(
+      object(value) &&
+      object(value.stores) &&
+      Object.values(value.stores).every(
+        (account) =>
+          object(account) &&
+          Object.values(account).every(
+            (entry) =>
+              object(entry) &&
+              Number.isInteger(entry.rev) &&
+              entry.rev >= 0 &&
+              (entry.data === null || typeof entry.data === "object"),
+          ),
+      ),
+    );
+  },
+};
 
 function loadUserStores() {
-  try {
-    if (!fs.existsSync(USER_STORES_FILE)) return { stores: {} };
-    const raw = JSON.parse(fs.readFileSync(USER_STORES_FILE, "utf8"));
-    return raw && typeof raw.stores === "object" && raw.stores ? raw : { stores: {} };
-  } catch {
-    return { stores: {} };
-  }
+  return readJsonStore(USER_STORES_FILE, personalStoresShape);
 }
 
 function saveUserStores(store) {
-  writeJsonAtomic(USER_STORES_FILE, { stores: store?.stores || {} });
+  saveJsonStore(USER_STORES_FILE, store, personalStoresShape);
 }
 
 function getUserStoreEntry(stores, username, kind) {
@@ -2096,10 +2133,14 @@ function putUserStore(stores, username, kind, baseRev, data) {
       data: entry.data,
     };
   }
-  const next = { rev: entry.rev + 1, updatedAt: nowIso(), data };
+  const next = {
+    rev: entry.rev + 1,
+    updatedAt: nowIso(),
+    data: mergeUserStoreData(kind, entry.data, data),
+  };
   stores.stores[username] = stores.stores[username] || {};
   stores.stores[username][kind] = next;
-  return { ok: true, rev: next.rev, updatedAt: next.updatedAt, data };
+  return { ok: true, rev: next.rev, updatedAt: next.updatedAt, data: next.data };
 }
 
 // 把负载实时下发给同一用户的其它在线端 (按 username 匹配, 排除发起端 token)。
@@ -2175,7 +2216,53 @@ function focusLeaderboard(range) {
   return rows.slice(0, 50);
 }
 
-const server = http.createServer(async (req, res) => {
+const handleAdminAccountRequest = createAdminAccountHandler({
+  cleanupExpiredSessions,
+  readBody,
+  safeParseJson,
+  safeText,
+  normalizeIp,
+  loginLockState,
+  recordLoginFail,
+  clearLoginFails,
+  findUser,
+  verifyPassword,
+  makeToken,
+  adminSessions,
+  SESSION_TTL_MS,
+  sendText,
+  sendJson,
+  adminUserSummary,
+  hasAdminUser,
+  loadUserStore,
+  createUserRecord,
+  saveUserStore,
+  extractBearer,
+  requireAdminSession,
+  MAX_AVATAR_LENGTH,
+  inferAvatarKind,
+  normalizeProxyRouteIds,
+  hashPassword,
+  nowIso,
+  revokeUserSessions,
+  normalizeUserRecord,
+});
+
+const handleUserDataRequest = createUserDataHandler({
+  extractBearer,
+  resolveSessionByToken,
+  sendText,
+  sendJson,
+  getUserStoreEntry,
+  loadUserStores,
+  safeParseJson,
+  readBody,
+  putUserStore,
+  saveUserStores,
+  broadcastToUser,
+});
+
+async function handleRequest(req, res) {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": CORS_ORIGIN,
@@ -2238,6 +2325,11 @@ const server = http.createServer(async (req, res) => {
       }
       clearLoginFails(remoteIp);
 
+      // Additive: old clients keep the existing login response and need no challenge.
+      const identity = payload?.identityNonce
+        ? signLoginIdentity(SERVER_IDENTITY_FILE, user, payload.identityNonce, store.users)
+        : null;
+
       for (const [oldToken, session] of sessions.entries()) {
         if (session.username === username) {
           sessions.delete(oldToken);
@@ -2275,10 +2367,11 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         token,
         username,
+        ...(identity ? { identity } : {}),
         profile: getPublicProfile(username),
         roomScope: subnetLabel,
         users: buildUserDirectory(),
-        history: visibleHistoryForIdentity(username, subnetKey),
+        history: user.chatDisabled ? [] : visibleHistoryForIdentity(username, subnetKey),
       });
     } catch (err) {
       sendText(res, 500, err.message || "登录失败");
@@ -2478,228 +2571,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && pathname === "/api/admin/login") {
-    try {
-      cleanupExpiredSessions();
-      const body = await readBody(req);
-      const payload = safeParseJson(body);
-      const username = safeText(payload?.username);
-      const password = String(payload?.password || "");
-      const { user } = findUser(username);
-
-      if (!user || !user.isAdmin || user.disabled || !verifyPassword(user, password)) {
-        sendText(res, 401, "管理员账号或密码错误");
-        return;
-      }
-
-      const token = makeToken();
-      const now = Date.now();
-      adminSessions.set(token, {
-        token,
-        username,
-        displayName: safeText(user.displayName) || username,
-        issuedAt: now,
-        expiresAt: now + SESSION_TTL_MS,
-      });
-
-      sendJson(res, 200, {
-        token,
-        profile: adminUserSummary(user),
-      });
-    } catch (err) {
-      sendText(res, 500, err.message || "管理员登录失败");
-    }
-    return;
-  }
-
-  if (req.method === "POST" && pathname === "/api/admin/setup") {
-    try {
-      if (hasEnabledAdminUser()) {
-        sendText(res, 409, "服务器已经存在管理员账号");
-        return;
-      }
-      const body = await readBody(req);
-      const payload = safeParseJson(body) || {};
-      const username = safeText(payload.username);
-      const password = String(payload.password || "");
-      const displayName = safeText(payload.displayName) || username;
-
-      const store = loadUserStore();
-      const existing = store.users.find((item) => item.username === username);
-      if (existing) {
-        sendText(res, 409, "该用户已存在");
-        return;
-      }
-
-      const record = createUserRecord(username, password, {
-        displayName,
-        isAdmin: true,
-      });
-      store.users.push(record);
-      saveUserStore(store);
-
-      const token = makeToken();
-      const now = Date.now();
-      adminSessions.set(token, {
-        token,
-        username,
-        displayName: safeText(record.displayName) || username,
-        issuedAt: now,
-        expiresAt: now + SESSION_TTL_MS,
-      });
-
-      sendJson(res, 200, {
-        token,
-        profile: adminUserSummary(record),
-      });
-    } catch (err) {
-      sendText(res, 400, err.message || "初始化管理员失败");
-    }
-    return;
-  }
-
-  if (req.method === "POST" && pathname === "/api/admin/logout") {
-    const token = extractBearer(req);
-    if (token) {
-      adminSessions.delete(token);
-    }
-    sendJson(res, 200, { ok: true });
-    return;
-  }
-
-  if (req.method === "GET" && pathname === "/api/admin/users") {
-    const adminSession = requireAdminSession(req, res);
-    if (!adminSession) return;
-    const store = loadUserStore();
-    sendJson(res, 200, {
-      users: store.users.map(adminUserSummary).sort((a, b) => a.username.localeCompare(b.username)),
-      admin: {
-        username: adminSession.username,
-        displayName: adminSession.displayName,
-      },
-    });
-    return;
-  }
-
-  if (req.method === "POST" && pathname === "/api/admin/users") {
-    const adminSession = requireAdminSession(req, res);
-    if (!adminSession) return;
-    try {
-      const body = await readBody(req);
-      const payload = safeParseJson(body) || {};
-      const username = safeText(payload.username);
-      const password = String(payload.password || "");
-      const store = loadUserStore();
-      const existing = store.users.find((item) => item.username === username);
-      if (existing) {
-        sendText(res, 409, "该用户已存在");
-        return;
-      }
-
-      const record = createUserRecord(username, password, payload);
-      store.users.push(record);
-      saveUserStore(store);
-      sendJson(res, 200, {
-        ok: true,
-        user: adminUserSummary(record),
-      });
-    } catch (err) {
-      sendText(res, 400, err.message || "创建用户失败");
-    }
-    return;
-  }
-
-  if (
-    (req.method === "PATCH" || req.method === "PUT") &&
-    pathname.startsWith("/api/admin/users/")
-  ) {
-    const adminSession = requireAdminSession(req, res);
-    if (!adminSession) return;
-    try {
-      const username = decodeURIComponent(pathname.slice("/api/admin/users/".length));
-      const store = loadUserStore();
-      const user = store.users.find((item) => item.username === username);
-      if (!user) {
-        sendText(res, 404, "用户不存在");
-        return;
-      }
-
-      const body = await readBody(req);
-      const payload = safeParseJson(body) || {};
-      const nextPassword = String(payload.password || "");
-      let securityChanged = false;
-
-      if (typeof payload.displayName !== "undefined")
-        user.displayName = safeText(payload.displayName).slice(0, 30) || user.username;
-      if (typeof payload.bio !== "undefined") user.bio = safeText(payload.bio).slice(0, 200);
-      if (typeof payload.avatar !== "undefined") {
-        user.avatar = safeText(payload.avatar).slice(0, MAX_AVATAR_LENGTH);
-        user.avatarKind = inferAvatarKind(user.avatar);
-      }
-      if (
-        typeof payload.disabled !== "undefined" &&
-        Boolean(payload.disabled) !== Boolean(user.disabled)
-      ) {
-        user.disabled = Boolean(payload.disabled);
-        securityChanged = true;
-      }
-      if (
-        typeof payload.isAdmin !== "undefined" &&
-        Boolean(payload.isAdmin) !== Boolean(user.isAdmin)
-      ) {
-        const wasAdmin = Boolean(user.isAdmin);
-        user.isAdmin = Boolean(payload.isAdmin);
-        if (wasAdmin && !user.isAdmin && typeof payload.advancedAiAllowed === "undefined") {
-          user.advancedAiAllowed = false;
-          user.legacyProxyEntitled = false;
-        }
-        securityChanged = true;
-      }
-      if (typeof payload.advancedAiAllowed !== "undefined")
-        if (Boolean(payload.advancedAiAllowed) !== Boolean(user.advancedAiAllowed)) {
-          user.advancedAiAllowed = Boolean(payload.advancedAiAllowed);
-          user.legacyProxyEntitled = false;
-          securityChanged = true;
-        }
-      if (typeof payload.allowedProxyRouteIds !== "undefined") {
-        const requestedRouteIds = normalizeProxyRouteIds(payload.allowedProxyRouteIds);
-        const currentRouteIds = normalizeProxyRouteIds(user.allowedProxyRouteIds);
-        const sameRoutes =
-          requestedRouteIds.length === currentRouteIds.length &&
-          requestedRouteIds.every((id) => currentRouteIds.includes(id));
-        if (!sameRoutes) {
-          user.allowedProxyRouteIds = requestedRouteIds;
-          user.legacyProxyEntitled = false;
-          securityChanged = true;
-        }
-      }
-      if (
-        typeof payload.chatDisabled !== "undefined" &&
-        Boolean(payload.chatDisabled) !== Boolean(user.chatDisabled)
-      ) {
-        user.chatDisabled = Boolean(payload.chatDisabled);
-        securityChanged = true;
-      }
-      if (nextPassword && !verifyPassword(user, nextPassword)) {
-        const salt = crypto.randomBytes(16).toString("hex");
-        user.salt = salt;
-        user.passwordHash = hashPassword(nextPassword, salt, 120000, "sha256");
-        user.iterations = 120000;
-        user.digest = "sha256";
-        securityChanged = true;
-      }
-      user.updatedAt = nowIso();
-      saveUserStore(store);
-      if (securityChanged) revokeUserSessions(user.username);
-      sendJson(res, 200, {
-        ok: true,
-        user: adminUserSummary(normalizeUserRecord(user)),
-      });
-    } catch (err) {
-      sendText(res, 400, err.message || "更新用户失败");
-    }
-    return;
-  }
+  if (await handleAdminAccountRequest(req, res, pathname)) return;
 
   if (req.method === "GET" && pathname === "/api/admin/bootstrap") {
     const adminSession = requireAdminSession(req, res);
@@ -2775,6 +2647,29 @@ const server = http.createServer(async (req, res) => {
       );
     } catch (err) {
       sendText(res, 400, err.message || "读取翻译用量失败");
+    }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/api/admin/ai-usage") {
+    const adminSession = requireAdminSession(req, res);
+    if (!adminSession) return;
+    try {
+      const service = safeText(reqUrl.searchParams.get("service") || "gpt").toLowerCase();
+      if (!AI_SERVICE_KINDS.includes(service)) {
+        sendText(res, 400, "AI 服务类型无效");
+        return;
+      }
+      sendJson(res, 200, {
+        service,
+        ...buildServiceUsageStats(
+          service,
+          reqUrl.searchParams.get("from") || "",
+          reqUrl.searchParams.get("to") || "",
+        ),
+      });
+    } catch (err) {
+      sendText(res, 400, err.message || "读取 AI 使用统计失败");
     }
     return;
   }
@@ -3463,67 +3358,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 个人云端存储 (按用户隔离, 多端同步 + 乐观并发防覆盖)。/api/user-store/:kind  kind=calendar|tasks
-  if (pathname.startsWith("/api/user-store/")) {
-    const token = extractBearer(req);
-    const session = resolveSessionByToken(token);
-    if (!session) {
-      sendText(res, 401, "未授权");
-      return;
-    }
-    const kind = decodeURIComponent(pathname.slice("/api/user-store/".length));
-    if (!USER_STORE_KINDS.has(kind)) {
-      sendText(res, 404, "Not Found");
-      return;
-    }
-
-    if (req.method === "GET") {
-      const entry = getUserStoreEntry(loadUserStores(), session.username, kind);
-      sendJson(res, 200, {
-        rev: entry.rev,
-        updatedAt: entry.updatedAt,
-        data: entry.data,
-      });
-      return;
-    }
-
-    if (req.method === "PUT") {
-      try {
-        const payload = safeParseJson(await readBody(req, 8 * 1024 * 1024)) || {};
-        const baseRev = Number.isInteger(payload.baseRev) ? payload.baseRev : 0;
-        const data = payload.data;
-        if (!data || typeof data !== "object") {
-          sendText(res, 400, "data 必填");
-          return;
-        }
-        const stores = loadUserStores();
-        const result = putUserStore(stores, session.username, kind, baseRev, data);
-        if (!result.ok) {
-          sendJson(res, 409, result);
-          return;
-        }
-        saveUserStores(stores);
-        broadcastToUser(
-          session.username,
-          {
-            type: "user_store_updated",
-            kind,
-            rev: result.rev,
-            updatedAt: result.updatedAt,
-            data,
-          },
-          token,
-        );
-        sendJson(res, 200, {
-          ok: true,
-          rev: result.rev,
-          updatedAt: result.updatedAt,
-        });
-      } catch (err) {
-        sendText(res, 500, err.message || "保存失败");
-      }
-      return;
-    }
-  }
+  if (await handleUserDataRequest(req, res, pathname)) return;
 
   // 团队专注(番茄钟)排名。
   if (pathname === "/api/focus/report" && req.method === "POST") {
@@ -3553,6 +3388,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   sendText(res, 404, "Not Found");
+}
+
+const server = http.createServer((req, res) => {
+  void handleRequest(req, res).catch((error) => {
+    console.error("[collab] HTTP request failed:", error.message);
+    if (res.headersSent) res.destroy();
+    else sendText(res, 503, "服务暂时不可用，请稍后重试或联系管理员");
+  });
 });
 
 const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_CHAT_PAYLOAD_BYTES });
@@ -3634,6 +3477,24 @@ wss.on("connection", (ws) => {
   broadcastPresence();
 
   const handleMessage = async (payload) => {
+    const currentSession = resolveSessionByToken(ws.token);
+    if (!currentSession || !hasCurrentProxyAuthorization(currentSession)) {
+      ws.close(4002, "session_expired");
+      return;
+    }
+    if (
+      ws.chatDisabled &&
+      (HISTORY_MUTATING_MESSAGE_TYPES.has(payload?.type) ||
+        payload?.type === "history_sync" ||
+        payload?.type === "chat_typing")
+    ) {
+      sendToClient(ws, {
+        type: "error",
+        text: "聊天功能已被管理员关闭",
+        timestamp: nowIso(),
+      });
+      return;
+    }
     if (payload?.type === "history_sync") {
       sendToClient(ws, buildHistorySyncPayload(ws, payload?.since));
       return;
@@ -3713,6 +3574,14 @@ wss.on("connection", (ws) => {
       const emoji = safeText(payload?.emoji).slice(0, 16);
       const { index, message } = findHistoryMessage(payload?.messageId);
       if (!message || index < 0 || !emoji || message.recalled) return;
+      if (!messageVisibleToIdentity(message, ws.username, ws.subnetKey)) {
+        sendToClient(ws, {
+          type: "error",
+          text: "无法操作这条消息",
+          timestamp: nowIso(),
+        });
+        return;
+      }
       const reactions =
         message.reactions && typeof message.reactions === "object" ? { ...message.reactions } : {};
       const users = new Set(Array.isArray(reactions[emoji]) ? reactions[emoji] : []);
@@ -3975,10 +3844,11 @@ wss.on("connection", (ws) => {
         editedAt: "",
       };
 
-      await addHistory(message);
-      sendToClient(ws, message);
+      const storedMessage = await addHistory(message);
+      if (!storedMessage) return;
+      sendToClient(ws, storedMessage);
       if (targetClient && targetClient !== ws) {
-        sendToClient(targetClient, message);
+        sendToClient(targetClient, storedMessage);
       }
       return;
     }
@@ -4003,8 +3873,9 @@ wss.on("connection", (ws) => {
       editedAt: "",
     };
 
-    await addHistory(message);
-    broadcastToSubnet(ws.subnetKey, message);
+    const storedMessage = await addHistory(message);
+    if (!storedMessage) return;
+    broadcastToSubnet(ws.subnetKey, storedMessage);
   };
 
   ws.on("message", (raw) => {

@@ -1,5 +1,13 @@
 import { create } from 'zustand'
-import { api } from '@/lib/api'
+import { api, userDataApiFor } from '@/lib/api'
+import {
+  settingsPrincipalRuntime,
+  type SettingsPrincipalSnapshot,
+} from '@/lib/settingsPrincipalRuntime'
+import { createPrincipalDebouncedSave } from '@/lib/principalDebouncedSave'
+import { assertUserDataWritable, userDataTransitionState } from '@/lib/userDataTransitionState'
+import { coalesceInFlight } from '@/lib/inFlightRequest'
+import type { ShareGptApi } from '@/types/api'
 import { startNoise, stopNoise, type NoiseKind } from '@/lib/noise'
 
 // 番茄钟 / 专注 store。全局单计时器: 用绝对时间戳(endAt)计算剩余, 后台不被 throttle 影响。
@@ -47,6 +55,8 @@ interface FocusState {
   loaded: boolean
 
   init: () => Promise<void>
+  flushPending: () => Promise<void>
+  resetForPrincipal: () => void
   start: () => void
   pause: () => void
   reset: () => void
@@ -60,20 +70,24 @@ interface FocusState {
   displayMs: () => number
 }
 
-let saveTimer: ReturnType<typeof setTimeout> | null = null
-
 export const useFocusStore = create<FocusState>((set, get) => {
+  let owner: SettingsPrincipalSnapshot | null = null
+  const loads = new Map<string, Promise<void>>()
+  const persistence = createPrincipalDebouncedSave<Parameters<ShareGptApi['saveFocus']>[0]>(
+    (payload, snapshot) => userDataApiFor(snapshot).saveFocus(payload),
+  )
   const persist = () => {
-    if (saveTimer) clearTimeout(saveTimer)
-    saveTimer = setTimeout(() => {
-      saveTimer = null
-      const s = get()
-      void api.saveFocus({
+    if (!owner) return
+    settingsPrincipalRuntime.assertCurrent(owner)
+    const s = get()
+    persistence.schedule(
+      {
         version: 1,
         sessions: s.sessions.slice(-2000),
         settings: { ...s.settings, currentTaskId: s.currentTaskId },
-      })
-    }, 400)
+      },
+      owner,
+    )
   }
 
   const durationMs = (p?: Phase): number => {
@@ -138,26 +152,58 @@ export const useFocusStore = create<FocusState>((set, get) => {
     sessions: [],
     loaded: false,
 
+    flushPending: () => persistence.flushPending(),
+    resetForPrincipal: () => {
+      persistence.cancel()
+      loads.clear()
+      owner = null
+      stopNoise()
+      set({
+        settings: { ...DEFAULTS },
+        phase: 'focus',
+        running: false,
+        endAt: null,
+        remainingMs: DEFAULTS.focusMin * 60000,
+        cycle: 0,
+        currentTaskId: null,
+        sessions: [],
+        loaded: false,
+      })
+    },
     init: async () => {
-      if (get().loaded) return
-      try {
-        const f = await api.loadFocus()
-        const st = (f?.settings ?? {}) as Partial<FocusSettings> & { currentTaskId?: string | null }
-        const settings = { ...DEFAULTS, ...st }
-        const sessions = Array.isArray(f?.sessions) ? (f.sessions as FocusSession[]) : []
-        set({
-          settings,
-          sessions,
-          currentTaskId: st.currentTaskId ?? null,
-          remainingMs: Math.max(1, settings.focusMin) * 60_000,
-          loaded: true,
-        })
-      } catch {
-        set({ loaded: true })
-      }
+      const snapshot = settingsPrincipalRuntime.snapshot()
+      if (
+        get().loaded &&
+        owner?.principalId === snapshot.principalId &&
+        owner?.generation === snapshot.generation
+      )
+        return
+      owner = snapshot
+      return coalesceInFlight(loads, JSON.stringify(snapshot), async () => {
+        try {
+          const f = await userDataApiFor(snapshot).loadFocus()
+          const st = (f?.settings ?? {}) as Partial<FocusSettings> & {
+            currentTaskId?: string | null
+          }
+          const settings = { ...DEFAULTS, ...st }
+          const sessions = Array.isArray(f?.sessions) ? (f.sessions as FocusSession[]) : []
+          set({
+            settings,
+            sessions,
+            currentTaskId: st.currentTaskId ?? null,
+            remainingMs: Math.max(1, settings.focusMin) * 60_000,
+            loaded: true,
+          })
+        } catch {
+          settingsPrincipalRuntime.assertCurrent(snapshot)
+          set({ loaded: false })
+        }
+      })
     },
 
     start: () => {
+      assertUserDataWritable()
+      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
       const s = get()
       if (s.running) return
       const end = Date.now() + (s.remainingMs > 0 ? s.remainingMs : durationMs())
@@ -165,35 +211,48 @@ export const useFocusStore = create<FocusState>((set, get) => {
       applySound(true)
     },
     pause: () => {
+      assertUserDataWritable()
+      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
       const s = get()
       if (!s.running || !s.endAt) return
       set({ running: false, remainingMs: Math.max(0, s.endAt - Date.now()), endAt: null })
       stopNoise()
     },
     reset: () => {
+      assertUserDataWritable()
+      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
       set({ running: false, endAt: null, remainingMs: durationMs() })
       stopNoise()
     },
     skip: () => {
+      assertUserDataWritable()
+      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
       stopNoise()
       // 跳过当前阶段(不计专注、不累加周期): 专注→短休, 休息→专注。
       const next: Phase = get().phase === 'focus' ? 'short' : 'focus'
       set({ phase: next, running: false, endAt: null, remainingMs: durationMs(next) })
     },
     tick: () => {
+      if (userDataTransitionState.isSuspended()) return
       const s = get()
       if (!s.running || !s.endAt) return
       if (s.endAt - Date.now() <= 0) complete()
     },
     setPhase: (p) => {
+      assertUserDataWritable()
+      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
       stopNoise()
       set({ phase: p, running: false, endAt: null, remainingMs: durationMs(p) })
     },
     setTaskId: (currentTaskId) => {
+      assertUserDataWritable()
+      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
       set({ currentTaskId })
       persist()
     },
     setSettings: (patch) => {
+      assertUserDataWritable()
+      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
       set((s) => ({ settings: { ...s.settings, ...patch } }))
       // 调整时长后, 若未运行则刷新剩余显示
       if (!get().running) set({ remainingMs: durationMs() })

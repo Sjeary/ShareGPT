@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Plus, Trash2, X, CalendarPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -57,20 +57,23 @@ export function TaskEditor({
   const [tagInput, setTagInput] = useState('')
   const [subInput, setSubInput] = useState('')
 
-  useEffect(() => {
-    if (!task) return
-    setTitle(task.title)
-    setNotes(task.notes ?? '')
-    setListId(task.listId)
-    setPriority(task.priority)
-    setDueDate(task.dueDate ?? '')
-    setDueTime(task.dueTime ?? '')
-    setIsAllDay(task.isAllDay)
-    setRepeat(task.repeat?.freq ?? 'none')
-    setTags(task.tags)
-    setTagInput('')
-    setSubInput('')
-  }, [task])
+  const [previousTask, setPreviousTask] = useState<Task | null>(null)
+  if (task !== previousTask) {
+    setPreviousTask(task)
+    if (task) {
+      setTitle(task.title)
+      setNotes(task.notes ?? '')
+      setListId(task.listId)
+      setPriority(task.priority)
+      setDueDate(task.dueDate ?? '')
+      setDueTime(task.dueTime ?? '')
+      setIsAllDay(task.isAllDay)
+      setRepeat(task.repeat?.freq ?? 'none')
+      setTags(task.tags)
+      setTagInput('')
+      setSubInput('')
+    }
+  }
 
   if (!task) return null
 

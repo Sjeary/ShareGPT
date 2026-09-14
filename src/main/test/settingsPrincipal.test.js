@@ -5,6 +5,74 @@ const os = require("node:os");
 const path = require("node:path");
 const { Backend, decodeLegacyEncryptedSettings, prepareImportedSettings } = require("../backend");
 const { principalIdFor } = require("../principal");
+const { linkPrincipalEndpoint } = require("../principalIdentity");
+const { partitionForAiEnvironment } = require("../aiEnvironments");
+const { signLoginIdentity } = require("../../../collab_server2/server_identity");
+
+test("silent identity verification rejects stale generations and changed proofs without switching storage", (t) => {
+  const backend = createBackend(t);
+  const file = path.join(path.dirname(backend.settingsFile), "server_identity.json");
+  const user = { username: "Alice" };
+  const nonce = "a".repeat(64);
+  const proof = signLoginIdentity(file, user, nonce);
+  backend.activatePrincipal("https://team.example", "Alice", { proof, nonce });
+  const snapshot = backend.getPrincipalContext();
+  const before = fs.readFileSync(backend.settingsFile, "utf8");
+  assert.equal(
+    backend.verifyPrincipalLogin("https://team.example", "Alice", { proof, nonce }, snapshot),
+    true,
+  );
+  assert.equal(fs.readFileSync(backend.settingsFile, "utf8"), before);
+  assert.throws(() => backend.verifyPrincipalLogin("https://team.example", "Alice", {}, snapshot));
+  assert.throws(() =>
+    backend.verifyPrincipalLogin(
+      "https://team.example",
+      "Alice",
+      { proof, nonce: "b".repeat(64) },
+      snapshot,
+    ),
+  );
+  backend.clearPrincipal();
+  assert.throws(() =>
+    backend.verifyPrincipalLogin("https://team.example", "Alice", { proof, nonce }, snapshot),
+  );
+});
+
+test("endpoint migration reuses old advanced/browser settings across save and restart without overwriting destination", (t) => {
+  const backend = createBackend(t);
+  const oldUrl = "https://old.example/team";
+  const newUrl = "https://new.example/team";
+  backend.activatePrincipal(oldUrl, "Alice");
+  const oldSettings = backend.loadSettings();
+  oldSettings.advancedAi.environments = [
+    { id: "env-old", kind: "gpt", name: "Old", routeId: "internal-unified" },
+  ];
+  backend.saveSettings(oldSettings);
+  const originalContext = backend.getPrincipalContext();
+  const partition = partitionForAiEnvironment("gpt", "env-old", originalContext);
+  backend.activatePrincipal(newUrl, "Alice");
+  const nextSettings = backend.loadSettings();
+  nextSettings.advancedAi.environments = [
+    { id: "env-new", kind: "gpt", name: "New", routeId: "internal-unified" },
+  ];
+  backend.saveSettings(nextSettings);
+  const stored = backend.readStoredSettings();
+  const nextId = principalIdFor(newUrl, "Alice");
+  const nextData = structuredClone(stored.principalSettings.byPrincipal[nextId]);
+  linkPrincipalEndpoint(stored.principalSettings, oldUrl, newUrl, "Alice");
+  backend.writeStoredSettings(stored);
+  const restored = backend.activatePrincipal(newUrl, "Alice");
+  assert.equal(restored.principalId, originalContext.principalId);
+  assert.equal(restored.settings.advancedAi.environments[0].id, "env-old");
+  assert.equal(
+    partitionForAiEnvironment("gpt", "env-old", backend.getPrincipalContext()),
+    partition,
+  );
+  backend.saveSettings(restored.settings);
+  backend.clearPrincipal();
+  assert.equal(backend.activatePrincipal(newUrl, "Alice").principalId, originalContext.principalId);
+  assert.deepEqual(backend.readStoredSettings().principalSettings.byPrincipal[nextId], nextData);
+});
 
 function createBackend(t, dependencies = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-principal-settings-"));
@@ -20,12 +88,64 @@ function createBackend(t, dependencies = {}) {
       return target;
     },
   };
-  return new Backend(app, () => null, "all", dependencies);
+  return new Backend(app, () => null, "all", {
+    legacySecretStorage: {
+      isEncryptionAvailable: () => true,
+      encryptString: (value) => Buffer.from(`fixture:${value}`, "utf8"),
+      decryptString: (value) => value.toString("utf8").slice("fixture:".length),
+    },
+    ...dependencies,
+  });
 }
 
 function principalId(backend) {
   return backend.getPrincipalContext().principalId;
 }
+
+test("a lone damaged chat backup does not abort startup or permit replacement", (t) => {
+  const backend = createBackend(t);
+  const backup = `${backend.chatHistoryFile}.bak`;
+  fs.mkdirSync(path.dirname(backup), { recursive: true });
+  fs.writeFileSync(backup, "{damaged-history");
+  assert.doesNotThrow(() => backend.init());
+  assert.equal(fs.existsSync(backend.chatHistoryFile), false);
+  assert.throws(() => backend.loadChatHistory(), { code: "LOCAL_STORE_UNAVAILABLE" });
+  assert.throws(() => backend.saveChatHistory({ conversations: {} }), {
+    code: "LOCAL_STORE_UNAVAILABLE",
+  });
+  assert.equal(fs.readFileSync(backup, "utf8"), "{damaged-history");
+  const recovered = { version: 1, conversations: {} };
+  fs.writeFileSync(backup, JSON.stringify(recovered));
+  assert.deepEqual(backend.loadChatHistory().conversations, {});
+  assert.equal(fs.readFileSync(backend.chatHistoryFile, "utf8"), JSON.stringify(recovered));
+});
+
+test("isolated development keeps update downloads and backup recovery inside its profile", (t) => {
+  const original = process.env.SHAREGPT_USER_DATA;
+  t.after(() => {
+    if (original === undefined) delete process.env.SHAREGPT_USER_DATA;
+    else process.env.SHAREGPT_USER_DATA = original;
+  });
+  const installed = createBackend(t);
+  const userData = installed.app.getPath("userData");
+  process.env.SHAREGPT_USER_DATA = userData;
+  const isolated = new Backend({ ...installed.app, isPackaged: false }, () => null);
+  assert.equal(isolated.updatesDir, path.join(userData, "ShareGPT Updates"));
+  assert.equal(isolated.updateBackupsDir, path.join(userData, "ShareGPT Backups"));
+  const backupDir = path.join(installed.updateBackupsDir, "update-2099-01-01T00-00-00-000Z");
+  fs.mkdirSync(backupDir, { recursive: true });
+  const sentinel = JSON.stringify({ collab: { server_url: "https://private.example.test" } });
+  fs.writeFileSync(path.join(backupDir, "settings.json"), sentinel);
+  assert.equal(isolated.restoreMissingDataFromLatestUpdateBackup(), null);
+  assert.equal(fs.existsSync(isolated.settingsFile), false);
+  assert.equal(fs.readFileSync(path.join(backupDir, "settings.json"), "utf8"), sentinel);
+
+  // Packaged upgrades ignore the development override and retain normal recovery.
+  const packaged = new Backend(installed.app, () => null);
+  assert.equal(packaged.updateBackupsDir, installed.updateBackupsDir);
+  assert.ok(packaged.restoreMissingDataFromLatestUpdateBackup());
+  assert.equal(fs.readFileSync(packaged.settingsFile, "utf8"), sentinel);
+});
 
 function patchSettings(backend, section, patch, revision, expectedPrincipalId, generation) {
   return backend.patchSettings(
@@ -54,6 +174,43 @@ function saveSettingsForPrincipal(backend, settings, expectedPrincipalId, genera
     Number.isInteger(generation) ? generation : backend.getPrincipalContext().generation,
   );
 }
+
+test("首次安装默认关闭可选效率入口和全部协作通知", (t) => {
+  const backend = createBackend(t);
+  backend.init();
+  const defaultsFile = backend
+    .resolvePrivateDefaultsCandidates()
+    .find((candidate) => fs.existsSync(candidate));
+  assert.ok(defaultsFile);
+  const defaults = JSON.parse(fs.readFileSync(defaultsFile, "utf8"));
+  assert.deepEqual(defaults.ui.hiddenNav, ["calendar", "team", "todo", "notes", "focus"]);
+  assert.deepEqual(
+    {
+      popup: defaults.collab.notify_message_popup,
+      system: defaults.collab.notify_system_notification,
+      sound: defaults.collab.notify_sound_play,
+      online: defaults.collab.notify_user_online,
+    },
+    { popup: false, system: false, sound: false, online: false },
+  );
+});
+
+test("升级时不重写现有用户的导航和通知默认文件", (t) => {
+  const backend = createBackend(t);
+  const defaultsFile = backend.resolvePrivateDefaultsCandidates().at(-1);
+  const existing = JSON.stringify(
+    {
+      ui: { hiddenNav: ["notes"] },
+      collab: { notify_system_notification: true },
+    },
+    null,
+    2,
+  );
+  fs.mkdirSync(path.dirname(defaultsFile), { recursive: true });
+  fs.writeFileSync(defaultsFile, existing);
+  backend.init();
+  assert.equal(fs.readFileSync(defaultsFile, "utf8"), existing);
+});
 
 test("legacy settings are claimed only by the exact server path and username", (t) => {
   const backend = createBackend(t);
@@ -405,6 +562,57 @@ test("stale principal and revision writes are rejected without changing current 
   assert.equal(backend.loadSettings().translation.provider, changed.translation.provider);
 });
 
+test("删除当前高级环境后可以原子创建并激活替代环境", (t) => {
+  const backend = createBackend(t);
+  const activated = backend.activatePrincipal("https://collab.example", "Alice");
+  const principal = backend.getPrincipalContext();
+  const first = {
+    id: "env-first",
+    kind: "gpt",
+    name: "First",
+    routeId: "route-a",
+    createdAt: "2026-09-09T00:00:00.000Z",
+  };
+  let settings = patchSettings(
+    backend,
+    "advancedAi",
+    {
+      enabled: true,
+      environments: [first],
+      activeByKind: { gpt: first.id, gemini: "", claude: "" },
+    },
+    activated.settings.settingsRevision,
+    principal.principalId,
+    principal.generation,
+  );
+
+  settings = operateSettings(
+    backend,
+    "advancedAi",
+    [{ op: "delete", path: ["environments", first.id] }],
+    settings.settingsRevision,
+    principal.principalId,
+    principal.generation,
+  );
+  assert.deepEqual(settings.advancedAi.environments, []);
+  assert.equal(settings.advancedAi.activeByKind.gpt, "");
+
+  const replacement = { ...first, id: "env-replacement", name: "Replacement" };
+  settings = operateSettings(
+    backend,
+    "advancedAi",
+    [
+      { op: "set", path: ["environments", replacement.id], value: replacement },
+      { op: "set", path: ["activeByKind", "gpt"], value: replacement.id },
+    ],
+    settings.settingsRevision,
+    principal.principalId,
+    principal.generation,
+  );
+  assert.deepEqual(settings.advancedAi.environments, [replacement]);
+  assert.equal(settings.advancedAi.activeByKind.gpt, replacement.id);
+});
+
 test("principal generation changes across A/B/A", (t) => {
   const backend = createBackend(t);
   const alice = backend.activatePrincipal("https://collab.example", "Alice");
@@ -578,7 +786,7 @@ test("an existing version 2 principal store activates without a migration rewrit
   assert.equal(fs.readFileSync(backend.settingsFile, "utf8"), stored);
 });
 
-test("settings remain v1.0.8-compatible and do not invoke credential encryption", (t) => {
+test("new saved credentials are protected on disk while runtime settings retain their public shape", (t) => {
   const backend = createBackend(t);
   const activated = backend.activatePrincipal("https://collab.example", "Alice");
   let saved = patchSettings(
@@ -597,9 +805,12 @@ test("settings remain v1.0.8-compatible and do not invoke credential encryption"
   );
 
   const raw = fs.readFileSync(backend.settingsFile, "utf8");
-  assert.match(raw, /remembered-password/);
-  assert.match(raw, /remembered-api-key/);
-  assert.doesNotMatch(raw, /sharegpt-safe:/);
+  assert.doesNotMatch(raw, /remembered-password/);
+  assert.doesNotMatch(raw, /remembered-api-key/);
+  assert.match(raw, /sharegpt-safe:/);
+  const loaded = backend.loadSettings();
+  assert.equal(loaded.collab.saved_password, "remembered-password");
+  assert.equal(loaded.translation.ai.apiKey, "remembered-api-key");
 });
 
 test("settings imports discard the exported revision before applying current state", () => {
@@ -785,6 +996,44 @@ test("legacy sharegpt-safe values decrypt in memory and failures never replace t
   assert.equal(fs.readFileSync(failing.settingsFile, "utf8"), raw);
 });
 
+test("unchanged protected settings reuse verified memory after the keychain becomes unavailable", (t) => {
+  let decryptCalls = 0;
+  const backend = createBackend(t, {
+    legacySecretStorage: {
+      isEncryptionAvailable: () => true,
+      encryptString: () => Buffer.from("protected-password"),
+      decryptString: () => {
+        decryptCalls++;
+        return "kept-password";
+      },
+    },
+  });
+  backend.activatePrincipal("https://collab.example", "Alice");
+  const original = backend.loadSettings();
+  backend.saveSettings({
+    ...original,
+    collab: { ...original.collab, saved_password: "kept-password" },
+  });
+  backend.legacyEncryptedSecrets = [];
+  assert.equal(backend.loadSettings().collab.saved_password, "kept-password");
+  assert.equal(decryptCalls, 1);
+  const unavailable = {
+    isEncryptionAvailable: () => false,
+    decryptString() {
+      throw new Error("unexpected keychain access");
+    },
+  };
+  backend.legacySecretStorage = unavailable;
+  const current = backend.loadSettings();
+  backend.saveSettings({ ...current, ui: { ...current.ui, theme: "light" } });
+  assert.equal(backend.loadSettings().collab.saved_password, "kept-password");
+  assert.equal(decryptCalls, 1);
+  const before = fs.readFileSync(backend.settingsFile, "utf8");
+  const cold = new Backend(backend.app, () => null, "all", { legacySecretStorage: unavailable });
+  assert.throws(() => cold.loadSettings(), /原文件未修改/);
+  assert.equal(fs.readFileSync(backend.settingsFile, "utf8"), before);
+});
+
 test("update backup includes every local data store and browser partition", (t) => {
   const backend = createBackend(t);
   const fixtures = {
@@ -792,6 +1041,8 @@ test("update backup includes every local data store and browser partition", (t) 
     "calendar.json": { events: [{ id: "calendar-kept" }] },
     "tasks.json": { tasks: [{ id: "task-kept" }] },
     "focus.json": { sessions: [{ id: "focus-kept" }] },
+    "ai-environment-cleanup.json": { pending: [{ partition: "persist-cleanup-current" }] },
+    "ai-environment-cleanup.json.bak": { pending: [{ partition: "persist-cleanup-previous" }] },
   };
   const userDataDir = backend.app.getPath("userData");
   for (const [name, payload] of Object.entries(fixtures)) {
@@ -815,6 +1066,26 @@ test("update backup includes every local data store and browser partition", (t) 
   );
   assert.ok(manifest.entries.includes("vault-meta.json"));
   assert.ok(manifest.entries.includes("ShareGPT-Vault"));
+});
+
+test("update restore recovers a missing cleanup ledger without replacing current cleanup intent", (t) => {
+  const backend = createBackend(t);
+  const userDataDir = backend.app.getPath("userData");
+  const ledger = path.join(userDataDir, "ai-environment-cleanup.json");
+  const previous = `${ledger}.bak`;
+  const original = JSON.stringify({ pending: [{ partition: "persist-cleanup-old" }] });
+  fs.writeFileSync(ledger, original);
+  fs.writeFileSync(previous, original);
+  backend.createUpdateBackup("test-cleanup");
+  fs.unlinkSync(ledger);
+  fs.unlinkSync(previous);
+  backend.restoreMissingDataFromLatestUpdateBackup();
+  assert.equal(fs.readFileSync(ledger, "utf8"), original);
+  assert.equal(fs.readFileSync(previous, "utf8"), original);
+  const current = JSON.stringify({ pending: [] });
+  fs.writeFileSync(ledger, current);
+  backend.restoreMissingDataFromLatestUpdateBackup();
+  assert.equal(fs.readFileSync(ledger, "utf8"), current);
 });
 
 test("update restore preserves an existing Chromium partition and reports the conflict", (t) => {

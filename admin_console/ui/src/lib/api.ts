@@ -4,6 +4,7 @@ import { AuthExpiredError } from '@/types/admin'
 // 浏览器/SSR 兜底: 真实运行在 Electron 渲染进程, window.adminApi 由 preload 注入。
 const fallback: AdminApi = {
   platform: 'unknown',
+  getAppVersion: async () => 'dev',
   loadPrefs: async () => ({ serverUrl: '', username: '' }),
   savePrefs: async (p) => p,
   minimizeWindow: async () => undefined,

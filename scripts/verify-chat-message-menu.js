@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { listenFixture } = require("./lib/listen-fixture.cjs");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -83,7 +84,7 @@ async function run() {
   });
   let electronApp;
   try {
-    await server.listen();
+    await listenFixture(server);
     const address = server.httpServer.address();
     electronApp = await electron.launch({
       args: [__filename],

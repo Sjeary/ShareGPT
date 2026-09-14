@@ -147,6 +147,7 @@ export interface VaultImportReport {
   root: string
 }
 export interface VaultChangeEvent {
+  snapshot?: { principalId: string; generation: number }
   events: { type: 'add' | 'change' | 'unlink'; path: string }[]
 }
 export interface VaultApi {
@@ -236,7 +237,12 @@ export interface ShareGptApi {
     expectedPrincipalId: string
     expectedPrincipalGeneration: number
   }) => Promise<Record<string, unknown>>
-  activateSettingsPrincipal: (payload: { serverUrl: string; username: string }) => Promise<{
+  activateSettingsPrincipal: (payload: {
+    serverUrl: string
+    username: string
+    identity?: unknown
+    identityNonce?: string
+  }) => Promise<{
     principalId: string
     generation: number
     settings: Record<string, unknown>
@@ -250,6 +256,13 @@ export interface ShareGptApi {
     settings: Record<string, unknown>
   }>
   getSettingsPrincipal: () => Promise<{ principalId: string; generation: number }>
+  verifySettingsPrincipalLogin: (payload: {
+    serverUrl: string
+    username: string
+    identity?: unknown
+    identityNonce: string
+    snapshot: { principalId: string; generation: number }
+  }) => Promise<boolean>
   saveSettings: (payload: {
     settings: Record<string, unknown>
     expectedPrincipalId: string
@@ -327,6 +340,12 @@ export interface ShareGptApi {
   }) => Promise<{ ok: boolean; sent: boolean }>
   exportUserData: () => Promise<unknown>
   importUserData: () => Promise<unknown>
+  inspectLegacyUserData: () => Promise<LegacyDataSummary[]>
+  importLegacyUserData: (payload: {
+    category: LegacyDataCategory
+    fingerprint: string
+    group?: string
+  }) => Promise<{ imported: boolean }>
   readClipboardAttachment: () => Promise<unknown>
 
   // 应用 / 状态
@@ -353,6 +372,10 @@ export interface ShareGptApi {
   ensureAiWorkspace: (payload: unknown) => Promise<unknown>
   activateAiEnvironment: (payload: unknown) => Promise<unknown>
   deleteAiEnvironment: (payload: unknown) => Promise<unknown>
+  listAiEnvironmentCleanup: (payload: unknown) => Promise<{ pendingCount: number }>
+  retryAiEnvironmentCleanup: (
+    payload: unknown,
+  ) => Promise<{ cleared: number; pendingCount: number }>
   checkAiEnvironmentEgress: (payload: unknown) => Promise<unknown>
   syncAiViewHost: (payload: unknown) => Promise<unknown>
   navigateAiWorkspace: (payload: unknown) => Promise<unknown>
@@ -438,3 +461,16 @@ declare global {
 }
 
 export {}
+export type LegacyDataCategory = 'calendar' | 'tasks' | 'focus' | 'chat' | 'notes'
+export interface LegacyDataSummary {
+  category: LegacyDataCategory
+  available: boolean
+  canImport: boolean
+  bytes: number
+  fileCount: number
+  fingerprint: string
+  reason: string
+  message?: string
+  sourcePath?: string
+  groups?: Array<LegacyDataSummary & { group: string; label: string }>
+}

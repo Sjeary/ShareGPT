@@ -18,6 +18,8 @@ const {
 const { Backend, DEFAULT_TARGET_DOMAINS } = require("./backend");
 const { buildAiRouteHealth } = require("./aiRouteHealth");
 const { loadRendererEntry, resolveRendererEntry } = require("./rendererEntry");
+const { createTrustedIpc } = require("./trustedIpc");
+const { createAiEnvironmentCleanup } = require("./aiEnvironmentCleanup");
 const appLog = require("./logger");
 const updateLog = appLog.scoped("update");
 const {
@@ -484,7 +486,15 @@ function createElectronApp(baseMode = "all") {
 
   let mainWindow = null;
   let profileWindow = null;
+  let profilePrincipal = null;
   let backend = null;
+  let environmentCleanup = null;
+  const trustedIpc = createTrustedIpc({
+    ipcMain,
+    openExternal: openExternalUrl,
+    assertPrincipal: (snapshot) => backend.assertSettingsPrincipalSnapshot(snapshot),
+    serializeData: true,
+  });
   // electron-updater: 仅 Windows 打包版启用「原地无感更新」(NSIS)。
   // mac 未签名无法走 Squirrel 自动更新, 仍用下载 dmg 的方式; dev/未打包也不启用。
   let autoUpdater = null;
@@ -588,13 +598,18 @@ function createElectronApp(baseMode = "all") {
     disposeAiWorkspaces({ incrementEpoch: false });
   }
 
-  function runPrincipalTransition(transition) {
-    return runSettingsPrincipalTransition(
-      {
-        invalidate: cancelPrincipalRuntime,
-        activate: () => backend?.notesAi?.activatePrincipal?.(),
-      },
-      transition,
+  async function runPrincipalTransition(transition) {
+    return backend.withDataWatchersPaused(() =>
+      runSettingsPrincipalTransition(
+        {
+          invalidate: cancelPrincipalRuntime,
+          activate: () => {
+            backend?.notesAi?.activatePrincipal?.();
+            retryPendingEnvironmentCleanup();
+          },
+        },
+        transition,
+      ),
     );
   }
 
@@ -602,6 +617,18 @@ function createElectronApp(baseMode = "all") {
     if (epoch !== aiRuntimeEpoch) {
       throw Object.assign(new Error("账号已切换，请重新操作"), { code: "STALE_PRINCIPAL" });
     }
+  }
+
+  function retryPendingEnvironmentCleanup() {
+    if (!environmentCleanup) return;
+    void Promise.resolve()
+      .then(() => {
+        const principal = backend.getPrincipalContext();
+        return environmentCleanup.retry(principal.principalId);
+      })
+      .catch((error) => {
+        mainLog.warn("Unable to retry pending environment cleanup", error);
+      });
   }
 
   function emitAiEvent(kind, type, payload = {}, principalOverride = null) {
@@ -671,6 +698,12 @@ function createElectronApp(baseMode = "all") {
   }
 
   function focusMainWindow() {
+    if (
+      !app.isPackaged &&
+      process.env.SHAREGPT_BACKGROUND_TEST === "1" &&
+      process.env.SHAREGPT_USER_DATA
+    )
+      return;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) {
       mainWindow.restore();
@@ -1496,7 +1529,12 @@ function createElectronApp(baseMode = "all") {
       throw new Error("目标网页标签未能安全关闭，请重启客户端后再清除");
     }
     aiWorkspaceRegistry.clear(targetKind, environmentId);
-    hostStateByKind[targetKind] = { visible: false, bounds: null };
+    if (
+      environmentId === undefined ||
+      currentAiEnvironment(targetKind) === safeText(environmentId)
+    ) {
+      hostStateByKind[targetKind] = { visible: false, bounds: null };
+    }
     scheduleAiReconcile("workspace-close", currentAiTarget());
   }
 
@@ -2271,49 +2309,39 @@ function createElectronApp(baseMode = "all") {
     }
   }
 
-  function attachWindowGuards(targetWindow) {
-    if (!targetWindow) return;
-
-    targetWindow.webContents.setWindowOpenHandler(({ url }) => {
-      void openExternalUrl(url).catch(() => {});
-      return { action: "deny" };
-    });
-
-    targetWindow.webContents.on("will-navigate", (event, url) => {
-      if (String(url || "").startsWith("file://")) return;
-      event.preventDefault();
-      void openExternalUrl(url).catch(() => {});
-    });
-  }
-
   function loadMainRenderer(win) {
     const devUrl = process.env.SHAREGPT_UI_DEV_URL;
-    return loadRendererEntry(
-      win,
-      resolveRendererEntry({
-        builtFile: path.join(__dirname, "../renderer-next/dist/index.html"),
-        devUrl,
-        isPackaged: app.isPackaged,
-      }),
-    );
+    const entry = resolveRendererEntry({
+      builtFile: path.join(__dirname, "../renderer-next/dist/index.html"),
+      devUrl,
+      isPackaged: app.isPackaged,
+    });
+    trustedIpc.registerWindow(win, entry, "main");
+    return loadRendererEntry(win, entry);
   }
 
   function loadProfileRenderer(win, query) {
     const devUrl = process.env.SHAREGPT_UI_DEV_URL;
-    return loadRendererEntry(
-      win,
-      resolveRendererEntry({
-        builtFile: path.join(__dirname, "../renderer-next/dist/profile.html"),
-        devUrl,
-        devPath: "profile.html",
-        isPackaged: app.isPackaged,
-        query,
-      }),
-    );
+    const entry = resolveRendererEntry({
+      builtFile: path.join(__dirname, "../renderer-next/dist/profile.html"),
+      devUrl,
+      devPath: "profile.html",
+      isPackaged: app.isPackaged,
+      query,
+    });
+    trustedIpc.registerWindow(win, entry, "profile");
+    return loadRendererEntry(win, entry);
   }
 
   function createWindow() {
+    // Isolated development acceptance only; packaged applications always show normally.
+    const backgroundTest =
+      !app.isPackaged &&
+      process.env.SHAREGPT_BACKGROUND_TEST === "1" &&
+      Boolean(process.env.SHAREGPT_USER_DATA);
+    if (backgroundTest && process.platform === "darwin") app.dock.hide();
     mainWindow = new BrowserWindow({
+      show: !backgroundTest,
       width: 1180,
       height: 760,
       minWidth: 860,
@@ -2331,7 +2359,6 @@ function createElectronApp(baseMode = "all") {
       },
     });
 
-    attachWindowGuards(mainWindow);
     // 主窗口获得焦点时也把缩放快捷键转发给当前 AI 网页。否则 Chromium 会缩放
     // ShareGPT 外壳，导致 DOM 坐标与原生 WebContentsView 的 DIP 边界不再一致。
     mainWindow.webContents.on("before-input-event", (event, input) => {
@@ -2400,24 +2427,27 @@ function createElectronApp(baseMode = "all") {
     // 让内嵌网页(ChatGPT/Gemini, 设为"跟随系统")的明暗跟随 app UI 主题。
     // nativeTheme.themeSource 影响所有 webContents 的 prefers-color-scheme;
     // 渲染层自身用 .dark class 控制, 不受此影响。
-    ipcMain.handle("app:set-theme-source", (_event, source) => {
+    trustedIpc.handle("app:set-theme-source", (_event, source) => {
       nativeTheme.themeSource =
         source === "dark" ? "dark" : source === "light" ? "light" : "system";
       return true;
     });
-    ipcMain.handle("settings:load", (_event, payload) => {
+    trustedIpc.handle("settings:load", (_event, payload) => {
       backend.assertSettingsPrincipalSnapshot({
         principalId: payload?.expectedPrincipalId,
         generation: payload?.expectedPrincipalGeneration,
       });
       return backend.loadSettings();
     });
-    ipcMain.handle("settings:principal-activate", (_event, payload) =>
+    trustedIpc.handle("settings:principal-activate", (_event, payload) =>
       runPrincipalTransition(() =>
-        backend.activatePrincipal(payload?.serverUrl, payload?.username),
+        backend.activatePrincipal(payload?.serverUrl, payload?.username, {
+          proof: payload?.identity,
+          nonce: payload?.identityNonce,
+        }),
       ),
     );
-    ipcMain.handle("settings:principal-clear", (_event, payload) => {
+    trustedIpc.handle("settings:principal-clear", (_event, payload) => {
       backend.assertSettingsPrincipalSnapshot({
         principalId: payload?.expectedPrincipalId,
         generation: payload?.expectedPrincipalGeneration,
@@ -2432,15 +2462,23 @@ function createElectronApp(baseMode = "all") {
         };
       });
     });
-    ipcMain.handle("settings:principal-context", () => backend.getPrincipalContext());
-    ipcMain.handle("settings:save", (_event, payload) =>
+    trustedIpc.handle("settings:principal-context", () => backend.getPrincipalContext());
+    trustedIpc.handle("settings:principal-verify", (_event, payload) =>
+      backend.verifyPrincipalLogin(
+        payload?.serverUrl,
+        payload?.username,
+        { proof: payload?.identity, nonce: payload?.identityNonce },
+        payload?.snapshot,
+      ),
+    );
+    trustedIpc.handle("settings:save", (_event, payload) =>
       backend.saveSettingsForPrincipal(
         payload?.settings,
         payload?.expectedPrincipalId,
         payload?.expectedPrincipalGeneration,
       ),
     );
-    ipcMain.handle("settings:patch", (_event, payload) =>
+    trustedIpc.handle("settings:patch", (_event, payload) =>
       backend.patchSettings(
         payload?.section,
         payload?.patch,
@@ -2449,7 +2487,7 @@ function createElectronApp(baseMode = "all") {
         payload?.expectedPrincipalGeneration,
       ),
     );
-    ipcMain.handle("settings:operate", (_event, payload) =>
+    trustedIpc.handle("settings:operate", (_event, payload) =>
       backend.operateSettings(
         payload?.section,
         payload?.operations,
@@ -2458,40 +2496,40 @@ function createElectronApp(baseMode = "all") {
         payload?.expectedPrincipalGeneration,
       ),
     );
-    ipcMain.handle("settings:import", () => backend.importSettings());
-    ipcMain.handle("chat-history:load", () => backend.loadChatHistory());
-    ipcMain.handle("chat-history:save", (_event, payload) => backend.saveChatHistory(payload));
+    trustedIpc.handle("settings:import", () => backend.importSettings());
+    trustedIpc.handle("chat-history:load", () => backend.loadChatHistory());
+    trustedIpc.handle("chat-history:save", (_event, payload) => backend.saveChatHistory(payload));
     // 个人日历 / 任务+备忘录 本地存储。
-    ipcMain.handle("calendar:load", () => backend.loadCalendar());
-    ipcMain.handle("calendar:save", (_event, payload) => backend.saveCalendar(payload));
-    ipcMain.handle("tasks:load", () => backend.loadTasks());
-    ipcMain.handle("tasks:save", (_event, payload) => backend.saveTasks(payload));
-    ipcMain.handle("focus:load", () => backend.loadFocus());
-    ipcMain.handle("focus:save", (_event, payload) => backend.saveFocus(payload));
+    trustedIpc.handle("calendar:load", () => backend.loadCalendar());
+    trustedIpc.handle("calendar:save", (_event, payload) => backend.saveCalendar(payload));
+    trustedIpc.handle("tasks:load", () => backend.loadTasks());
+    trustedIpc.handle("tasks:save", (_event, payload) => backend.saveTasks(payload));
+    trustedIpc.handle("focus:load", () => backend.loadFocus());
+    trustedIpc.handle("focus:save", (_event, payload) => backend.saveFocus(payload));
     // 知识库 vault (笔记文件 IO + 监听)。
-    ipcMain.handle("vault:start", () => backend.vault.startWatch());
-    ipcMain.handle("vault:get-root", () => backend.vault.getRoot());
-    ipcMain.handle("vault:set-root", (_event, p) => backend.vault.setRoot(p));
-    ipcMain.handle("vault:pick-folder", () => backend.vault.pickFolder());
-    ipcMain.handle("vault:list", () => backend.vault.list());
-    ipcMain.handle("vault:read-all", () => backend.vault.readAll());
-    ipcMain.handle("vault:read", (_event, p) => backend.vault.read(p));
-    ipcMain.handle("vault:read-binary", (_event, p) => backend.vault.readBinary(p));
-    ipcMain.handle("vault:write", (_event, { path, content }) =>
+    trustedIpc.handle("vault:start", () => backend.vault.startWatch());
+    trustedIpc.handle("vault:get-root", () => backend.vault.getRoot());
+    trustedIpc.handle("vault:set-root", (_event, p) => backend.vault.setRoot(p));
+    trustedIpc.handle("vault:pick-folder", () => backend.vault.pickFolder());
+    trustedIpc.handle("vault:list", () => backend.vault.list());
+    trustedIpc.handle("vault:read-all", () => backend.vault.readAll());
+    trustedIpc.handle("vault:read", (_event, p) => backend.vault.read(p));
+    trustedIpc.handle("vault:read-binary", (_event, p) => backend.vault.readBinary(p));
+    trustedIpc.handle("vault:write", (_event, { path, content }) =>
       backend.vault.write(path, content),
     );
-    ipcMain.handle("vault:create", (_event, { path, content }) =>
+    trustedIpc.handle("vault:create", (_event, { path, content }) =>
       backend.vault.create(path, content),
     );
-    ipcMain.handle("vault:rename", (_event, { from, to }) => backend.vault.rename(from, to));
-    ipcMain.handle("vault:remove", (_event, p) => backend.vault.remove(p));
-    ipcMain.handle("vault:import", (_event, src) => backend.vault.importFrom(src));
-    ipcMain.handle("notes-ai:complete", (_event, req) => backend.notesAi.complete(req));
-    ipcMain.handle("notes-ai:cancel", (_event, id) => backend.notesAi.cancel(id));
-    ipcMain.handle("notes-ai:invalidate-principal", (_event, principalId) =>
+    trustedIpc.handle("vault:rename", (_event, { from, to }) => backend.vault.rename(from, to));
+    trustedIpc.handle("vault:remove", (_event, p) => backend.vault.remove(p));
+    trustedIpc.handle("vault:import", (_event, src) => backend.vault.importFrom(src));
+    trustedIpc.handle("notes-ai:complete", (_event, req) => backend.notesAi.complete(req));
+    trustedIpc.handle("notes-ai:cancel", (_event, id) => backend.notesAi.cancel(id));
+    trustedIpc.handle("notes-ai:invalidate-principal", (_event, principalId) =>
       backend.notesAi.invalidatePrincipal(principalId),
     );
-    ipcMain.handle("translation:translate", async (event, payload) => {
+    trustedIpc.handle("translation:translate", async (event, payload) => {
       const requestId = safeText(payload?.requestId);
       if (!/^[a-z0-9-]{8,100}$/i.test(requestId)) throw new Error("翻译 requestId 无效");
       if (activeTranslationRequests.has(requestId)) throw new Error("相同的翻译请求仍在处理中");
@@ -2513,28 +2551,28 @@ function createElectronApp(baseMode = "all") {
         }
       }
     });
-    ipcMain.handle("translation:cancel", (event, payload) => {
+    trustedIpc.handle("translation:cancel", (event, payload) => {
       const requestId = safeText(payload?.requestId);
       const active = activeTranslationRequests.get(requestId);
       if (!active || active.senderId !== event.sender.id) return { ok: true, cancelled: false };
       active.controller.abort();
       return { ok: true, cancelled: true };
     });
-    ipcMain.handle("translation:capture-page", (_event, payload) =>
+    trustedIpc.handle("translation:capture-page", (_event, payload) =>
       captureAiPageText(
         safeText(payload?.kind),
         safeText(payload?.tabId),
         safeText(payload?.environmentId),
       ),
     );
-    ipcMain.handle("translation:capture-selection", (_event, payload) =>
+    trustedIpc.handle("translation:capture-selection", (_event, payload) =>
       captureAiSelectionText(
         safeText(payload?.kind),
         safeText(payload?.tabId),
         safeText(payload?.environmentId),
       ),
     );
-    ipcMain.handle("translation:composer-target", (_event, payload) => {
+    trustedIpc.handle("translation:composer-target", (_event, payload) => {
       const kind = safeText(payload?.kind);
       const tabId = safeText(payload?.tabId);
       const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
@@ -2542,23 +2580,27 @@ function createElectronApp(baseMode = "all") {
       const workspace = getWorkspace(kind, tabId, environmentId);
       return captureWorkspaceComposerTarget(workspace);
     });
-    ipcMain.handle("translation:write-composer", (_event, payload) => writeAiComposer(payload));
-    ipcMain.handle("translation:composer-guard-sync", async () => ({
+    trustedIpc.handle("translation:write-composer", (_event, payload) => writeAiComposer(payload));
+    trustedIpc.handle("translation:composer-guard-sync", async () => ({
       ok: true,
       updated: await syncAllComposerGuards(),
     }));
-    ipcMain.handle("translation:composer-confirmation-resolve", (_event, payload) =>
+    trustedIpc.handle("translation:composer-confirmation-resolve", (_event, payload) =>
       resolveComposerConfirmation(payload),
     );
-    ipcMain.handle("user-data:export", () => backend.exportUserData());
-    ipcMain.handle("user-data:import", () => backend.importUserData());
-    ipcMain.handle("clipboard:read-attachment", () => buildClipboardAttachmentPayload());
-    ipcMain.handle("service:status", () => backend.getStatus());
-    ipcMain.handle("app:paths", () => backend.getPaths());
-    ipcMain.handle("app:meta", () => backend.getAppMeta());
-    ipcMain.handle("app:device-info", () => backend.getDeviceInfo());
-    ipcMain.handle("app:mode", () => appMode);
-    ipcMain.handle("app:update-check", async () => {
+    trustedIpc.handle("user-data:export", () => backend.exportUserData());
+    trustedIpc.handle("user-data:import", () => backend.importUserData());
+    trustedIpc.handle("user-data:legacy-list", () => backend.inspectLegacyUserData());
+    trustedIpc.handle("user-data:legacy-import", (_event, payload) =>
+      backend.importLegacyUserData(payload),
+    );
+    trustedIpc.handle("clipboard:read-attachment", () => buildClipboardAttachmentPayload());
+    trustedIpc.handle("service:status", () => backend.getStatus());
+    trustedIpc.handle("app:paths", () => backend.getPaths());
+    trustedIpc.handle("app:meta", () => backend.getAppMeta());
+    trustedIpc.handle("app:device-info", () => backend.getDeviceInfo());
+    trustedIpc.handle("app:mode", () => appMode);
+    trustedIpc.handle("app:update-check", async () => {
       try {
         return await backend.checkLatestRelease();
       } catch (_err) {
@@ -2566,9 +2608,9 @@ function createElectronApp(baseMode = "all") {
       }
     });
     // 是否支持「原地无感更新」(Windows 打包版 = true; mac / dev = false -> 前端回退到下载方式)。
-    ipcMain.handle("app:update-supported", () => Boolean(autoUpdater));
+    trustedIpc.handle("app:update-supported", () => Boolean(autoUpdater));
     // Windows 无感更新: 检查 -> 下载(进度走 app:update-progress) -> 完成后原地安装并自动重启。
-    ipcMain.handle("app:update-install", async (_event, payload) => {
+    trustedIpc.handle("app:update-install", async (_event, payload) => {
       if (!autoUpdater) {
         throw new Error("当前版本不支持原地自动安装，请用下载方式更新");
       }
@@ -2607,7 +2649,7 @@ function createElectronApp(baseMode = "all") {
         autoUpdaterBusy = false;
       }
     });
-    ipcMain.handle("app:update-download", async (event, payload) => {
+    trustedIpc.handle("app:update-download", async (event, payload) => {
       const request = assertManualUpdateRequest(await backend.checkLatestRelease(), payload);
       const result = await backend.downloadUpdatePackage(request, (progress) => {
         event.sender.send("app:update-progress", progress);
@@ -2615,7 +2657,7 @@ function createElectronApp(baseMode = "all") {
       downloadedUpdatePackages.add(path.resolve(result.filePath));
       return result;
     });
-    ipcMain.handle("app:update-open", async (_event, payload) => {
+    trustedIpc.handle("app:update-open", async (_event, payload) => {
       const filePath = safeText(payload?.filePath);
       if (!filePath) {
         throw new Error("缺少更新包路径");
@@ -2641,7 +2683,7 @@ function createElectronApp(baseMode = "all") {
       }
       return { ok: true, backupDir: backup.backupDir, willQuit: payload?.quitAfterOpen !== false };
     });
-    ipcMain.handle("notifications:show", (_event, payload) => {
+    trustedIpc.handle("notifications:show", (_event, payload) => {
       if (!Notification.isSupported()) {
         return false;
       }
@@ -2661,7 +2703,7 @@ function createElectronApp(baseMode = "all") {
       notification.show();
       return true;
     });
-    ipcMain.handle("shell:open-external", async (_event, rawUrl) => {
+    trustedIpc.handle("shell:open-external", async (_event, rawUrl) => {
       const url = safeText(rawUrl);
       if (!url) return false;
       return openExternalUrl(url);
@@ -2669,7 +2711,7 @@ function createElectronApp(baseMode = "all") {
 
     // 原生 WebContentsView 位于渲染层之上，必须由当前导航页做全局门控；
     // 仅靠组件卸载时的异步隐藏通知会产生竞态，导致旧 Claude/GPT 盖住其它页面。
-    ipcMain.handle("ai:set-active-kind", async (_event, payload) => {
+    trustedIpc.handle("ai:set-active-kind", async (_event, payload) => {
       const activeKind = setActiveAiKind(payload?.kind);
       const target = currentAiTarget();
       const reconcile = await requestAiReconcile("active-kind", target);
@@ -2677,7 +2719,7 @@ function createElectronApp(baseMode = "all") {
     });
 
     // 标签管理 (GPT / Gemini / Claude 通用, 由 payload.kind 区分)。
-    ipcMain.handle("ai-tabs:list", (_event, payload) => {
+    trustedIpc.handle("ai-tabs:list", (_event, payload) => {
       const kind = safeText(payload?.kind) || "gpt";
       const active = getLogicalWorkspace(kind, activeTabIdFor(kind));
       return {
@@ -2686,7 +2728,7 @@ function createElectronApp(baseMode = "all") {
       };
     });
 
-    ipcMain.handle("ai-tabs:create", async (_event, payload) => {
+    trustedIpc.handle("ai-tabs:create", async (_event, payload) => {
       const kind = safeText(payload?.kind) || "gpt";
       const workspace = createTabWorkspace(kind, {
         title: safeText(payload?.title),
@@ -2710,7 +2752,7 @@ function createElectronApp(baseMode = "all") {
       };
     });
 
-    ipcMain.handle("ai-tabs:switch", async (_event, payload) => {
+    trustedIpc.handle("ai-tabs:switch", async (_event, payload) => {
       const kind = safeText(payload?.kind) || "gpt";
       const tabId = safeText(payload?.tabId);
       const environmentId = currentAiEnvironment(kind);
@@ -2733,13 +2775,13 @@ function createElectronApp(baseMode = "all") {
       };
     });
 
-    ipcMain.handle("ai-tabs:close", async (_event, payload) => {
+    trustedIpc.handle("ai-tabs:close", async (_event, payload) => {
       const result = closeTabWorkspace(safeText(payload?.kind) || "gpt", payload?.tabId);
       await aiReconciler.idle();
       return result;
     });
 
-    ipcMain.handle("ai:environment-activate", async (_event, payload) => {
+    trustedIpc.handle("ai:environment-activate", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
       const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
@@ -2758,27 +2800,92 @@ function createElectronApp(baseMode = "all") {
       return { ok: true, kind, environmentId, changed };
     });
 
-    ipcMain.handle("ai:environment-delete", async (_event, payload) => {
+    trustedIpc.handle("ai:environment-delete", async (_event, payload) => {
       const epoch = aiRuntimeEpoch;
+      backend.assertSettingsPrincipalSnapshot(payload?.snapshot);
       const kind = safeText(payload?.kind);
       const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
       if (!isAiKind(kind) || !environmentId) throw new Error("AI 环境标识不合法");
       getConfiguredAiEnvironment(kind, environmentId);
+      const principal = backend.getPrincipalContext();
+      const partition = partitionForAiEnvironment(kind, environmentId, principal);
+      environmentCleanup.enqueue({
+        principalId: principal.principalId,
+        kind,
+        environmentId,
+        partition,
+      });
       const targetLoaded = listWorkspaces(kind, environmentId).length > 0;
       if (targetLoaded) await closeWorkspacesForKind(kind, environmentId);
       assertAiRuntimeEpoch(epoch);
-      const partition = partitionForAiEnvironment(
+      backend.assertSettingsPrincipalSnapshot(principal);
+
+      // Configuration removal is the authoritative delete. Commit it in main before clearing
+      // Chromium data so a platform-specific cache failure cannot leave a closed-but-configured
+      // environment that blocks creating its replacement.
+      const currentSettings = backend.loadSettings();
+      const advanced = currentSettings.advancedAi || {};
+      const environments = Array.isArray(advanced.environments) ? advanced.environments : [];
+      const remaining = environments.filter(
+        (environment) => normalizeAiEnvironmentId(environment?.id) !== environmentId,
+      );
+      const nextEnvironmentId =
+        remaining.find((environment) => safeText(environment?.kind) === kind)?.id || "";
+      const operations = [{ op: "delete", path: ["environments", environmentId] }];
+      if (normalizeAiEnvironmentId(advanced.activeByKind?.[kind]) === environmentId) {
+        operations.push({
+          op: "set",
+          path: ["activeByKind", kind],
+          value: nextEnvironmentId,
+        });
+      }
+      backend.operateSettings(
+        "advancedAi",
+        operations,
+        currentSettings.settingsRevision,
+        principal.principalId,
+        principal.generation,
+      );
+      if (currentAiEnvironment(kind) === environmentId) {
+        aiWorkspaceRegistry.activateEnvironment(kind, nextEnvironmentId);
+        scheduleAiReconcile("environment-delete", currentAiTarget());
+        emitTabsChanged(kind);
+      }
+
+      await environmentCleanup.retry(principal.principalId, kind);
+      const dataCleared = !environmentCleanup
+        .list(principal.principalId)
+        .some((entry) => entry.partition === partition);
+      assertAiRuntimeEpoch(epoch);
+      backend.assertSettingsPrincipalSnapshot(principal);
+      aiContactedHostsByPartition.get(partition)?.clear();
+      return {
+        ok: true,
         kind,
         environmentId,
-        backend.getPrincipalContext(),
-      );
-      await clearAiSessionData(session.fromPartition(partition));
-      assertAiRuntimeEpoch(epoch);
-      aiContactedHostsByPartition.get(partition)?.clear();
-      return { ok: true, kind, environmentId };
+        dataCleared,
+        principal,
+        // Include writes that may have completed while Chromium storage was being cleared.
+        settings: backend.loadSettings(),
+      };
     });
 
-    ipcMain.handle("ai:environment-egress-check", async (_event, payload) => {
+    trustedIpc.handle("ai:environment-cleanup-list", (_event, payload) => {
+      backend.assertSettingsPrincipalSnapshot(payload?.snapshot);
+      const pending = environmentCleanup.list(payload.snapshot.principalId);
+      return { pendingCount: pending.filter((entry) => entry.kind === payload.kind).length };
+    });
+    trustedIpc.handle("ai:environment-cleanup-retry", async (_event, payload) => {
+      backend.assertSettingsPrincipalSnapshot(payload?.snapshot);
+      const result = await environmentCleanup.retry(payload.snapshot.principalId, payload.kind);
+      backend.assertSettingsPrincipalSnapshot(payload.snapshot);
+      return {
+        cleared: result.cleared,
+        pendingCount: result.pending.filter((entry) => entry.kind === payload.kind).length,
+      };
+    });
+
+    trustedIpc.handle("ai:environment-egress-check", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
       const sender = {
@@ -2789,7 +2896,7 @@ function createElectronApp(baseMode = "all") {
       return checkAiRouteHealth(route, { force: true });
     });
 
-    ipcMain.handle("ai:ensure", async (_event, payload) => {
+    trustedIpc.handle("ai:ensure", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
       const environmentId = normalizeAiEnvironmentId(payload?.environmentId);
@@ -2933,7 +3040,7 @@ function createElectronApp(baseMode = "all") {
 
     // 只允许按单个 AI 服务清理；组织工作区复核账号密码，个人工作区复核 local-device Principal。
     // 主进程不提供“全部清理”，避免一次误操作删除所有网页会话。
-    ipcMain.handle("ai:data-clear", async (_event, payload) => {
+    trustedIpc.handle("ai:data-clear", async (_event, payload) => {
       const epoch = aiRuntimeEpoch;
       const kind = safeText(payload?.kind);
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
@@ -2962,7 +3069,7 @@ function createElectronApp(baseMode = "all") {
       return { ok: true, kind, clearedAt, homeUrl: policy.homeUrl, beforeSnapshot };
     });
 
-    ipcMain.handle("ai:profile-rebuild", async (_event, payload) => {
+    trustedIpc.handle("ai:profile-rebuild", async (_event, payload) => {
       const epoch = aiRuntimeEpoch;
       const kind = safeText(payload?.kind);
       if (!isAiKind(kind)) throw new Error("不支持的 AI 服务");
@@ -3002,11 +3109,11 @@ function createElectronApp(baseMode = "all") {
       };
     });
 
-    ipcMain.handle("browser-privacy:capture", async (_event, payload) => {
+    trustedIpc.handle("browser-privacy:capture", async (_event, payload) => {
       return captureWorkspaceFingerprint(payload?.kind, payload?.tabId);
     });
 
-    ipcMain.handle("browser-privacy:apply", async () => {
+    trustedIpc.handle("browser-privacy:apply", async () => {
       const results = [];
       for (const workspace of aiWorkspaceRegistry.all()) {
         if (!isWorkspaceViewUsable(workspace)) continue;
@@ -3025,7 +3132,7 @@ function createElectronApp(baseMode = "all") {
       return { ok: results.every((item) => item.ok), results };
     });
 
-    ipcMain.handle("browser-privacy:detect-proxy-environment", async () => {
+    trustedIpc.handle("browser-privacy:detect-proxy-environment", async () => {
       const port = Number(backend?.activeSocksPort);
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
         throw new Error("请先启动代理，再同步出口环境");
@@ -3033,7 +3140,7 @@ function createElectronApp(baseMode = "all") {
       return detectProxyEnvironment(port);
     });
 
-    ipcMain.handle("ai:sync-host", async (_event, payload) => {
+    trustedIpc.handle("ai:sync-host", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       const bounds = payload?.bounds;
       const visible = Boolean(payload?.visible);
@@ -3067,7 +3174,7 @@ function createElectronApp(baseMode = "all") {
     // 会话级: resolveProxy 确认 webview 出口确实指向本地 socks (sing-box)。
     // 路由级: 把会话实际访问过的每个主机, 按 backend 的发送路由清单逐域判定
     //   命中 target_domains -> 走发送代理(梯子); 未命中 -> 回落(本机代理/直连), 即未走发送代理。
-    ipcMain.handle("ai:proxy-check", async (_event, payload) => {
+    trustedIpc.handle("ai:proxy-check", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       const workspace =
         getWorkspace(kind, safeText(payload?.tabId)) || getWorkspace(kind, activeTabIdFor(kind));
@@ -3135,7 +3242,7 @@ function createElectronApp(baseMode = "all") {
       };
     });
 
-    ipcMain.handle("ai:navigate", async (_event, payload) => {
+    trustedIpc.handle("ai:navigate", async (_event, payload) => {
       const kind = safeText(payload?.kind);
       const action = safeText(payload?.action);
       const url = safeText(payload?.url);
@@ -3181,12 +3288,13 @@ function createElectronApp(baseMode = "all") {
       return getAiStatePayload(workspace);
     });
 
-    ipcMain.handle("profile:open", (_event, payload) => {
+    trustedIpc.handle("profile:open", (_event, payload) => {
       if (profileWindow && !profileWindow.isDestroyed()) {
         profileWindow.focus();
         return true;
       }
 
+      profilePrincipal = backend.getPrincipalContext();
       profileWindow = new BrowserWindow({
         width: 900,
         height: 680,
@@ -3200,14 +3308,13 @@ function createElectronApp(baseMode = "all") {
         autoHideMenuBar: true,
         titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
         webPreferences: {
-          preload: path.join(__dirname, "preload.js"),
+          preload: path.join(__dirname, "profilePreload.js"),
           contextIsolation: true,
           nodeIntegration: false,
-          sandbox: false,
+          sandbox: true,
         },
       });
 
-      attachWindowGuards(profileWindow);
       if (process.platform === "darwin") {
         profileWindow.setWindowButtonVisibility(true);
       }
@@ -3221,17 +3328,24 @@ function createElectronApp(baseMode = "all") {
       loadProfileRenderer(profileWindow, query);
       profileWindow.on("closed", () => {
         profileWindow = null;
+        profilePrincipal = null;
       });
       return true;
     });
 
-    ipcMain.on("profile:updated", (_event, payload) => {
+    trustedIpc.handle("profile:theme", () => ({ ui: { theme: backend.loadSettings().ui.theme } }));
+    trustedIpc.on("profile:updated", (_event, payload) => {
+      try {
+        backend.assertSettingsPrincipalSnapshot(profilePrincipal);
+      } catch {
+        return;
+      }
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("profile:updated", payload || {});
       }
     });
 
-    ipcMain.handle("window:minimize", (event) => {
+    trustedIpc.handle("window:minimize", (event) => {
       const targetWindow = getEventWindow(event, mainWindow);
       if (targetWindow) {
         targetWindow.minimize();
@@ -3239,7 +3353,7 @@ function createElectronApp(baseMode = "all") {
       return true;
     });
 
-    ipcMain.handle("window:toggle-maximize", (event) => {
+    trustedIpc.handle("window:toggle-maximize", (event) => {
       const targetWindow = getEventWindow(event, mainWindow);
       if (targetWindow) {
         if (targetWindow.isMaximized()) {
@@ -3252,7 +3366,7 @@ function createElectronApp(baseMode = "all") {
       return false;
     });
 
-    ipcMain.handle("window:close", (event) => {
+    trustedIpc.handle("window:close", (event) => {
       const targetWindow = getEventWindow(event, mainWindow);
       if (targetWindow) {
         targetWindow.close();
@@ -3260,20 +3374,20 @@ function createElectronApp(baseMode = "all") {
       return true;
     });
 
-    ipcMain.handle("window:is-maximized", (event) => {
+    trustedIpc.handle("window:is-maximized", (event) => {
       const targetWindow = getEventWindow(event, mainWindow);
       if (!targetWindow) return false;
       return targetWindow.isMaximized();
     });
 
-    ipcMain.handle("window:is-fullscreen", (event) => {
+    trustedIpc.handle("window:is-fullscreen", (event) => {
       const targetWindow = getEventWindow(event, mainWindow);
       if (!targetWindow) return false;
       return targetWindow.isFullScreen();
     });
 
     // 切换窗口全屏 (类似 F11)。供 AI 工作区「全屏」按钮与 F11 快捷键调用。
-    ipcMain.handle("window:toggle-fullscreen", (event, payload) => {
+    trustedIpc.handle("window:toggle-fullscreen", (event, payload) => {
       const targetWindow = getEventWindow(event, mainWindow) || mainWindow;
       if (!targetWindow || targetWindow.isDestroyed()) return false;
       const next =
@@ -3284,25 +3398,25 @@ function createElectronApp(baseMode = "all") {
       return next;
     });
 
-    ipcMain.handle("sender:start", async (_event, senderSettings) => {
+    trustedIpc.handle("sender:start", async (_event, senderSettings) => {
       assertMode("sender");
       aiRouteHealthCache.clear();
       const result = await backend.startSender(senderSettings);
       warmActiveAiRouteHealth(senderSettings);
       return result;
     });
-    ipcMain.handle("sender:stop", () => {
+    trustedIpc.handle("sender:stop", () => {
       assertMode("sender");
       aiRouteHealthCache.clear();
       backend.stopSender();
       return backend.getStatus();
     });
 
-    ipcMain.handle("receiver:start", (_event, receiverSettings) => {
+    trustedIpc.handle("receiver:start", (_event, receiverSettings) => {
       assertMode("receiver");
       return backend.startReceiver(receiverSettings);
     });
-    ipcMain.handle("receiver:stop", () => {
+    trustedIpc.handle("receiver:stop", () => {
       assertMode("receiver");
       backend.stopReceiver();
       return backend.getStatus();
@@ -3319,6 +3433,19 @@ function createElectronApp(baseMode = "all") {
     process.on("unhandledRejection", (reason) => log.error("unhandledRejection:", reason));
     backend = new Backend(app, () => mainWindow, appMode);
     backend.init();
+
+    environmentCleanup = createAiEnvironmentCleanup({
+      file: path.join(app.getPath("userData"), "ai-environment-cleanup.json"),
+      clearPartition: (partition) => clearAiSessionData(session.fromPartition(partition)),
+      canClear: (record) => {
+        if (backend.getPrincipalContext().principalId !== record.principalId) return false;
+        return !(backend.loadSettings().advancedAi?.environments || []).some(
+          (environment) =>
+            environment.id === record.environmentId && environment.kind === record.kind,
+        );
+      },
+    });
+    retryPendingEnvironmentCleanup();
 
     registerIpc();
     createWindow();

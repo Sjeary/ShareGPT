@@ -4,6 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const http = require("node:http");
 const { pathToFileURL } = require("node:url");
+const { listenFixture } = require("./lib/listen-fixture.cjs");
 const { WebSocketServer } = require("../collab_server2/node_modules/ws");
 const ROOT = path.resolve(__dirname, "..");
 
@@ -28,7 +29,13 @@ window.switchPrincipal = (username) => {
 };
 window.switchPrincipal('Alice');
 const root = createRoot(document.getElementById('root'));
-window.mountChat = () => flushSync(() => root.render(<main className="bg-background text-foreground" style={{display:'flex',height:'100vh'}}><ChatPanel /></main>));
+function Fixture() {
+  const active = useAppStore(state => state.active);
+  return <main className="bg-background text-foreground" style={{display:'flex',height:'100vh'}}><div className={active === 'chat' ? 'contents' : 'hidden'}><ChatPanel /></div></main>;
+}
+window.selectConversation = key => flushSync(() => useChatStore.getState().setActiveKey(key));
+window.selectPanel = active => flushSync(() => useAppStore.setState({ active }));
+window.mountChat = () => flushSync(() => root.render(<Fixture />));
 window.unmountChat = () => flushSync(() => root.render(null));
 const send = WebSocket.prototype.send;
 window.failNextChat = false;
@@ -110,7 +117,7 @@ async function run() {
   });
   let app;
   try {
-    await server.listen();
+    await listenFixture(server);
     app = await electron.launch({
       args: [__filename],
       env: {
@@ -129,6 +136,26 @@ async function run() {
       () =>
         window.chatStore?.getState().connection === "online" &&
         window.chatStore.getState().directory.length === 2,
+    );
+    const broadcast = (payload) => {
+      for (const socket of sockets.clients) socket.send(JSON.stringify(payload));
+    };
+    for (let index = 0; index < 3; index += 1) {
+      broadcast({
+        type: "system",
+        scope: "subnet",
+        text: "Fixture member is online " + index,
+        timestamp: new Date(2026, 8, 7, 10, index).toISOString(),
+      });
+    }
+    await page
+      .locator("[data-chat-scroll-viewport]")
+      .getByText("Fixture member is online 2", { exact: true })
+      .waitFor();
+    assert.equal(
+      await page.getByRole("separator", { name: "未读消息", exact: true }).count(),
+      0,
+      "id-less system messages must not match an empty unread marker",
     );
     const input = page.getByRole("textbox", { name: "消息内容", exact: true });
     await input.fill("Room draft");
@@ -179,9 +206,6 @@ async function run() {
     assert.equal(received.filter((m) => m.type === "chat").length, 1);
     await page.screenshot({ path: path.join(directory, "offline-draft.png") });
     await page.evaluate(() => window.chatStore.getState().setConnection("online"));
-    const broadcast = (payload) => {
-      for (const socket of sockets.clients) socket.send(JSON.stringify(payload));
-    };
     const history = Array.from({ length: 70 }, (_, i) => ({
       id: "history-" + i,
       type: "chat",
@@ -229,8 +253,107 @@ async function run() {
       return node.scrollHeight - node.scrollTop - node.clientHeight < 2;
     });
     await latest.waitFor({ state: "hidden" });
+    await page.getByRole("separator", { name: "未读消息", exact: true }).waitFor({
+      state: "hidden",
+    });
     assert.ok(received.some((m) => m.type === "chat_read" && m.messageIds?.includes("live-1")));
     await page.screenshot({ path: path.join(directory, "reading-latest.png") });
+
+    // A completed read must survive both conversation changes and Shell's hidden panel.
+    await page.evaluate(() => window.selectConversation("user:Bob"));
+    await page.evaluate(() => window.selectConversation(""));
+    assert.ok(
+      await viewport.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight < 2),
+      "returning to a read conversation must stay at latest",
+    );
+    await page.evaluate(() => window.appStore.setState({ active: "service" }));
+    await page.evaluate(() => window.appStore.setState({ active: "chat" }));
+    assert.ok(
+      await viewport.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight < 2),
+      "returning from another panel must stay at latest",
+    );
+
+    // Scroll delivery is asynchronous: navigating immediately must not keep the old anchor.
+    await viewport.evaluate((node) => {
+      node.scrollTop = 300;
+    });
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
+    await page.evaluate(() => {
+      const node = document.querySelector("[data-chat-scroll-viewport]");
+      node.scrollTop = node.scrollHeight;
+      window.selectConversation("user:Bob");
+    });
+    await page.evaluate(() => window.selectConversation(""));
+    assert.ok(
+      await viewport.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight < 2),
+      "read-to-bottom followed immediately by navigation must retain latest intent",
+    );
+    await viewport.evaluate((node) => {
+      node.scrollTop = 300;
+    });
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    );
+    await page.evaluate(() => {
+      const node = document.querySelector("[data-chat-scroll-viewport]");
+      node.scrollTop = node.scrollHeight;
+      window.selectPanel("service");
+    });
+    await page.evaluate(() => window.selectPanel("chat"));
+    assert.ok(
+      await viewport.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight < 2),
+      "read-to-bottom followed immediately by hiding the panel must retain latest intent",
+    );
+
+    // The inverse transition must retain intentional history reading, not force the bottom.
+    await page.evaluate(() => {
+      document.querySelector("[data-chat-scroll-viewport]").scrollTop = 300;
+      window.selectConversation("user:Bob");
+    });
+    await page.evaluate(() => window.selectConversation(""));
+    assert.ok(
+      Math.abs((await viewport.evaluate((node) => node.scrollTop)) - 300) < 2,
+      "an immediate history scroll must keep its actual anchor",
+    );
+    await page.getByRole("button", { name: "回到最新", exact: true }).click();
+
+    const privateUnread = Array.from({ length: 30 }, (_, i) => ({
+      id: "private-unread-" + i,
+      type: "chat",
+      scope: "private",
+      from: "Bob",
+      to: "Alice",
+      username: "Bob",
+      text: "Private unread " + i,
+      timestamp: new Date(2026, 8, 7, 11, i).toISOString(),
+    }));
+    for (const message of privateUnread) broadcast(message);
+    await page.waitForFunction(() => window.chatStore.getState().unreadByKey["user:Bob"] === 30);
+    await page.evaluate(() => window.chatStore.getState().setActiveKey("user:Bob"));
+    const privateLatest = page.getByRole("button", { name: "30 条新消息", exact: true });
+    await privateLatest.waitFor();
+    const privateMarker = page.getByRole("separator", { name: "未读消息", exact: true });
+    await privateMarker.waitFor();
+    const unreadPlacement = await page
+      .locator('[data-message-id="private-unread-0"]')
+      .evaluate((node) => {
+        const root = document.querySelector("[data-chat-scroll-viewport]");
+        return {
+          messageTop: node.getBoundingClientRect().top,
+          viewportTop: root.getBoundingClientRect().top,
+          viewportBottom: root.getBoundingClientRect().bottom,
+        };
+      });
+    assert.ok(unreadPlacement.messageTop >= unreadPlacement.viewportTop);
+    assert.ok(unreadPlacement.messageTop < unreadPlacement.viewportTop + 140);
+    assert.ok(unreadPlacement.messageTop < unreadPlacement.viewportBottom);
+    await privateLatest.click();
+    await privateLatest.waitFor({ state: "hidden" });
+    await privateMarker.waitFor({ state: "hidden" });
+    await page.evaluate(() => window.chatStore.getState().setActiveKey(""));
+
     const receiptsBefore = received.filter((m) => m.type === "chat_read").length;
     broadcast({
       type: "chat_read",
@@ -344,6 +467,40 @@ async function run() {
       "live-2",
     );
     await page.screenshot({ path: path.join(directory, "new-message-indicator.png") });
+    // Delayed delivery must put the one boundary at the oldest unread in display order.
+    broadcast({
+      ...laterMessage,
+      id: "delayed-unread",
+      text: "Earlier unread delivered later",
+      timestamp: new Date(Date.parse(laterMessage.timestamp) - 1000).toISOString(),
+    });
+    await page.getByRole("button", { name: "2 条新消息", exact: true }).waitFor();
+    assert.equal(await marker.count(), 1);
+    assert.equal(
+      await marker.evaluate(
+        (node) => node.parentElement.querySelector("[data-message-id]")?.dataset.messageId,
+      ),
+      "delayed-unread",
+      "the boundary belongs to the oldest unread, not the first delivery",
+    );
+    await page.getByRole("button", { name: "2 条新消息", exact: true }).click();
+    await marker.waitFor({ state: "hidden" });
+    for (let i = 0; i < 6; i++) {
+      broadcast({
+        type: "system",
+        scope: "subnet",
+        text: `Fixture ${i} ${i % 2 ? "已上线" : "已离线"}`,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    await viewport.getByText("Fixture 5 已上线", { exact: true }).waitFor();
+    await page.evaluate(() => window.chatStore.getState().setActiveKey("user:Bob"));
+    await page.evaluate(() => window.chatStore.getState().setActiveKey(""));
+    assert.equal(
+      await marker.count(),
+      0,
+      "read boundaries must not return with presence or navigation",
+    );
     assert.deepEqual(errors, []);
     process.stdout.write(
       JSON.stringify({
