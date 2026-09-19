@@ -34,7 +34,7 @@ import { useTranslationStore } from '@/store/useTranslationStore'
 import type { AiKind } from '@/store/useAiStore'
 import { isSenderRunning } from '@/components/panels/service/helpers'
 import { api } from '@/lib/api'
-import { canUseAdvancedAi, canUseTranslation } from '@/lib/aiAccess'
+import { canBrowseExternalWeb, canUseAdvancedAi, canUseTranslation } from '@/lib/aiAccess'
 import { userFacingAiWorkspaceError } from '@/lib/aiWorkspaceError'
 import { coalesceInFlight } from '@/lib/inFlightRequest'
 import { toast } from 'sonner'
@@ -52,6 +52,7 @@ import {
   normalizeGeminiUrl,
   normalizeClaudeUrl,
   normalizeHttpUrl,
+  isExternalBrowsingKind,
 } from './constants'
 import type { AiEventPayload } from './types'
 import { AiEnvironmentPanel } from './AiEnvironmentPanel'
@@ -133,6 +134,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     [settings?.advancedAi],
   )
   const advancedMode = advancedAiAllowed && advancedAi.enabled
+  const externalBrowsingAvailable = useAuthStore((s) =>
+    canBrowseExternalWeb(kind, workspaceMode, s.token, s.profile, advancedMode),
+  )
   const availableRoutes = useMemo(() => availableAiRoutes(settings?.sender), [settings?.sender])
   const managedDefaultRoute = useMemo(
     () => managedDefaultRouteForKind(availableRoutes, settings?.sender, kind),
@@ -304,15 +308,19 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const [addressValue, setAddressValue] = useState('')
   const [webAddressOpen, setWebAddressOpen] = useState(false)
 
-  if (!networkReady && webAddressOpen) setWebAddressOpen(false)
+  useEffect(() => {
+    if (networkReady && externalBrowsingAvailable) return
+    const frame = window.requestAnimationFrame(() => setWebAddressOpen(false))
+    return () => window.cancelAnimationFrame(frame)
+  }, [externalBrowsingAvailable, networkReady])
 
   useEffect(() => {
-    if (kind !== 'claude' || document.activeElement === addressInputRef.current) return
+    if (!externalBrowsingAvailable || document.activeElement === addressInputRef.current) return
     setAddressValue(activeTab?.allowExternalBrowsing ? activeTab.url : '')
-  }, [kind, activeTabId, activeTab?.allowExternalBrowsing, activeTab?.url])
+  }, [activeTabId, activeTab?.allowExternalBrowsing, activeTab?.url, externalBrowsingAvailable])
 
   useEffect(() => {
-    if (kind !== 'claude' || !networkReady) return
+    if (!externalBrowsingAvailable || !networkReady) return
     const focusAddressBar = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'l') return
       event.preventDefault()
@@ -320,7 +328,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     }
     window.addEventListener('keydown', focusAddressBar)
     return () => window.removeEventListener('keydown', focusAddressBar)
-  }, [kind, networkReady])
+  }, [externalBrowsingAvailable, networkReady])
 
   useEffect(() => {
     if (!webAddressOpen) return
@@ -624,7 +632,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   }, [kind, environmentId, networkReady, ensureWorkspace, reportWorkspaceError])
 
   const openWebPage = useCallback(async () => {
-    if (kind !== 'claude') return
+    if (!externalBrowsingAvailable || !isExternalBrowsingKind(kind)) return
     const url = normalizeHttpUrl(addressValue, { assumeHttps: true })
     if (!url) {
       setFeedback(kind, '请输入有效的 HTTP 或 HTTPS 网址', 'error')
@@ -647,6 +655,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     }
   }, [
     kind,
+    externalBrowsingAvailable,
     addressValue,
     environmentId,
     setFeedback,
@@ -832,7 +841,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
                 </Button>
               </>
             )}
-            {kind === 'claude' && (
+            {externalBrowsingAvailable && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -951,7 +960,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           />
         )}
 
-        {kind === 'claude' && webAddressOpen && (
+        {externalBrowsingAvailable && webAddressOpen && (
           <form
             className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/20 px-3 py-1.5"
             onSubmit={(event) => {
@@ -965,7 +974,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
             <Globe2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <Input
               ref={addressInputRef}
-              data-testid="claude-address-input"
+              data-testid={`${kind}-address-input`}
               type="text"
               inputMode="url"
               value={addressValue}

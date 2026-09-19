@@ -260,6 +260,35 @@ async function main() {
     assert.strictEqual(Object.hasOwn(syncedPrivacy, "localProfiles"), false);
     assert.strictEqual(Object.hasOwn(syncedPrivacy, "audit"), false);
 
+    const deniedGptExternal = await window.evaluate(() =>
+      window.api.createAiView("gpt", {
+        lastUrl: "https://example.com/team-reference",
+        title: "example.com",
+        allowExternalBrowsing: true,
+      }),
+    );
+    const deniedGptExternalTab = deniedGptExternal.tabs?.find(
+      (tab) => tab.id === deniedGptExternal.activeTabId,
+    );
+    assert.strictEqual(
+      deniedGptExternalTab?.allowExternalBrowsing,
+      false,
+      "a regular organization account must not enable ChatGPT external browsing through IPC",
+    );
+    await window.evaluate(
+      (tabId) => window.api.closeAiView("gpt", { tabId }),
+      deniedGptExternalTab.id,
+    );
+
+    await window.locator('[data-tour="nav-gpt"]').click();
+    assert.strictEqual(
+      await window.getByRole("button", { name: "打开网页", exact: true }).count(),
+      0,
+      "a regular organization account must not see ChatGPT external browsing",
+    );
+    await window.locator('[data-tour="nav-account"]').click();
+    await window.getByText("网页隐私与环境", { exact: true }).waitFor({ state: "visible" });
+
     await window.screenshot({ path: screenshotPath, fullPage: true });
 
     if (Number.isInteger(upstreamSocksPort) && upstreamSocksPort > 0) {

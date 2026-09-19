@@ -279,6 +279,14 @@ async function startFixtureServers(directory) {
       else complete();
       return;
     }
+    if (request.method === "GET" && fixtureUrl.pathname === "/gpt-external-reference") {
+      response.writeHead(200, {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      response.end("External reference page");
+      return;
+    }
     response.writeHead(200, {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
@@ -1769,6 +1777,41 @@ async function main() {
       expectedPrincipalGeneration: principalB.generation,
     });
     assert.notEqual(settingsB.gpt.last_url, "https://chatgpt.com/c/stale-from-a");
+
+    process.stdout.write(
+      "[verify] personal ChatGPT external tab keeps an arbitrary text page open\n",
+    );
+    const localPrincipal = await api(page, "clearSettingsPrincipal", {
+      expectedPrincipalId: principalB.principalId,
+      expectedPrincipalGeneration: principalB.generation,
+    });
+    assert.equal(localPrincipal.principalId, "local-device");
+    const externalUrl = "http://fixture.invalid/gpt-external-reference";
+    const externalTabPayload = await api(page, "createAiView", "gpt", {
+      lastUrl: externalUrl,
+      title: "fixture.invalid",
+      allowExternalBrowsing: true,
+    });
+    const externalTabId = externalTabPayload.activeTabId;
+    const externalTab = externalTabPayload.tabs.find((tab) => tab.id === externalTabId);
+    assert.equal(externalTab?.allowExternalBrowsing, true);
+    await ensureTab(page, {
+      kind: "gpt",
+      tabId: externalTabId,
+      url: externalUrl,
+      socksPort,
+      allowExternalBrowsing: true,
+    });
+    await waitUntil(
+      async () =>
+        (await appSnapshot(electronApp)).contents.some((contents) => contents.url === externalUrl),
+      "personal GPT external text page load",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.ok(
+      (await appSnapshot(electronApp)).contents.some((contents) => contents.url === externalUrl),
+      "ChatGPT raw-document recovery must not replace an external text page",
+    );
     process.stdout.write("[verify] real appFactory AI workspace lifecycle passed\n");
   } finally {
     await electronApp?.close().catch(() => undefined);

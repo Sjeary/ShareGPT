@@ -97,6 +97,10 @@ export function isClaudeAllowedUrl(rawUrl: string): boolean {
   return isAllowedUrlForHosts(rawUrl, CLAUDE_ALLOWED_HOSTS)
 }
 
+export function isExternalBrowsingKind(kind: AiKind): boolean {
+  return kind === 'gpt' || kind === 'claude'
+}
+
 // 旧 normalizeGptUrl: chatgpt.com 根路径回落到登录主页, 非法 URL 回落主页。
 export function normalizeGptUrl(rawUrl: string, homeUrl = GPT_HOME_URL): string {
   const url = String(rawUrl || '').trim()

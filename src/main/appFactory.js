@@ -38,7 +38,13 @@ const {
   normalizeAiPartition,
   partitionForProfile,
 } = require("./browserFingerprint");
-const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
+const {
+  canEnableExternalBrowsing,
+  isAllowedUrlForHosts,
+  isWorkspaceUrlAllowed,
+  normalizeHttpUrl,
+} = require("./aiNavigation");
+const { LOCAL_PRINCIPAL_ID } = require("./principal");
 const { translateText } = require("./translation");
 const {
   COMPOSER_OPERATION_WORLD_ID,
@@ -1840,7 +1846,7 @@ function createElectronApp(baseMode = "all") {
     wc.on("did-finish-load", () => {
       if (!isCurrentView()) return;
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
-      if (workspace.kind !== "gpt") return;
+      if (workspace.kind !== "gpt" || workspace.allowExternalBrowsing) return;
       void detectRawChatGptDocument(wc)
         .then((isRawDocument) => {
           if (!isCurrentView()) return;
@@ -2243,6 +2249,11 @@ function createElectronApp(baseMode = "all") {
     if (!ownerPrincipalId || ownerPrincipalGeneration < 1) {
       throw new Error("账号身份尚未准备好");
     }
+    const externalBrowsingAllowed = canEnableExternalBrowsing({
+      kind: targetKind,
+      personalWorkspace: ownerPrincipalId === LOCAL_PRINCIPAL_ID,
+      environmentId,
+    });
 
     const workspace = {
       id: targetTabId,
@@ -2269,7 +2280,7 @@ function createElectronApp(baseMode = "all") {
       loading: false,
       visible: false,
       lastUrl: safeText(options.lastUrl) || policy.homeUrl,
-      allowExternalBrowsing: targetKind === "claude" && Boolean(options.allowExternalBrowsing),
+      allowExternalBrowsing: externalBrowsingAllowed && Boolean(options.allowExternalBrowsing),
       defaultTitle: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
       title: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
       proxySignature: "",

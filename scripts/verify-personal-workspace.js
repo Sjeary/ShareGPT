@@ -106,6 +106,27 @@ async function main() {
       "created AI workspace must be present in the main-process tab registry",
     );
 
+    const personalExternalWorkspace = await page.evaluate(() =>
+      window.api.createAiView("gpt", {
+        lastUrl: "https://example.com/personal-reference",
+        title: "example.com",
+        allowExternalBrowsing: true,
+      }),
+    );
+    const personalExternalTab = personalExternalWorkspace.tabs?.find(
+      (tab) => tab.id === personalExternalWorkspace.activeTabId,
+    );
+    assert.equal(
+      personalExternalTab?.allowExternalBrowsing,
+      true,
+      "personal ChatGPT workspace must accept an explicit external web tab",
+    );
+    assert.equal(personalExternalTab?.url, "https://example.com/personal-reference");
+    await page.evaluate(
+      (tabId) => window.api.closeAiView("gpt", { tabId }),
+      personalExternalTab.id,
+    );
+
     await page.locator('[data-tour="nav-service"]').click();
     assert.equal(await page.getByText(/请先登录账号并保持在线/).count(), 0);
     assert.equal(await page.getByText("代理协议", { exact: true }).count(), 1);
@@ -126,6 +147,18 @@ async function main() {
     const senderStatus = await page.evaluate(() => window.api.getStatus());
     assert.equal(senderStatus.senderRunning, true);
     assert.notEqual(senderStatus.senderSocksPort, 1080);
+
+    await page.locator('[data-tour="nav-gpt"]').click();
+    const personalOpenWebPageButton = page.getByRole("button", {
+      name: "打开网页",
+      exact: true,
+    });
+    await personalOpenWebPageButton.waitFor({ state: "visible" });
+    assert.equal(await personalOpenWebPageButton.isEnabled(), true);
+    await personalOpenWebPageButton.click();
+    await page.getByTestId("gpt-address-input").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "收起网址输入", exact: true }).click();
+    await page.getByTestId("gpt-address-input").waitFor({ state: "detached" });
 
     const ensuredWorkspace = await page.evaluate(
       async ({ tabId, port }) => {

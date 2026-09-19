@@ -4,6 +4,7 @@ interface AiCapabilityProfile {
 }
 
 type AiWorkspaceMode = 'chooser' | 'personal' | 'organization'
+type ExternalBrowsingAiKind = 'gpt' | 'gemini' | 'claude'
 
 export function canUseTranslation(
   workspaceMode: AiWorkspaceMode,
@@ -24,4 +25,17 @@ export function canUseAdvancedAi(
     workspaceMode === 'organization' &&
     (profile?.isAdmin || profile?.advancedAiAllowed),
   )
+}
+
+export function canBrowseExternalWeb(
+  kind: ExternalBrowsingAiKind,
+  workspaceMode: AiWorkspaceMode,
+  token: string | null | undefined,
+  profile: AiCapabilityProfile | null | undefined,
+  advancedAiEnabled: boolean,
+): boolean {
+  if (kind === 'claude') return true
+  if (kind !== 'gpt') return false
+  if (workspaceMode === 'personal') return true
+  return advancedAiEnabled && canUseAdvancedAi(workspaceMode, token, profile)
 }

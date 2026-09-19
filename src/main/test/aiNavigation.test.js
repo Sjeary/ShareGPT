@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 
 const {
+  canEnableExternalBrowsing,
   isAllowedUrlForHosts,
   isWorkspaceUrlAllowed,
   normalizeHttpUrl,
@@ -24,7 +25,7 @@ test("普通 AI 标签继续使用域名白名单", () => {
   assert.strictEqual(isAllowedUrlForHosts("https://example.com/verify", ["claude.ai"]), false);
 });
 
-test("只有显式创建的 Claude 外部网页标签允许任意 HTTP/HTTPS", () => {
+test("只有显式创建的 Claude 或获授权 ChatGPT 外部网页标签允许任意 HTTP/HTTPS", () => {
   const policy = { allowedHosts: ["claude.ai"] };
   assert.strictEqual(
     isWorkspaceUrlAllowed({ kind: "claude", policy }, "https://example.com/verify"),
@@ -42,13 +43,36 @@ test("只有显式创建的 Claude 外部网页标签允许任意 HTTP/HTTPS", (
       { kind: "gpt", policy, allowExternalBrowsing: true },
       "https://example.com/verify",
     ),
-    false,
+    true,
   );
   assert.strictEqual(
     isWorkspaceUrlAllowed(
       { kind: "claude", policy, allowExternalBrowsing: true },
       "data:text/html,unsafe",
     ),
+    false,
+  );
+});
+
+test("ChatGPT 外部网页权限只向个人工作区或高级环境开放", () => {
+  assert.strictEqual(
+    canEnableExternalBrowsing({ kind: "claude", personalWorkspace: false, environmentId: "" }),
+    true,
+  );
+  assert.strictEqual(
+    canEnableExternalBrowsing({ kind: "gpt", personalWorkspace: true, environmentId: "" }),
+    true,
+  );
+  assert.strictEqual(
+    canEnableExternalBrowsing({ kind: "gpt", personalWorkspace: false, environmentId: "env-a" }),
+    true,
+  );
+  assert.strictEqual(
+    canEnableExternalBrowsing({ kind: "gpt", personalWorkspace: false, environmentId: "" }),
+    false,
+  );
+  assert.strictEqual(
+    canEnableExternalBrowsing({ kind: "gemini", personalWorkspace: true, environmentId: "env-a" }),
     false,
   );
 });

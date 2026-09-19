@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { canUseAdvancedAi, canUseTranslation } from './aiAccess.ts'
+import { canBrowseExternalWeb, canUseAdvancedAi, canUseTranslation } from './aiAccess.ts'
 
 test('a signed-in regular account can translate without gaining advanced environments', () => {
   const regular = { isAdmin: false, advancedAiAllowed: false }
@@ -25,4 +25,24 @@ test('personal translation is local while advanced environments remain organizat
   assert.equal(canUseTranslation('personal', '', null), true)
   assert.equal(canUseAdvancedAi('personal', 'session-token', { isAdmin: true }), false)
   assert.equal(canUseTranslation('chooser', 'session-token', { isAdmin: true }), false)
+})
+
+test('external web tabs stay available in Claude without widening Gemini', () => {
+  const regular = { isAdmin: false, advancedAiAllowed: false }
+  assert.equal(
+    canBrowseExternalWeb('claude', 'organization', 'session-token', regular, false),
+    true,
+  )
+  assert.equal(canBrowseExternalWeb('gemini', 'personal', '', null, true), false)
+})
+
+test('ChatGPT external web tabs require a personal or enabled advanced workspace', () => {
+  const regular = { isAdmin: false, advancedAiAllowed: false }
+  const advanced = { isAdmin: false, advancedAiAllowed: true }
+
+  assert.equal(canBrowseExternalWeb('gpt', 'personal', '', null, false), true)
+  assert.equal(canBrowseExternalWeb('gpt', 'organization', 'session-token', regular, true), false)
+  assert.equal(canBrowseExternalWeb('gpt', 'organization', 'session-token', advanced, false), false)
+  assert.equal(canBrowseExternalWeb('gpt', 'organization', 'session-token', advanced, true), true)
+  assert.equal(canBrowseExternalWeb('gpt', 'chooser', 'session-token', advanced, true), false)
 })
