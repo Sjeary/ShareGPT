@@ -4,7 +4,9 @@ const asar = require("@electron/asar");
 // Inspect the archive, not the development checkout: hoisted or linked modules
 // can resolve during tests while being absent from the installed application.
 function verifyPackagedDependencies(archive) {
-  const files = new Set(asar.listPackage(archive).map((file) => file.replace(/^\//, "")));
+  const files = new Set(
+    asar.listPackage(archive, { isPack: false }).map((file) => file.replace(/^\//, "")),
+  );
   const visited = new Set();
   const pending = [""];
   const missing = [];
