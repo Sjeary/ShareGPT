@@ -71,7 +71,7 @@
     "dist:win:release": "npm run build:next && node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --win nsis -c.forceCodeSigning=true",
     "dist:mac": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --mac --config build.sender.json",
     "dist:mac:sender": "npm run dist:mac",
-    "dist:mac:sender:local": "npm run build:next && node scripts/prepare-assets.mjs sender --required && CSC_IDENTITY_AUTO_DISCOVERY=false npm exec -- electron-builder --mac dir --config build.sender.json -c.mac.notarize=false -c.mac.hardenedRuntime=false && bash scripts/sign-local-macos.sh release_sender/mac-arm64/ShareGPT.app",
+    "dist:mac:sender:local": "npm run build:next && node scripts/prepare-assets.mjs sender --required && CSC_IDENTITY_AUTO_DISCOVERY=false npm exec -- electron-builder --mac dir --config build.sender.json -c.mac.notarize=false -c.mac.hardenedRuntime=false && node scripts/verify-packaged-dependencies.cjs release_sender/mac-arm64/ShareGPT.app/Contents/Resources/app.asar && bash scripts/sign-local-macos.sh release_sender/mac-arm64/ShareGPT.app",
     "dist:linux": "node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --linux AppImage",
     "dev:admin": "npm --prefix admin_console run dev",
     "dist:admin:win": "npm --prefix admin_console run dist:win",
