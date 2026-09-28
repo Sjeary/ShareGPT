@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
+const { finished } = require("node:stream/promises");
 const asar = require("@electron/asar");
 const { verifyPackagedDependencies } = require("../../../scripts/verify-packaged-dependencies.cjs");
 
@@ -15,7 +16,9 @@ async function fixture(t, packages) {
     await fs.writeFile(path.join(target, "package.json"), JSON.stringify(manifest));
   }
   const archive = path.join(root, "app.asar");
-  await asar.createPackage(path.join(root, "source"), archive);
+  // asar 3 returns the output stream before its final writes have completed.
+  const output = await asar.createPackage(path.join(root, "source"), archive);
+  await finished(output);
   return archive;
 }
 
