@@ -150,6 +150,108 @@ test("出口检测必须由两条链路确认同一个 IP", async () => {
   assert.strictEqual(viaInjectedTransport.ip, "203.0.113.10");
 });
 
+test("定位 TLS 故障切换备用源，仍核对出口并保留 ASN", async () => {
+  const agent = {};
+  const calls = [];
+  const result = await detectProxyEnvironment(1080, {
+    agent,
+    fetchText: async (url, actual) => {
+      assert.strictEqual(actual, agent);
+      calls.push(url);
+      if (url.includes("ipwho")) throw new Error("TLS disconnected");
+      if (url.includes("cloudflare")) return "ip=203.0.113.10\nloc=US\n";
+      return JSON.stringify({
+        ip: "203.0.113.10",
+        country: "US",
+        loc: "34.05,-118.24",
+        timezone: "America/Los_Angeles",
+        org: "AS123 Test",
+      });
+    },
+  });
+  assert.strictEqual(result.asn, "AS123");
+  assert.strictEqual(result.timezone, "America/Los_Angeles");
+  assert.strictEqual(calls.length, 3);
+});
+
+test("位置服务均失败只允许线路验证降级，环境同步不写入残缺数据", async () => {
+  const fetchText = async (url) => {
+    if (url.includes("cloudflare")) return "ip=203.0.113.10\nloc=US\n";
+    if (url.includes("ipify")) return "203.0.113.10";
+    throw new Error("provider unavailable");
+  };
+  const detected = await detectProxyEnvironment(1080, { agent: {}, fetchText, routeOnly: true });
+  assert.strictEqual(detected.ip, "203.0.113.10");
+  assert.strictEqual(detected.locationUnavailable, true);
+  assert.strictEqual(Object.hasOwn(detected, "timezone"), false);
+  const { buildAiRouteHealth } = require("../aiRouteHealth");
+  const route = { id: "test", dnsTag: "dns", outboundTag: "out", expected: { countryCode: "US" } };
+  assert.strictEqual(buildAiRouteHealth(route, detected).ok, true);
+  for (const expected of [{ asn: "123" }, { countryCode: "GB" }, { ip: "198.51.100.1" }]) {
+    assert.strictEqual(buildAiRouteHealth({ ...route, expected }, detected).ok, false);
+  }
+  await assert.rejects(detectProxyEnvironment(1080, { agent: {}, fetchText }), /已保留原有/);
+});
+
+test("备用源出口冲突和交叉检测失败不降级放行", async () => {
+  for (const mismatchProvider of ["ipwho", "ipinfo", "ipify"]) {
+    await assert.rejects(
+      detectProxyEnvironment(1080, {
+        agent: {},
+        routeOnly: true,
+        fetchText: async (url) => {
+          if (url.includes("cloudflare")) return "ip=203.0.113.10\nloc=US\n";
+          if (url.includes(mismatchProvider))
+            return mismatchProvider === "ipify"
+              ? "198.51.100.2"
+              : JSON.stringify({ ip: "198.51.100.2" });
+          throw new Error("unavailable");
+        },
+      }),
+      /出口 IP 不一致/,
+    );
+  }
+  await assert.rejects(
+    detectProxyEnvironment(1080, {
+      agent: {},
+      routeOnly: true,
+      fetchText: async () => {
+        throw new Error("TLS disconnected");
+      },
+    }),
+    /出口交叉验证服务连接失败/,
+  );
+});
+
+test("交叉验证服务故障可替换，但不能把同一服务重复算成两份证据", async () => {
+  const fetchText = async (url) => {
+    if (url.includes("ipify")) return "203.0.113.10";
+    if (url.includes("ipwho"))
+      return JSON.stringify({
+        ip: "203.0.113.10",
+        timezone: { id: "America/Los_Angeles" },
+        latitude: 34,
+        longitude: -118,
+      });
+    throw new Error("unavailable");
+  };
+  assert.strictEqual(
+    (await detectProxyEnvironment(1080, { agent: {}, fetchText })).ip,
+    "203.0.113.10",
+  );
+  await assert.rejects(
+    detectProxyEnvironment(1080, {
+      agent: {},
+      routeOnly: true,
+      fetchText: async (url) => {
+        if (url.includes("ipify")) return "203.0.113.10";
+        throw new Error("unavailable");
+      },
+    }),
+    /仅一个出口检测服务/,
+  );
+});
+
 test("环境应用会设置语言、时区、地理位置和 WebRTC 防泄漏策略", async () => {
   const commands = [];
   const bootstrapUrls = [];

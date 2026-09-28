@@ -64,6 +64,8 @@ const DEFAULT_TARGET_DOMAINS = [
   "cloudflare.com",
   // 设置页用它查询代理出口的时区与城市级位置；必须经发送代理，不能回落真实出口。
   "ipwho.is",
+  "ipinfo.io",
+  "api.ipify.org",
   "wp.com",
   "gemini.google.com",
   "google.com",
@@ -942,6 +944,9 @@ class Backend {
       ...autoDomains,
       // 环境检测必须始终经远端出口，即使 all/dev 模式仍保存着旧版可编辑域名清单。
       "ipwho.is",
+      "ipinfo.io",
+      "api.ipify.org",
+      "cloudflare.com",
     ]
       .map((s) => String(s).trim().replace(/^\./, ""))
       .filter(Boolean);

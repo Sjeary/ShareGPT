@@ -799,7 +799,7 @@ function createElectronApp(baseMode = "all") {
     return aiRouteHealthCache.run(
       cacheKey,
       async () => {
-        const detected = await detectProxyEnvironment(route.port);
+        const detected = await detectProxyEnvironment(route.port, { routeOnly: true });
         return buildAiRouteHealth(route, detected);
       },
       options,

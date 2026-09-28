@@ -6,6 +6,17 @@ const path = require("node:path");
 const { Backend, resolvePersonalSenderListenPort } = require("../backend");
 const { activeAiRouteIds, managedDefaultRouteId } = require("../aiEnvironments");
 
+test("出口探测的备用域名在旧版自定义规则下仍固定经代理", () => {
+  const backend = Object.create(Backend.prototype);
+  for (const appMode of ["sender", "all"]) {
+    backend.appMode = appMode;
+    const domains = backend.proxiedDomainSuffixes({ target_domains: "example.com" });
+    for (const host of ["ipwho.is", "ipinfo.io", "api.ipify.org", "cloudflare.com"]) {
+      assert.ok(domains.includes(host), `${appMode}: ${host}`);
+    }
+  }
+});
+
 test("基础 AI 工作区只接受合法的管理员默认线路", () => {
   const sender = {
     managed_default_route_by_kind: {
