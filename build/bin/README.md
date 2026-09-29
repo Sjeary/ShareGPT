@@ -1,63 +1,28 @@
 # Third-Party Binaries
 
-ShareGPT 运行代理能力时依赖以下第三方程序：
+ShareGPT 桌面客户端的代理能力需要 `sing-box`。默认开发和打包入口只准备此资源；历史接收端使用的 `frpc` 不属于当前客户端依赖。
 
-- `sing-box`
-- `frpc`：仅 Receiver 模式需要
+二进制不提交到源码仓库。固定版本与 SHA-256 见 [`checksums.json`](checksums.json)。
 
-源码仓库不再直接提交这些二进制文件。这样可以避免把第三方可执行文件和大体积产物放进 Git 历史。
+## 准备资源
 
-## 下载来源
-- sing-box 官方发布页：`https://github.com/SagerNet/sing-box/releases`
-- frp 官方发布页：`https://github.com/fatedier/frp/releases`
+从 [sing-box 官方发布页](https://github.com/SagerNet/sing-box/releases) 下载当前平台、架构及清单指定版本，放到 `build/bin/`，或对应的 `build/bin/windows/`、`build/bin/macos/`、`build/bin/linux/`。
 
-## 版本与校验和（供应链安全）
-
-固定版本与 SHA256 记录在 [`checksums.json`](checksums.json)。打包脚本 `prepare-assets.mjs` 会在拷贝时按当前平台核对：
-
-- 不匹配 → 普通运行告警；构建（`--required`）直接失败。
-- **更换二进制版本时**：从官方发布页下载、核对官方校验和后，更新 `checksums.json` 里对应平台的 `version` 与 `sha256`。
-
-当前固定版本：sing-box `windows 1.11.8` / `macos 1.12.17`，frpc `windows 0.65.0`。
-
-GitHub Actions 的 Windows 构建使用 `scripts/prepare-windows-release-assets.ps1` 从上述官方
-Release 下载固定版本并校验 SHA-256，只写入 `build/bin/` 根目录。正式包校验会拒绝
-`resources/bin/windows/*.exe` 与根目录副本同时出现，避免安装包重复携带二进制。
-
-macOS 正式构建使用 `scripts/prepare-macos-release-assets.sh` 下载 arm64 官方归档，先校验
-归档 SHA-256，再校验解包后的可执行文件 SHA-256，校验通过后才写入 `build/bin/sing-box`。
-
-## 放置方式
-
-可以把下载后的文件放到以下任一位置：
-
-- `build/bin/`
-- `build/bin/windows/`
-- `build/bin/macos/`
-- `build/bin/linux/`
-
-常见文件名：
-
-- Windows：`sing-box.exe`、`frpc.exe`
-- macOS / Linux：`sing-box`、`frpc`
-
-macOS Sender 发行包只需要 `sing-box`，不需要 `frpc`。推荐放置方式：
+- Windows 文件名为 `sing-box.exe`。
+- macOS / Linux 文件名为 `sing-box`，需有执行权限。
+- 也可用 `SHAREGPT_SINGBOX_PATH` 指向已有文件，或用 `SHAREGPT_BIN_DIR` 指定资源目录。
 
 ```bash
-mkdir -p build/bin/macos
-cp /path/to/sing-box build/bin/macos/sing-box
-chmod +x build/bin/macos/sing-box
+npm run prepare:assets -- --required
+npm run dev
 ```
 
-## 环境变量方式
+准备脚本会核对 SHA-256。默认开发和打包均使用 `--required`，缺失或校验不符会停止。只测试界面且不启动代理时，可以在编译界面后直接运行 `npm exec -- electron .`；数据仍与正式应用隔离。
 
-如果你不想把二进制放到仓库内，可以通过环境变量指定已有路径：
+## 发布构建
 
-- `SHAREGPT_BIN_DIR`
-- `SHAREGPT_SINGBOX_PATH`
-- `SHAREGPT_FRPC_PATH`
+Windows 的 `scripts/prepare-windows-release-assets.ps1` 从官方 Release 下载固定版本并校验可执行文件 SHA-256。macOS 的 `scripts/prepare-macos-release-assets.sh` 下载 arm64 归档，先核对归档 SHA-256，再核对可执行文件。
 
-## 说明
+两者都把资源放到 `build/bin/` 根目录。当前客户端配置只打包根目录的 sing-box 可执行文件，避免把平台子目录、历史 frpc 和校验文档带进安装包。
 
-- 没有这些二进制时，应用仍然可以启动界面、登录、聊天、管理和打包
-- 只有真正点击启动 Sender / Receiver 代理服务时，才会提示缺少对应二进制
+更换二进制版本时，先核对官方来源与校验和，再更新清单中对应平台的版本和哈希。

@@ -23,7 +23,7 @@ function legacyReleaseCommands({ version, tag, platform }) {
   const commands = [
     [node, ["src/renderer-next/node_modules/typescript/bin/tsc", "-b", "src/renderer-next"]],
     [node, ["node_modules/vite/bin/vite.js", "build"], "src/renderer-next"],
-    [node, ["scripts/prepare-assets.mjs", platform === "darwin" ? "sender" : "all", "--required"]],
+    [node, ["scripts/prepare-assets.mjs", "sender", "--required"]],
   ];
   if (platform === "win32") {
     commands.push([node, [builder, "--win", "nsis", "--x64", "--publish", "never"]]);

@@ -40,7 +40,6 @@ const appAsar = requiredFile(path.join(releaseDir, "win-unpacked", "resources", 
 const singBox = requiredFile(
   path.join(releaseDir, "win-unpacked", "resources", "bin", "sing-box.exe"),
 );
-const frpc = requiredFile(path.join(releaseDir, "win-unpacked", "resources", "bin", "frpc.exe"));
 for (const duplicate of ["sing-box", "frpc"]) {
   const duplicatePath = path.join(
     root,
@@ -88,10 +87,7 @@ const appUpdateMetadata = assertWindowsAppUpdateContract(
 
 const checksumFile = path.join(root, "build", "bin", "checksums.json");
 const checksums = JSON.parse(fs.readFileSync(checksumFile, "utf8"));
-for (const [label, asset] of [
-  ["sing-box", singBox],
-  ["frpc", frpc],
-]) {
+for (const [label, asset] of [["sing-box", singBox]]) {
   const expected = String(checksums?.[label]?.windows?.sha256 || "").toLowerCase();
   const actual = sha256(asset.filePath).toLowerCase();
   if (!expected || actual !== expected) {
@@ -126,7 +122,6 @@ process.stdout.write(
         npmCacheEntries: localCacheEntries.length,
         rendererIndex,
         singBoxBytes: singBox.size,
-        frpcBytes: frpc.size,
       },
     },
     null,

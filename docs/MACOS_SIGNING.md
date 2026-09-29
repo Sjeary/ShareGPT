@@ -20,7 +20,7 @@
 本地 ad-hoc 签名只用于同一台 Mac 上测试覆盖安装、Keychain 与用户数据连续性：
 
 ```bash
-npm run dist:mac:sender:local
+npm run dist:mac:local
 ```
 
 该命令显式覆盖 `mac.notarize=false` 和 `mac.hardenedRuntime=false`，再用 ad-hoc 身份签署 `.app`。它不创建证书、不访问钥匙串，也不应要求用户输入密码。入口脚本在 `CI=true` 时拒绝运行。本地产物没有 Apple 公证，不得作为已公证产品或直接上传 GitHub Release。获准采用旧分发方式的版本经精确策略检查后，在 CI 中重新构建并调用相同的底层签名工具，不复用本机测试产物。

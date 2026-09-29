@@ -528,7 +528,7 @@ async function launchCase({
   events,
   username,
   password = PASSWORD,
-  mode = "all",
+  mode = "sender",
   waitForSilentRelogin = false,
   exercise,
   profileDirectory,
@@ -537,7 +537,7 @@ async function launchCase({
   const userDataDir =
     profileDirectory || fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-login-compat-"));
   if (prepareUserData) await prepareUserData(userDataDir);
-  const args = mode === "all" ? [ROOT] : [ROOT, `--mode=${mode}`];
+  const args = mode === "receiver" ? [path.join(ROOT, "src/main/main_receiver.js")] : [ROOT];
   const electronApp = await electron.launch({
     args,
     cwd: ROOT,

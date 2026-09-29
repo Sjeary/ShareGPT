@@ -25,7 +25,7 @@ npm --prefix src/renderer-next run build
 npm --prefix admin_console/ui run build
 ```
 
-`.github/workflows/ci.yml` 还会在真实 Windows runner 下载固定版本的 sing-box/frpc、校验 SHA-256、构建 NSIS 并执行 `verify:release-win`。这用于覆盖 Windows 专属路径，不新增第二套更新机制。
+`.github/workflows/ci.yml` 还会在真实 Windows runner 下载固定版本的 sing-box、校验 SHA-256、构建 NSIS 并执行 `verify:release-win`。这用于覆盖 Windows 专属路径，不新增第二套更新机制。
 
 ## 正式产物
 
@@ -46,7 +46,7 @@ v1.0.9 与 v1.0.10 明确采用旧分发方式：Windows 使用未签名 NSIS，
 
 ## Windows 固定二进制
 
-`scripts/prepare-windows-release-assets.ps1` 从官方 release 下载 `build/bin/checksums.json` 固定的 sing-box 与 frpc，按 SHA-256 验证后只放到 `build/bin` 根目录，避免同时打包根目录和 `windows/` 副本。
+`scripts/prepare-windows-release-assets.ps1` 从官方 release 下载 `build/bin/checksums.json` 固定的 sing-box，按 SHA-256 验证后只放到 `build/bin` 根目录，避免同时打包根目录和 `windows/` 副本。
 
 正式构建命令：
 
@@ -71,5 +71,5 @@ npm run verify:release-win
 1. GitHub Release 必须为 Latest，资产数和名称精确匹配工作流预期。
 2. `/releases/latest` 最终跳转到当前 tag。
 3. `latest.yml` 的 version/path/size/sha512 与 tag 和 Windows canonical 安装包精确一致，`app-update.yml` 固定 GitHub owner/repo；正式签名路径还必须固定 publisher，旧分发方式不得伪造发布者签名。
-4. 从 1.0.8 安装升级，确认账号、设置、协作记录及 AI 网页登录态仍位于原 ShareGPT 数据目录。
+4. 从上一支持的公开版本实际安装升级（另保留 1.0.x 兼容基线），确认账号、设置、协作记录及 AI 网页登录态仍位于原 ShareGPT 数据目录。
 5. Windows 自动更新遇到版本或文件名不一致时必须停止；macOS canonical 与 legacy DMG 必须 `cmp` 一致。

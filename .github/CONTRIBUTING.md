@@ -7,7 +7,7 @@
 ## 环境要求
 
 - Node.js 22.12+、npm。
-- 第三方二进制（sing-box，必要时 frpc）按 `build/bin/README.md` 放好——**不要把二进制提交进仓库**。
+- 客户端代理二进制 sing-box 按 `build/bin/README.md` 放好——**不要把二进制提交进仓库**。
 
 ## 本地跑起来
 
@@ -22,8 +22,8 @@ npm --prefix collab_server2 ci
 各端开发脚本（详见 `package.json` 的 `scripts`）：
 
 ```bash
-# 客户端（发送端）
-npm run dev:sender
+# ShareGPT 客户端
+npm run dev
 
 # 管理控制台
 npm run dev:admin
@@ -35,8 +35,8 @@ npm --prefix collab_server2 start
 打包构建（如需验证产物）：
 
 ```bash
-npm run dist:win:sender     # Windows 发送端（NSIS）
-npm run dist:mac:sender     # macOS 发送端
+npm run dist:win:installer  # Windows 客户端候选（不发布）
+npm run dist:mac            # macOS 客户端
 npm run dist:admin:win      # 管理控制台
 ```
 

@@ -25,7 +25,7 @@ const cliMode =
         .trim()
         .toLowerCase(),
     )
-    .find((item) => item === "sender" || item === "receiver" || item === "all") || "all";
+    .find((item) => item === "sender" || item === "receiver" || item === "all") || "sender";
 const required = argv.some((item) => {
   const value = String(item || "")
     .trim()

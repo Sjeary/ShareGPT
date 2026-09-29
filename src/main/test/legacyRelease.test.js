@@ -30,6 +30,7 @@ for (const version of ["1.0.9", "1.0.10"]) {
   test(`${version} macOS builds fresh, signs ad-hoc, verifies, then packages`, () => {
     const steps = legacyReleaseCommands({ version, tag: `v${version}`, platform: "darwin" });
     assert.equal(steps.length, 7);
+    assert.deepEqual(steps[2][1], ["scripts/prepare-assets.mjs", "sender", "--required"]);
     assert.ok(steps[3][1].includes("dir"));
     assert.equal(steps[4][1][0], "scripts/sign-local-macos.mjs");
     assert.deepEqual(steps[5], [
@@ -47,6 +48,7 @@ for (const version of ["1.0.9", "1.0.10"]) {
   test(`${version} Windows keeps canonical NSIS and prevents implicit upload`, () => {
     const steps = legacyReleaseCommands({ version, tag: `v${version}`, platform: "win32" });
     assert.equal(steps.length, 4);
+    assert.deepEqual(steps[2][1], ["scripts/prepare-assets.mjs", "sender", "--required"]);
     assert.deepEqual(steps[3][1], [
       "node_modules/electron-builder/cli.js",
       "--win",

@@ -5,6 +5,7 @@
   "files": [
     "src/**/*",
     "!src/**/.npm-cache{,/**/*}",
+    "!src/**/.cache{,/**/*}",
     "!src/renderer-next/node_modules/**",
     "!src/renderer-next/src/**",
     "!src/renderer-next/public/**",
@@ -21,7 +22,7 @@
     {
       "from": "build/bin",
       "to": "bin",
-      "filter": ["**/*"]
+      "filter": ["sing-box", "sing-box.exe"]
     }
   ],
   "directories": {

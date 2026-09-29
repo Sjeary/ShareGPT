@@ -14,10 +14,11 @@ function validContract() {
   return {
     packageJson: {
       version: "1.0.9",
+      main: "src/main/main_sender.js",
       scripts: {
         "dist:win:installer": "electron-builder --win nsis --publish never",
         "dist:mac": "electron-builder --mac --config build.sender.json",
-        "dist:mac:sender:local":
+        "dist:mac:local":
           "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir --config build.sender.json -c.mac.notarize=false -c.mac.hardenedRuntime=false && bash scripts/sign-local-macos.sh app",
       },
       build: {
@@ -40,7 +41,7 @@ function validContract() {
         hardenedRuntime: true,
         notarize: true,
       },
-      extraMetadata: { name: "sharegpt-desktop" },
+      extraMetadata: { name: "sharegpt-desktop", main: "src/main/main_sender.js" },
     },
     compatibility: {
       windows: {
@@ -62,6 +63,8 @@ test("accepts the complete 1.0.9 release and user-data identity contract", () =>
 
 /** @type {Array<[string, (contract: ReturnType<typeof validContract>) => unknown, string]>} */
 const invalidContracts = [
+  ["desktop client entry", (c) => (c.packageJson.main = "src/main/main_receiver.js"), "desktop client entry"],
+  ["macOS client entry", (c) => (c.senderBuild.extraMetadata.main = "src/main/main.js"), "macOS client entry"],
   ["tag", (c) => (c.releaseTag = "v6.0.0"), "release tag"],
   ["desktop appId", (c) => (c.packageJson.build.appId += ".sender"), "desktop appId"],
   ["mac appId", (c) => (c.senderBuild.appId += ".sender"), "macOS appId"],
@@ -84,7 +87,7 @@ const invalidContracts = [
   ],
   [
     "local notarization override",
-    (c) => (c.packageJson.scripts["dist:mac:sender:local"] = "electron-builder --mac dir"),
+    (c) => (c.packageJson.scripts["dist:mac:local"] = "electron-builder --mac dir"),
     "local-only boundary",
   ],
   ["legacy mac alias", (c) => (c.compatibility.mac.legacyArtifactName = "bad.dmg"), "alias"],

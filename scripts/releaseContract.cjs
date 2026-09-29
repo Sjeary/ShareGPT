@@ -57,6 +57,7 @@ function releaseWorkflowFailures(source) {
 /**
  * @typedef {{
  *   version?: unknown,
+ *   main?: unknown,
  *   scripts?: Record<string, unknown>,
  *   build?: {
  *     appId?: unknown,
@@ -70,7 +71,7 @@ function releaseWorkflowFailures(source) {
  *   appId?: unknown,
  *   productName?: unknown,
  *   mac?: { artifactName?: unknown, hardenedRuntime?: unknown, notarize?: unknown },
- *   extraMetadata?: { name?: unknown }
+ *   extraMetadata?: { name?: unknown, main?: unknown }
  * }} SenderBuild
  * @typedef {{
  *   windows?: { appId?: unknown, artifactName?: unknown },
@@ -105,6 +106,8 @@ function releaseContractFailures({
   }
   requireEqual("package-lock version", packageLock?.version, version);
   requireEqual("package-lock root version", packageLock?.packages?.[""]?.version, version);
+  requireEqual("desktop client entry", packageJson?.main, "src/main/main_sender.js");
+  requireEqual("macOS client entry", senderBuild?.extraMetadata?.main, packageJson?.main);
   requireEqual("desktop appId", packageJson?.build?.appId, EXPECTED_APP_ID);
   requireEqual("macOS appId", senderBuild?.appId, EXPECTED_APP_ID);
   requireEqual("desktop productName", packageJson?.build?.productName, EXPECTED_PRODUCT_NAME);
@@ -134,7 +137,7 @@ function releaseContractFailures({
     failures.push("Windows verification build: must disable implicit publishing");
   }
   const publicMacCommand = String(packageJson?.scripts?.["dist:mac"] || "");
-  const localMacCommand = String(packageJson?.scripts?.["dist:mac:sender:local"] || "");
+  const localMacCommand = String(packageJson?.scripts?.["dist:mac:local"] || "");
   if (!publicMacCommand.includes("build.sender.json") || publicMacCommand.includes("sign-local")) {
     failures.push("public macOS build: must use the official sender config without local signing");
   }
