@@ -204,15 +204,21 @@ function createAdminAccountHandler({
           sendText(res, 404, "用户不存在");
           return true;
         }
+        const nextIsAdmin =
+          typeof payload.isAdmin === "undefined" ? Boolean(user.isAdmin) : Boolean(payload.isAdmin);
+        const nextDisabled =
+          typeof payload.disabled === "undefined"
+            ? Boolean(user.disabled)
+            : Boolean(payload.disabled);
         if (
           user.isAdmin &&
-          typeof payload.isAdmin !== "undefined" &&
-          !Boolean(payload.isAdmin) &&
+          !user.disabled &&
+          (!nextIsAdmin || nextDisabled) &&
           !store.users.some(
             (other) => other.username !== user.username && other.isAdmin && !other.disabled,
           )
         ) {
-          sendText(res, 409, "请先为其他启用账号授予管理员权限，再移除此账号的管理员权限");
+          sendText(res, 409, "请先为其他启用账号授予管理员权限，再禁用或移除此账号的管理员权限");
           return true;
         }
 
