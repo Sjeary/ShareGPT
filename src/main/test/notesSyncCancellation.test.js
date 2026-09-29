@@ -3,17 +3,12 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { createRequire } = require("node:module");
 const ts = require("typescript");
+const root = path.resolve(__dirname, "../../renderer-next");
+const requireRenderer = createRequire(path.join(root, "package.json"));
 
 async function exercise(cancel) {
-  const source = fs.readFileSync(
-    path.join(__dirname, "../../renderer-next/src/hooks/useNotesSync.ts"),
-    "utf8",
-  );
-  const output = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  let generation = 1;
   let cleanup = () => {};
   let release = () => {};
   let reloads = 0;
@@ -23,18 +18,36 @@ async function exercise(cancel) {
     persisted = [];
   const merged = { "first.md": "remote first", "second.md": "remote second" };
   const raw = { "obsolete.md": "old" };
-  const store = {
-    loaded: true,
-    rawByPath: raw,
-    reload: async () => {
-      reloads++;
-      Object.assign(raw, merged);
-      delete raw["obsolete.md"];
+  const modules = new Map();
+  const bridge = {
+    vault: {
+      write: async (name, content) => {
+        writes.push(name);
+        if (writes.length === 1)
+          await new Promise((resolve) => {
+            release = () => resolve(undefined);
+          });
+        raw[name] = content;
+      },
+      remove: async (name) => {
+        removals.push(name);
+        delete raw[name];
+      },
+      list: async () => [],
+      readAll: async () => {
+        reloads++;
+        return Object.entries(raw).map(([name, content]) => ({
+          path: name,
+          content,
+          ctime: 1,
+          mtime: 1,
+        }));
+      },
     },
   };
-  const exports = {};
   const mocks = {
     "@/lib/userDataTransitionState": {
+      assertUserDataWritable() {},
       useUserDataTransitionVersion: () => 0,
       userDataTransitionState: { isSuspended: () => false, revision: () => 0 },
     },
@@ -46,25 +59,19 @@ async function exercise(cancel) {
     zustand: {
       create: (init) => {
         let state;
-        state = init((patch) => Object.assign(state, patch));
-        return { getState: () => state };
+        const set = (patch) =>
+          Object.assign(state, typeof patch === "function" ? patch(state) : patch);
+        const get = () => state;
+        state = init(set, get);
+        return Object.assign((selector) => selector(state), {
+          getState: get,
+          setState: set,
+          subscribe: () => () => {},
+        });
       },
     },
     "@/lib/api": {
-      api: {
-        vault: {
-          write: async (name) => {
-            writes.push(name);
-            if (writes.length === 1)
-              await new Promise((resolve) => {
-                release = () => resolve(undefined);
-              });
-          },
-          remove: async (name) => {
-            removals.push(name);
-          },
-        },
-      },
+      userDataApiFor: (snapshot) => load("lib/userDataApi").scopedUserDataApi(bridge, snapshot),
     },
     "@/store/useChatStore": {
       useChatStore: (selector) =>
@@ -72,52 +79,64 @@ async function exercise(cancel) {
           identity: { serverUrl: "https://fixture.invalid", token: "synthetic-A", username: "A" },
         }),
     },
-    "@/store/useVaultStore": {
-      useVaultStore: { getState: () => store, subscribe: () => () => {} },
-    },
     "@/lib/wsBus": { wsBus: { subscribe: () => () => {} } },
-    "@/lib/settingsPrincipalRuntime": {
-      settingsPrincipalRuntime: {
-        current: () => ({ principalId: generation === 1 ? "A" : "B", generation }),
-      },
-    },
-    "@/lib/notes/merge": {
-      mergeVault: () => ({
-        changed: true,
-        merged,
-        fromCloud: ["first.md", "second.md"],
-        conflicts: [],
-        deleted: ["obsolete.md"],
-      }),
-    },
   };
-  mocks["@/lib/api"].userDataApiFor = () => mocks["@/lib/api"].api;
-  vm.runInNewContext(output, {
-    exports,
-    require: (name) => mocks[name],
-    AbortController,
-    console,
-    localStorage: { getItem: () => null, setItem: (...args) => persisted.push(args) },
-    window: {
+  function load(relative) {
+    let file = path.resolve(root, "src", relative);
+    if (!path.extname(file))
+      file = fs.existsSync(`${file}.ts`) ? `${file}.ts` : path.join(file, "index.ts");
+    if (modules.has(file)) return modules.get(file);
+    const exports = {};
+    modules.set(file, exports);
+    const output = ts.transpileModule(fs.readFileSync(file, "utf8"), {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+        esModuleInterop: true,
+      },
+    }).outputText;
+    vm.runInNewContext(output, {
+      exports,
+      require(name) {
+        if (mocks[name]) return mocks[name];
+        if (name.startsWith("@/")) return load(name.slice(2));
+        if (name.startsWith("."))
+          return load(
+            path.relative(path.join(root, "src"), path.resolve(path.dirname(file), name)),
+          );
+        return requireRenderer(name);
+      },
+      AbortController,
+      console,
       setTimeout: () => 1,
-      clearTimeout: () => {},
-      setInterval: () => 1,
-      clearInterval: () => {},
-    },
-    fetch: async (_url, options) => {
-      if (options.method === "PUT") {
-        puts++;
-        return { ok: true, json: async () => ({ rev: 2 }) };
-      }
-      return { ok: true, json: async () => ({ rev: 1, data: { files: merged } }) };
-    },
-  });
-  exports.useNotesSync();
+      clearTimeout() {},
+      localStorage: {
+        getItem: (key) =>
+          key === "notesync:base:A" ? JSON.stringify({ "obsolete.md": "old" }) : null,
+        setItem: (...args) => persisted.push(args),
+      },
+      window: { setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {} },
+      fetch: async (_url, options) => {
+        if (options.method === "PUT") {
+          puts++;
+          assert.deepEqual(JSON.parse(options.body).data.files, merged);
+          return { ok: true, json: async () => ({ rev: 2 }) };
+        }
+        return { ok: true, json: async () => ({ rev: 1, data: { files: merged } }) };
+      },
+    });
+    return exports;
+  }
+  const runtime = load("lib/settingsPrincipalRuntime").settingsPrincipalRuntime;
+  runtime.activate("A", 1);
+  const vault = load("store/useVaultStore").useVaultStore;
+  vault.setState({ loaded: true, root: "A", rawByPath: { ...raw } });
+  load("hooks/useNotesSync").useNotesSync();
   for (let index = 0; index < 10; index++) await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(writes, ["first.md"]);
   if (cancel) {
     cleanup();
-    generation++;
+    runtime.activate("B", 2);
   }
   release();
   for (let index = 0; index < 10; index++) await new Promise((resolve) => setImmediate(resolve));
@@ -126,8 +145,7 @@ async function exercise(cancel) {
 }
 
 test("cancelling Notes sync during its first write stops later writes, deletion, reload and old-credential push", async () => {
-  const result = await exercise(true);
-  assert.deepEqual(result, {
+  assert.deepEqual(await exercise(true), {
     writes: ["first.md"],
     removals: [],
     reloads: 0,
@@ -137,8 +155,7 @@ test("cancelling Notes sync during its first write stops later writes, deletion,
 });
 
 test("Notes sync completes every merge step when its Principal remains current", async () => {
-  const result = await exercise(false);
-  assert.deepEqual(result, {
+  assert.deepEqual(await exercise(false), {
     writes: ["first.md", "second.md"],
     removals: ["obsolete.md"],
     reloads: 1,
