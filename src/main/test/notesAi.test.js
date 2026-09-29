@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { PassThrough } = require("node:stream");
+const http = require("node:http");
 const { createPinnedLookup } = require("../endpointSecurity");
 const { buildTranslationPrompt, createNotesAi } = require("../notesAi");
 
@@ -185,6 +186,81 @@ test("notes AI reports an HTTP non-2xx response exactly once", async () => {
   assert.equal(events.filter((event) => event.type === "error").length, 1);
   assert.match(events.find((event) => event.type === "error")?.message || "", /接口错误 401/);
   assert.equal(events.filter((event) => event.type === "done").length, 0);
+});
+
+for (const responseEvent of ["aborted", "error", "close"]) {
+  test(`notes AI terminates an interrupted response on ${responseEvent} exactly once`, async () => {
+    let requestCount = 0;
+    const { notesAi, events } = createHarness({
+      httpsRequest: (_options, callback) => {
+        requestCount += 1;
+        const request = /** @type {any} */ (new EventEmitter());
+        request.destroy = () => {};
+        request.end = () => {
+          const response = /** @type {any} */ (new PassThrough());
+          response.statusCode = 200;
+          callback(response);
+          response.write('data: {"type":"response.output_text.delta","delta":"partial"}\n');
+          response.emit(responseEvent, new Error("connection reset"));
+          response.emit("error", new Error("late response error"));
+          response.emit("close");
+          request.emit("error", new Error("late request error"));
+          response.end();
+        };
+        return request;
+      },
+    });
+    notesAi.complete({
+      provider: { baseUrl: "https://example.test", apiKey: "test" },
+      text: "内容",
+    });
+    await waitForTurn();
+    assert.equal(requestCount, 1, "partial output must never be retried");
+    assert.equal(events.filter((event) => event.type === "error").length, 1);
+    assert.equal(events.filter((event) => event.type === "done").length, 0);
+  });
+}
+
+test("notes AI terminates a real socket disconnect after a delta", { timeout: 5000 }, async (t) => {
+  let disconnect = () => {};
+  const server = http.createServer((_request, response) => {
+    disconnect = () => response.socket?.destroy();
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.write('data: {"type":"response.output_text.delta","delta":"partial"}\n');
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  const address = /** @type {import("node:net").AddressInfo} */ (server.address());
+  let finish;
+  const terminal = new Promise((resolve) => {
+    finish = resolve;
+  });
+  const events = [];
+  const notesAi = createNotesAi({
+    getWindow: () => ({
+      isDestroyed: () => false,
+      webContents: {
+        send: (_channel, payload) => {
+          events.push(payload);
+          if (payload.type === "delta") disconnect();
+          if (["done", "error"].includes(payload.type)) finish(payload);
+        },
+      },
+    }),
+    lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+    // Only the test transport is redirected to this disposable loopback fixture.
+    httpsRequest: (_options, callback) =>
+      http.request({ host: "127.0.0.1", port: address.port, method: "POST" }, callback),
+  });
+  notesAi.complete({
+    provider: { baseUrl: "https://example.test", apiKey: "test" },
+    text: "hello",
+  });
+  await terminal;
+  assert.deepEqual(
+    events.map((event) => event.type),
+    ["delta", "error"],
+  );
 });
 
 test("notes AI cancel clears a pending retry backoff", async (t) => {

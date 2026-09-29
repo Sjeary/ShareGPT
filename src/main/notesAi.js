@@ -259,6 +259,20 @@ function createNotesAi({
             timeout: 120000,
           },
           (res) => {
+            let responseEnded = false;
+            const failResponse = (error) => {
+              if (attemptSettled || stream.cancelled || stream.terminal) return;
+              attemptSettled = true;
+              failAttempt(0, error?.message || "AI 接口连接中断，请重试");
+            };
+            res.on("error", failResponse);
+            res.on("aborted", () => failResponse(new Error("AI 接口连接中断，请重试")));
+            res.on("close", () => {
+              if (!responseEnded) failResponse(new Error("AI 接口连接中断，请重试"));
+            });
+            res.on("end", () => {
+              responseEnded = true;
+            });
             if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
               let err = "";
               let errorBytes = 0;
