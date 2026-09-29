@@ -150,6 +150,12 @@ jobs:
       - name: Verify notes editor lifecycle
         run: node scripts/verify-notes-lifecycle.js
 
+      - name: Verify notes AI cancellation and error feedback
+        run: node scripts/verify-notes-ai.js
+
+      - name: Verify focus recovery calendar retry and chat draft retention
+        run: node scripts/verify-audit-ui.js
+
       - name: Verify unreadable settings recovery
         run: npm run verify:startup-recovery
 
