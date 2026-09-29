@@ -31,7 +31,7 @@ const { resolvePrincipalIdentity } = require("./principalIdentity");
 const { readLocalJson, writeLocalJson, atomicReplace } = require("./localJsonStore");
 const { PrincipalData } = require("./principalData");
 const {
-  LOCAL_SECRET_KEYS,
+  isLocalSecretPath,
   LEGACY_SECRET_DECRYPTION_FAILED,
   decodeLegacyEncryptedSettings,
   protectSettingsSecrets,
@@ -1016,15 +1016,18 @@ class Backend {
     }
 
     // Default templates describe setup; credentials are entered and protected through settings.
-    // Never materialize a plaintext saved password/API key from a distributed example file.
-    const withoutExampleSecrets = (value, key = "") => {
-      if (LOCAL_SECRET_KEYS.has(key.toLowerCase())) return "";
-      if (Array.isArray(value)) return value.map((nested) => withoutExampleSecrets(nested, key));
+    // Never materialize plaintext credentials from a distributed example file.
+    const withoutExampleSecrets = (value, keys = []) => {
+      if (isLocalSecretPath(keys)) return "";
+      if (Array.isArray(value))
+        return value.map((nested, index) =>
+          withoutExampleSecrets(nested, [...keys, String(index)]),
+        );
       if (!value || typeof value !== "object") return value;
       return Object.fromEntries(
         Object.entries(value).map(([nestedKey, nested]) => [
           nestedKey,
-          withoutExampleSecrets(nested, nestedKey),
+          withoutExampleSecrets(nested, [...keys, nestedKey]),
         ]),
       );
     };

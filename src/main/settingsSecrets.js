@@ -28,7 +28,7 @@ function decodeLegacyEncryptedSettings(
   if (!legacyEncryptedSettingsPresent(value)) return structuredClone(value);
   let storage;
 
-  const decode = (current, key = "") => {
+  const decode = (current, key = "", keys = []) => {
     if (typeof current === "string" && current.startsWith(LEGACY_ENCRYPTED_SECRET_PREFIX)) {
       const cached = cachedSecrets.find(
         (record) => record.key === key && record.ciphertext === current,
@@ -48,13 +48,17 @@ function decodeLegacyEncryptedSettings(
         });
       }
       const plaintext = storage.decryptString(Buffer.from(encoded, "base64"));
-      decodedSecrets.push({ key, plaintext, ciphertext: current });
+      decodedSecrets.push({ key, path: JSON.stringify(keys), plaintext, ciphertext: current });
       return plaintext;
     }
-    if (Array.isArray(current)) return current.map((nested) => decode(nested, key));
+    if (Array.isArray(current))
+      return current.map((nested, index) => decode(nested, key, [...keys, String(index)]));
     if (!current || typeof current !== "object") return current;
     return Object.fromEntries(
-      Object.entries(current).map(([nestedKey, nested]) => [nestedKey, decode(nested, nestedKey)]),
+      Object.entries(current).map(([nestedKey, nested]) => [
+        nestedKey,
+        decode(nested, nestedKey, [...keys, nestedKey]),
+      ]),
     );
   };
 
@@ -72,15 +76,35 @@ function decodeLegacyEncryptedSettings(
   }
 }
 
-const LOCAL_SECRET_KEYS = new Set(["saved_password", "apikey", "api_key"]);
+const LOCAL_SECRET_KEYS = new Set([
+  "saved_password",
+  "apikey",
+  "api_key",
+  "proxy_uuid",
+  "vmess_uuid",
+  "frps_token",
+]);
+
+// Generic IDs are not credentials. Only UUID/password values inside a sender
+// proxy outbound belong to the secure-storage boundary (including Principal copies).
+function isLocalSecretPath(keys) {
+  const key = String(keys.at(-1) || "").toLowerCase();
+  if (LOCAL_SECRET_KEYS.has(key)) return true;
+  if (!["uuid", "password"].includes(key)) return false;
+  const sender = keys.lastIndexOf("sender");
+  if (sender < 0) return false;
+  const suffix = keys.slice(sender + 1);
+  return (
+    suffix[0] === "airport_outbound" ||
+    (suffix[0] === "managed_proxy_routes" &&
+      /^\d+$/.test(suffix[1] || "") &&
+      suffix[2] === "outbound")
+  );
+}
 const PORTABLE_CREDENTIAL_KEYS = new Set([
   ...LOCAL_SECRET_KEYS,
   "password",
   "token",
-  "frps_token",
-  "proxy_uuid",
-  "vmess_uuid",
-  "uuid",
   "secret",
   "authorization",
 ]);
@@ -97,27 +121,35 @@ function protectSettingsSecrets(
   let storage;
   let storageResolved = false;
   const previousPlaintext = new Map();
-  const collect = (current, key = "") => {
-    if (typeof current === "string" && current && LOCAL_SECRET_KEYS.has(key.toLowerCase())) {
+  const collect = (current, keys = []) => {
+    const key = keys.at(-1) || "";
+    if (typeof current === "string" && current && isLocalSecretPath(keys)) {
       if (!current.startsWith(LEGACY_ENCRYPTED_SECRET_PREFIX)) {
         const values = previousPlaintext.get(key) || new Set();
         values.add(current);
         previousPlaintext.set(key, values);
       }
-    } else if (Array.isArray(current)) current.forEach((nested) => collect(nested, key));
+    } else if (Array.isArray(current))
+      current.forEach((nested, index) => collect(nested, [...keys, String(index)]));
     else if (current && typeof current === "object")
-      Object.entries(current).forEach(([nestedKey, nested]) => collect(nested, nestedKey));
+      Object.entries(current).forEach(([nestedKey, nested]) =>
+        collect(nested, [...keys, nestedKey]),
+      );
   };
   collect(previous);
 
-  const protect = (current, key = "") => {
+  const protect = (current, keys = []) => {
+    const key = keys.at(-1) || "";
+    const secret = isLocalSecretPath(keys);
     if (typeof current === "string") {
       const known = decodedSecrets.find(
         (record) =>
-          record.key === key && (record.plaintext === current || record.ciphertext === current),
+          record.key === key &&
+          (secret || record.path === JSON.stringify(keys)) &&
+          (record.plaintext === current || record.ciphertext === current),
       );
       if (known) return known.ciphertext;
-      if (!current || !LOCAL_SECRET_KEYS.has(key.toLowerCase())) return current;
+      if (!current || !secret) return current;
       if (trustedCiphertext && current.startsWith(LEGACY_ENCRYPTED_SECRET_PREFIX)) {
         if (!/^[A-Za-z0-9+/]+={0,2}$/.test(current.slice(LEGACY_ENCRYPTED_SECRET_PREFIX.length))) {
           throw new Error("已有加密凭据内容无效，原文件未修改");
@@ -139,7 +171,7 @@ function protectSettingsSecrets(
         if (previousPlaintext.get(key)?.has(current)) return current;
         throw Object.assign(
           new Error(
-            "系统安全存储不可用，无法保存新的密码或 API 密钥。请解锁系统钥匙串，或暂不记住密码后重试。",
+            "系统安全存储不可用，无法保存新的密码、代理凭据或 API 密钥。请解锁系统钥匙串后重试。",
           ),
           { code: "SECRET_STORAGE_UNAVAILABLE" },
         );
@@ -149,35 +181,47 @@ function protectSettingsSecrets(
         if (!Buffer.isBuffer(encrypted) || !encrypted.length)
           throw new Error("empty encryption result");
         const ciphertext = LEGACY_ENCRYPTED_SECRET_PREFIX + encrypted.toString("base64");
-        decodedSecrets.push({ key, plaintext: current, ciphertext });
+        decodedSecrets.push({ key, path: JSON.stringify(keys), plaintext: current, ciphertext });
         return ciphertext;
       } catch {
         if (previousPlaintext.get(key)?.has(current)) return current;
         throw Object.assign(
           new Error(
-            "系统安全存储未能保护密码或 API 密钥，本次设置未保存。请解锁系统钥匙串后重试。",
+            "系统安全存储未能保护密码、代理凭据或 API 密钥，本次设置未保存。请解锁系统钥匙串后重试。",
           ),
           { code: "SECRET_STORAGE_FAILED" },
         );
       }
     }
-    if (Array.isArray(current)) return current.map((nested) => protect(nested, key));
+    if (Array.isArray(current))
+      return current.map((nested, index) => protect(nested, [...keys, String(index)]));
     if (!current || typeof current !== "object") return current;
     return Object.fromEntries(
-      Object.entries(current).map(([nestedKey, nested]) => [nestedKey, protect(nested, nestedKey)]),
+      Object.entries(current).map(([nestedKey, nested]) => [
+        nestedKey,
+        protect(nested, [...keys, nestedKey]),
+      ]),
     );
   };
   return protect(value);
 }
 
 function portableSettings(value, includeSecrets = false) {
-  const strip = (current, key = "") => {
-    if (PORTABLE_CREDENTIAL_KEYS.has(key.toLowerCase()) && typeof current === "string")
+  const strip = (current, keys = []) => {
+    const key = String(keys.at(-1) || "").toLowerCase();
+    if (
+      (PORTABLE_CREDENTIAL_KEYS.has(key) || isLocalSecretPath(keys)) &&
+      typeof current === "string"
+    )
       return includeSecrets ? current : "";
-    if (Array.isArray(current)) return current.map((nested) => strip(nested, key));
+    if (Array.isArray(current))
+      return current.map((nested, index) => strip(nested, [...keys, String(index)]));
     if (!current || typeof current !== "object") return current;
     return Object.fromEntries(
-      Object.entries(current).map(([nestedKey, nested]) => [nestedKey, strip(nested, nestedKey)]),
+      Object.entries(current).map(([nestedKey, nested]) => [
+        nestedKey,
+        strip(nested, [...keys, nestedKey]),
+      ]),
     );
   };
   const result = strip(value);
@@ -190,6 +234,7 @@ function portableSettings(value, includeSecrets = false) {
 
 module.exports = {
   LOCAL_SECRET_KEYS,
+  isLocalSecretPath,
   LEGACY_SECRET_DECRYPTION_FAILED,
   decodeLegacyEncryptedSettings,
   protectSettingsSecrets,

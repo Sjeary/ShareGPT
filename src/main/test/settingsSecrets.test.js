@@ -254,3 +254,176 @@ test("the production export dialog defaults to no secrets; explicit include keep
   response = 2;
   assert.equal(await backend.exportUserData(), null);
 });
+
+function proxySettings(label = "old") {
+  const sender = {
+    proxy_uuid: `${label}-unified-credential`,
+    managed_proxy_routes: [
+      {
+        id: "route-id",
+        uuid: "route-metadata-id",
+        outbound: { type: "vmess", uuid: `${label}-vmess-credential` },
+      },
+      { id: "password-route", outbound: { type: "socks", password: `${label}-socks-credential` } },
+    ],
+    airport_outbound: {
+      type: "trojan",
+      password: `${label}-airport-credential`,
+      uuid: `${label}-airport-uuid-credential`,
+    },
+  };
+  return {
+    sender,
+    receiver: {
+      vmess_uuid: `${label}-legacy-credential`,
+      frps_token: `${label}-legacy-token-credential`,
+    },
+    principalSettings: { byPrincipal: { alice: { sender: structuredClone(sender) } } },
+    ui: { uuid: "business-id", theme: "dark" },
+  };
+}
+
+test("proxy credentials encrypt in settings, previous backups and update snapshots, then survive restart", (t) => {
+  const storage = storageFixture();
+  const backend = backendFixture(t, storage);
+  const legacy = proxySettings("old"),
+    next = proxySettings("new");
+  fs.writeFileSync(backend.settingsFile, JSON.stringify(legacy));
+  backend.writeStoredSettings(next);
+  for (const [file, expected] of [
+    [backend.settingsFile, next],
+    [`${backend.settingsFile}.bak`, legacy],
+  ]) {
+    const raw = fs.readFileSync(file, "utf8");
+    assert.doesNotMatch(raw, /(?:old|new)-[a-z-]*credential/);
+    assert.deepEqual(decodeLegacyEncryptedSettings(JSON.parse(raw), storage), expected);
+    assert.match(raw, /business-id|route-metadata-id/);
+  }
+  const restarted = Object.create(Backend.prototype);
+  Object.assign(restarted, {
+    settingsFile: backend.settingsFile,
+    legacySecretStorage: storage,
+    legacyEncryptedSecrets: [],
+    loadPrivateDefaults: () => ({}),
+  });
+  const runtime = restarted.readStoredSettings();
+  assert.deepEqual(runtime.sender, next.sender);
+  assert.deepEqual(runtime.principalSettings.byPrincipal.alice.sender, next.sender);
+  restarted.legacySecretStorage = null;
+  restarted.writeStoredSettings({ ...runtime, ui: { ...runtime.ui, theme: "light" } });
+  assert.doesNotMatch(fs.readFileSync(backend.settingsFile, "utf8"), /new-[a-z-]*credential/);
+
+  const dir = path.dirname(backend.settingsFile);
+  Object.assign(backend, {
+    app: { getPath: () => dir, getName: () => "ShareGPT", getVersion: () => "test" },
+    updateBackupsDir: path.join(dir, "backups"),
+  });
+  fs.writeFileSync(path.join(dir, "private.defaults.local.json"), JSON.stringify(legacy));
+  const backup = backend.createUpdateBackup("proxy-fixture");
+  for (const name of ["settings.json", "private.defaults.local.json"]) {
+    const raw = fs.readFileSync(path.join(backup.backupDir, name), "utf8");
+    assert.doesNotMatch(raw, /(?:old|new)-[a-z-]*credential/);
+    assert.ok(decodeLegacyEncryptedSettings(JSON.parse(raw), storage).sender.proxy_uuid);
+  }
+});
+
+test("unavailable secure storage carries old proxy values but rejects every new or changed credential", (t) => {
+  const replacements = [
+    (value) => {
+      value.sender.proxy_uuid = "new-secret";
+    },
+    (value) => {
+      value.receiver.vmess_uuid = "new-secret";
+    },
+    (value) => {
+      value.receiver.frps_token = "new-secret";
+    },
+    (value) => {
+      value.sender.managed_proxy_routes[0].outbound.uuid = "new-secret";
+    },
+    (value) => {
+      value.sender.managed_proxy_routes[1].outbound.password = "new-secret";
+    },
+    (value) => {
+      value.sender.airport_outbound.uuid = "new-secret";
+    },
+    (value) => {
+      value.sender.airport_outbound.password = "new-secret";
+    },
+    (value) => {
+      value.principalSettings.byPrincipal.alice.sender.proxy_uuid = "new-secret";
+    },
+  ];
+  for (const storage of [
+    null,
+    { getSelectedStorageBackend: () => "basic_text" },
+    {
+      isEncryptionAvailable: () => true,
+      encryptString() {
+        throw new Error("locked");
+      },
+    },
+  ]) {
+    const backend = backendFixture(t, storage);
+    const legacy = proxySettings();
+    fs.writeFileSync(backend.settingsFile, JSON.stringify(legacy));
+    backend.writeStoredSettings({ ...legacy, ui: { ...legacy.ui, theme: "light" } });
+    const before = fs.readFileSync(backend.settingsFile, "utf8");
+    const oldBackup = fs.readFileSync(`${backend.settingsFile}.bak`, "utf8");
+    for (const change of replacements) {
+      const next = structuredClone(legacy);
+      change(next);
+      assert.throws(
+        () => backend.writeStoredSettings(next),
+        (error) =>
+          error instanceof Error && /^SECRET_STORAGE_/.test(String(Reflect.get(error, "code"))),
+      );
+      assert.equal(fs.readFileSync(backend.settingsFile, "utf8"), before);
+      assert.equal(fs.readFileSync(`${backend.settingsFile}.bak`, "utf8"), oldBackup);
+    }
+    assert.throws(
+      () => protectSettingsSecrets(legacy, { storageOverride: storage }),
+      (error) =>
+        error instanceof Error && /^SECRET_STORAGE_/.test(String(Reflect.get(error, "code"))),
+    );
+  }
+});
+
+test("proxy templates and portable exports omit credentials while business UUIDs remain ordinary data", (t) => {
+  const input = proxySettings();
+  const safe = portableSettings(input);
+  assert.doesNotMatch(JSON.stringify(safe), /old-[a-z-]*credential/);
+  assert.equal(safe.ui.uuid, "business-id");
+  assert.equal(safe.sender.managed_proxy_routes[0].uuid, "route-metadata-id");
+  assert.deepEqual(portableSettings(input, true), input);
+  const decodedSecrets = [];
+  const sameUuid = {
+    sender: input.sender,
+    ui: { uuid: input.sender.managed_proxy_routes[0].outbound.uuid },
+  };
+  const protectedSettings = protectSettingsSecrets(sameUuid, {
+    storageOverride: storageFixture(),
+    decodedSecrets,
+  });
+  assert.equal(
+    protectedSettings.ui.uuid,
+    sameUuid.ui.uuid,
+    "matching a cached secret does not turn a business ID into a credential",
+  );
+
+  const backend = backendFixture(t, null),
+    dir = path.dirname(backend.settingsFile);
+  const defaults = path.join(dir, "private.defaults.local.json"),
+    example = path.join(dir, "example.json");
+  fs.writeFileSync(example, JSON.stringify(input));
+  Object.assign(backend, {
+    app: { getPath: () => dir },
+    resolvePrivateDefaultsCandidates: () => [defaults],
+    resolveExampleDefaultsCandidates: () => [example],
+  });
+  backend.ensureLocalDefaultsFile();
+  const template = JSON.parse(fs.readFileSync(defaults, "utf8"));
+  assert.doesNotMatch(JSON.stringify(template), /old-[a-z-]*credential/);
+  assert.equal(template.ui.uuid, "business-id");
+  assert.equal(template.sender.managed_proxy_routes[0].uuid, "route-metadata-id");
+});
