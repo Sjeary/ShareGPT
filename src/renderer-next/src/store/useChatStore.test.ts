@@ -172,3 +172,39 @@ test('public room stays in server order when cached, history, and live messages 
     ['same-millisecond-earlier', 'same-millisecond-later'],
   )
 })
+
+test('distinct server IDs preserve identical same-millisecond messages while repeated IDs update', () => {
+  const key = roomConversationKey('team')
+  const first = { ...roomMessage('one', '2026-01-02T12:00:00.000Z', 1), text: 'same text' }
+  const second = { ...first, id: 'two', serverSequence: 2 }
+  useChatStore.getState().mergeMessages([second, first, second])
+  assert.deepEqual(
+    useChatStore.getState().messagesByConversation[key].map((m) => m.id),
+    ['one', 'two'],
+  )
+  useChatStore.getState().upsertMessage({ ...second, text: 'edited', edited: true })
+  assert.equal(useChatStore.getState().messagesByConversation[key].length, 2)
+  assert.equal(useChatStore.getState().messagesByConversation[key][1].text, 'edited')
+})
+
+test('legacy messages deduplicate full content without conflating different attachments', () => {
+  const key = roomConversationKey('team')
+  const first = {
+    ...roomMessage('', '2026-01-02T12:00:00.000Z'),
+    attachments: [
+      {
+        kind: 'file' as const,
+        name: 'a.txt',
+        mime: 'text/plain',
+        size: 1,
+        dataUrl: 'data:text/plain,a',
+      },
+    ],
+  }
+  const second = {
+    ...first,
+    attachments: [{ ...first.attachments[0], name: 'b.txt', dataUrl: 'data:text/plain,b' }],
+  }
+  useChatStore.getState().mergeMessages([first, first, second])
+  assert.equal(useChatStore.getState().messagesByConversation[key].length, 2)
+})
