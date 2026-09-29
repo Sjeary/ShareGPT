@@ -11,7 +11,7 @@ async function fixture(devUrl = "") {
     writes = [],
     windows = [];
   const dirname = path.resolve(__dirname, "../../../admin_console/src/main");
-  let ready;
+  let ready = () => {};
   const app = {
     isPackaged: false,
     setName() {},
@@ -141,7 +141,8 @@ test("release upload requires a file chosen in this window, and a late picker lo
     f.handlers.get("release:upload")(f.event, { filePath: "/chosen.exe" }),
     /缺少必要参数/,
   );
-  let complete;
+  /** @type {(value: { canceled: boolean, filePaths: string[] }) => void} */
+  let complete = () => {};
   f.controls.pick = () =>
     new Promise((resolve) => {
       complete = resolve;

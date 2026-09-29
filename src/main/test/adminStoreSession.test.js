@@ -10,7 +10,10 @@ const { create } = requireRenderer("zustand");
 
 class AuthExpiredError extends Error {}
 function deferred() {
-  let resolve, reject;
+  /** @type {(value?: any) => void} */
+  let resolve = () => {};
+  /** @type {(reason?: any) => void} */
+  let reject = () => {};
   const promise = new Promise((yes, no) => {
     resolve = yes;
     reject = no;
@@ -166,13 +169,15 @@ test("logout immediately clears every session field; delayed logout cannot clear
 });
 
 test("late save results and follow-up reads stay with the initiating session", async () => {
-  for (const [method, args, endpoint] of [
+  /** @type {Array<[string, any[], string]>} */
+  const cases = [
     ["saveProxyRoutes", [[{ id: "a-secret" }]], "/api/admin/proxy-routes"],
     ["saveTranslationProfiles", ["a", []], "/api/admin/translation-profiles"],
     ["saveBootstrap", [{}], "/api/admin/bootstrap"],
     ["createUser", [{}], "/api/admin/users"],
     ["saveUser", ["user", {}], "/api/admin/users/user"],
-  ]) {
+  ];
+  for (const [method, args, endpoint] of cases) {
     const f = fixture();
     await f.login("https://a");
     const wait = deferred();
