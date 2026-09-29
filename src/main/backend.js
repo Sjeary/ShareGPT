@@ -814,6 +814,7 @@ class Backend {
     // 当前运行中的发送端 SOCKS 端口 / 实际走代理的域名后缀集合 (供更新代理、代理检测分类复用)。
     this.activeSocksPort = null;
     this.activeProxiedSuffixes = null;
+    this.activeRouteAll = false;
     this.activeAiProxyRoutes = [];
     this.activePrincipalId = LOCAL_PRINCIPAL_ID;
     this.activePrincipalServerUrl = "";
@@ -2656,6 +2657,7 @@ class Backend {
       this.log(source, `进程启动失败：${err.message || err}`);
       if (source === "sender" && this.senderProcess === child) {
         this.senderProcess = null;
+        this.activeRouteAll = false;
         this.activeAiProxyRoutes = [];
       }
       if (source === "receiver-frpc" && this.receiverFrpc === child) this.receiverFrpc = null;
@@ -2668,6 +2670,7 @@ class Backend {
       this.log(source, `进程退出，code=${code}`);
       if (source === "sender" && this.senderProcess === child) {
         this.senderProcess = null;
+        this.activeRouteAll = false;
         this.activeAiProxyRoutes = [];
       }
       if (source === "receiver-frpc" && this.receiverFrpc === child) this.receiverFrpc = null;
@@ -2731,6 +2734,7 @@ class Backend {
     this.senderProcess = null;
     this.activeSocksPort = null;
     this.activeProxiedSuffixes = null;
+    this.activeRouteAll = false;
     this.activeAiProxyRoutes = [];
     this.emitStatus();
   }
@@ -2775,6 +2779,7 @@ class Backend {
     this.senderProcess = null;
     this.activeSocksPort = null;
     this.activeProxiedSuffixes = null;
+    this.activeRouteAll = false;
     this.activeAiProxyRoutes = [];
     this.emitStatus();
     await this.stopChildAndWait(child, "sender");
@@ -3106,6 +3111,8 @@ class Backend {
     // 记下「当前运行中的配置」实际走代理的域名后缀, 供代理检测按真实路由分类
     // (而非写死的内置清单), 加入域名并重启后检测才会从"回落"翻到"已走代理"。
     this.activeProxiedSuffixes = this.proxiedDomainSuffixes(runtimeSettings);
+    // Read the generated runtime route, rather than independently interpreting settings.
+    this.activeRouteAll = String(config.route.final).startsWith("proxy-");
     // 运行日志标明当前代理方式, 便于观察走的是统一梯子还是下发的机场节点。
     const usePersonalLog = settings.proxy_mode === "personal";
     const useAirportLog =

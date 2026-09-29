@@ -46,6 +46,7 @@ const {
 } = require("./aiNavigation");
 const { LOCAL_PRINCIPAL_ID } = require("./principal");
 const { translateText } = require("./translation");
+const { classifyIpAddress, isLoopbackHostname } = require("./endpointSecurity");
 const {
   COMPOSER_OPERATION_WORLD_ID,
   assertComposerOperationCurrent,
@@ -3227,6 +3228,14 @@ function createElectronApp(baseMode = "all") {
       const viaProxy = (host) => {
         if (workspace.proxyMode === "singbox") return true;
         if (workspace.proxyMode !== "sender") return false;
+        if (backend?.activeRouteAll) {
+          // route_all retains the private-address direct rule. Hostname DNS answers
+          // are not available here; this is a runtime-config diagnostic, not a trace.
+          return (
+            !isLoopbackHostname(host) &&
+            !["private", "loopback", "link-local", "unspecified"].includes(classifyIpAddress(host))
+          );
+        }
         return suffixes.some((s) => host === s || host.endsWith(`.${s}`));
       };
 

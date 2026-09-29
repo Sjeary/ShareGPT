@@ -1534,6 +1534,35 @@ async function main() {
       "fixture\\.invalid/claude/a",
       "Claude load",
     );
+    await electronApp.evaluate((_electron, root) => {
+      const { Backend } = process.mainModule.require(`${root}/src/main/backend.js`);
+      const original = Backend.prototype.getStatus;
+      Backend.prototype.getStatus = function () {
+        Backend.prototype.getStatus = original;
+        globalThis.__diagnosticBackend = this;
+        return original.call(this);
+      };
+    }, ROOT);
+    await api(page, "getStatus");
+    try {
+      for (const routeAll of [false, true]) {
+        await electronApp.evaluate((_electron, value) => {
+          globalThis.__diagnosticBackend.activeRouteAll = value;
+        }, routeAll);
+        const diagnostic = await api(page, "checkAiProxy", "claude", claudeId);
+        assert.equal(
+          diagnostic.hosts.find((entry) => entry.host === "fixture.invalid")?.via,
+          routeAll ? "proxy" : "fallback",
+        );
+      }
+    } finally {
+      await electronApp.evaluate(() => {
+        globalThis.__diagnosticBackend.activeRouteAll = false;
+      });
+    }
+    process.stdout.write(
+      "[verify] production proxy diagnostic honors the active all-traffic route snapshot\n",
+    );
     await fixtureState(
       electronApp,
       "fixture\\.invalid/claude/a",
