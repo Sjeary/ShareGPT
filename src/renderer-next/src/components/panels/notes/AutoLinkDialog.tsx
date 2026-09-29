@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Loader2, Link2, Sparkles, X } from 'lucide-react'
 import { toast } from 'sonner'
+import { ErrorNotice } from '@/components/ErrorNotice'
 import { useVaultStore } from '@/store/useVaultStore'
 import { useNotesUi } from '@/store/useNotesUi'
 import { useNotesAiStore } from '@/store/useNotesAiStore'
@@ -160,7 +161,7 @@ function AutoLinkDialogRuntime() {
 
         <div className="no-scrollbar min-h-0 flex-1 overflow-auto p-3">
           {err ? (
-            <p className="py-6 text-center text-sm text-destructive">{err}</p>
+            <ErrorNotice error={err} context="AI 自动连线" />
           ) : running ? (
             <div className="flex flex-col items-center gap-2 py-8 text-sm text-muted-foreground">
               <Loader2 className="size-5 animate-spin text-primary" />

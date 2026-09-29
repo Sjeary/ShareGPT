@@ -152,6 +152,42 @@ async function main() {
         await emit(4, { type: "done" });
         await window.getByText("RESTARTED-RESULT", { exact: true }).waitFor();
 
+        const providerError =
+          "Client network socket disconnected before secure TLS connection was established https://user:fixture-password@example.test/path?api_key=fixture-secret Authorization: Bearer fixture-bearer-secret";
+        const checkError = async (context) => {
+          const notice = window.getByRole("alert", { name: `${context}错误` });
+          await notice.waitFor();
+          assert.equal(await notice.getAttribute("data-error-category"), "connection");
+          assert.match(await notice.locator("summary").innerText(), /安全连接中断/);
+          assert.equal(await notice.locator("details").getAttribute("open"), null);
+          await notice.locator("summary").click();
+          const details = await notice.locator("pre").innerText();
+          assert.match(details, /TLS/);
+          assert.doesNotMatch(details, /fixture-password|fixture-secret|fixture-bearer-secret/);
+          assert.equal(
+            await notice.getByRole("button", { name: "复制技术详情", exact: true }).isVisible(),
+            true,
+          );
+        };
+        await window.getByRole("button", { name: "总结", exact: true }).click();
+        await waitRequests(6);
+        await emit(5, { type: "error", message: providerError });
+        await checkError("笔记 AI");
+        instruction = await openInline();
+        await instruction.fill("fail inline");
+        await instruction.press("Enter");
+        await waitRequests(7);
+        await emit(6, { type: "error", message: providerError });
+        await checkError("内联 AI 编辑");
+        await instruction.press("Escape");
+        await window.getByRole("button", { name: "图谱", exact: true }).click();
+        await window.getByRole("button", { name: "AI 连线", exact: true }).click();
+        await waitRequests(8);
+        await emit(7, { type: "error", message: providerError });
+        await checkError("AI 自动连线");
+        await window.getByText("AI 自动连线", { exact: true }).getByRole("button").click();
+        await window.getByRole("button", { name: "编辑", exact: true }).click();
+
         await electronApp.evaluate(({ ipcMain }) => {
           const original = ipcMain._invokeHandlers.get("settings:operate");
           ipcMain.removeHandler("settings:operate");
@@ -170,7 +206,7 @@ async function main() {
         assert.deepEqual(pageErrors, []);
         assert.deepEqual(await electronApp.evaluate(() => globalThis.__notesAiForeground), []);
         process.stdout.write(
-          "[verify] Notes AI settings save after login and report failures without foreground events\n",
+          "[verify] Notes AI settings, document isolation, cancellation and redacted errors passed without foreground events\n",
         );
       },
     });

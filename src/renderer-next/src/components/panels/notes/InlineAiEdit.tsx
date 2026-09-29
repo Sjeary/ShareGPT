@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { diffWords } from 'diff'
 import { Loader2, Send, Sparkles, X } from 'lucide-react'
 import { toast } from 'sonner'
+import { ErrorNotice } from '@/components/ErrorNotice'
 import { useEditorBridge, type AiEdit } from '@/store/useEditorBridge'
 import { useNotesAiStore } from '@/store/useNotesAiStore'
 import { runAi } from '@/lib/notes/aiClient'
@@ -174,7 +175,7 @@ function InlineAiEditRuntime({ aiEdit }: { aiEdit: AiEdit }) {
         {(result || running || err) && (
           <div className="no-scrollbar max-h-[40vh] overflow-auto border-t border-border p-2.5 text-sm">
             {err ? (
-              <p className="text-xs text-destructive">{err}</p>
+              <ErrorNotice error={err} context="内联 AI 编辑" />
             ) : hasSel && !running && result ? (
               <DiffView a={aiEdit.original} b={result} />
             ) : (
