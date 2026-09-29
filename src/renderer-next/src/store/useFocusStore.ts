@@ -49,6 +49,7 @@ interface FocusState {
   running: boolean
   endAt: number | null
   remainingMs: number
+  round: { startedAt: number; durationMs: number; taskId: string | null } | null
   cycle: number // 已完成专注数(用于长休判定)
   currentTaskId: string | null
   sessions: FocusSession[]
@@ -120,20 +121,20 @@ export const useFocusStore = create<FocusState>((set, get) => {
   const complete = () => {
     const s = get()
     stopNoise()
-    if (s.phase === 'focus') {
+    if (s.phase === 'focus' && s.round) {
       const session: FocusSession = {
         id: crypto.randomUUID(),
-        startedAt: new Date(Date.now() - durationMs('focus')).toISOString(),
+        startedAt: new Date(s.round.startedAt).toISOString(),
         date: todayStr(),
-        minutes: s.settings.focusMin,
-        taskId: s.currentTaskId,
+        minutes: s.round.durationMs / 60_000,
+        taskId: s.round.taskId,
       }
       const cycle = s.cycle + 1
       const next: Phase = cycle % s.settings.longEvery === 0 ? 'long' : 'short'
       set({ sessions: [...s.sessions, session], cycle, phase: next })
       void api.showSystemNotification({
         title: '专注完成 🍅',
-        body: `已专注 ${s.settings.focusMin} 分钟，休息一下`,
+        body: `已专注 ${session.minutes} 分钟，休息一下`,
       })
     } else {
       set({ phase: 'focus' })
@@ -142,10 +143,15 @@ export const useFocusStore = create<FocusState>((set, get) => {
     const auto = get().settings.autoStart
     const dur = durationMs(get().phase)
     if (auto) {
-      set({ running: true, endAt: Date.now() + dur, remainingMs: dur })
+      set({
+        running: true,
+        endAt: Date.now() + dur,
+        remainingMs: dur,
+        round: { startedAt: Date.now(), durationMs: dur, taskId: get().currentTaskId },
+      })
       applySound(true)
     } else {
-      set({ running: false, endAt: null, remainingMs: dur })
+      set({ running: false, endAt: null, remainingMs: dur, round: null })
     }
     persist()
   }
@@ -156,6 +162,7 @@ export const useFocusStore = create<FocusState>((set, get) => {
     running: false,
     endAt: null,
     remainingMs: DEFAULTS.focusMin * 60_000,
+    round: null,
     cycle: 0,
     currentTaskId: null,
     sessions: [],
@@ -176,6 +183,7 @@ export const useFocusStore = create<FocusState>((set, get) => {
         running: false,
         endAt: null,
         remainingMs: DEFAULTS.focusMin * 60000,
+        round: null,
         cycle: 0,
         currentTaskId: null,
         sessions: [],
@@ -238,8 +246,18 @@ export const useFocusStore = create<FocusState>((set, get) => {
       assertReady()
       const s = get()
       if (s.running) return
-      const end = Date.now() + (s.remainingMs > 0 ? s.remainingMs : durationMs())
-      set({ running: true, endAt: end })
+      const startedAt = Date.now()
+      const remaining = s.remainingMs > 0 ? s.remainingMs : durationMs()
+      const end = startedAt + remaining
+      set({
+        running: true,
+        endAt: end,
+        round: s.round ?? {
+          startedAt,
+          durationMs: remaining,
+          taskId: s.currentTaskId,
+        },
+      })
       applySound(true)
     },
     pause: () => {
@@ -251,7 +269,7 @@ export const useFocusStore = create<FocusState>((set, get) => {
     },
     reset: () => {
       assertReady()
-      set({ running: false, endAt: null, remainingMs: durationMs() })
+      set({ running: false, endAt: null, remainingMs: durationMs(), round: null })
       stopNoise()
     },
     skip: () => {
@@ -259,7 +277,7 @@ export const useFocusStore = create<FocusState>((set, get) => {
       stopNoise()
       // 跳过当前阶段(不计专注、不累加周期): 专注→短休, 休息→专注。
       const next: Phase = get().phase === 'focus' ? 'short' : 'focus'
-      set({ phase: next, running: false, endAt: null, remainingMs: durationMs(next) })
+      set({ phase: next, running: false, endAt: null, remainingMs: durationMs(next), round: null })
     },
     tick: () => {
       if (userDataTransitionState.isSuspended() || !get().loaded || !owner) return
@@ -273,7 +291,7 @@ export const useFocusStore = create<FocusState>((set, get) => {
     setPhase: (p) => {
       assertReady()
       stopNoise()
-      set({ phase: p, running: false, endAt: null, remainingMs: durationMs(p) })
+      set({ phase: p, running: false, endAt: null, remainingMs: durationMs(p), round: null })
     },
     setTaskId: (currentTaskId) => {
       assertReady()
@@ -283,8 +301,8 @@ export const useFocusStore = create<FocusState>((set, get) => {
     setSettings: (patch) => {
       assertReady()
       set((s) => ({ settings: { ...s.settings, ...patch } }))
-      // 调整时长后, 若未运行则刷新剩余显示
-      if (!get().running) set({ remainingMs: durationMs() })
+      // 时长设置只影响下一轮，暂停后继续仍保留本轮时长。
+      if (!get().round) set({ remainingMs: durationMs() })
       applySound(get().running)
       persist()
     },

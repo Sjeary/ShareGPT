@@ -60,3 +60,31 @@ test("focus delayed load success or failure cannot replace another principal", a
     assert.equal(store.getState().loadError, "");
   }
 });
+
+test("focus duration, start time and task belong to the started round across settings changes and pauses", async () => {
+  const app = rendererStoreHarness();
+  const store = app.load("store/useFocusStore.ts").useFocusStore;
+  await store.getState().init();
+  store.getState().setSettings({ focusMin: 1 });
+  store.getState().setTaskId("original-task");
+  store.getState().start();
+  const startedAt = store.getState().round.startedAt;
+  app.advance(20_000);
+  store.getState().setSettings({ focusMin: 60 });
+  store.getState().setTaskId("next-task");
+  store.getState().pause();
+  store.getState().setSettings({ focusMin: 30 });
+  assert.equal(store.getState().remainingMs, 40_000);
+  app.advance(10_000);
+  store.getState().start();
+  app.advance(40_000);
+  store.getState().tick();
+  const session = store.getState().sessions[0];
+  assert.equal(session.minutes, 1);
+  assert.equal(session.startedAt, new Date(startedAt).toISOString());
+  assert.equal(session.taskId, "original-task");
+  store.getState().skip();
+  store.getState().start();
+  assert.equal(store.getState().round.durationMs, 30 * 60_000);
+  assert.equal(store.getState().round.taskId, "next-task");
+});
