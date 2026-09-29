@@ -228,7 +228,7 @@ test("notes AI terminates a real socket disconnect after a delta", { timeout: 50
     response.writeHead(200, { "Content-Type": "text/event-stream" });
     response.write('data: {"type":"response.output_text.delta","delta":"partial"}\n');
   });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(undefined)));
   t.after(() => server.close());
   const address = /** @type {import("node:net").AddressInfo} */ (server.address());
   let finish;

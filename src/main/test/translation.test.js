@@ -199,7 +199,7 @@ test(
       response.write('{"translatedText":"partial');
       setImmediate(() => response.socket?.destroy());
     });
-    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(undefined)));
     t.after(() => server.close());
     const address = /** @type {import("node:net").AddressInfo} */ (server.address());
     await assert.rejects(
