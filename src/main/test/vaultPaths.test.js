@@ -137,7 +137,7 @@ test("vault snapshots reject unreadable directories, metadata and contents inste
   const { vault } = fixture(t);
   const fsp = require("node:fs/promises");
   await vault.create("folder/kept.md", "kept note");
-  for (const operation of ["readdir", "stat", "readFile"]) {
+  for (const operation of /** @type {const} */ (["readdir", "stat", "readFile"])) {
     const original = fsp[operation];
     const stub = t.mock.method(fsp, operation, async (...args) => {
       if (String(args[0]).includes("folder"))
