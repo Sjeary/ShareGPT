@@ -37,6 +37,25 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
   const [apiKey, setApiKey] = useState(s.apiKey)
   const [model, setModel] = useState(s.model)
   const [effort, setEffort] = useState(s.effort)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<unknown>(null)
+  const save = async () => {
+    if (saving) return
+    const generation = useNotesAiStore.getState().principalGeneration
+    const isCurrent = () => useNotesAiStore.getState().principalGeneration === generation
+    setSaving(true)
+    setSaveError(null)
+    try {
+      await useNotesAiStore.getState().save({ baseUrl, apiKey, model, effort })
+      if (!isCurrent()) return
+      toast.success('已保存 AI 配置')
+      onDone()
+    } catch (error) {
+      if (isCurrent()) setSaveError(error)
+    } finally {
+      if (isCurrent()) setSaving(false)
+    }
+  }
   return (
     <div className="space-y-2.5 p-3 text-sm">
       <p className="text-xs text-muted-foreground">
@@ -95,15 +114,13 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
       </div>
       <button
         type="button"
-        onClick={async () => {
-          await useNotesAiStore.getState().save({ baseUrl, apiKey, model, effort })
-          toast.success('已保存 AI 配置')
-          onDone()
-        }}
-        className="h-8 w-full rounded-md bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/90"
+        disabled={saving}
+        onClick={() => void save()}
+        className="h-8 w-full rounded-md bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
       >
-        保存
+        {saving ? '正在保存…' : '保存'}
       </button>
+      {saveError !== null && <ErrorNotice error={saveError} context="保存 AI 配置" />}
     </div>
   )
 }
