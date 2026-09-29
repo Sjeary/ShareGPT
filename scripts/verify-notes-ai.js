@@ -133,6 +133,25 @@ async function main() {
           true,
         );
 
+        await window.getByRole("button", { name: "总结", exact: true }).click();
+        await waitRequests(4);
+        await emit(3, { type: "delta", text: "PARTIAL-STOPPED" });
+        await window.getByRole("button", { name: "停止", exact: true }).click();
+        assert.equal(
+          await window.getByRole("button", { name: "总结", exact: true }).isEnabled(),
+          true,
+        );
+        assert.equal(
+          await window.getByRole("button", { name: "插入文末", exact: true }).count(),
+          0,
+        );
+        await emit(3, { type: "done" });
+        await window.getByRole("button", { name: "总结", exact: true }).click();
+        await waitRequests(5);
+        await emit(4, { type: "delta", text: "RESTARTED-RESULT" });
+        await emit(4, { type: "done" });
+        await window.getByText("RESTARTED-RESULT", { exact: true }).waitFor();
+
         await electronApp.evaluate(({ ipcMain }) => {
           const original = ipcMain._invokeHandlers.get("settings:operate");
           ipcMain.removeHandler("settings:operate");

@@ -351,7 +351,16 @@ function AiAssistantRuntime() {
             {!err && (
               <div className="mt-2 flex flex-wrap gap-1.5 border-t border-border/60 pt-2">
                 {running ? (
-                  <Btn onClick={() => cancelRef.current?.()} icon={Square}>
+                  <Btn
+                    onClick={() => {
+                      cancelRef.current?.()
+                      cancelRef.current = null
+                      setRunning(false)
+                      setResult('')
+                      setErr('')
+                    }}
+                    icon={Square}
+                  >
                     停止
                   </Btn>
                 ) : (
