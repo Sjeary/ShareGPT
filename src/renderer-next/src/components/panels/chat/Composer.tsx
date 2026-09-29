@@ -9,6 +9,7 @@ import {
   Upload,
   X,
 } from 'lucide-react'
+import { assertChatTextLength } from '@/lib/chatText'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -191,6 +192,7 @@ export function Composer({
   function submit() {
     if (!canSend) return
     try {
+      assertChatTextLength(text.trim())
       const accepted =
         inEdit && edit
           ? onEditSubmit(edit.id, text.trim())

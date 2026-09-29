@@ -1,4 +1,5 @@
 const http = require("node:http");
+const { maxTextLength: MAX_CHAT_TEXT_LENGTH } = require("./chat_limits.json");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -3701,7 +3702,15 @@ wss.on("connection", (ws) => {
         return;
       }
 
-      const text = String(payload?.text || "").slice(0, 8000);
+      const text = String(payload?.text || "");
+      if (text.length > MAX_CHAT_TEXT_LENGTH) {
+        sendToClient(ws, {
+          type: "error",
+          text: `消息不能超过 ${MAX_CHAT_TEXT_LENGTH} 个字符，请缩短正文或作为文件发送`,
+          timestamp: nowIso(),
+        });
+        return;
+      }
       if (!safeText(text)) {
         sendToClient(ws, {
           type: "error",
@@ -3786,7 +3795,15 @@ wss.on("connection", (ws) => {
 
     if (payload?.type !== "chat") return;
 
-    const text = String(payload?.text || "").slice(0, 8000);
+    const text = String(payload?.text || "");
+    if (text.length > MAX_CHAT_TEXT_LENGTH) {
+      sendToClient(ws, {
+        type: "error",
+        text: `消息不能超过 ${MAX_CHAT_TEXT_LENGTH} 个字符，请缩短正文或作为文件发送`,
+        timestamp: nowIso(),
+      });
+      return;
+    }
     const normalizedAttachments = normalizeIncomingAttachments(payload?.attachments);
     if (normalizedAttachments.error) {
       sendToClient(ws, {

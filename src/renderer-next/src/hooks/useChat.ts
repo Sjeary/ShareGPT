@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { assertChatTextLength } from '@/lib/chatText'
 import { api } from '@/lib/api'
 import { chatPersistence } from '@/lib/chatPersistence'
 import {
@@ -833,6 +834,7 @@ export function useChat() {
   const sendMessage = useCallback((input: SendMessageInput) => {
     if (userDataTransitionState.isSuspended()) throw new Error('正在切换资料，请稍候')
     const text = (input.text || '').trim()
+    assertChatTextLength(text)
     const attachments = input.attachments ?? []
     if (!text && !attachments.length) return false
     const ws = wsRef.current
@@ -937,6 +939,7 @@ export function useChat() {
   const sendEdit = useCallback((messageId: string, text: string) => {
     const id = (messageId || '').trim()
     const body = (text || '').trim()
+    assertChatTextLength(body)
     if (!id) return
     if (!body) throw new Error('编辑后的消息内容不能为空。')
     requireOpenSocket().send(JSON.stringify({ type: 'chat_edit', messageId: id, text: body }))
@@ -945,6 +948,7 @@ export function useChat() {
   // 转发 (移植自旧 sendChatMessage 的 forwardDraft 分支 ~5226)。
   const sendForward = useCallback(
     (draft: ChatForwardDraft, scope: 'subnet' | 'private', to: string) => {
+      assertChatTextLength((draft.text || '').trim())
       requireOpenSocket().send(
         JSON.stringify({
           type: 'chat',

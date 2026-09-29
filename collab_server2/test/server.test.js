@@ -32,7 +32,7 @@ process.env.SHAREGPT_TRANSLATION_MASTER_KEY = Buffer.alloc(32, 7).toString("base
 process.env.LOGIN_MAX_FAILS = "3"; // 测试用小阈值
 process.env.LOGIN_LOCK_MS = "10000";
 process.env.MAX_ATTACHMENT_BYTES = "8";
-process.env.MAX_CHAT_PAYLOAD_BYTES = "4096";
+process.env.MAX_CHAT_PAYLOAD_BYTES = "65536";
 
 const srv = require("../server.js");
 const proxyRoutesBackupFile = `${process.env.PROXY_ROUTES_FILE}.backup`;
@@ -663,6 +663,38 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   assert.strictEqual(typeof legacyChat.timestamp, "string");
   assert.ok(Number.isSafeInteger(legacyChat.serverSequence));
   assert.ok(legacyChat.serverSequence > 0);
+  const maxTextLength = require("../chat_limits.json").maxTextLength;
+  const boundaryText = "x".repeat(maxTextLength);
+  legacySocket.ws.send(JSON.stringify({ type: "chat", text: boundaryText }));
+  const boundaryChat = await legacySocket.next(
+    (message) => message.type === "chat" && message.text === boundaryText,
+  );
+  for (const operation of [
+    { type: "chat", text: `${boundaryText}x` },
+    { type: "chat_edit", messageId: boundaryChat.id, text: `${boundaryText}x` },
+  ]) {
+    legacySocket.ws.send(JSON.stringify(operation));
+    const rejected = await legacySocket.next((message) => message.type === "error");
+    assert.match(rejected.text, /8000/);
+  }
+  legacySocket.ws.send(JSON.stringify({ type: "history_sync", since: "" }));
+  const lengthHistory = await legacySocket.next((message) => message.type === "history_sync");
+  assert.strictEqual(
+    lengthHistory.messages.filter((message) => message.text === boundaryText).length,
+    1,
+  );
+  assert.strictEqual(
+    lengthHistory.messages.find((message) => message.id === boundaryChat.id).edited,
+    false,
+  );
+  const editBoundary = "y".repeat(maxTextLength);
+  legacySocket.ws.send(
+    JSON.stringify({ type: "chat_edit", messageId: boundaryChat.id, text: editBoundary }),
+  );
+  const boundaryEdit = await legacySocket.next(
+    (message) => message.type === "chat_edit" && message.message?.id === boundaryChat.id,
+  );
+  assert.strictEqual(boundaryEdit.message.text, editBoundary);
   const savedHistory = JSON.parse(fs.readFileSync(process.env.CHAT_HISTORY_FILE, "utf8"));
   assert.ok(savedHistory.history.some((message) => message.id === legacyChat.id));
   assert.ok(fs.existsSync(`${process.env.CHAT_HISTORY_FILE}.backup`));
