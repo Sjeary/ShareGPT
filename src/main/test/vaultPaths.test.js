@@ -138,7 +138,7 @@ test("vault snapshots reject unreadable directories, metadata and contents inste
   const fsp = require("node:fs/promises");
   await vault.create("folder/kept.md", "kept note");
   for (const operation of /** @type {const} */ (["readdir", "stat", "readFile"])) {
-    const original = fsp[operation];
+    const original = /** @type {(...args: any[]) => Promise<any>} */ (fsp[operation]);
     const stub = t.mock.method(fsp, operation, async (...args) => {
       if (String(args[0]).includes("folder"))
         throw Object.assign(new Error("fixture unreadable"), { code: "EACCES" });
