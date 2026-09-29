@@ -1365,6 +1365,41 @@ async function verifyProductionComposer({ electronApp, page, principalId, tabId 
   );
   assert.equal((await composerState(electronApp, "chatgpt\\.com/composer-spa")).submits, 1);
   assert.equal((await aiEvents(page, "accepted-send", tabId)).length, 0);
+  process.stdout.write("[verify] SPA replaces the guard owner and can disable it completely\n");
+  await clearAiEvents(page);
+  const spaPattern = "chatgpt\\.com/composer-spa";
+  await api(page, "syncAiComposerGuard");
+  await writeComposer(page, tabId, "导航后仍能确认");
+  await sendTrustedEnter(electronApp, spaPattern);
+  const freshEvents = await waitForAiEvent(
+    page,
+    "composer-confirmation",
+    tabId,
+    1,
+    "post-SPA confirmation",
+  );
+  assert.equal(freshEvents.length, 1);
+  assert.deepEqual(
+    await api(page, "resolveAiComposerConfirmation", {
+      requestId: freshEvents[0].requestId,
+      confirmed: true,
+    }),
+    { ok: true, sent: true },
+  );
+  await waitUntil(
+    async () => (await composerState(electronApp, spaPattern)).submits === 2,
+    "post-SPA successful send",
+  );
+  await patchTranslation(page, principalId, { confirmNonTargetSend: false });
+  await api(page, "syncAiComposerGuard");
+  await clearAiEvents(page);
+  await writeComposer(page, tabId, "禁用后直接发送");
+  await sendTrustedEnter(electronApp, spaPattern);
+  await waitUntil(
+    async () => (await composerState(electronApp, spaPattern)).submits === 3,
+    "post-SPA disabled guard send",
+  );
+  assert.equal((await aiEvents(page, "composer-confirmation", tabId)).length, 0);
 }
 
 async function verifyConcurrentTabUsage({ electronApp, page, principalId, gptAId, gptBId }) {
