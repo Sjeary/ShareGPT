@@ -7,7 +7,10 @@ interface Selection {
   to: number
   text: string
 }
-interface AiEdit {
+export interface AiEdit {
+  id: number
+  view: EditorView
+  doc: EditorView['state']['doc']
   open: boolean
   from: number
   to: number
@@ -23,15 +26,22 @@ interface EditorBridgeState {
   setSelection: (s: Selection) => void
   openAiEdit: () => void
   closeAiEdit: () => void
-  replaceRange: (from: number, to: number, text: string) => void
+  replaceRange: (target: AiEdit, text: string) => boolean
 }
 
+let nextAiEditId = 0
 export const useEditorBridge = create<EditorBridgeState>((set, get) => ({
   view: null,
   selection: { from: 0, to: 0, text: '' },
   aiEdit: null,
-  setView: (view) => set({ view }),
-  setSelection: (selection) => set({ selection }),
+  setView: (view) => {
+    if (view !== get().view) set({ view, aiEdit: null, selection: { from: 0, to: 0, text: '' } })
+  },
+  setSelection: (selection) =>
+    set((state) => ({
+      selection,
+      aiEdit: state.aiEdit && state.view?.state.doc !== state.aiEdit.doc ? null : state.aiEdit,
+    })),
   openAiEdit: () => {
     const view = get().view
     if (!view) return
@@ -44,20 +54,29 @@ export const useEditorBridge = create<EditorBridgeState>((set, get) => ({
     } catch {
       /* fallback */
     }
-    set({ aiEdit: { open: true, from: sel.from, to: sel.to, original, anchor } })
+    set({
+      aiEdit: {
+        id: ++nextAiEditId,
+        view,
+        doc: view.state.doc,
+        open: true,
+        from: sel.from,
+        to: sel.to,
+        original,
+        anchor,
+      },
+    })
   },
   closeAiEdit: () => set({ aiEdit: null }),
-  replaceRange: (from, to, text) => {
-    const view = get().view
-    if (!view) return
-    // 流式生成期间文档可能已变, 钳制偏移避免替换错位/越界。
-    const len = view.state.doc.length
-    const f = Math.max(0, Math.min(from, len))
-    const t = Math.max(f, Math.min(to, len))
+  replaceRange: (target, text) => {
+    const { view, aiEdit } = get()
+    if (!view || aiEdit !== target || view !== target.view || view.state.doc !== target.doc)
+      return false
     view.dispatch({
-      changes: { from: f, to: t, insert: text },
-      selection: { anchor: f + text.length },
+      changes: { from: target.from, to: target.to, insert: text },
+      selection: { anchor: target.from + text.length },
     })
     view.focus()
+    return true
   },
 }))

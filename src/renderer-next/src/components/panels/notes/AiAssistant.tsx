@@ -127,7 +127,8 @@ function SettingsForm({ onDone }: { onDone: () => void }) {
 
 export function AiAssistant() {
   const principalGeneration = useNotesAiStore((s) => s.principalGeneration)
-  return <AiAssistantRuntime key={principalGeneration} />
+  const currentPath = useVaultStore((s) => s.currentPath)
+  return <AiAssistantRuntime key={`${principalGeneration}:${currentPath}`} />
 }
 
 function AiAssistantRuntime() {
