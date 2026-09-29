@@ -108,7 +108,7 @@ export function createTeamCalendarClient(
     if (!response.ok) {
       const detail = await owned(response.text().catch(() => ''))
       assertCurrent()
-      throw new Error(`组队日历请求失败 (${response.status})${detail ? `：${detail}` : ''}`)
+      throw new Error(`组队日历请求失败 (HTTP ${response.status})${detail ? `：${detail}` : ''}`)
     }
     return response
   }

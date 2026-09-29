@@ -76,6 +76,12 @@ test("503 retains only the same principal snapshot and A/B/A restores scoped cac
   await app.service.createTeamCalendarClient().reload();
   assert.equal(app.store.getState().events.A.id, "A");
   assert.match(app.store.getState().loadError, /503/);
+  assert.equal(
+    app
+      .load("lib/userFacingError.ts")
+      .describeUserError(app.store.getState().loadError, "组队日历加载失败").category,
+    "service",
+  );
   await app.activate("B").reload();
   assert.equal(Object.keys(app.store.getState().events).length, 0);
   assert.notEqual(app.store.getState().source, "local");
