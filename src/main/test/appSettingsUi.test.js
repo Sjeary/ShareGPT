@@ -29,15 +29,15 @@ function setup(api = {}) {
       documentElement: { classList: { toggle: (key, value) => dom.push([key, value]) } },
     },
   });
-  app.store = app.load("store/useAppStore.ts").useAppStore;
-  app.store.setState({
+  const store = app.load("store/useAppStore.ts").useAppStore;
+  store.setState({
     dark: true,
     showClaude: true,
     showGemini: true,
     active: "claude",
     workspaceMode: "organization",
   });
-  return { ...app, themes, dom };
+  return { ...app, store, themes, dom };
 }
 
 for (const action of ["reloadSettings", "saveSettings", "patchSection"]) {

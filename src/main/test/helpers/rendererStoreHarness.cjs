@@ -33,7 +33,7 @@ function rendererStoreHarness(overrides = {}) {
   };
   class Clock extends Date {
     constructor(...args) {
-      super(...(args.length ? args : [now]));
+      super(args.length ? Reflect.construct(Date, args).getTime() : now);
     }
     static now() {
       return now;
@@ -110,7 +110,10 @@ function rendererStoreHarness(overrides = {}) {
   };
 }
 function deferred() {
-  let resolve, reject;
+  /** @type {(value?: any) => void} */
+  let resolve = () => {};
+  /** @type {(reason?: any) => void} */
+  let reject = () => {};
   const promise = new Promise((yes, no) => {
     resolve = yes;
     reject = no;
