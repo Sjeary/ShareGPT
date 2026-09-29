@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { EditorView, keymap, highlightActiveLine } from '@codemirror/view'
-import { EditorState } from '@codemirror/state'
+import { EditorState, Transaction } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { autocompletion, completionKeymap } from '@codemirror/autocomplete'
@@ -42,6 +42,7 @@ export function NoteEditor({ path }: { path: string }) {
       else void store.createNote(target)
     }
 
+    let applyingDraft = false
     const view = new EditorView({
       parent: hostRef.current,
       state: EditorState.create({
@@ -65,7 +66,8 @@ export function NoteEditor({ path }: { path: string }) {
             indentWithTab,
           ]),
           EditorView.updateListener.of((u) => {
-            if (u.docChanged) setDraftRef.current(u.state.doc.toString())
+            if (u.docChanged && !applyingDraft && useVaultStore.getState().currentPath === path)
+              setDraftRef.current(u.state.doc.toString())
             if (u.selectionSet || u.docChanged) {
               const s = u.state.selection.main
               useEditorBridge.getState().setSelection({
@@ -78,10 +80,35 @@ export function NoteEditor({ path }: { path: string }) {
         ],
       }),
     })
+    const unsubscribe = useVaultStore.subscribe((state) => {
+      if (state.currentPath !== path) return
+      const previous = view.state.doc.toString()
+      const next = state.draft
+      if (previous === next) return
+      // Map selection through the changed span and keep ordinary typing history.
+      let from = 0
+      while (from < previous.length && from < next.length && previous[from] === next[from]) from++
+      let oldEnd = previous.length
+      let newEnd = next.length
+      while (oldEnd > from && newEnd > from && previous[oldEnd - 1] === next[newEnd - 1]) {
+        oldEnd--
+        newEnd--
+      }
+      applyingDraft = true
+      try {
+        view.dispatch({
+          changes: { from, to: oldEnd, insert: next.slice(from, newEnd) },
+          annotations: Transaction.addToHistory.of(false),
+        })
+      } finally {
+        applyingDraft = false
+      }
+    })
     viewRef.current = view
     useEditorBridge.getState().setView(view)
     view.focus()
     return () => {
+      unsubscribe()
       if (useEditorBridge.getState().view === view) useEditorBridge.getState().setView(null)
       view.destroy()
       viewRef.current = null
