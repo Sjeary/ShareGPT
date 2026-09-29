@@ -1437,6 +1437,116 @@ async function verifyConcurrentTabUsage({ electronApp, page, principalId, gptAId
   assert.notEqual(acceptedA[0].usageId, acceptedB[0].usageId);
 }
 
+async function verifyContextTranslation({ electronApp, page, socksPort, basicTabId }) {
+  const selectText = async (urlPattern, text) => {
+    await clearAiEvents(page);
+    await electronApp.evaluate(
+      ({ Menu, webContents }, args) => {
+        const contents = webContents
+          .getAllWebContents()
+          .find((item) => !item.isDestroyed() && new RegExp(args.urlPattern).test(item.getURL()));
+        if (!contents) throw new Error("context menu fixture missing");
+        const original = Menu.buildFromTemplate;
+        try {
+          Menu.buildFromTemplate = (template) => ({
+            popup() {
+              const translate = template.find((item) => item.label === "翻译选中文字");
+              if (!translate) throw new Error("production translation menu item missing");
+              translate.click();
+            },
+          });
+          // Exercise the production context-menu listener and callback without opening a native menu.
+          contents.emit("context-menu", {}, { selectionText: args.text, editFlags: {} });
+        } finally {
+          Menu.buildFromTemplate = original;
+        }
+      },
+      { urlPattern, text },
+    );
+  };
+  await selectText("chatgpt\\.com/conversation/42", "BASIC-SELECTION");
+  const basic = await waitForAiEvent(
+    page,
+    "translate-selection",
+    basicTabId,
+    1,
+    "basic menu selection",
+  );
+  assert.equal(basic[0].environmentId, "");
+  assert.equal(basic[0].text, "BASIC-SELECTION");
+
+  const principal = await api(page, "getSettingsPrincipal");
+  const snapshot = {
+    expectedPrincipalId: principal.principalId,
+    expectedPrincipalGeneration: principal.generation,
+  };
+  const settings = await api(page, "loadSettings", snapshot);
+  const environmentId = "fixture-context-menu";
+  await api(page, "patchSettings", {
+    ...snapshot,
+    section: "advancedAi",
+    patch: {
+      ...settings.advancedAi,
+      enabled: true,
+      environments: [
+        { id: environmentId, kind: "gpt", name: "Context fixture", routeId: "internal-unified" },
+      ],
+      activeByKind: { ...settings.advancedAi.activeByKind, gpt: environmentId },
+    },
+  });
+  await electronApp.evaluate((_electron, port) => {
+    const backend = globalThis.__diagnosticBackend;
+    globalThis.__contextOriginalRoutes = backend.activeAiProxyRoutes;
+    // Reuse this local fixture transport; route-health behavior is covered separately.
+    backend.activeAiProxyRoutes = [
+      { id: "internal-unified", mode: "sender", label: "Fixture", host: "127.0.0.1", port },
+    ];
+  }, socksPort);
+  try {
+    await api(page, "activateAiEnvironment", { kind: "gpt", environmentId });
+    const created = await api(page, "createAiView", "gpt", {
+      environmentId,
+      lastUrl: "https://chatgpt.com/gpt/context",
+    });
+    const tabId = created.activeState.id;
+    await api(page, "setActiveAiKind", "gpt");
+    await api(page, "ensureAiWorkspace", {
+      kind: "gpt",
+      environmentId,
+      tabId,
+      host: "127.0.0.1",
+      port: socksPort,
+      lastUrl: "https://chatgpt.com/gpt/context",
+    });
+    await waitForFixture(electronApp, "chatgpt\\.com/gpt/context", "advanced context fixture");
+    await selectText("chatgpt\\.com/gpt/context", "ADVANCED-SELECTION");
+    const advanced = await waitForAiEvent(
+      page,
+      "translate-selection",
+      tabId,
+      1,
+      "advanced menu selection",
+    );
+    assert.equal(advanced[0].environmentId, environmentId);
+    assert.equal(advanced[0].text, "ADVANCED-SELECTION");
+    await api(page, "closeAiView", "gpt", { tabId });
+  } finally {
+    await api(page, "activateAiEnvironment", { kind: "gpt", environmentId: "" });
+    await api(page, "patchSettings", {
+      ...snapshot,
+      section: "advancedAi",
+      patch: settings.advancedAi,
+    });
+    await electronApp.evaluate(() => {
+      globalThis.__diagnosticBackend.activeAiProxyRoutes = globalThis.__contextOriginalRoutes;
+    });
+    await activateTab(page, "gpt", basicTabId);
+  }
+  process.stdout.write(
+    "[verify] production context menus preserve basic and advanced environment identity\n",
+  );
+}
+
 async function main() {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-app-lifecycle-"));
   const userData = path.join(temporaryRoot, "user-data");
@@ -1808,6 +1918,7 @@ async function main() {
       gptAId,
       gptBId,
     });
+    await verifyContextTranslation({ electronApp, page, socksPort, basicTabId: gptBId });
 
     process.stdout.write("[verify] delayed A events and usage are discarded after activating B\n");
     await clearAiEvents(page);

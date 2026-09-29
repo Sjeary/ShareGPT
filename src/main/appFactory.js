@@ -2083,6 +2083,7 @@ function createElectronApp(baseMode = "all") {
         click: () =>
           emitWorkspaceEvent(workspace, "translate-selection", {
             tabId: workspace.id,
+            environmentId: workspace.environmentId,
             text: text.slice(0, 30000),
           }),
       });
