@@ -161,6 +161,29 @@ async function main() {
             collapsedHeight,
           );
           await notice.screenshot({ path: COLLAPSED_SCREENSHOT, animations: "disabled" });
+          const darkTheme = await window
+            .locator("html")
+            .evaluate((node) => node.classList.contains("dark"));
+          await window.getByRole("button", { name: "切换主题", exact: true }).click();
+          await window.waitForFunction(
+            (wasDark) => document.documentElement.classList.contains("dark") !== wasDark,
+            darkTheme,
+          );
+          const alternateTheme = darkTheme ? "light" : "dark";
+          await notice.screenshot({
+            path: COLLAPSED_SCREENSHOT.replace(".png", `-${alternateTheme}.png`),
+            animations: "disabled",
+          });
+          await summary.click();
+          await notice.screenshot({
+            path: SCREENSHOT.replace(".png", `-${alternateTheme}.png`),
+            animations: "disabled",
+          });
+          await window.getByRole("button", { name: "切换主题", exact: true }).click();
+          await window.waitForFunction(
+            (wasDark) => document.documentElement.classList.contains("dark") === wasDark,
+            darkTheme,
+          );
 
           await electronApp.evaluate(() => {
             globalThis.__feedbackTranslationError = "";

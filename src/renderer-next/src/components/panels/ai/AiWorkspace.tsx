@@ -1021,7 +1021,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           <ErrorNotice
             error={feedback.text}
             context={meta.title}
-            className="shrink-0 rounded-none border-x-0 border-t-0 px-4"
+            className="shrink-0 rounded-none border-x-0 border-t-0 border-border px-4 py-1.5"
             onDismiss={() => setFeedback(kind, '')}
             dismissLabel={`关闭 ${meta.title} 提示`}
           />
