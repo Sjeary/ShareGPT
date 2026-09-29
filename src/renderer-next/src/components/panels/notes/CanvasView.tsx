@@ -19,10 +19,11 @@ import {
 import '@xyflow/react/dist/style.css'
 import { FileText, Plus, Type as TypeIcon } from 'lucide-react'
 import { api } from '@/lib/api'
+import { ErrorNotice } from '@/components/ErrorNotice'
 import { useAppStore } from '@/store/useAppStore'
 import { useVaultStore } from '@/store/useVaultStore'
 import { inputPrompt } from './InputPrompt'
-import { parseCanvas, toCanvas, toReactFlow } from '@/lib/notes/canvas'
+import { parseCanvas, toCanvas, toReactFlow, type CanvasDoc } from '@/lib/notes/canvas'
 
 let idc = 0
 const newId = () => `n${Date.now()}_${idc++}`
@@ -125,9 +126,8 @@ function GroupNode({ data }: NodeProps) {
   )
 }
 
-function CanvasInner({ path }: { path: string }) {
-  const raw = useVaultStore((s) => s.rawByPath[path] || '')
-  const initial = useMemo(() => toReactFlow(parseCanvas(raw)), [raw])
+function CanvasInner({ path, doc }: { path: string; doc: CanvasDoc }) {
+  const initial = useMemo(() => toReactFlow(doc), [doc])
   const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
   const rf = useReactFlow()
@@ -153,13 +153,13 @@ function CanvasInner({ path }: { path: string }) {
     }
     if (saveTimer.current) clearTimeout(saveTimer.current)
     saveTimer.current = setTimeout(() => {
-      const doc = toCanvas(nodes as Node[], edges as Edge[])
-      void api.vault.write(path, JSON.stringify(doc, null, 2))
+      const document = toCanvas(nodes as Node[], edges as Edge[], doc)
+      void api.vault.write(path, JSON.stringify(document, null, 2))
     }, 700)
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current)
     }
-  }, [nodes, edges, path])
+  }, [nodes, edges, path, doc])
 
   const addText = () => {
     const c = rf.screenToFlowPosition({ x: 300, y: 200 })
@@ -230,9 +230,18 @@ function CanvasInner({ path }: { path: string }) {
 
 // 画布视图: .canvas 文件用无限白板渲染/编辑 (JSON Canvas 往返), 可被 Obsidian 直接打开。
 export function CanvasView({ path }: { path: string }) {
+  const raw = useVaultStore((s) => (s.currentPath === path ? s.draft : s.rawByPath[path] || ''))
+  const parsed = useMemo(() => {
+    try {
+      return { doc: parseCanvas(raw), error: null }
+    } catch (error) {
+      return { doc: null, error }
+    }
+  }, [raw])
+  if (!parsed.doc) return <ErrorNotice error={parsed.error} context="画布" className="m-3" />
   return (
     <ReactFlowProvider>
-      <CanvasInner key={path} path={path} />
+      <CanvasInner key={path} path={path} doc={parsed.doc} />
     </ReactFlowProvider>
   )
 }

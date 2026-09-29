@@ -48,6 +48,11 @@ async function main() {
         }
         assert.match(content, /new remote body/);
         assert.match(content, /local input/);
+        fs.writeFileSync(path.join(root, "broken.canvas"), "{broken canvas");
+        await window.getByText("broken.canvas", { exact: true }).first().click();
+        await window.getByRole("alert", { name: "画布错误" }).waitFor();
+        assert.equal(await window.getByRole("button", { name: "文本", exact: true }).count(), 0);
+        assert.equal(fs.readFileSync(path.join(root, "broken.canvas"), "utf8"), "{broken canvas");
         assert.deepEqual(errors, []);
         const foreground = await electronApp.evaluate(() => globalThis.__notesForeground);
         assert.deepEqual(foreground, []);
