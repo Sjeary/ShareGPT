@@ -3,6 +3,7 @@ import { CalendarDays, ChevronLeft, ChevronRight, Plus, WifiOff } from 'lucide-r
 import { addDays, addMonths, parseISO } from 'date-fns'
 import { cn } from '@/lib/utils'
 import { PanelScaffold } from '@/components/panels/PanelScaffold'
+import { LocalDataStatus } from '@/components/LocalDataStatus'
 import { ErrorNotice } from '@/components/ErrorNotice'
 import { Button } from '@/components/ui/button'
 import { useTeamCalendar } from '@/hooks/useTeamCalendar'
@@ -23,6 +24,7 @@ import {
 // Shell 通过该精确路径与导出名引入: export function TeamCalendarPanel()。
 export function TeamCalendarPanel() {
   const {
+    ownsSnapshot,
     source,
     loading,
     loadError,
@@ -85,6 +87,13 @@ export function TeamCalendarPanel() {
     d.setHours(9, 0, 0, 0)
     openNew(d.toISOString())
   }
+
+  if (!ownsSnapshot)
+    return (
+      <PanelScaffold icon={CalendarDays} title="组队日历" hint="团队共享日历" scrollable={false}>
+        <LocalDataStatus loading={loading} error={loadError} onRetry={reload} />
+      </PanelScaffold>
+    )
 
   const toolbar = (
     <div className="flex items-center gap-1.5">

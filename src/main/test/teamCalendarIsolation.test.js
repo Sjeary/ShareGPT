@@ -195,3 +195,64 @@ test("sharing before opening the team panel preserves the same-account cached sn
   assert.deepEqual(Object.keys(app.store.getState().events), ["previous", "created"]);
   assert.equal(JSON.parse(app.storage.get(key)).length, 2);
 });
+
+for (const mutation of ["create", "delete", "broadcast", "share"]) {
+  test(`a delayed GET cannot overwrite a newer ${mutation} result from the same principal`, async () => {
+    const pending = deferred();
+    const app = setup((_url, init) =>
+      init.method === "GET" ? pending.promise : Promise.resolve(response({ event: event("new") })),
+    );
+    const client = app.activate("A");
+    app.storage.set(app.service.teamCalendarCacheKey("A"), JSON.stringify([event("old")]));
+    const reload = client.reload();
+    await app.settle();
+    if (mutation === "create") await client.createEvent(draft);
+    if (mutation === "share") await app.load("lib/integrations.ts").shareEventToTeam(draft);
+    if (mutation === "delete") await client.deleteEvent("old");
+    if (mutation === "broadcast")
+      client.receive({ type: "calendar_event_created", event: event("new") });
+    const latest = JSON.stringify(app.store.getState().events);
+    pending.resolve(response({ events: [event("old")] }));
+    await reload;
+    assert.equal(JSON.stringify(app.store.getState().events), latest);
+    assert.equal(app.store.getState().loading, false);
+  });
+}
+
+test("the team hook hides old-account events and status before its first effect can reset the store", () => {
+  const { createRequire } = require("node:module");
+  const path = require("node:path");
+  const requireRenderer = createRequire(
+    path.resolve(__dirname, "../../renderer-next/package.json"),
+  );
+  const { createStore } = requireRenderer("zustand/vanilla");
+  const app = rendererStoreHarness({
+    modules: {
+      zustand: {
+        create(initializer) {
+          const store = createStore(initializer);
+          return Object.assign((selector) => selector(store.getState()), store);
+        },
+      },
+      react: { useMemo: (factory) => factory(), useEffect() {} },
+    },
+  });
+  const runtime = app.load("lib/settingsPrincipalRuntime.ts").settingsPrincipalRuntime;
+  const store = app.load("store/useTeamCalendarStore.ts").useTeamCalendarStore;
+  const owner = runtime.activate("A", 1);
+  store.setState({
+    owner,
+    events: { A: event("A") },
+    source: "server",
+    loadError: "A error",
+    editorTarget: "A",
+  });
+  runtime.activate("B", 2);
+  const hook = app.load("hooks/useTeamCalendar.ts").useTeamCalendar();
+  assert.equal(hook.ownsSnapshot, false);
+  assert.equal(hook.events.length, 0);
+  assert.equal(hook.loadError, "");
+  assert.equal(hook.source, "loading");
+  runtime.activate("A", 3);
+  assert.equal(app.load("hooks/useTeamCalendar.ts").useTeamCalendar().events.length, 0);
+});

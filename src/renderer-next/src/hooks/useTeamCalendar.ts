@@ -15,6 +15,7 @@ export type { TeamEventDraft } from '@/lib/teamCalendarClient'
 
 export interface UseTeamCalendar {
   source: 'loading' | 'server' | 'local'
+  ownsSnapshot: boolean
   loading: boolean
   loadError: string
   username: string
@@ -30,11 +31,16 @@ export interface UseTeamCalendar {
 export function useTeamCalendar(): UseTeamCalendar {
   const identity = useChatStore((s) => s.identity)
   const transitionVersion = useUserDataTransitionVersion()
+  const owner = useTeamCalendarStore((s) => s.owner)
   const source = useTeamCalendarStore((s) => s.source)
   const loading = useTeamCalendarStore((s) => s.loading)
   const loadError = useTeamCalendarStore((s) => s.loadError)
   const eventsMap = useTeamCalendarStore((s) => s.events)
   const { principalId, generation } = settingsPrincipalRuntime.current()
+  const ownsSnapshot =
+    owner?.principalId === principalId &&
+    owner?.generation === generation &&
+    transitionVersion % 2 === 0
   const client = useMemo(
     () =>
       createTeamCalendarClient(
@@ -56,11 +62,15 @@ export function useTeamCalendar(): UseTeamCalendar {
     }
   }, [client, identity.serverUrl, identity.token])
 
-  const events = useMemo(() => selectSortedEvents(eventsMap), [eventsMap])
+  const events = useMemo(
+    () => (ownsSnapshot ? selectSortedEvents(eventsMap) : []),
+    [eventsMap, ownsSnapshot],
+  )
   return {
-    source,
-    loading,
-    loadError,
+    ownsSnapshot,
+    source: ownsSnapshot ? source : 'loading',
+    loading: !ownsSnapshot || loading,
+    loadError: ownsSnapshot ? loadError : '',
     username: identity.username,
     displayName: identity.displayName || identity.username,
     events,

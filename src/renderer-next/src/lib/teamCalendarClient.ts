@@ -135,7 +135,11 @@ export function createTeamCalendarClient(
       if (!isCurrent()) return
       prepare()
       const sequence = ++reloadSequence
-      const current = () => isCurrent() && sequence === reloadSequence
+      let queriedEvents: Record<string, TeamEvent> | null = null
+      const current = () =>
+        isCurrent() &&
+        sequence === reloadSequence &&
+        (!queriedEvents || useTeamCalendarStore.getState().events === queriedEvents)
       useTeamCalendarStore.setState({ loading: true, loadError: '' })
       try {
         if (!loggedIn) {
@@ -154,6 +158,7 @@ export function createTeamCalendarClient(
             /* 远端成功可修复镜像，失败时下方保留原文件并提示。 */
           }
         }
+        queriedEvents = useTeamCalendarStore.getState().events
         const response = await request('', { method: 'GET' })
         const payload = (await owned(response.json())) as { events?: TeamEvent[] }
         if (!current()) return
