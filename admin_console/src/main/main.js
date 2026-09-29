@@ -4,6 +4,11 @@ const http = require("node:http");
 const https = require("node:https");
 const { URL } = require("node:url");
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { configureAdminUserData } = require("./userDataPath");
+
+// Configure storage before whenReady can create Chromium sessions.
+app.setName("ShareGPT Admin");
+configureAdminUserData(app);
 const backgroundTest = !app.isPackaged && process.env.SHAREGPT_ADMIN_TEST_HIDDEN === "1";
 if (backgroundTest && process.platform === "darwin") app.setActivationPolicy("prohibited");
 
@@ -193,13 +198,6 @@ function loadRenderer(win) {
 }
 
 app.whenReady().then(() => {
-  app.setName("ShareGPT Admin");
-  app.setPath(
-    "userData",
-    process.env.SHAREGPT_ADMIN_TEST_USER_DATA
-      ? path.resolve(process.env.SHAREGPT_ADMIN_TEST_USER_DATA)
-      : path.join(app.getPath("appData"), "ShareGPT Admin"),
-  );
   ipcMain.handle("prefs:load", () => loadPrefs());
   ipcMain.handle("prefs:save", (_event, data) => savePrefs(data || {}));
   ipcMain.handle("app:version", () => app.getVersion());
