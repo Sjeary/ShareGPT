@@ -413,8 +413,8 @@ export const useTranslationStore = create<TranslationState>((set, get) => ({
           outputFormat,
         ),
         previewEdited: false,
-        phase: state.composer.translation ? 'ready' : state.composer.phase,
-        status: state.composer.translation ? '发送格式已更新，尚未写入网页' : state.composer.status,
+        status:
+          state.composer.phase === 'ready' ? '发送格式已更新，尚未写入网页' : state.composer.status,
       },
     })),
   setComposerStatus: (status) => set((state) => ({ composer: { ...state.composer, status } })),
