@@ -147,6 +147,9 @@ jobs:
       - name: Verify local editor drafts and onboarding restart
         run: npm run verify:local-editor-state
 
+      - name: Verify notes editor lifecycle
+        run: node scripts/verify-notes-lifecycle.js
+
       - name: Verify unreadable settings recovery
         run: npm run verify:startup-recovery
 
