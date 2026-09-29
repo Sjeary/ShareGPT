@@ -530,6 +530,7 @@ async function launchCase({
   password = PASSWORD,
   mode = "sender",
   waitForSilentRelogin = false,
+  beforeLogin,
   exercise,
   profileDirectory,
   prepareUserData,
@@ -581,13 +582,15 @@ async function launchCase({
       await chooseTeam.click();
     }
     await window.locator("#account-server").waitFor({ state: "visible" });
+    if (beforeLogin) await beforeLogin({ electronApp, window });
     await window.locator("#account-server").fill(baseUrl);
     await window.locator("#account-username").fill(username);
     await window.locator("#account-password").fill(password);
     await window.getByRole("button", { name: "登录", exact: true }).click();
 
     if (password !== PASSWORD) {
-      await window.getByText("密码错误", { exact: true }).waitFor({ state: "visible" });
+      await window.getByText("身份验证未通过", { exact: true }).waitFor({ state: "visible" });
+      assert.equal(await window.locator("#account-password").getAttribute("aria-invalid"), "true");
       const principal = await window.evaluate(() => window.api.getSettingsPrincipal());
       return { authed: false, principal, blockedRequests };
     }

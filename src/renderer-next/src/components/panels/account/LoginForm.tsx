@@ -1,3 +1,5 @@
+import { ErrorNotice } from '@/components/ErrorNotice'
+import { describeUserError } from '@/lib/userFacingError'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { toast } from 'sonner'
 import {
@@ -135,7 +137,7 @@ export function LoginForm() {
     hasSeenWorkspaceIntro ? 'organization' : 'welcome',
   )
   // 内联错误条 + 出错字段 (用于 aria-invalid 触发红边)。
-  const [error, setError] = useState('')
+  const [error, setError] = useState<unknown>(null)
   const [errorField, setErrorField] = useState<ErrorField | null>(null)
 
   const serverRef = useRef<HTMLInputElement>(null)
@@ -159,9 +161,11 @@ export function LoginForm() {
     void login(params)
       .catch((err) => {
         if (isStaleAttemptError(err)) return
-        const message = err instanceof Error ? err.message : '自动登录失败，请重新登录'
-        setError(`自动登录失败：${message}`)
-        setErrorField('password')
+        setError(err)
+        const category = describeUserError(err).category
+        setErrorField(
+          category === 'connection' ? 'server' : category === 'credentials' ? 'password' : null,
+        )
       })
       .finally(() => {
         loginUiBusyRef.current = false
@@ -215,12 +219,12 @@ export function LoginForm() {
       toast.success(`登录成功，欢迎 ${profile.displayName}`)
     } catch (err) {
       if (isStaleAttemptError(err)) return
-      const message = err instanceof Error ? err.message : '登录失败，请稍后重试'
-      toast.error(message)
-      // 内联持久错误条 + 红边密码框 + 聚焦选中 (对齐旧版失败聚焦密码语义)。
-      setError(message)
-      setErrorField('password')
-      focusField('password', true)
+      setError(err)
+      const category = describeUserError(err).category
+      const field =
+        category === 'connection' ? 'server' : category === 'credentials' ? 'password' : null
+      setErrorField(field)
+      if (field) focusField(field, field === 'password')
     } finally {
       loginUiBusyRef.current = false
       setSubmitting(false)
@@ -238,9 +242,7 @@ export function LoginForm() {
       }
       await enterPersonal()
     } catch (err) {
-      const message = err instanceof Error ? err.message : '个人工作区初始化失败，请重试'
-      toast.error(message)
-      setError(message)
+      setError(err)
     } finally {
       setEnteringPersonal(false)
     }
@@ -418,13 +420,8 @@ export function LoginForm() {
               {enteringPersonal ? <Loader2 className="animate-spin" /> : <Laptop />}
               {enteringPersonal ? '正在准备个人工作区…' : '进入个人工作区'}
             </Button>
-            {error && (
-              <p
-                role="alert"
-                className="mt-3 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-              >
-                {error}
-              </p>
+            {Boolean(error) && (
+              <ErrorNotice error={error} context="登录与工作区" className="mt-3" />
             )}
           </main>
         </div>
@@ -544,13 +541,8 @@ export function LoginForm() {
                       />
                     </div>
 
-                    {error && (
-                      <p
-                        role="alert"
-                        className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                      >
-                        {error}
-                      </p>
+                    {Boolean(error) && (
+                      <ErrorNotice error={error} context="登录与工作区" className="mt-3" />
                     )}
 
                     <Button

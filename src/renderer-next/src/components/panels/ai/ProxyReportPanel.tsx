@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/ErrorNotice'
 import { ShieldCheck, ShieldAlert, ShieldX, Loader2, RotateCw, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -42,7 +43,9 @@ export function ProxyReportPanel({
           ? `线路绑定错误：预期 SOCKS ${report.expectedSessionProxy || '未确定'}，实际 ${report.sessionProxy || 'DIRECT'}。页面访问已被阻止。`
           : fallbackHosts.length > 0
             ? `共 ${hosts.length} 个域名：${proxyHosts.length} 个经代理（梯子），${fallbackHosts.length} 个回落（本机代理/直连，未走代理）。`
-            : `此页面流量已全部经代理（梯子）访问，共 ${hosts.length} 个域名。`
+            : hosts.length
+              ? `本次已记录的 ${hosts.length} 个域名均匹配当前代理线路。`
+              : '尚未记录到页面域名，请加载网页后重新检测。'
 
   const SummaryIcon =
     tone === 'ok'
@@ -97,7 +100,11 @@ export function ProxyReportPanel({
         </div>
       </div>
 
-      <p className={`mb-2 text-xs ${summaryColor}`}>{summary}</p>
+      {report && !report.ok && report.reason && report.reason !== 'no-workspace' && !checking ? (
+        <ErrorNotice error={report.reason} context="代理检测" className="mb-2" />
+      ) : (
+        <p className={`mb-2 text-xs ${summaryColor}`}>{summary}</p>
+      )}
 
       {report?.ok && senderRoute && fallbackHosts.length > 0 && (
         <div className="mb-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -105,7 +112,7 @@ export function ProxyReportPanel({
             <ShieldX className="mt-0.5 size-4 shrink-0" />
             <span>
               <b>有 {fallbackHosts.length} 个域名没走代理！</b>
-              这些流量从你的真实 IP 出网（未经梯子）。已自动加入本机代理清单并上报管理员，
+              这些域名未走当前指定线路，可能使用本机代理或直连；本次检测未确认最终公网出口。已自动加入本机代理清单并上报管理员，
               点下方按钮重启代理即可生效。
             </span>
           </div>

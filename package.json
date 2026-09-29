@@ -35,6 +35,7 @@
     "typecheck:main": "tsc -p src/main/jsconfig.json",
     "verify:browser-privacy": "electron scripts/verify-browser-privacy.js",
     "verify:browser-privacy-ui": "npm run build:next && node scripts/verify-browser-privacy-ui.js",
+    "verify:error-feedback": "npm run build:next && node scripts/verify-error-feedback.js",
     "verify:collab-login-compatibility": "npm run build:next && node scripts/verify-collab-login-compatibility.js",
     "verify:advanced-environment-recreate": "npm run build:next && node scripts/verify-collab-login-compatibility.js --case=advanced-environment-recreate",
     "verify:ai-composer": "electron scripts/verify-ai-composer.js",

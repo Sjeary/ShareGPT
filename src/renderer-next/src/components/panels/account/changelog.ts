@@ -10,6 +10,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: 'Unreleased',
+    date: '待发布',
+    highlights: [
+      '登录、AI 网页、翻译、笔记 AI 和更新下载的常见连接错误显示中文原因说明与处理建议；可查看或复制隐藏认证信息后的技术详情。网络故障不再误将密码框标为错误。',
+    ],
+  },
+  {
     version: '1.0.10',
     date: '2026-09-13',
     highlights: [

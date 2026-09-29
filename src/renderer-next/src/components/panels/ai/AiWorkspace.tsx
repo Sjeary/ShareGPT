@@ -1,3 +1,5 @@
+import { showErrorToast } from '@/lib/errorToast'
+import { ErrorNotice } from '@/components/ErrorNotice'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
@@ -279,16 +281,10 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         })
         if (showStatus) setFeedback(kind, confirmed ? '已发送' : '已取消发送')
       } catch (error) {
-        const raw = error instanceof Error ? error.message : String(error)
-        const message = raw
-          .replace(/^Error invoking remote method '[^']+': Error:\s*/i, '')
-          .replace(/^Error:\s*/i, '')
-        if (!/网页或标签已经变化|发送确认已失效/.test(message)) {
-          setFeedback(kind, message, 'error')
-        }
+        reportWorkspaceError(error)
       }
     },
-    [activeTabId, environmentId, kind, setFeedback],
+    [activeTabId, environmentId, kind, setFeedback, reportWorkspaceError],
   )
 
   useEffect(() => {
@@ -438,7 +434,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       toast.success('已加入并重启代理，正在重新检测…')
       window.setTimeout(() => void runProxyCheck(), 1500)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '重启代理失败')
+      showErrorToast(err, '重启代理')
     } finally {
       setRestartingProxy(false)
     }
@@ -1021,15 +1017,18 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           </div>
         )}
 
-        {feedback.text && (
+        {feedback.text && feedback.tone === 'error' ? (
+          <ErrorNotice
+            error={feedback.text}
+            context={meta.title}
+            className="shrink-0 rounded-none border-x-0 border-t-0 px-4"
+            onDismiss={() => setFeedback(kind, '')}
+            dismissLabel={`关闭 ${meta.title} 提示`}
+          />
+        ) : feedback.text ? (
           <div
-            role={feedback.tone === 'error' ? 'alert' : 'status'}
-            className={cn(
-              'flex shrink-0 items-start gap-2 border-b border-border px-4 py-1.5 text-xs',
-              feedback.tone === 'error'
-                ? 'bg-destructive/10 text-destructive'
-                : 'bg-muted/40 text-muted-foreground',
-            )}
+            role="status"
+            className="flex shrink-0 items-start gap-2 border-b border-border bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground"
           >
             <span className="min-w-0 flex-1 break-words">{feedback.text}</span>
             <button
@@ -1037,17 +1036,12 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               title="关闭提示"
               aria-label={`关闭 ${meta.title} 提示`}
               onClick={() => setFeedback(kind, '')}
-              className={cn(
-                'shrink-0 rounded p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                feedback.tone === 'error'
-                  ? 'text-destructive/70 hover:bg-destructive/10 hover:text-destructive'
-                  : 'text-muted-foreground/70 hover:bg-muted hover:text-muted-foreground',
-              )}
+              className="shrink-0 rounded p-0.5 text-muted-foreground/70 transition-colors hover:bg-muted hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <X className="size-3.5" />
             </button>
           </div>
-        )}
+        ) : null}
 
         {pendingComposerConfirmation && (
           <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/45 bg-amber-500/10 px-4 py-2 text-xs text-amber-800 dark:text-amber-200">

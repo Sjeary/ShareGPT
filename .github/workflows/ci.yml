@@ -128,6 +128,9 @@ jobs:
       - name: Verify managed proxy editing permissions
         run: npm run verify:managed-proxy-readonly
 
+      - name: 用户错误提示与恢复验收
+        run: npm run verify:error-feedback
+
       - name: 协作登录与客户端/服务端兼容验收
         run: npm run verify:collab-login-compatibility
 

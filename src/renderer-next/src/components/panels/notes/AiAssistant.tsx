@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/ErrorNotice'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Copy,
@@ -322,7 +323,7 @@ function AiAssistantRuntime() {
         {(result || running || err) && (
           <div className="mt-3 rounded-lg border border-border bg-muted/30 p-2.5">
             {err ? (
-              <p className="text-xs text-destructive">{err}</p>
+              <ErrorNotice error={err} context="笔记 AI" />
             ) : (
               <div className="whitespace-pre-wrap text-sm leading-relaxed">
                 {result}

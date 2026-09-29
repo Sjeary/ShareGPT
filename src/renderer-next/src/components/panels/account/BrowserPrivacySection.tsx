@@ -1,3 +1,4 @@
+import { showErrorToast } from '@/lib/errorToast'
 import { useState } from 'react'
 import {
   Fingerprint,
@@ -205,7 +206,7 @@ export function BrowserPrivacySection() {
         toast.info(`出口位于 ${detected.country || detected.countryCode}，环境已按真实出口同步`)
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '同步代理出口环境失败')
+      showErrorToast(error, '同步代理出口环境')
     } finally {
       setSyncingExit(false)
     }

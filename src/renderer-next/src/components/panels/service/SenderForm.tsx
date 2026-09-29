@@ -1,3 +1,4 @@
+import { showErrorToast } from '@/lib/errorToast'
 import { useMemo, useState } from 'react'
 import { Play, Square, Loader2, TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
@@ -173,7 +174,7 @@ export function SenderForm() {
       }
       toast.success('代理已开启')
     } catch (e) {
-      toast.error((e as Error)?.message || '开启代理失败')
+      showErrorToast(e, '开启代理')
     } finally {
       setBusy(false)
     }
@@ -185,7 +186,7 @@ export function SenderForm() {
       await api.stopSender()
       toast.success('已发送停止指令')
     } catch (e) {
-      toast.error((e as Error)?.message || '停止代理失败')
+      showErrorToast(e, '停止代理')
     } finally {
       setBusy(false)
     }
