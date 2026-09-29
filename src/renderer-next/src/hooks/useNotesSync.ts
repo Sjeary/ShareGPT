@@ -3,36 +3,19 @@ import {
   userDataTransitionState,
 } from '@/lib/userDataTransitionState'
 import { useEffect } from 'react'
-import { create } from 'zustand'
+import { useNotesSyncStore } from '@/store/useNotesSyncStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useVaultStore } from '@/store/useVaultStore'
 import { wsBus } from '@/lib/wsBus'
 import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
-import { type MergeReport, type VaultFiles } from '@/lib/notes/merge'
+import { type VaultFiles } from '@/lib/notes/merge'
 
 // 知识库云端同步 (单会话顺序模型, 无实时强依赖):
 //  - 保存后防抖推送整库 blob (kind=notes) 到 user-store; rev 乐观并发。
 //  - 打开/登录时拉取, 与本地三方合并(防止旧版本覆盖新版本), 有差异弹「同步对比」。
 //  - 未登录 / 服务器不支持 -> 静默纯本地。
 
-export type NotesSyncState = 'off' | 'local' | 'syncing' | 'synced' | 'error'
-
-interface NotesSyncStore {
-  state: NotesSyncState
-  lastReport: MergeReport | null
-  compareOpen: boolean
-  setState: (s: NotesSyncState) => void
-  showReport: (r: MergeReport) => void
-  setCompareOpen: (v: boolean) => void
-}
-export const useNotesSyncStore = create<NotesSyncStore>((set) => ({
-  state: 'off',
-  lastReport: null,
-  compareOpen: false,
-  setState: (state) => set({ state }),
-  showReport: (lastReport) => set({ lastReport, compareOpen: true }),
-  setCompareOpen: (compareOpen) => set({ compareOpen }),
-}))
+export { useNotesSyncStore, type NotesSyncState } from '@/store/useNotesSyncStore'
 
 const PUSH_DEBOUNCE_MS = 900
 const POLL_MS = 25000
@@ -86,6 +69,7 @@ export function useNotesSync(): void {
   const vaultLoaded = useVaultStore((s) => s.loaded)
 
   useEffect(() => {
+    useNotesSyncStore.getState().resetForPrincipal()
     const setState = useNotesSyncStore.getState().setState
     if (dataSuspended || !vaultLoaded || !serverUrl || !token) {
       setState('local')

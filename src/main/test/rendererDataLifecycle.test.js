@@ -352,3 +352,27 @@ test("navigation waits for edits made while the previous save is still in flight
   assert.equal(vault.getState().draft, "b");
   assert.equal(f.files.get("A").vault["a.md"], "second change during save");
 });
+
+test("Principal transitions clear the Notes comparison report before loading the next account", async () => {
+  const f = fixture();
+  const runtime = f.load("lib/settingsPrincipalRuntime").settingsPrincipalRuntime;
+  runtime.activate("A", 1);
+  const sync = f.load("store/useNotesSyncStore").useNotesSyncStore;
+  sync
+    .getState()
+    .showReport({
+      fromCloud: ["A-private.md"],
+      conflicts: [],
+      deleted: [],
+      merged: {},
+      keptLocal: [],
+      autoMerged: [],
+      changed: true,
+    });
+  assert.equal(sync.getState().compareOpen, true);
+  await f
+    .load("lib/userDataLifecycle")
+    .withUserDataTransition(async () => runtime.activate("B", 2), { reload: true });
+  assert.equal(sync.getState().compareOpen, false);
+  assert.equal(sync.getState().lastReport, null);
+});
