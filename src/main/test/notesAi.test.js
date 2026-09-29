@@ -148,6 +148,30 @@ test("notes AI handles an SSE terminal line without a trailing newline", async (
   assert.equal(events.filter((event) => event.type === "error").length, 0);
 });
 
+for (const [name, chunks] of [
+  ["partial EOF", ['data: {"type":"response.output_text.delta","delta":"partial"}\n']],
+  ["empty EOF", []],
+  ["JSON error with HTTP 200", ['{"error":{"message":"provider rejected"}}']],
+  [
+    "incomplete",
+    [
+      'data: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}\n',
+    ],
+  ],
+]) {
+  test(`notes AI rejects ${name} without a successful terminal event`, async () => {
+    const { notesAi, events } = createHarness({ httpsRequest: responseRequest(chunks) });
+    notesAi.complete({
+      provider: { baseUrl: "https://example.test", apiKey: "test" },
+      mode: "summary",
+      text: "内容",
+    });
+    await waitForTurn();
+    assert.equal(events.filter((event) => event.type === "error").length, 1);
+    assert.equal(events.filter((event) => event.type === "done").length, 0);
+  });
+}
+
 test("notes AI reports an HTTP non-2xx response exactly once", async () => {
   const { notesAi, events } = createHarness({
     httpsRequest: responseRequest(["unauthorized"], 401),
