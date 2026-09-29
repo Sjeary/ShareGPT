@@ -1055,6 +1055,9 @@ class Backend {
       if (!fs.existsSync(sourcePath)) continue;
 
       const before = fs.existsSync(targetPath);
+      // An existing data tree is authoritative, including intentional file deletions.
+      // Chromium partitions retain their separate whole-partition recovery policy.
+      if (before && entryName !== "Partitions") continue;
       copyImportantPath(sourcePath, targetPath, errors, {
         overwrite: false,
         chromiumPartitionConflicts: conflicts,

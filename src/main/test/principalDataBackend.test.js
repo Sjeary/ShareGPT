@@ -195,3 +195,20 @@ test("ambiguous old chat archives fail before changing settings or current histo
   assert.deepEqual(fs.readFileSync(backend.settingsFile), settings);
   assert.equal(fs.existsSync(backend.chatHistoryFile), false);
 });
+
+test("startup recovery respects deleted notes in an existing data tree but recovers a missing tree", async (t) => {
+  const { backend, userData } = fixture(t);
+  backend.activatePrincipal("https://team.example", "Alice");
+  await backend.vault.create("removed.md", "backup copy");
+  await backend.vault.create("kept.md", "kept copy");
+  backend.createUpdateBackup("test-vault-deletion");
+  await backend.vault.remove("removed.md");
+  backend.init();
+  assert.equal(fs.existsSync(path.join(backend.vault.root, "removed.md")), false);
+  assert.equal((await backend.vault.read("kept.md")).content, "kept copy");
+  await backend.stopDataWatchers();
+  fs.rmSync(path.join(userData, "PrincipalData"), { recursive: true });
+  const restored = backend.restoreMissingDataFromLatestUpdateBackup();
+  assert.ok(restored.restored.includes("PrincipalData"));
+  assert.equal((await backend.vault.read("removed.md")).content, "backup copy");
+});
