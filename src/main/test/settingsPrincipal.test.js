@@ -120,7 +120,7 @@ test("a lone damaged chat backup does not abort startup or permit replacement", 
   assert.equal(fs.readFileSync(backend.chatHistoryFile, "utf8"), JSON.stringify(recovered));
 });
 
-test("isolated development keeps update downloads and backup recovery inside its profile", (t) => {
+test("default development keeps update downloads and backup recovery inside its profile", (t) => {
   const original = process.env.SHAREGPT_USER_DATA;
   t.after(() => {
     if (original === undefined) delete process.env.SHAREGPT_USER_DATA;
@@ -128,7 +128,7 @@ test("isolated development keeps update downloads and backup recovery inside its
   });
   const installed = createBackend(t);
   const userData = installed.app.getPath("userData");
-  process.env.SHAREGPT_USER_DATA = userData;
+  delete process.env.SHAREGPT_USER_DATA;
   const isolated = new Backend({ ...installed.app, isPackaged: false }, () => null);
   assert.equal(isolated.updatesDir, path.join(userData, "ShareGPT Updates"));
   assert.equal(isolated.updateBackupsDir, path.join(userData, "ShareGPT Backups"));
@@ -141,6 +141,7 @@ test("isolated development keeps update downloads and backup recovery inside its
   assert.equal(fs.readFileSync(path.join(backupDir, "settings.json"), "utf8"), sentinel);
 
   // Packaged upgrades ignore the development override and retain normal recovery.
+  process.env.SHAREGPT_USER_DATA = userData;
   const packaged = new Backend(installed.app, () => null);
   assert.equal(packaged.updateBackupsDir, installed.updateBackupsDir);
   assert.ok(packaged.restoreMissingDataFromLatestUpdateBackup());

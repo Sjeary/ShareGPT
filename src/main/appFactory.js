@@ -443,6 +443,7 @@ async function openExternalUrl(rawUrl) {
 
 function createElectronApp(baseMode = "all") {
   app.setName("ShareGPT");
+  applyStableUserDataPath(app);
   if (typeof app.setAppUserModelId === "function") {
     app.setAppUserModelId("ShareGPT");
   }
@@ -3440,7 +3441,6 @@ function createElectronApp(baseMode = "all") {
   }
 
   app.whenReady().then(() => {
-    applyStableUserDataPath(app);
     appLog.init(app.getPath("userData"));
     const log = appLog.scoped("main");
     mainLog = log;

@@ -58,15 +58,44 @@ function copyMissingUserDataEntries(sourceDir, targetDir, options = {}) {
   return conflicts;
 }
 
+// Resolve existing ancestors too, so a not-yet-created child of a symlink cannot
+// redirect development writes into the installed application's profile.
+function resolveProfilePath(directory) {
+  const absolute = path.resolve(directory);
+  try {
+    return fs.realpathSync(absolute);
+  } catch (error) {
+    if (error.code !== "ENOENT" || path.dirname(absolute) === absolute) throw error;
+    return path.join(resolveProfilePath(path.dirname(absolute)), path.basename(absolute));
+  }
+}
+
 function applyStableUserDataPath(appInstance, environment = process.env) {
-  const devUserDataDir = environment.SHAREGPT_USER_DATA;
-  if (devUserDataDir && !appInstance.isPackaged) {
-    try {
-      fs.mkdirSync(devUserDataDir, { recursive: true });
-    } catch (error) {
-      console.warn("Unable to create dev user data dir:", error.message || error);
+  if (!appInstance.isPackaged) {
+    const devUserDataDir = resolveProfilePath(
+      environment.SHAREGPT_USER_DATA || path.join(appInstance.getAppPath(), ".cache", "user-data"),
+    );
+    const installedUserDataDir = resolveProfilePath(
+      path.join(appInstance.getPath("appData"), "ShareGPT"),
+    );
+    const overlaps = (parent, child) => {
+      const relative = path.relative(parent, child);
+      return (
+        relative === "" ||
+        (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
+      );
+    };
+    if (
+      overlaps(installedUserDataDir, devUserDataDir) ||
+      overlaps(devUserDataDir, installedUserDataDir)
+    ) {
+      throw new Error(
+        "Development user data must be separate from the installed ShareGPT profile.",
+      );
     }
+    fs.mkdirSync(devUserDataDir, { recursive: true });
     appInstance.setPath("userData", devUserDataDir);
+    appInstance.setPath("sessionData", devUserDataDir);
     return devUserDataDir;
   }
 
