@@ -5,6 +5,10 @@ const { createFixtureServer, launchCase } = require("./verify-collab-login-compa
 
 const TLS_ERROR = "Client network socket disconnected before secure TLS connection was established";
 const SCREENSHOT = path.resolve(__dirname, "../.cache/error-feedback/translation-tls.png");
+const COLLAPSED_SCREENSHOT = path.resolve(
+  __dirname,
+  "../.cache/error-feedback/translation-tls-collapsed.png",
+);
 
 async function main() {
   const fixture = await createFixtureServer();
@@ -42,8 +46,11 @@ async function main() {
         assert.equal(await window.locator("#account-server").getAttribute("aria-invalid"), "true");
         assert.equal(await window.locator("#account-password").inputValue(), "wrong-password");
 
+        await notice.locator("summary").click();
+        assert.equal(await notice.locator("details").getAttribute("open"), "");
         await submit.click();
         await notice.getByText("身份验证未通过", { exact: true }).waitFor();
+        assert.equal(await notice.locator("details").getAttribute("open"), null);
         assert.equal(
           await window.locator("#account-password").getAttribute("aria-invalid"),
           "true",
@@ -100,7 +107,18 @@ async function main() {
           await notice.getByText("安全连接中断", { exact: true }).waitFor();
           assert.equal(await notice.locator("details").getAttribute("open"), null);
           assert.equal(await notice.locator("pre").isVisible(), false);
-          await notice.getByText("查看技术详情", { exact: true }).click();
+          const summary = notice.locator("summary");
+          const collapsedHeight = await notice.evaluate(
+            (node) => node.getBoundingClientRect().height,
+          );
+          assert.ok(collapsedHeight <= 44, `collapsed notice height: ${collapsedHeight}`);
+          await summary.press("Enter");
+          await notice.getByText("收起", { exact: true }).waitFor();
+          assert.equal(await notice.locator("pre").isVisible(), true);
+          await summary.press("Space");
+          assert.equal(await notice.locator("details").getAttribute("open"), null);
+          assert.equal(await notice.locator("pre").isVisible(), false);
+          await summary.click();
           const details = await notice.locator("pre").innerText();
           assert.ok(details.includes(TLS_ERROR));
           assert.ok(details.includes("translation.example.test"));
@@ -134,7 +152,15 @@ async function main() {
             .getByText("登录成功，欢迎 error-feedback", { exact: true })
             .waitFor({ state: "hidden" });
           await notice.scrollIntoViewIfNeeded();
-          await notice.screenshot({ path: SCREENSHOT });
+          await notice.screenshot({ path: SCREENSHOT, animations: "disabled" });
+          await summary.click();
+          await notice.getByText("展开", { exact: true }).waitFor();
+          assert.equal(await notice.locator("pre").isVisible(), false);
+          assert.equal(
+            await notice.evaluate((node) => node.getBoundingClientRect().height),
+            collapsedHeight,
+          );
+          await notice.screenshot({ path: COLLAPSED_SCREENSHOT, animations: "disabled" });
 
           await electronApp.evaluate(() => {
             globalThis.__feedbackTranslationError = "";
@@ -163,12 +189,14 @@ async function main() {
             serverLogin: true,
             recoveredLogin: true,
             tlsIpc: true,
+            disclosure: { keyboard: true, mouse: true, resetOnNewError: true, collapsedHeight },
             redactedCopy: true,
             clipboardFailure: true,
             narrowLayout: layout,
             recoveredTranslation: true,
             windowState,
             screenshot: SCREENSHOT,
+            collapsedScreenshot: COLLAPSED_SCREENSHOT,
           };
         } finally {
           await electronApp.evaluate(() => globalThis.__feedbackRestoreTranslation());
