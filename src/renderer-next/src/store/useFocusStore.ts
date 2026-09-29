@@ -53,6 +53,8 @@ interface FocusState {
   currentTaskId: string | null
   sessions: FocusSession[]
   loaded: boolean
+  loading: boolean
+  loadError: string
 
   init: () => Promise<void>
   flushPending: () => Promise<void>
@@ -72,12 +74,13 @@ interface FocusState {
 
 export const useFocusStore = create<FocusState>((set, get) => {
   let owner: SettingsPrincipalSnapshot | null = null
+  let loadEpoch = 0
   const loads = new Map<string, Promise<void>>()
   const persistence = createPrincipalDebouncedSave<Parameters<ShareGptApi['saveFocus']>[0]>(
     (payload, snapshot) => userDataApiFor(snapshot).saveFocus(payload),
   )
   const persist = () => {
-    if (!owner) return
+    if (!owner || !get().loaded) return
     settingsPrincipalRuntime.assertCurrent(owner)
     const s = get()
     persistence.schedule(
@@ -88,6 +91,12 @@ export const useFocusStore = create<FocusState>((set, get) => {
       },
       owner,
     )
+  }
+
+  const assertReady = () => {
+    assertUserDataWritable()
+    if (!owner || !get().loaded) throw new Error('专注资料尚未加载，请重新加载后再试')
+    settingsPrincipalRuntime.assertCurrent(owner)
   }
 
   const durationMs = (p?: Phase): number => {
@@ -151,9 +160,12 @@ export const useFocusStore = create<FocusState>((set, get) => {
     currentTaskId: null,
     sessions: [],
     loaded: false,
+    loading: false,
+    loadError: '',
 
     flushPending: () => persistence.flushPending(),
     resetForPrincipal: () => {
+      loadEpoch += 1
       persistence.cancel()
       loads.clear()
       owner = null
@@ -168,6 +180,8 @@ export const useFocusStore = create<FocusState>((set, get) => {
         currentTaskId: null,
         sessions: [],
         loaded: false,
+        loading: false,
+        loadError: '',
       })
     },
     init: async () => {
@@ -178,10 +192,22 @@ export const useFocusStore = create<FocusState>((set, get) => {
         owner?.generation === snapshot.generation
       )
         return
-      owner = snapshot
+      set({ loading: true, loadError: '' })
       return coalesceInFlight(loads, JSON.stringify(snapshot), async () => {
+        const epoch = ++loadEpoch
+        const isCurrent = () => {
+          const current = settingsPrincipalRuntime.current()
+          return (
+            epoch === loadEpoch &&
+            current.principalId === snapshot.principalId &&
+            current.generation === snapshot.generation
+          )
+        }
+        if (!isCurrent()) return
+        owner = snapshot
         try {
           const f = await userDataApiFor(snapshot).loadFocus()
+          if (!isCurrent()) return
           const st = (f?.settings ?? {}) as Partial<FocusSettings> & {
             currentTaskId?: string | null
           }
@@ -193,17 +219,23 @@ export const useFocusStore = create<FocusState>((set, get) => {
             currentTaskId: st.currentTaskId ?? null,
             remainingMs: Math.max(1, settings.focusMin) * 60_000,
             loaded: true,
+            loading: false,
+            loadError: '',
           })
         } catch {
-          settingsPrincipalRuntime.assertCurrent(snapshot)
-          set({ loaded: false })
+          if (isCurrent())
+            set({
+              loaded: false,
+              loading: false,
+              loadError:
+                '无法读取专注资料，原有资料已保留。请检查文件访问权限或恢复有效备份后重试。',
+            })
         }
       })
     },
 
     start: () => {
-      assertUserDataWritable()
-      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
+      assertReady()
       const s = get()
       if (s.running) return
       const end = Date.now() + (s.remainingMs > 0 ? s.remainingMs : durationMs())
@@ -211,48 +243,45 @@ export const useFocusStore = create<FocusState>((set, get) => {
       applySound(true)
     },
     pause: () => {
-      assertUserDataWritable()
-      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
+      assertReady()
       const s = get()
       if (!s.running || !s.endAt) return
       set({ running: false, remainingMs: Math.max(0, s.endAt - Date.now()), endAt: null })
       stopNoise()
     },
     reset: () => {
-      assertUserDataWritable()
-      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
+      assertReady()
       set({ running: false, endAt: null, remainingMs: durationMs() })
       stopNoise()
     },
     skip: () => {
-      assertUserDataWritable()
-      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
+      assertReady()
       stopNoise()
       // 跳过当前阶段(不计专注、不累加周期): 专注→短休, 休息→专注。
       const next: Phase = get().phase === 'focus' ? 'short' : 'focus'
       set({ phase: next, running: false, endAt: null, remainingMs: durationMs(next) })
     },
     tick: () => {
-      if (userDataTransitionState.isSuspended()) return
+      if (userDataTransitionState.isSuspended() || !get().loaded || !owner) return
+      const current = settingsPrincipalRuntime.current()
+      if (current.principalId !== owner.principalId || current.generation !== owner.generation)
+        return
       const s = get()
       if (!s.running || !s.endAt) return
       if (s.endAt - Date.now() <= 0) complete()
     },
     setPhase: (p) => {
-      assertUserDataWritable()
-      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
+      assertReady()
       stopNoise()
       set({ phase: p, running: false, endAt: null, remainingMs: durationMs(p) })
     },
     setTaskId: (currentTaskId) => {
-      assertUserDataWritable()
-      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
+      assertReady()
       set({ currentTaskId })
       persist()
     },
     setSettings: (patch) => {
-      assertUserDataWritable()
-      if (owner) settingsPrincipalRuntime.assertCurrent(owner)
+      assertReady()
       set((s) => ({ settings: { ...s.settings, ...patch } }))
       // 调整时长后, 若未运行则刷新剩余显示
       if (!get().running) set({ remainingMs: durationMs() })

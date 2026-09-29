@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Pause, Play, RotateCcw, Settings2, SkipForward, Timer, Flame } from 'lucide-react'
+import { LocalDataStatus } from '@/components/LocalDataStatus'
 import { PanelScaffold } from './PanelScaffold'
 import { cn } from '@/lib/utils'
 import { useFocusStore, focusStats, type Phase } from '@/store/useFocusStore'
@@ -27,6 +28,9 @@ function fmt(ms: number): string {
 
 export function FocusPanel() {
   const init = useFocusStore((s) => s.init)
+  const loaded = useFocusStore((s) => s.loaded)
+  const loading = useFocusStore((s) => s.loading)
+  const loadError = useFocusStore((s) => s.loadError)
   const phase = useFocusStore((s) => s.phase)
   const running = useFocusStore((s) => s.running)
   const settings = useFocusStore((s) => s.settings)
@@ -59,6 +63,13 @@ export function FocusPanel() {
   const openTasks = tasks.filter((t) => !t.completed)
   const curTask = tasks.find((t) => t.id === currentTaskId)
   const taskPomos = currentTaskId ? sessions.filter((s) => s.taskId === currentTaskId).length : 0
+
+  if (!loaded)
+    return (
+      <PanelScaffold icon={Timer} title="专注" hint="番茄钟 · 专注统计 · 团队排名">
+        <LocalDataStatus loading={loading} error={loadError} onRetry={init} />
+      </PanelScaffold>
+    )
 
   return (
     <PanelScaffold
