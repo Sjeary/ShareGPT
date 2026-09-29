@@ -5,7 +5,8 @@ import { coalesceInFlight } from '@/lib/inFlightRequest'
 import { useChatStore } from '@/store/useChatStore'
 import { useCalendarStore } from '@/store/useCalendarStore'
 import { useTasksStore, type Task } from '@/store/useTasksStore'
-import { useTeamCalendarStore, type TeamEvent, type RsvpStatus } from '@/store/useTeamCalendarStore'
+import type { TeamEvent } from '@/store/useTeamCalendarStore'
+import { createTeamCalendarClient } from '@/lib/teamCalendarClient'
 
 // ============================================================
 //  待办 -> 个人日历 (单条同步 / 一键同步)
@@ -102,8 +103,6 @@ export function syncableTaskCount(): number {
 //  个人日历事件 -> 组队(共享)日历
 // ============================================================
 
-const TEAM_LOCAL_KEY = 'team-calendar:local-events' // 与 useTeamCalendar 的本地降级 key 保持一致
-
 export interface ShareToTeamInput {
   title: string
   start: string
@@ -114,76 +113,9 @@ export interface ShareToTeamInput {
   color?: string
 }
 
-// 把一条事件共享到组队日历。
-//  - 立即写入 team store + 本地降级存储 (即使团队面板未打开也不丢、可见)。
-//  - 已登录协作服务器时, 额外尽力 POST 到服务器 (失败忽略, 本地已可见)。
-export function shareEventToTeam(input: ShareToTeamInput): TeamEvent {
-  const { username, displayName, serverUrl, token } = useChatStore.getState().identity
-  const organizer = username || '我'
-  const now = new Date().toISOString()
-  const loggedIn = Boolean(serverUrl && token)
-
-  const event: TeamEvent = {
-    id: crypto.randomUUID(),
-    subnetKey: loggedIn ? '' : 'local',
-    title: input.title,
-    description: input.description,
-    location: input.location,
-    start: input.start,
-    end: input.end,
-    allDay: input.allDay,
-    organizer,
-    attendees: [
-      { username: organizer, displayName: displayName || organizer, rsvp: 'accept' as RsvpStatus },
-    ],
-    color: input.color,
-    createdBy: organizer,
-    createdAt: now,
-    updatedAt: now,
-  }
-
-  // 1) 写入内存 store (团队日历界面立即可见)。
-  useTeamCalendarStore.getState().upsert(event)
-
-  // 2) 持久化到本地降级存储 (团队面板未挂载时其副作用不会跑, 这里兜底)。
-  try {
-    const raw = localStorage.getItem(TEAM_LOCAL_KEY)
-    const list = raw ? JSON.parse(raw) : []
-    if (Array.isArray(list)) {
-      list.push(event)
-      localStorage.setItem(TEAM_LOCAL_KEY, JSON.stringify(list))
-    }
-  } catch {
-    /* 配额/隐私模式失败可忽略 */
-  }
-
-  // 3) 已登录: 尽力推到服务器, 成功则用服务端返回(带真实 subnetKey)覆盖本地这条。
-  if (loggedIn) {
-    void fetch(`${serverUrl}/api/team-calendar/events`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        title: input.title,
-        description: input.description,
-        location: input.location,
-        start: input.start,
-        end: input.end,
-        allDay: input.allDay,
-        color: input.color,
-        attendees: [],
-      }),
-    })
-      .then(async (res) => {
-        if (!res.ok) return
-        const data = (await res.json().catch(() => null)) as { event?: TeamEvent } | null
-        if (data?.event) useTeamCalendarStore.getState().upsert(data.event)
-      })
-      .catch(() => {
-        /* 服务端不支持/网络失败: 本地已可见, 忽略 */
-      })
-  }
-
-  return event
+// 跨面板共享复用组队日历的数据入口，成功保存后调用者才显示成功。
+export function shareEventToTeam(input: ShareToTeamInput): Promise<TeamEvent> {
+  return createTeamCalendarClient().createEvent({ ...input, attendees: [] })
 }
 
 // ============================================================
