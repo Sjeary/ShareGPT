@@ -28,7 +28,7 @@ const {
 const { buildUpdateReleaseInfo } = require("./updateRelease");
 const { copyMissingChromiumPartitions } = require("./userDataPath");
 const { resolvePrincipalIdentity } = require("./principalIdentity");
-const { readLocalJson, writeLocalJson } = require("./localJsonStore");
+const { readLocalJson, writeLocalJson, atomicReplace } = require("./localJsonStore");
 const { PrincipalData } = require("./principalData");
 const {
   LOCAL_SECRET_KEYS,
@@ -1962,13 +1962,109 @@ class Backend {
     try {
       const filePath = result.filePaths[0];
       const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      if (Object.keys(raw?.chatHistory?.conversations || {}).some((key) => key.includes("\0"))) {
-        throw new Error("资料包包含旧聊天分组，请先使用旧资料接续确认来源；本次未导入");
+      const isObject = (value) => value && typeof value === "object" && !Array.isArray(value);
+      if (!isObject(raw) || raw.format !== "sharegpt-user-data" || raw.version !== 1) {
+        throw new Error("请选择 ShareGPT 导出的版本 1 资料包，当前文件格式不受支持；本次未导入");
       }
-      const settings = this.saveImportedSettingsForPrincipal(raw?.settings, principal);
+      if (
+        !isObject(raw.settings) ||
+        !isObject(raw.chatHistory) ||
+        !isObject(raw.chatHistory.conversations)
+      ) {
+        throw new Error("资料包缺少有效的设置或聊天记录；本次未导入");
+      }
+      for (const [key, messages] of Object.entries(raw.chatHistory.conversations)) {
+        if (key.includes("\0")) {
+          throw new Error("资料包包含旧聊天分组，请先使用旧资料接续确认来源；本次未导入");
+        }
+        if (
+          !key.trim() ||
+          !Array.isArray(messages) ||
+          messages.some((message) => !isObject(message) || !normalizeStoredMessage(message))
+        ) {
+          throw new Error("资料包的聊天记录结构不完整；本次未导入");
+        }
+      }
+      for (const section of [
+        "sender",
+        "receiver",
+        "collab",
+        "gpt",
+        "gemini",
+        "claude",
+        "browserPrivacy",
+        "advancedAi",
+        "translation",
+        "ui",
+      ]) {
+        if (section in raw.settings && !isObject(raw.settings[section])) {
+          throw new Error("资料包的设置结构不完整；本次未导入");
+        }
+      }
       this.assertSettingsPrincipalSnapshot(principal);
-      const chatHistory = this.saveChatHistory(raw?.chatHistory || {});
-      return { settings, chatHistory, filePath };
+      // Validate/recover current files before taking the rollback copy. Both writes below
+      // are synchronous, so no account transition can interleave with this import.
+      this.loadSettings();
+      this.loadChatHistory();
+      const files = [
+        this.settingsFile,
+        `${this.settingsFile}.bak`,
+        this.chatHistoryFile,
+        `${this.chatHistoryFile}.bak`,
+      ];
+      const originals = files.map((file) => {
+        try {
+          return fs.readFileSync(file);
+        } catch (error) {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        }
+      });
+      const secrets = [...this.legacyEncryptedSecrets];
+      fs.mkdirSync(this.runtimeDir, { recursive: true });
+      const recovery = fs.mkdtempSync(path.join(this.runtimeDir, "user-data-import-"));
+      try {
+        for (let i = 0; i < files.length; i++) {
+          if (originals[i] !== null)
+            fs.writeFileSync(path.join(recovery, `${i}.json`), originals[i], { mode: 0o600 });
+        }
+        fs.writeFileSync(
+          path.join(recovery, "manifest.json"),
+          JSON.stringify(
+            files.map((file, i) => ({
+              file,
+              snapshot: originals[i] === null ? null : `${i}.json`,
+            })),
+          ),
+          { mode: 0o600 },
+        );
+        const settings = this.saveImportedSettingsForPrincipal(raw.settings, principal);
+        const chatHistory = this.saveChatHistory(raw.chatHistory);
+        fs.rmSync(recovery, { recursive: true, force: true });
+        return { settings, chatHistory, filePath };
+      } catch (error) {
+        this.legacyEncryptedSecrets = secrets;
+        const failures = [];
+        for (let i = 0; i < files.length; i++) {
+          try {
+            const current = fs.existsSync(files[i]) ? fs.readFileSync(files[i]) : null;
+            const original = originals[i];
+            if (original === null) {
+              if (current !== null) fs.unlinkSync(files[i]);
+            } else if (!current || !current.equals(original))
+              atomicReplace(files[i], original.toString("utf8"));
+          } catch (rollbackError) {
+            failures.push(rollbackError);
+          }
+        }
+        if (failures.length)
+          throw new Error(
+            `导入未完成，部分文件无法恢复。原资料副本保存在 ${recovery}；请恢复后重试。`,
+            { cause: error },
+          );
+        fs.rmSync(recovery, { recursive: true, force: true });
+        throw error;
+      }
     } catch (err) {
       throw new Error(`无法导入资料包: ${err.message}`);
     }
