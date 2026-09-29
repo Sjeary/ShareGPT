@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Plus, Trash2, X, CalendarPlus } from 'lucide-react'
 import { toast } from 'sonner'
+import { showErrorToast } from '@/lib/errorToast'
+import { StaleSettingsPrincipalError } from '@/lib/settingsPrincipalRuntime'
 import { cn } from '@/lib/utils'
 import { syncTaskToCalendar } from '@/lib/integrations'
 import {
@@ -354,13 +356,18 @@ export function TaskEditor({
               variant="outline"
               size="sm"
               title="把此任务加入个人日历(需设置到期日期)"
-              onClick={() => {
-                persist()
-                const r = syncTaskToCalendar(task.id)
-                if (r === 'no-date') toast.error('请先设置到期日期，再加入日历')
-                else if (r === 'updated') toast.success('已更新到个人日历')
-                else if (r === 'synced') toast.success('已加入个人日历')
-                else toast.error('加入失败')
+              onClick={async () => {
+                try {
+                  persist()
+                  const r = await syncTaskToCalendar(task.id)
+                  if (r === 'no-date') toast.error('请先设置到期日期，再加入日历')
+                  else if (r === 'updated') toast.success('已更新到个人日历')
+                  else if (r === 'synced') toast.success('已加入个人日历')
+                  else toast.error('加入失败')
+                } catch (error) {
+                  if (!(error instanceof StaleSettingsPrincipalError))
+                    showErrorToast(error, '加入日历失败')
+                }
               }}
             >
               <CalendarPlus className="size-4" />

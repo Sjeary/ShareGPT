@@ -1,5 +1,7 @@
 // 跨功能集成层: 把「待办 / 个人日历 / 组队日历 / 协作聊天」串起来。
 // 全部通过各 store 的 getState() 在运行时调用, 不在组件间产生耦合 import 链。
+import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
+import { coalesceInFlight } from '@/lib/inFlightRequest'
 import { useChatStore } from '@/store/useChatStore'
 import { useCalendarStore } from '@/store/useCalendarStore'
 import { useTasksStore, type Task } from '@/store/useTasksStore'
@@ -37,40 +39,55 @@ function taskToTimes(task: Task): { start: string; end: string; allDay: boolean 
 export type SyncTaskResult = 'synced' | 'updated' | 'no-date' | 'not-found'
 
 // 单条任务同步到个人日历。已关联事件且仍存在 -> 更新; 否则新建并回写 calendarEventId。
-export function syncTaskToCalendar(taskId: string): SyncTaskResult {
-  const tasks = useTasksStore.getState()
-  const task = tasks.tasks.find((t) => t.id === taskId)
-  if (!task) return 'not-found'
-  const times = taskToTimes(task)
-  if (!times) return 'no-date'
+const taskSyncs = new Map<string, Promise<SyncTaskResult>>()
 
-  const cal = useCalendarStore.getState()
-  const notes = `来自待办${task.notes ? `\n${task.notes}` : ''}`
-
-  if (task.calendarEventId && cal.events.some((e) => e.id === task.calendarEventId)) {
-    cal.updateEvent(task.calendarEventId, { title: task.title, ...times, notes })
-    return 'updated'
-  }
-  const calendarId = ensureTodoCalendarId()
-  const ev = cal.addEvent({
-    calendarId,
-    title: task.title,
-    start: times.start,
-    end: times.end,
-    allDay: times.allDay,
-    notes,
-    recurrence: null,
+export function syncTaskToCalendar(taskId: string): Promise<SyncTaskResult> {
+  const snapshot = settingsPrincipalRuntime.snapshot()
+  return coalesceInFlight(taskSyncs, JSON.stringify([snapshot, taskId]), async () => {
+    settingsPrincipalRuntime.assertCurrent(snapshot)
+    await Promise.all([useTasksStore.getState().init(), useCalendarStore.getState().init()])
+    settingsPrincipalRuntime.assertCurrent(snapshot)
+    const tasks = useTasksStore.getState()
+    const cal = useCalendarStore.getState()
+    if (!tasks.loaded || !cal.loaded)
+      throw new Error(tasks.loadError || cal.loadError || '本机资料尚未加载')
+    const task = tasks.tasks.find((t) => t.id === taskId)
+    if (!task) return 'not-found'
+    const times = taskToTimes(task)
+    if (!times) return 'no-date'
+    const notes = `来自待办${task.notes ? `\n${task.notes}` : ''}`
+    const existing = task.calendarEventId && cal.events.some((e) => e.id === task.calendarEventId)
+    if (existing) {
+      cal.updateEvent(task.calendarEventId!, { title: task.title, ...times, notes })
+    } else {
+      const ev = cal.addEvent({
+        calendarId: ensureTodoCalendarId(),
+        title: task.title,
+        ...times,
+        notes,
+        recurrence: null,
+      })
+      tasks.updateTask(taskId, { calendarEventId: ev.id })
+    }
+    await cal.flushPending()
+    settingsPrincipalRuntime.assertCurrent(snapshot)
+    await useTasksStore.getState().flushPending()
+    settingsPrincipalRuntime.assertCurrent(snapshot)
+    return existing ? 'updated' : 'synced'
   })
-  tasks.updateTask(taskId, { calendarEventId: ev.id })
-  return 'synced'
 }
 
 // 一键: 把所有「未完成且有到期日」的任务同步到个人日历, 返回成功数量。
-export function syncAllTasksToCalendar(): number {
+export async function syncAllTasksToCalendar(): Promise<number> {
+  const snapshot = settingsPrincipalRuntime.snapshot()
+  await useTasksStore.getState().init()
+  settingsPrincipalRuntime.assertCurrent(snapshot)
+  if (!useTasksStore.getState().loaded) throw new Error(useTasksStore.getState().loadError)
   const tasks = useTasksStore.getState().tasks.filter((t) => !t.completed && t.dueDate)
   let n = 0
   for (const t of tasks) {
-    const r = syncTaskToCalendar(t.id)
+    settingsPrincipalRuntime.assertCurrent(snapshot)
+    const r = await syncTaskToCalendar(t.id)
     if (r === 'synced' || r === 'updated') n += 1
   }
   return n
