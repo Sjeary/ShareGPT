@@ -17,6 +17,7 @@ import type { ParsedNote } from '@/lib/notes/types'
 
 interface VaultState {
   loaded: boolean
+  loadError: string
   root: string
   rawByPath: Record<string, string> // 磁盘原文 (含 frontmatter)
   notesByPath: Record<string, ParsedNote>
@@ -84,6 +85,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
 
   const state: VaultState = {
     loaded: false,
+    loadError: '',
     root: '',
     rawByPath: {},
     notesByPath: {},
@@ -102,6 +104,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
       saveTimer = null
       set({
         loaded: false,
+        loadError: '',
         root: '',
         rawByPath: {},
         notesByPath: {},
@@ -140,17 +143,22 @@ export const useVaultStore = create<VaultState>((set, get) => {
         } catch {
           /* 监听不可用不致命 */
         }
-        let root = ''
         try {
-          root = await api.vault.getRoot()
+          const root = await api.vault.getRoot()
+          settingsPrincipalRuntime.assertCurrent(snapshot)
+          set({ root })
+          await get().reload()
+          settingsPrincipalRuntime.assertCurrent(snapshot)
+          set({ loaded: true, loadError: '' })
         } catch {
-          /* 取不到 root 则保持空串 */
+          if (
+            settingsPrincipalRuntime.current().principalId === snapshot.principalId &&
+            settingsPrincipalRuntime.current().generation === snapshot.generation
+          )
+            set({
+              loadError: '无法完整读取知识库，原有资料已保留。请检查文件和目录访问权限后重新加载。',
+            })
         }
-        settingsPrincipalRuntime.assertCurrent(snapshot)
-        set({ root })
-        await get().reload()
-        settingsPrincipalRuntime.assertCurrent(snapshot)
-        set({ loaded: true })
       })
     },
 
@@ -201,9 +209,9 @@ export const useVaultStore = create<VaultState>((set, get) => {
           const f = await api.vault.read(path)
           content = f.content
           set((s) => ({ rawByPath: { ...s.rawByPath, [path]: content } }))
-        } catch {
+        } catch (error) {
           settingsPrincipalRuntime.assertCurrent(snapshot)
-          content = ''
+          throw error
         }
       }
       set({ currentPath: path, draft: content, dirty: false })

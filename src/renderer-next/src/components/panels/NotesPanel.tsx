@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { PanelScaffold } from './PanelScaffold'
+import { LocalDataStatus } from '@/components/LocalDataStatus'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useVaultStore } from '@/store/useVaultStore'
@@ -83,6 +84,8 @@ const RIGHT_TABS: { key: RightTab; label: string; icon: typeof Link2 }[] = [
 export function NotesPanel() {
   const init = useVaultStore((s) => s.init)
   const loaded = useVaultStore((s) => s.loaded)
+  const loadError = useVaultStore((s) => s.loadError)
+  const busy = useVaultStore((s) => s.busy)
   const applyExternalChanges = useVaultStore((s) => s.applyExternalChanges)
   const notesCount = useVaultStore((s) => Object.keys(s.notesByPath).length)
   const currentPath = useVaultStore((s) => s.currentPath)
@@ -146,6 +149,18 @@ export function NotesPanel() {
       }
     }
   }
+
+  if (!loaded)
+    return (
+      <PanelScaffold
+        icon={BookText}
+        title="笔记 / 知识库"
+        hint="双链笔记、图谱与全文检索"
+        scrollable={false}
+      >
+        <LocalDataStatus loading={busy} error={loadError} onRetry={init} />
+      </PanelScaffold>
+    )
 
   const toolbar = (
     <div className="flex items-center gap-2">

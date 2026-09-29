@@ -13,6 +13,7 @@ function fixture() {
   const files = new Map();
   const calls = [];
   let failSave = false;
+  let failRead = false;
   const timers = new Set();
   const localStorage = new Map();
   function load(input) {
@@ -30,6 +31,7 @@ function fixture() {
         async (value, content) => {
           load("lib/settingsPrincipalRuntime").settingsPrincipalRuntime.assertCurrent(snapshot);
           calls.push({ name, id: snapshot.principalId });
+          if (!write && failRead) throw new Error("fixture read failure");
           if (write && failSave) throw new Error("fixture save failure");
           if (name === "vault.write") {
             (scope.vault ||= {})[value] = content;
@@ -110,6 +112,9 @@ function fixture() {
     load,
     files,
     calls,
+    failRead: (value) => {
+      failRead = value;
+    },
     failSave: (value) => {
       failSave = value;
     },
@@ -212,4 +217,24 @@ test("same-account calendar import preserves the active note and ongoing focus s
   assert.equal(f.files.get("A").vault["note.md"], "current draft");
   assert.equal(focus.getState().running, true);
   assert.equal(focus.getState().endAt, endAt);
+});
+
+test("an unreadable vault never publishes a partial snapshot or an editable empty note", async () => {
+  const f = fixture();
+  f.load("lib/settingsPrincipalRuntime").settingsPrincipalRuntime.activate("A", 1);
+  f.files.set("A", { vault: { "kept.md": "saved" } });
+  const vault = f.load("store/useVaultStore").useVaultStore;
+  f.failRead(true);
+  await vault.getState().init();
+  assert.equal(vault.getState().loaded, false);
+  assert.match(vault.getState().loadError, /无法完整读取/);
+  f.failRead(false);
+  await vault.getState().init();
+  await vault.getState().openNote("kept.md");
+  f.failRead(true);
+  await assert.rejects(vault.getState().reload(), /fixture read failure/);
+  assert.equal(vault.getState().rawByPath["kept.md"], "saved");
+  assert.equal(vault.getState().draft, "saved");
+  await assert.rejects(vault.getState().openNote("missing.md"));
+  assert.equal(vault.getState().currentPath, "kept.md");
 });
