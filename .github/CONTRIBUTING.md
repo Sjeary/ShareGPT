@@ -76,6 +76,8 @@ npm --prefix admin_console/ui run build
 
 涉及 Electron 生命周期、登录兼容、隐私清理、composer 或发布包时，还要运行对应的 `verify:*` 行为验收；Windows 正式安装包必须在 Windows 构建机执行 `verify:release-win`。不要用源码字符串或单一平台结果替代真实行为验证。
 
+普通 Electron 验收使用隔离资料和后台窗口，不应显示窗口或抢占桌面焦点。macOS 原生全屏验收会切换系统桌面，因此本机默认拒绝启动；确认允许前台运行后，才使用 `npm run verify:macos-fullscreen-titlebar -- --allow-foreground`。该验收在一次性 GitHub Actions runner 中仍完整执行。
+
 ## PR 流程
 
 1. **Fork** 本仓库。

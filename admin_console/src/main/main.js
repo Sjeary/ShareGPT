@@ -4,6 +4,8 @@ const http = require("node:http");
 const https = require("node:https");
 const { URL } = require("node:url");
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const backgroundTest = !app.isPackaged && process.env.SHAREGPT_ADMIN_TEST_HIDDEN === "1";
+if (backgroundTest && process.platform === "darwin") app.setActivationPolicy("prohibited");
 
 let mainWindow = null;
 const prefsFile = () => path.join(app.getPath("userData"), "admin_prefs.json");
@@ -142,7 +144,8 @@ async function uploadReleaseFile(payload = {}, onProgress = null) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    show: process.env.SHAREGPT_ADMIN_TEST_HIDDEN !== "1",
+    show: !backgroundTest,
+    focusable: !backgroundTest,
     width: 1380,
     height: 900,
     minWidth: 1180,

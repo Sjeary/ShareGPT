@@ -512,7 +512,7 @@ async function verifyTranslationWorkbench({
   assert.equal(await separator.count(), 0);
   const narrowScreenshot = await electronApp.evaluate(async ({ BrowserWindow }) => {
     const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-    const image = await window.capturePage();
+    const image = await window.capturePage(undefined, { stayHidden: true });
     return image.toPNG().toString("base64");
   });
   const narrowScreenshotPath = path.join(
@@ -781,7 +781,7 @@ async function verifyTranslationWorkbench({
   assert.ok(bounds.y + bounds.height <= viewport.height + 1);
   const screenshot = await electronApp.evaluate(async ({ BrowserWindow }) => {
     const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-    const image = await window.capturePage();
+    const image = await window.capturePage(undefined, { stayHidden: true });
     return image.toPNG().toString("base64");
   });
   fs.writeFileSync(screenshotPath, Buffer.from(screenshot, "base64"));
@@ -1420,9 +1420,23 @@ async function main() {
     electronApp = await electron.launch({
       args: [ROOT, "--ignore-certificate-errors"],
       cwd: ROOT,
-      env: { ...process.env, SHAREGPT_USER_DATA: userData, SHAREGPT_LOG_LEVEL: "warn" },
+      env: {
+        ...process.env,
+        SHAREGPT_BACKGROUND_TEST: "1",
+        SHAREGPT_USER_DATA: userData,
+        SHAREGPT_LOG_LEVEL: "warn",
+      },
     });
     const page = await electronApp.firstWindow();
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      globalThis.__foregroundEvents = [];
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isVisible() || window.isFocused() || window.isFocusable())
+          throw new Error("Lifecycle acceptance must stay hidden and unfocusable");
+        window.on("show", () => globalThis.__foregroundEvents.push("show"));
+        window.on("focus", () => globalThis.__foregroundEvents.push("focus"));
+      }
+    });
     await page.waitForFunction(() => Boolean(window.api?.createAiView));
     const fixtureBaseUrl = `http://127.0.0.1:${httpServer.address().port}`;
     await loginThroughForm(page, fixtureBaseUrl);
@@ -1812,7 +1826,10 @@ async function main() {
       (await appSnapshot(electronApp)).contents.some((contents) => contents.url === externalUrl),
       "ChatGPT raw-document recovery must not replace an external text page",
     );
-    process.stdout.write("[verify] real appFactory AI workspace lifecycle passed\n");
+    assert.deepEqual(await electronApp.evaluate(() => globalThis.__foregroundEvents), []);
+    process.stdout.write(
+      "[verify] real appFactory AI workspace lifecycle passed without foreground events\n",
+    );
   } finally {
     await electronApp?.close().catch(() => undefined);
     await Promise.all([

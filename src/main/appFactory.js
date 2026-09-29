@@ -444,6 +444,9 @@ async function openExternalUrl(rawUrl) {
 function createElectronApp(baseMode = "all") {
   app.setName("ShareGPT");
   applyStableUserDataPath(app);
+  if (isBackgroundAcceptanceWindow() && process.platform === "darwin") {
+    app.setActivationPolicy("prohibited");
+  }
   if (typeof app.setAppUserModelId === "function") {
     app.setAppUserModelId("ShareGPT");
   }
@@ -594,11 +597,7 @@ function createElectronApp(baseMode = "all") {
   }
 
   function isBackgroundAcceptanceWindow() {
-    return Boolean(
-      !app.isPackaged &&
-      process.env.SHAREGPT_BACKGROUND_TEST === "1" &&
-      process.env.SHAREGPT_USER_DATA,
-    );
+    return !app.isPackaged && process.env.SHAREGPT_BACKGROUND_TEST === "1";
   }
 
   function cancelPrincipalRuntime() {
@@ -713,12 +712,7 @@ function createElectronApp(baseMode = "all") {
   }
 
   function focusMainWindow() {
-    if (
-      !app.isPackaged &&
-      process.env.SHAREGPT_BACKGROUND_TEST === "1" &&
-      process.env.SHAREGPT_USER_DATA
-    )
-      return;
+    if (isBackgroundAcceptanceWindow()) return;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) {
       mainWindow.restore();
@@ -2356,9 +2350,9 @@ function createElectronApp(baseMode = "all") {
   function createWindow() {
     // Isolated development acceptance only; packaged applications always show normally.
     const backgroundTest = isBackgroundAcceptanceWindow();
-    if (backgroundTest && process.platform === "darwin") app.dock.hide();
     mainWindow = new BrowserWindow({
       show: !backgroundTest,
+      focusable: !backgroundTest,
       width: 1180,
       height: 760,
       minWidth: 860,
@@ -2701,7 +2695,7 @@ function createElectronApp(baseMode = "all") {
       return { ok: true, backupDir: backup.backupDir, willQuit: payload?.quitAfterOpen !== false };
     });
     trustedIpc.handle("notifications:show", (_event, payload) => {
-      if (!Notification.isSupported()) {
+      if (isBackgroundAcceptanceWindow() || !Notification.isSupported()) {
         return false;
       }
 
@@ -3307,12 +3301,14 @@ function createElectronApp(baseMode = "all") {
 
     trustedIpc.handle("profile:open", (_event, payload) => {
       if (profileWindow && !profileWindow.isDestroyed()) {
-        profileWindow.focus();
+        if (!isBackgroundAcceptanceWindow()) profileWindow.focus();
         return true;
       }
 
       profilePrincipal = backend.getPrincipalContext();
       profileWindow = new BrowserWindow({
+        show: !isBackgroundAcceptanceWindow(),
+        focusable: !isBackgroundAcceptanceWindow(),
         width: 900,
         height: 680,
         minWidth: 760,

@@ -133,6 +133,7 @@ async function main() {
       env: {
         ...process.env,
         SHAREGPT_USER_DATA: userDataDir,
+        SHAREGPT_BACKGROUND_TEST: "1",
       },
     });
 

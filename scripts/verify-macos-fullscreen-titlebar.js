@@ -56,6 +56,14 @@ async function main() {
     process.stdout.write("[verify] macOS fullscreen titlebar skipped on non-macOS\n");
     return;
   }
+  if (
+    !(process.env.GITHUB_ACTIONS === "true" && process.env.RUNNER_TEMP) &&
+    !process.argv.includes("--allow-foreground")
+  ) {
+    throw new Error(
+      "This acceptance requires a visible native fullscreen window. Obtain explicit permission before running with --allow-foreground locally.",
+    );
+  }
 
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-fullscreen-titlebar-"));
   const screenshots = {
@@ -69,7 +77,11 @@ async function main() {
     electronApp = await electron.launch({
       args: [ROOT],
       cwd: ROOT,
-      env: { ...process.env, SHAREGPT_USER_DATA: path.join(temporaryRoot, "user-data") },
+      env: {
+        ...process.env,
+        SHAREGPT_USER_DATA: path.join(temporaryRoot, "user-data"),
+        SHAREGPT_BACKGROUND_TEST: "0",
+      },
     });
     const page = await electronApp.firstWindow();
     await page.waitForFunction(() => Boolean(window.api?.toggleWindowFullScreen));

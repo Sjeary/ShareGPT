@@ -190,6 +190,7 @@ async function run() {
 
 if (process.versions.electron) {
   const { app, BrowserWindow, ipcMain } = require("electron");
+  if (process.platform === "darwin") app.setActivationPolicy("prohibited");
   const { createTrustedIpc } = require("../src/main/trustedIpc");
   const trustedIpc = createTrustedIpc({ ipcMain, openExternal: async () => {} });
   global.profileEmissions = [];
@@ -206,7 +207,6 @@ if (process.versions.electron) {
   trustedIpc.on("profile:updated", (_, payload) => global.profileEmissions.push(payload));
   app.setPath("userData", process.env.SHAREGPT_USER_DATA);
   app.whenReady().then(() => {
-    if (process.platform === "darwin") app.dock.hide();
     const window = new BrowserWindow({
       show: false,
       width: 900,

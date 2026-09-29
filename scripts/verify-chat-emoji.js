@@ -142,8 +142,8 @@ async function run() {
 
 if (process.versions.electron) {
   const { app, BrowserWindow } = require("electron");
+  if (process.platform === "darwin") app.setActivationPolicy("prohibited");
   app.setPath("userData", process.env.SHAREGPT_USER_DATA);
-  if (process.platform === "darwin") app.dock.hide();
   app.whenReady().then(() => {
     const win = new BrowserWindow({
       show: false,

@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const { app, BrowserWindow } = require("electron");
+if (process.platform === "darwin") app.setActivationPolicy("prohibited");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -21,9 +22,9 @@ function changedPixels(before, after) {
 
 async function main() {
   await app.whenReady();
-  if (process.platform === "darwin") app.dock.hide();
   const window = new BrowserWindow({
     show: false,
+    focusable: false,
     x: -10_000,
     y: -10_000,
     width: 520,

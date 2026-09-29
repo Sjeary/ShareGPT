@@ -22,6 +22,11 @@ async function verifyDefaultDevelopment() {
     app.setPath("appData", ${JSON.stringify(appData)});
     app.setPath("userData", ${JSON.stringify(installed)});
     app.setAppPath(${JSON.stringify(fixture)});
+    globalThis.__foregroundEvents = [];
+    app.on("browser-window-focus", () => globalThis.__foregroundEvents.push("focus"));
+    app.on("browser-window-created", (_event, window) => {
+      window.on("show", () => globalThis.__foregroundEvents.push("show"));
+    });
     require(${JSON.stringify(path.join(ROOT, require("../package.json").main))});
   `,
   );
@@ -41,6 +46,21 @@ async function verifyDefaultDevelopment() {
         assert.equal(paths.frpc, "");
         assert.equal((await page.evaluate(() => window.api.getAppMeta())).mode, "sender");
         assert.equal(await instance.evaluate(({ app }) => app.getPath("sessionData")), profile);
+        await page.evaluate(() => window.api.openProfileEditor({}));
+        await page.evaluate(() => window.api.openProfileEditor({}));
+        assert.equal(
+          await page.evaluate(() => window.api.showSystemNotification({ title: "fixture" })),
+          false,
+        );
+        assert.deepEqual(await instance.evaluate(() => globalThis.__foregroundEvents), []);
+        assert.equal(
+          await instance.evaluate(({ BrowserWindow }) =>
+            BrowserWindow.getAllWindows().some(
+              (window) => window.isVisible() || window.isFocused() || window.isFocusable(),
+            ),
+          ),
+          false,
+        );
         await assert.rejects(
           page.evaluate(() => window.api.startReceiver({})),
           /不支持 receiver/,
@@ -106,7 +126,7 @@ async function main() {
     assert.equal(fs.readFileSync(path.join(profile, "preserved-marker.txt"), "utf8"), "keep");
     assert.deepEqual(errors, []);
     process.stdout.write(
-      `${JSON.stringify({ ok: true, defaultClientEntry: true, defaultProfileIsolated: true, restartPreserved: true, corruptSettingsPreserved: true, explicitRetryRecovered: true, rendererErrors: errors })}\n`,
+      `${JSON.stringify({ ok: true, defaultClientEntry: true, defaultProfileIsolated: true, backgroundWindows: true, restartPreserved: true, corruptSettingsPreserved: true, explicitRetryRecovered: true, rendererErrors: errors })}\n`,
     );
   } finally {
     await app.close();
