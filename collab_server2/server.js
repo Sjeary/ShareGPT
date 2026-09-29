@@ -2585,6 +2585,7 @@ async function handleRequest(req, res) {
     if (!adminSession) return;
     try {
       const body = await readBody(req, 512 * 1024);
+      if (!requireAdminSession(req, res)) return;
       const payload = safeParseJson(body) || {};
       const previous = loadClientBootstrap(req);
       const saved = saveClientBootstrap(payload);
@@ -2620,6 +2621,7 @@ async function handleRequest(req, res) {
     if (!adminSession) return;
     try {
       const payload = safeParseJson(await readBody(req, 512 * 1024));
+      if (!requireAdminSession(req, res)) return;
       if (!payload) {
         sendText(res, 400, "请求 JSON 无效");
         return;
@@ -2678,7 +2680,6 @@ async function handleRequest(req, res) {
     const adminSession = requireAdminSession(req, res);
     if (!adminSession) return;
     try {
-      ensureReleasesDir();
       const platformKey = safeText(
         reqUrl.searchParams.get("platform") || req.headers["x-update-platform"],
       );
@@ -2694,6 +2695,8 @@ async function handleRequest(req, res) {
         return;
       }
       const body = await readRawBody(req, 512 * 1024 * 1024);
+      if (!requireAdminSession(req, res)) return;
+      ensureReleasesDir();
       const filePath = path.join(RELEASES_DIR, requestedName);
       fs.writeFileSync(filePath, body);
 
@@ -2752,6 +2755,7 @@ async function handleRequest(req, res) {
   if (req.method === "PUT" && pathname === "/api/dev/release") {
     if (!requireDevSession(req, res)) return;
     const body = await readBody(req);
+    if (!requireDevSession(req, res)) return;
     const payload = safeParseJson(body) || {};
     const cur = loadSharedRelease();
     const next = saveSharedRelease({
@@ -2768,7 +2772,6 @@ async function handleRequest(req, res) {
   if (req.method === "POST" && pathname === "/api/dev/releases/upload") {
     if (!requireDevSession(req, res)) return;
     try {
-      ensureReleaseStore();
       const platformKey = safeText(
         reqUrl.searchParams.get("platform") || req.headers["x-update-platform"],
       );
@@ -2784,6 +2787,8 @@ async function handleRequest(req, res) {
         return;
       }
       const bodyBuf = await readRawBody(req, 512 * 1024 * 1024);
+      if (!requireDevSession(req, res)) return;
+      ensureReleaseStore();
       fs.writeFileSync(path.join(RELEASE_STORE, requestedName), bodyBuf);
       const cur = loadSharedRelease();
       const next = saveSharedRelease({
@@ -3123,6 +3128,7 @@ async function handleRequest(req, res) {
     if (!adminSession) return;
     try {
       const body = await readBody(req, 256 * 1024);
+      if (!requireAdminSession(req, res)) return;
       const payload = safeParseJson(body) || {};
       const outbound =
         payload.outbound && typeof payload.outbound === "object" ? payload.outbound : null;
@@ -3184,6 +3190,7 @@ async function handleRequest(req, res) {
     if (!adminSession) return;
     try {
       const body = await readBody(req, 2 * 1024 * 1024);
+      if (!requireAdminSession(req, res)) return;
       const payload = safeParseJson(body) || {};
       const previousStatus = readProxyRouteCatalogStatus();
       const saved = saveProxyRouteCatalog(payload.routes);
