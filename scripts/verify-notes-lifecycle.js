@@ -48,6 +48,52 @@ async function main() {
         }
         assert.match(content, /new remote body/);
         assert.match(content, /local input/);
+        const canvas = {
+          nodes: [
+            {
+              id: "a",
+              type: "text",
+              x: 0,
+              y: 0,
+              width: 240,
+              height: 120,
+              text: "canvas original",
+              color: "2",
+            },
+          ],
+          edges: [],
+          extension: "kept",
+        };
+        const canvasText = JSON.stringify(canvas);
+        fs.writeFileSync(path.join(root, "board.canvas"), canvasText);
+        await window.getByText("board.canvas", { exact: true }).first().click();
+        const card = window.locator('.react-flow__node[data-id="a"]');
+        await card.getByText("canvas original", { exact: true }).waitFor();
+        await window.waitForTimeout(800);
+        assert.equal(
+          fs.readFileSync(path.join(root, "board.canvas"), "utf8"),
+          canvasText,
+          "initial layout must not dirty the document",
+        );
+        await card.getByText("canvas original", { exact: true }).dblclick();
+        await card.locator("textarea").fill("canvas edited immediately before switching");
+        await window.getByText("EXTERNAL", { exact: true }).first().click();
+        const savedCanvas = JSON.parse(fs.readFileSync(path.join(root, "board.canvas"), "utf8"));
+        assert.equal(savedCanvas.nodes[0].text, "canvas edited immediately before switching");
+        assert.equal(savedCanvas.nodes[0].color, "2");
+        assert.equal(savedCanvas.extension, "kept");
+        await window.getByText("board.canvas", { exact: true }).first().click();
+        await card
+          .getByText("canvas edited immediately before switching", { exact: true })
+          .waitFor();
+        await window.getByRole("button", { name: "文本", exact: true }).click();
+        await window.getByText("EXTERNAL", { exact: true }).first().click();
+        assert.equal(
+          JSON.parse(fs.readFileSync(path.join(root, "board.canvas"), "utf8")).nodes.length,
+          2,
+        );
+        await window.getByText("board.canvas", { exact: true }).first().click();
+        assert.equal(await window.locator(".react-flow__node").count(), 2);
         fs.writeFileSync(path.join(root, "broken.canvas"), "{broken canvas");
         await window.getByText("broken.canvas", { exact: true }).first().click();
         await window.getByRole("alert", { name: "画布错误" }).waitFor();
@@ -56,7 +102,13 @@ async function main() {
         assert.deepEqual(errors, []);
         const foreground = await electronApp.evaluate(() => globalThis.__notesForeground);
         assert.deepEqual(foreground, []);
-        return { externalUpdateAndSubsequentInputPreserved: true, foreground, errors };
+        return {
+          externalUpdateAndSubsequentInputPreserved: true,
+          canvasDraftFlushAndCachePreserved: true,
+          damagedCanvasPreserved: true,
+          foreground,
+          errors,
+        };
       },
     });
     console.log(JSON.stringify(result.exerciseResult, null, 2));
