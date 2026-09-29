@@ -504,16 +504,50 @@ export const useVaultStore = create<VaultState>((set, get) => {
       const snapshot = snapshotForOperation()
       const api = userDataApiFor(snapshot)
       await flushDraft()
-      const current = { ...get().rawByPath }
-      const report = mergeVault(base, current, theirs)
-      for (const [path, content] of Object.entries(report.merged)) {
-        if (current[path] !== content) await api.vault.write(path, content)
+      let local = { ...get().rawByPath }
+      const persisted = { ...local }
+      let report = mergeVault(base, local, theirs)
+      const includeNewDraft = () => {
+        const { currentPath, draft, dirty } = get()
+        if (!dirty || !currentPath || draft === local[currentPath]) return false
+        const nextLocal = { ...local, [currentPath]: draft }
+        const next = mergeVault(local, nextLocal, report.merged)
+        local = nextLocal
+        report = {
+          ...next,
+          changed: report.changed || next.changed,
+          fromCloud: [...new Set([...report.fromCloud, ...next.fromCloud])],
+          keptLocal: [...new Set([...report.keptLocal, ...next.keptLocal])],
+          autoMerged: [...new Set([...report.autoMerged, ...next.autoMerged])],
+          deleted: [...new Set([...report.deleted, ...next.deleted])],
+          conflicts: [...report.conflicts, ...next.conflicts],
+        }
+        return true
       }
-      for (const path of Object.keys(current)) {
-        if (report.merged[path] === undefined) await api.vault.remove(path)
+      // Typing can continue during every IPC write and reload. Rebase it onto the
+      // pending merge until the persisted result includes both sides.
+      for (;;) {
+        for (const [path, content] of Object.entries(report.merged)) {
+          if (persisted[path] !== content) {
+            await api.vault.write(path, content)
+            persisted[path] = content
+          }
+        }
+        for (const path of Object.keys(persisted)) {
+          if (report.merged[path] === undefined) {
+            await api.vault.remove(path)
+            delete persisted[path]
+          }
+        }
+        if (includeNewDraft()) continue
+        await state.reload()
+        if (includeNewDraft()) continue
+        if (saveTimer) clearTimeout(saveTimer)
+        saveTimer = null
+        const path = get().currentPath
+        set({ draft: path ? (report.merged[path] ?? '') : '', dirty: false })
+        return report
       }
-      if (report.changed) await state.reload()
-      return report
     },
 
     applyExternalChanges: async (payload) => {

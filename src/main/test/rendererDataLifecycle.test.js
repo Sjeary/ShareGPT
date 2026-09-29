@@ -16,6 +16,7 @@ function fixture() {
   let failRead = false;
   let pickedRoot = null;
   let beforeWrite = null;
+  let beforeReadAll = null;
   const timers = new Set();
   const localStorage = new Map();
   function load(input) {
@@ -51,13 +52,15 @@ function fixture() {
             (scope.vault ||= {})[value] = content;
             return;
           }
-          if (name === "vault.readAll")
+          if (name === "vault.readAll") {
+            if (beforeReadAll) await beforeReadAll();
             return Object.entries(scope.vault || {}).map(([p, text]) => ({
               path: p,
               content: text,
               mtime: 1,
               ctime: 1,
             }));
+          }
           if (name === "vault.list") return [];
           if (name === "vault.getRoot") return snapshot.principalId;
           if (name === "vault.start") return;
@@ -131,6 +134,9 @@ function fixture() {
     calls,
     pickRoot: (root) => {
       pickedRoot = root;
+    },
+    beforeReadAll: (fn) => {
+      beforeReadAll = fn;
     },
     beforeWrite: (fn) => {
       beforeWrite = fn;
@@ -298,29 +304,26 @@ test("cloud deletion includes dirty notes and a late local edit survives the mer
   assert.equal(report.merged["note.md"], "local unsaved");
   assert.equal(vault.getState().draft, "local unsaved");
   assert.equal(f.files.get("A").vault["note.md"], "local unsaved");
-  let release;
-  let started;
-  const pending = new Promise((resolve) => {
-    started = resolve;
-  });
+  let writes = 0;
   f.beforeWrite(async () => {
-    started();
-    await new Promise((resolve) => {
-      release = resolve;
-    });
+    // Continue typing across multiple separate writes, not just the first await.
+    if (++writes <= 2) vault.getState().setDraft(`typing during merge ${writes}`);
   });
-  const merging = vault
+  f.beforeReadAll(async () => {
+    f.beforeReadAll(null);
+    vault.getState().setDraft("typing during reload");
+  });
+  const merged = await vault
     .getState()
     .mergeFromCloud({ "note.md": "local unsaved" }, { "note.md": "cloud update" });
-  await pending;
-  vault.getState().setDraft("typing during merge");
-  release();
-  await merging;
-  assert.equal(vault.getState().draft, "typing during merge");
-  assert.equal(vault.getState().dirty, true);
+  assert.equal(vault.getState().draft, "typing during reload");
+  assert.equal(vault.getState().dirty, false);
+  assert.equal(merged.conflicts.length, 1);
+  assert.equal(merged.merged[merged.conflicts[0].copyPath], "cloud update");
   f.beforeWrite(null);
   await vault.getState().flushPending();
-  assert.equal(f.files.get("A").vault["note.md"], "typing during merge");
+  assert.deepEqual({ ...merged.merged }, f.files.get("A").vault);
+  assert.equal(f.files.get("A").vault["note.md"], "typing during reload");
 });
 
 test("navigation waits for edits made while the previous save is still in flight", async () => {
@@ -331,16 +334,20 @@ test("navigation waits for edits made while the previous save is still in flight
   await vault.getState().init();
   await vault.getState().openNote("a.md");
   vault.getState().setDraft("first change");
-  let release;
-  let started;
+  /** @type {() => void} */
+  let release = () => {
+    throw new Error("write has not started");
+  };
+  /** @type {() => void} */
+  let started = () => {};
   const pending = new Promise((resolve) => {
-    started = resolve;
+    started = () => resolve(undefined);
   });
   f.beforeWrite(async () => {
     f.beforeWrite(null);
     started();
     await new Promise((resolve) => {
-      release = resolve;
+      release = () => resolve(undefined);
     });
   });
   const opening = vault.getState().openNote("b.md");
@@ -358,17 +365,15 @@ test("Principal transitions clear the Notes comparison report before loading the
   const runtime = f.load("lib/settingsPrincipalRuntime").settingsPrincipalRuntime;
   runtime.activate("A", 1);
   const sync = f.load("store/useNotesSyncStore").useNotesSyncStore;
-  sync
-    .getState()
-    .showReport({
-      fromCloud: ["A-private.md"],
-      conflicts: [],
-      deleted: [],
-      merged: {},
-      keptLocal: [],
-      autoMerged: [],
-      changed: true,
-    });
+  sync.getState().showReport({
+    fromCloud: ["A-private.md"],
+    conflicts: [],
+    deleted: [],
+    merged: {},
+    keptLocal: [],
+    autoMerged: [],
+    changed: true,
+  });
   assert.equal(sync.getState().compareOpen, true);
   await f
     .load("lib/userDataLifecycle")
