@@ -62,3 +62,38 @@ test("switching accounts during calendar initialization cancels task integration
   assert.equal(app.saved.calendar.length, 0);
   assert.equal(app.tasks.getState().tasks.length, 0);
 });
+
+test("task link is not changed or saved while calendar write is pending or has failed", async () => {
+  const pending = deferred();
+  const app = await setup({
+    api: {
+      loadCalendar: async () => ({
+        calendars: [{ id: "existing", name: "Personal", color: "#123456" }],
+        events: [],
+      }),
+      saveCalendar: () => pending.promise,
+    },
+  });
+  await app.tasks.getState().flushPending();
+  app.saved.tasks.length = 0;
+  const operation = app.sync(app.task.id);
+  await app.settle();
+  await app.tasks.getState().flushPending();
+  assert.equal(Boolean(app.tasks.getState().tasks[0].calendarEventId), false);
+  assert.equal(app.saved.tasks.length, 0);
+  pending.reject(new Error("calendar write failed"));
+  await assert.rejects(operation, /calendar write failed/);
+  await app.tasks.getState().flushPending();
+  assert.equal(Boolean(app.tasks.getState().tasks[0].calendarEventId), false);
+  assert.equal(app.saved.tasks.length, 0);
+  app.api.saveCalendar = async (data) => {
+    app.saved.calendar.push(data);
+    return data;
+  };
+  await app.sync(app.task.id);
+  assert.equal(app.calendar.getState().events.length, 1, "retry must reuse the failed event");
+  assert.equal(
+    app.saved.tasks.at(-1).tasks[0].calendarEventId,
+    app.saved.calendar.at(-1).events[0].id,
+  );
+});

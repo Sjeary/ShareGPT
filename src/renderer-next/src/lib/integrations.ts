@@ -41,10 +41,17 @@ export type SyncTaskResult = 'synced' | 'updated' | 'no-date' | 'not-found'
 
 // 单条任务同步到个人日历。已关联事件且仍存在 -> 更新; 否则新建并回写 calendarEventId。
 const taskSyncs = new Map<string, Promise<SyncTaskResult>>()
+// 日历保存失败时保留事件身份供本代次重试，避免再次点击创建重复事件。
+const pendingTaskLinks = new Map<string, { ownerKey: string; eventId: string }>()
 
 export function syncTaskToCalendar(taskId: string): Promise<SyncTaskResult> {
   const snapshot = settingsPrincipalRuntime.snapshot()
-  return coalesceInFlight(taskSyncs, JSON.stringify([snapshot, taskId]), async () => {
+  const ownerKey = JSON.stringify(snapshot)
+  const operationKey = JSON.stringify([ownerKey, taskId])
+  for (const [key, pending] of pendingTaskLinks) {
+    if (pending.ownerKey !== ownerKey) pendingTaskLinks.delete(key)
+  }
+  return coalesceInFlight(taskSyncs, operationKey, async () => {
     settingsPrincipalRuntime.assertCurrent(snapshot)
     await Promise.all([useTasksStore.getState().init(), useCalendarStore.getState().init()])
     settingsPrincipalRuntime.assertCurrent(snapshot)
@@ -57,9 +64,11 @@ export function syncTaskToCalendar(taskId: string): Promise<SyncTaskResult> {
     const times = taskToTimes(task)
     if (!times) return 'no-date'
     const notes = `来自待办${task.notes ? `\n${task.notes}` : ''}`
-    const existing = task.calendarEventId && cal.events.some((e) => e.id === task.calendarEventId)
-    if (existing) {
-      cal.updateEvent(task.calendarEventId!, { title: task.title, ...times, notes })
+    const candidateId = task.calendarEventId || pendingTaskLinks.get(operationKey)?.eventId
+    let eventId = candidateId && cal.events.some((e) => e.id === candidateId) ? candidateId : ''
+    const existing = Boolean(eventId)
+    if (eventId) {
+      cal.updateEvent(eventId, { title: task.title, ...times, notes })
     } else {
       const ev = cal.addEvent({
         calendarId: ensureTodoCalendarId(),
@@ -68,12 +77,15 @@ export function syncTaskToCalendar(taskId: string): Promise<SyncTaskResult> {
         notes,
         recurrence: null,
       })
-      tasks.updateTask(taskId, { calendarEventId: ev.id })
+      eventId = ev.id
+      pendingTaskLinks.set(operationKey, { ownerKey, eventId })
     }
     await cal.flushPending()
     settingsPrincipalRuntime.assertCurrent(snapshot)
+    useTasksStore.getState().updateTask(taskId, { calendarEventId: eventId })
     await useTasksStore.getState().flushPending()
     settingsPrincipalRuntime.assertCurrent(snapshot)
+    pendingTaskLinks.delete(operationKey)
     return existing ? 'updated' : 'synced'
   })
 }
