@@ -110,6 +110,13 @@ class VaultManager {
     if (!next) throw new Error("路径为空");
     this.validateRoot(next);
     fs.mkdirSync(next, { recursive: true });
+    // Prove the destination is readable before changing the active root or metadata.
+    const candidate = new VaultManager(this.app, this.getWindow, {
+      dataRoot: this.dataRoot,
+      validateRoot: this.validateRoot,
+    });
+    candidate.root = next;
+    const files = await candidate.readAll();
     const previous = this.root;
     this.root = next;
     try {
@@ -118,8 +125,14 @@ class VaultManager {
       this.root = previous;
       throw error;
     }
-    await this.restartWatch();
-    const files = await this.list();
+    try {
+      await this.restartWatch();
+    } catch (error) {
+      this.root = previous;
+      this.#saveRoot();
+      await this.restartWatch().catch(() => {});
+      throw error;
+    }
     return { ok: true, root: this.root, count: files.length };
   }
 

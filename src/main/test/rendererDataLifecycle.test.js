@@ -14,6 +14,8 @@ function fixture() {
   const calls = [];
   let failSave = false;
   let failRead = false;
+  let pickedRoot = null;
+  let beforeWrite = null;
   const timers = new Set();
   const localStorage = new Map();
   function load(input) {
@@ -33,7 +35,19 @@ function fixture() {
           calls.push({ name, id: snapshot.principalId });
           if (!write && failRead) throw new Error("fixture read failure");
           if (write && failSave) throw new Error("fixture save failure");
+          if (name === "vault.pickFolder") return pickedRoot;
+          if (name === "vault.setRoot") {
+            scope.roots ||= { [snapshot.principalId]: scope.vault || {} };
+            scope.root = value;
+            scope.vault = scope.roots[value] ||= {};
+            return { root: value };
+          }
+          if (name === "vault.remove") {
+            delete scope.vault[value];
+            return;
+          }
           if (name === "vault.write") {
+            if (beforeWrite) await beforeWrite(value, content);
             (scope.vault ||= {})[value] = content;
             return;
           }
@@ -63,6 +77,9 @@ function fixture() {
         {
           vault: {
             start: call("vault.start"),
+            pickFolder: call("vault.pickFolder"),
+            setRoot: call("vault.setRoot", true),
+            remove: call("vault.remove", true),
             getRoot: call("vault.getRoot"),
             list: call("vault.list"),
             readAll: call("vault.readAll"),
@@ -112,6 +129,12 @@ function fixture() {
     load,
     files,
     calls,
+    pickRoot: (root) => {
+      pickedRoot = root;
+    },
+    beforeWrite: (fn) => {
+      beforeWrite = fn;
+    },
     failRead: (value) => {
       failRead = value;
     },
@@ -237,4 +260,95 @@ test("an unreadable vault never publishes a partial snapshot or an editable empt
   assert.equal(vault.getState().draft, "saved");
   await assert.rejects(vault.getState().openNote("missing.md"));
   assert.equal(vault.getState().currentPath, "kept.md");
+});
+
+test("switching vault flushes the old draft and never reuses it for a same-name destination", async () => {
+  const f = fixture();
+  f.load("lib/settingsPrincipalRuntime").settingsPrincipalRuntime.activate("A", 1);
+  const original = { "same.md": "old disk" };
+  const destination = { "same.md": "destination" };
+  f.files.set("A", { vault: original, roots: { A: original, next: destination } });
+  const vault = f.load("store/useVaultStore").useVaultStore;
+  await vault.getState().init();
+  await vault.getState().openNote("same.md");
+  vault.getState().setDraft("saved to original only");
+  f.pickRoot("next");
+  f.failSave(true);
+  await assert.rejects(vault.getState().setRootViaDialog(), /fixture save failure/);
+  assert.equal(vault.getState().draft, "saved to original only");
+  assert.equal(vault.getState().root, "A");
+  f.failSave(false);
+  await vault.getState().setRootViaDialog();
+  assert.equal(original["same.md"], "saved to original only");
+  assert.equal(destination["same.md"], "destination");
+  assert.equal(vault.getState().currentPath, null);
+  await vault.getState().openNote("same.md");
+  assert.equal(vault.getState().draft, "destination");
+});
+
+test("cloud deletion includes dirty notes and a late local edit survives the merge", async () => {
+  const f = fixture();
+  f.load("lib/settingsPrincipalRuntime").settingsPrincipalRuntime.activate("A", 1);
+  f.files.set("A", { vault: { "note.md": "base", "other.md": "other" } });
+  const vault = f.load("store/useVaultStore").useVaultStore;
+  await vault.getState().init();
+  await vault.getState().openNote("note.md");
+  vault.getState().setDraft("local unsaved");
+  const report = await vault.getState().mergeFromCloud({ "note.md": "base" }, {});
+  assert.equal(report.merged["note.md"], "local unsaved");
+  assert.equal(vault.getState().draft, "local unsaved");
+  assert.equal(f.files.get("A").vault["note.md"], "local unsaved");
+  let release;
+  let started;
+  const pending = new Promise((resolve) => {
+    started = resolve;
+  });
+  f.beforeWrite(async () => {
+    started();
+    await new Promise((resolve) => {
+      release = resolve;
+    });
+  });
+  const merging = vault
+    .getState()
+    .mergeFromCloud({ "note.md": "local unsaved" }, { "note.md": "cloud update" });
+  await pending;
+  vault.getState().setDraft("typing during merge");
+  release();
+  await merging;
+  assert.equal(vault.getState().draft, "typing during merge");
+  assert.equal(vault.getState().dirty, true);
+  f.beforeWrite(null);
+  await vault.getState().flushPending();
+  assert.equal(f.files.get("A").vault["note.md"], "typing during merge");
+});
+
+test("navigation waits for edits made while the previous save is still in flight", async () => {
+  const f = fixture();
+  f.load("lib/settingsPrincipalRuntime").settingsPrincipalRuntime.activate("A", 1);
+  f.files.set("A", { vault: { "a.md": "a", "b.md": "b" } });
+  const vault = f.load("store/useVaultStore").useVaultStore;
+  await vault.getState().init();
+  await vault.getState().openNote("a.md");
+  vault.getState().setDraft("first change");
+  let release;
+  let started;
+  const pending = new Promise((resolve) => {
+    started = resolve;
+  });
+  f.beforeWrite(async () => {
+    f.beforeWrite(null);
+    started();
+    await new Promise((resolve) => {
+      release = resolve;
+    });
+  });
+  const opening = vault.getState().openNote("b.md");
+  await pending;
+  vault.getState().setDraft("second change during save");
+  release();
+  await opening;
+  assert.equal(vault.getState().currentPath, "b.md");
+  assert.equal(vault.getState().draft, "b");
+  assert.equal(f.files.get("A").vault["a.md"], "second change during save");
 });
