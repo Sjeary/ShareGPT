@@ -177,14 +177,20 @@ jobs:
       - name: 安装 Windows 构建依赖
         run: |
           npm ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm --prefix src/renderer-next ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm --prefix collab_server2 ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Windows 发布逻辑回归
         run: |
           npm run test:release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run typecheck:main
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run verify:release-contract
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify emoji combination loading and recovery on Windows
         run: npm run verify:chat-emoji
@@ -218,12 +224,15 @@ jobs:
       - name: 构建并验收 Windows NSIS 安装包
         run: |
           npm run dist:win:installer
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run verify:release-win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Install and launch the actual NSIS package
         shell: pwsh
         run: |
           $version = node -p "require('./package.json').version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $destination = Join-Path $env:RUNNER_TEMP "ShareGPT-installed"
           $installer = Start-Process -FilePath "release/sharegpt-$version.exe" -ArgumentList @("/S", "/D=$destination") -Wait -PassThru
           if ($installer.ExitCode -ne 0) { throw "NSIS installation failed" }

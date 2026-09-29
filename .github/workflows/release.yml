@@ -217,20 +217,30 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm --prefix src/renderer-next ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm --prefix collab_server2 ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify release behavior
         shell: pwsh
         run: |
           npm run verify:signing-boundaries
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:SHAREGPT_RELEASE_TAG = $env:GITHUB_REF_NAME
           npm run verify:release-contract
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm --prefix src/renderer-next run typecheck:test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run typecheck:main
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run lint
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Download pinned Windows binaries
         shell: pwsh
@@ -270,6 +280,7 @@ jobs:
           npm run verify:release-win
           if ($LASTEXITCODE -ne 0) { throw "Installer verification failed" }
           $version = node -p "require('./package.json').version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           foreach ($target in @("release/sharegpt-$version.exe", "release/win-unpacked/sharegpt.exe")) {
             if ((Get-AuthenticodeSignature $target).Status -ne "NotSigned") {
               throw "Unexpected signing identity in legacy build: $target"
@@ -284,7 +295,9 @@ jobs:
         shell: pwsh
         run: |
           npm run verify:release-win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $version = node -p "require('./package.json').version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           foreach ($target in @("release/sharegpt-$version.exe", "release/win-unpacked/sharegpt.exe")) {
             if (-not (Test-Path $target)) { throw "Missing signed executable: $target" }
             $signature = Get-AuthenticodeSignature $target
@@ -300,6 +313,7 @@ jobs:
         shell: pwsh
         run: |
           $version = node -p "require('./package.json').version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $destination = Join-Path $env:RUNNER_TEMP "ShareGPT-installed"
           $installer = Start-Process -FilePath "release/sharegpt-$version.exe" -ArgumentList @("/S", "/D=$destination") -Wait -PassThru
           if ($installer.ExitCode -ne 0) { throw "NSIS installation failed" }
