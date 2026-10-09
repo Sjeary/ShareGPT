@@ -220,7 +220,12 @@ function createNotesAi({
         } else if (event.type === "response.completed") {
           finishOnce({ type: "done" });
         } else if (event.type === "response.failed" || event.type === "error") {
-          finishOnce({ type: "error", message: event.error?.message || "生成失败" });
+          finishOnce({
+            type: "error",
+            message: event.response?.error?.message || event.error?.message || "生成失败",
+          });
+        } else if (event.type === "response.incomplete") {
+          finishOnce({ type: "error", message: "AI 生成未完成，请重试或减少输入内容" });
         }
       } catch {
         // 非法 SSE 行由上游负责重发；不能与下一行拼接，否则会组成错误 JSON。
@@ -254,6 +259,20 @@ function createNotesAi({
             timeout: 120000,
           },
           (res) => {
+            let responseEnded = false;
+            const failResponse = (error) => {
+              if (attemptSettled || stream.cancelled || stream.terminal) return;
+              attemptSettled = true;
+              failAttempt(0, error?.message || "AI 接口连接中断，请重试");
+            };
+            res.on("error", failResponse);
+            res.on("aborted", () => failResponse(new Error("AI 接口连接中断，请重试")));
+            res.on("close", () => {
+              if (!responseEnded) failResponse(new Error("AI 接口连接中断，请重试"));
+            });
+            res.on("end", () => {
+              responseEnded = true;
+            });
             if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
               let err = "";
               let errorBytes = 0;
@@ -286,7 +305,7 @@ function createNotesAi({
               if (buf.trim()) handleSseLine(buf);
               if (!attemptSettled) {
                 attemptSettled = true;
-                finishOnce({ type: "done" });
+                finishOnce({ type: "error", message: "AI 响应在确认完成前已结束，请重试" });
               }
             });
           },

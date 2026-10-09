@@ -474,6 +474,8 @@ function requestText(url, agent, timeoutMs = 12_000) {
       },
       (response) => {
         const chunks = [];
+        response.on("error", reject);
+        response.on("aborted", () => reject(new Error("环境检测响应中断")));
         let size = 0;
         response.on("data", (chunk) => {
           size += chunk.length;
@@ -493,7 +495,8 @@ function requestText(url, agent, timeoutMs = 12_000) {
         });
       },
     );
-    request.setTimeout(timeoutMs, () => request.destroy(new Error("环境检测超时")));
+    const deadline = setTimeout(() => request.destroy(new Error("环境检测超时")), timeoutMs);
+    request.on("close", () => clearTimeout(deadline));
     request.on("error", reject);
   });
 }
@@ -527,7 +530,9 @@ function normalizeDetectedEnvironment(geo, trace) {
   const geoIp = canonicalIp(geo.ip);
   const traceIp = canonicalIp(trace.ip);
   if (!geoIp || !traceIp || geoIp !== traceIp) {
-    throw new Error("两条独立检测链路返回的出口 IP 不一致，已拒绝更新环境");
+    throw Object.assign(new Error("两条独立检测链路返回的出口 IP 不一致，已拒绝更新环境"), {
+      code: "EGRESS_MISMATCH",
+    });
   }
   const timezone = validTimezone(geo?.timezone?.id, "");
   if (!timezone) throw new Error("出口位置没有有效的 IANA 时区");
@@ -569,17 +574,79 @@ async function detectProxyEnvironment(socksPort, options = {}) {
   }
   const agent = options.agent || new SocksProxyAgent(`socks5h://127.0.0.1:${port}`);
   const fetchText = options.fetchText || requestText;
-  const [geoText, traceText] = await Promise.all([
+  const [primary, traceResult] = await Promise.allSettled([
     fetchText("https://ipwho.is/", agent),
     fetchText("https://www.cloudflare.com/cdn-cgi/trace", agent),
   ]);
-  let geo;
-  try {
-    geo = JSON.parse(geoText);
-  } catch {
-    throw new Error("出口位置服务返回了无效数据");
+  let trace;
+  let traceUsesIpify = false;
+  if (traceResult.status === "fulfilled") {
+    trace = parseCloudflareTrace(traceResult.value);
   }
-  return normalizeDetectedEnvironment(geo, parseCloudflareTrace(traceText));
+  if (!canonicalIp(trace?.ip)) {
+    try {
+      trace = { ip: canonicalIp(await fetchText("https://api.ipify.org", agent)) };
+      traceUsesIpify = true;
+    } catch {
+      throw new Error("出口交叉验证服务连接失败，请稍后重试或检查当前线路");
+    }
+  }
+  if (!canonicalIp(trace.ip)) throw new Error("出口交叉验证服务未返回有效 IP");
+  if (primary.status === "fulfilled") {
+    try {
+      return normalizeDetectedEnvironment(JSON.parse(primary.value), trace);
+    } catch (error) {
+      if (error.code === "EGRESS_MISMATCH") throw error;
+    }
+  }
+  // Alternative providers use the same SOCKS route. Never fall back to direct access.
+  try {
+    const info = JSON.parse(await fetchText("https://ipinfo.io/json", agent));
+    const [latitude, longitude] = String(info.loc || "").split(",");
+    return normalizeDetectedEnvironment(
+      {
+        success: !info.error,
+        ip: info.ip,
+        country_code: info.country,
+        country: info.country,
+        region: info.region,
+        city: info.city,
+        latitude,
+        longitude,
+        timezone: { id: info.timezone },
+        connection: {
+          asn: /^AS\d+\b/.exec(String(info.org || ""))?.[0] || "",
+          org: String(info.org || "").replace(/^AS\d+\s*/, ""),
+        },
+      },
+      trace,
+    );
+  } catch (error) {
+    if (error.code === "EGRESS_MISMATCH") throw error;
+  }
+  // Admission can use verified IP/country without writing incomplete city/timezone data.
+  if (options.routeOnly) {
+    if (traceUsesIpify) {
+      throw new Error("当前仅一个出口检测服务可用，无法交叉验证，请稍后重试");
+    }
+    let ip;
+    try {
+      ip = canonicalIp(await fetchText("https://api.ipify.org", agent));
+    } catch {
+      throw new Error("出口检测服务暂时不可用，请稍后重试；当前线路未通过验证");
+    }
+    if (!ip || ip !== canonicalIp(trace.ip)) {
+      throw new Error("两条独立检测链路返回的出口 IP 不一致，当前线路未通过验证");
+    }
+    return {
+      ip,
+      countryCode: /^[A-Z]{2}$/.test(trace.loc) ? trace.loc : "",
+      asn: "",
+      checkedAt: new Date().toISOString(),
+      locationUnavailable: true,
+    };
+  }
+  throw new Error("出口位置服务暂时不可用，已保留原有时区和位置，请稍后重试");
 }
 
 function isAiKind(value) {

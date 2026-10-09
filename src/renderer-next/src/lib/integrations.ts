@@ -1,9 +1,12 @@
 // 跨功能集成层: 把「待办 / 个人日历 / 组队日历 / 协作聊天」串起来。
 // 全部通过各 store 的 getState() 在运行时调用, 不在组件间产生耦合 import 链。
+import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
+import { coalesceInFlight } from '@/lib/inFlightRequest'
 import { useChatStore } from '@/store/useChatStore'
 import { useCalendarStore } from '@/store/useCalendarStore'
 import { useTasksStore, type Task } from '@/store/useTasksStore'
-import { useTeamCalendarStore, type TeamEvent, type RsvpStatus } from '@/store/useTeamCalendarStore'
+import type { TeamEvent } from '@/store/useTeamCalendarStore'
+import { createTeamCalendarClient } from '@/lib/teamCalendarClient'
 
 // ============================================================
 //  待办 -> 个人日历 (单条同步 / 一键同步)
@@ -37,40 +40,67 @@ function taskToTimes(task: Task): { start: string; end: string; allDay: boolean 
 export type SyncTaskResult = 'synced' | 'updated' | 'no-date' | 'not-found'
 
 // 单条任务同步到个人日历。已关联事件且仍存在 -> 更新; 否则新建并回写 calendarEventId。
-export function syncTaskToCalendar(taskId: string): SyncTaskResult {
-  const tasks = useTasksStore.getState()
-  const task = tasks.tasks.find((t) => t.id === taskId)
-  if (!task) return 'not-found'
-  const times = taskToTimes(task)
-  if (!times) return 'no-date'
+const taskSyncs = new Map<string, Promise<SyncTaskResult>>()
+// 日历保存失败时保留事件身份供本代次重试，避免再次点击创建重复事件。
+const pendingTaskLinks = new Map<string, { ownerKey: string; eventId: string }>()
 
-  const cal = useCalendarStore.getState()
-  const notes = `来自待办${task.notes ? `\n${task.notes}` : ''}`
-
-  if (task.calendarEventId && cal.events.some((e) => e.id === task.calendarEventId)) {
-    cal.updateEvent(task.calendarEventId, { title: task.title, ...times, notes })
-    return 'updated'
+export function syncTaskToCalendar(taskId: string): Promise<SyncTaskResult> {
+  const snapshot = settingsPrincipalRuntime.snapshot()
+  const ownerKey = JSON.stringify(snapshot)
+  const operationKey = JSON.stringify([ownerKey, taskId])
+  for (const [key, pending] of pendingTaskLinks) {
+    if (pending.ownerKey !== ownerKey) pendingTaskLinks.delete(key)
   }
-  const calendarId = ensureTodoCalendarId()
-  const ev = cal.addEvent({
-    calendarId,
-    title: task.title,
-    start: times.start,
-    end: times.end,
-    allDay: times.allDay,
-    notes,
-    recurrence: null,
+  return coalesceInFlight(taskSyncs, operationKey, async () => {
+    settingsPrincipalRuntime.assertCurrent(snapshot)
+    await Promise.all([useTasksStore.getState().init(), useCalendarStore.getState().init()])
+    settingsPrincipalRuntime.assertCurrent(snapshot)
+    const tasks = useTasksStore.getState()
+    const cal = useCalendarStore.getState()
+    if (!tasks.loaded || !cal.loaded)
+      throw new Error(tasks.loadError || cal.loadError || '本机资料尚未加载')
+    const task = tasks.tasks.find((t) => t.id === taskId)
+    if (!task) return 'not-found'
+    const times = taskToTimes(task)
+    if (!times) return 'no-date'
+    const notes = `来自待办${task.notes ? `\n${task.notes}` : ''}`
+    const candidateId = task.calendarEventId || pendingTaskLinks.get(operationKey)?.eventId
+    let eventId = candidateId && cal.events.some((e) => e.id === candidateId) ? candidateId : ''
+    const existing = Boolean(eventId)
+    if (eventId) {
+      cal.updateEvent(eventId, { title: task.title, ...times, notes })
+    } else {
+      const ev = cal.addEvent({
+        calendarId: ensureTodoCalendarId(),
+        title: task.title,
+        ...times,
+        notes,
+        recurrence: null,
+      })
+      eventId = ev.id
+      pendingTaskLinks.set(operationKey, { ownerKey, eventId })
+    }
+    await cal.flushPending()
+    settingsPrincipalRuntime.assertCurrent(snapshot)
+    useTasksStore.getState().updateTask(taskId, { calendarEventId: eventId })
+    await useTasksStore.getState().flushPending()
+    settingsPrincipalRuntime.assertCurrent(snapshot)
+    pendingTaskLinks.delete(operationKey)
+    return existing ? 'updated' : 'synced'
   })
-  tasks.updateTask(taskId, { calendarEventId: ev.id })
-  return 'synced'
 }
 
 // 一键: 把所有「未完成且有到期日」的任务同步到个人日历, 返回成功数量。
-export function syncAllTasksToCalendar(): number {
+export async function syncAllTasksToCalendar(): Promise<number> {
+  const snapshot = settingsPrincipalRuntime.snapshot()
+  await useTasksStore.getState().init()
+  settingsPrincipalRuntime.assertCurrent(snapshot)
+  if (!useTasksStore.getState().loaded) throw new Error(useTasksStore.getState().loadError)
   const tasks = useTasksStore.getState().tasks.filter((t) => !t.completed && t.dueDate)
   let n = 0
   for (const t of tasks) {
-    const r = syncTaskToCalendar(t.id)
+    settingsPrincipalRuntime.assertCurrent(snapshot)
+    const r = await syncTaskToCalendar(t.id)
     if (r === 'synced' || r === 'updated') n += 1
   }
   return n
@@ -85,8 +115,6 @@ export function syncableTaskCount(): number {
 //  个人日历事件 -> 组队(共享)日历
 // ============================================================
 
-const TEAM_LOCAL_KEY = 'team-calendar:local-events' // 与 useTeamCalendar 的本地降级 key 保持一致
-
 export interface ShareToTeamInput {
   title: string
   start: string
@@ -97,76 +125,9 @@ export interface ShareToTeamInput {
   color?: string
 }
 
-// 把一条事件共享到组队日历。
-//  - 立即写入 team store + 本地降级存储 (即使团队面板未打开也不丢、可见)。
-//  - 已登录协作服务器时, 额外尽力 POST 到服务器 (失败忽略, 本地已可见)。
-export function shareEventToTeam(input: ShareToTeamInput): TeamEvent {
-  const { username, displayName, serverUrl, token } = useChatStore.getState().identity
-  const organizer = username || '我'
-  const now = new Date().toISOString()
-  const loggedIn = Boolean(serverUrl && token)
-
-  const event: TeamEvent = {
-    id: crypto.randomUUID(),
-    subnetKey: loggedIn ? '' : 'local',
-    title: input.title,
-    description: input.description,
-    location: input.location,
-    start: input.start,
-    end: input.end,
-    allDay: input.allDay,
-    organizer,
-    attendees: [
-      { username: organizer, displayName: displayName || organizer, rsvp: 'accept' as RsvpStatus },
-    ],
-    color: input.color,
-    createdBy: organizer,
-    createdAt: now,
-    updatedAt: now,
-  }
-
-  // 1) 写入内存 store (团队日历界面立即可见)。
-  useTeamCalendarStore.getState().upsert(event)
-
-  // 2) 持久化到本地降级存储 (团队面板未挂载时其副作用不会跑, 这里兜底)。
-  try {
-    const raw = localStorage.getItem(TEAM_LOCAL_KEY)
-    const list = raw ? JSON.parse(raw) : []
-    if (Array.isArray(list)) {
-      list.push(event)
-      localStorage.setItem(TEAM_LOCAL_KEY, JSON.stringify(list))
-    }
-  } catch {
-    /* 配额/隐私模式失败可忽略 */
-  }
-
-  // 3) 已登录: 尽力推到服务器, 成功则用服务端返回(带真实 subnetKey)覆盖本地这条。
-  if (loggedIn) {
-    void fetch(`${serverUrl}/api/team-calendar/events`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        title: input.title,
-        description: input.description,
-        location: input.location,
-        start: input.start,
-        end: input.end,
-        allDay: input.allDay,
-        color: input.color,
-        attendees: [],
-      }),
-    })
-      .then(async (res) => {
-        if (!res.ok) return
-        const data = (await res.json().catch(() => null)) as { event?: TeamEvent } | null
-        if (data?.event) useTeamCalendarStore.getState().upsert(data.event)
-      })
-      .catch(() => {
-        /* 服务端不支持/网络失败: 本地已可见, 忽略 */
-      })
-  }
-
-  return event
+// 跨面板共享复用组队日历的数据入口，成功保存后调用者才显示成功。
+export function shareEventToTeam(input: ShareToTeamInput): Promise<TeamEvent> {
+  return createTeamCalendarClient().createEvent({ ...input, attendees: [] })
 }
 
 // ============================================================

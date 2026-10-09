@@ -1,3 +1,6 @@
+import { showErrorToast } from '@/lib/errorToast'
+import { ErrorNotice } from '@/components/ErrorNotice'
+import { userFacingAiWorkspaceError } from '@/lib/aiWorkspaceError'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Check,
@@ -65,13 +68,7 @@ interface ActiveTranslationRun {
 }
 
 function cleanError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error || '')
-  if (/网页或标签已经变化|当前网页标签已经变化|账号已切换|操作已取消/.test(raw)) {
-    return ''
-  }
-  return raw
-    .replace(/^Error invoking remote method '[^']+': Error:\s*/i, '')
-    .replace(/^Error:\s*/i, '')
+  return userFacingAiWorkspaceError(error) || ''
 }
 
 export function TranslationPanel({
@@ -174,10 +171,8 @@ export function TranslationPanel({
       state.markStale()
     }
     void state.saveConfig(patch).catch((error) => {
-      const current = useTranslationStore.getState()
       const message = cleanError(error)
-      if (current.mode === 'read') current.setReaderStatus(message)
-      else current.setComposerStatus(message)
+      if (message) showErrorToast(message, '保存翻译设置')
     })
   }
 
@@ -342,7 +337,9 @@ export function TranslationPanel({
         status: selection.truncated ? '选区较长，已读取前 30000 个字符' : '已读取网页选中文字',
       })
     } catch (error) {
-      state.setReaderStatus(cleanError(error))
+      const message = cleanError(error)
+      state.setReaderStatus('')
+      if (message) showErrorToast(message, '读取网页内容')
     } finally {
       state.setReaderLoading(false)
     }
@@ -357,7 +354,9 @@ export function TranslationPanel({
         status: page.truncated ? '内容较长，已读取前 30000 个字符' : '已读取当前网页',
       })
     } catch (error) {
-      state.setReaderStatus(cleanError(error))
+      const message = cleanError(error)
+      state.setReaderStatus('')
+      if (message) showErrorToast(message, '读取网页内容')
     } finally {
       state.setReaderLoading(false)
     }
@@ -386,7 +385,9 @@ export function TranslationPanel({
       current.completeComposerWrite(`已插入 ${AI_LABELS[kind]}，尚未发送`)
     } catch (error) {
       if (operationGenerationRef.current !== generation) return
-      current.completeComposerWrite(cleanError(error))
+      const message = cleanError(error)
+      current.completeComposerWrite(message ? '插入未完成，请重试' : '')
+      if (message) showErrorToast(message, '插入网页输入框')
     }
   }
 
@@ -679,7 +680,11 @@ export function TranslationPanel({
             {state.reader.phase === 'ready' ? (
               <CircleCheck className="mt-0.5 size-3.5 shrink-0" />
             ) : null}
-            <span>{state.reader.status}</span>
+            {state.reader.phase === 'error' ? (
+              <ErrorNotice error={state.reader.status} context="阅读翻译" className="w-full" />
+            ) : (
+              <span>{state.reader.status}</span>
+            )}
           </div>
         </div>
       ) : (
@@ -874,7 +879,11 @@ export function TranslationPanel({
               {state.composer.phase === 'ready' ? (
                 <CircleCheck className="mt-0.5 size-3.5 shrink-0" />
               ) : null}
-              <span>{state.composer.status}</span>
+              {state.composer.phase === 'error' ? (
+                <ErrorNotice error={state.composer.status} context="写作翻译" className="w-full" />
+              ) : (
+                <span>{state.composer.status}</span>
+              )}
             </div>
           </div>
         </div>
@@ -1001,11 +1010,7 @@ function TranslationSettingsForm({
             </Button>
           </div>
           {usesRemoteHttp(managedServerUrl) && <HttpWarning text={MANAGED_HTTP_WARNING} />}
-          {managedError && (
-            <p className="rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-[11px] leading-4 text-destructive">
-              {managedError}
-            </p>
-          )}
+          {managedError && <ErrorNotice error={managedError} context="团队翻译配置" />}
           <textarea
             className="min-h-16 w-full resize-y rounded-md border border-input bg-background px-2 py-1.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
             value={config.glossary}
@@ -1111,11 +1116,16 @@ function TranslationSettingsForm({
           )}
           测试连接
         </Button>
-        <span className="text-[11px] text-muted-foreground" role="status">
-          {testStatus}
-        </span>
+        {(!testStatus || ['正在测试…', '连接正常', '测试已取消'].includes(testStatus)) && (
+          <span className="text-[11px] text-muted-foreground" role="status">
+            {testStatus}
+          </span>
+        )}
       </div>
 
+      {testStatus && !['正在测试…', '连接正常', '测试已取消'].includes(testStatus) && (
+        <ErrorNotice error={testStatus} context="翻译连接测试" />
+      )}
       <label className="flex items-center gap-2 text-xs">
         <input
           type="checkbox"

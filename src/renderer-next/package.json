@@ -21,6 +21,8 @@
     "@codemirror/view": "^6.43.1",
     "@lezer/highlight": "^1.2.3",
     "@types/diff": "^7.0.2",
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/xterm": "6.0.0",
     "@xyflow/react": "^12.11.1",
     "chrono-node": "^2.9.1",
     "class-variance-authority": "^0.7.1",

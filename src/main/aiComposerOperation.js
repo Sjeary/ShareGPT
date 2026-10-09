@@ -175,7 +175,7 @@ function composerConfirmationGuardScript(token, options = {}) {
   const enabled = options.enabled === true;
   const targetLanguage = safeText(options.targetLanguage || "en").toLowerCase();
   const ttlMs = Math.max(1000, Math.min(30000, Number(options.ttlMs) || 15000));
-  const key = `__shareGptComposerConfirmation_${assertToken(token)}`;
+  const key = "__shareGptComposerConfirmation";
   const detectSource = hasClearlyNonTargetLanguage.toString();
   const composerEditorSource = isLikelyComposerEditorInPage.toString();
   return `
@@ -193,6 +193,7 @@ function composerConfirmationGuardScript(token, options = {}) {
       const isLikelyComposerEditor = ${composerEditorSource};
       const selector = 'textarea, input:not([type]), input[type="text"], [contenteditable]:not([contenteditable="false"]), [role="textbox"]';
       const state = {
+        token: ${JSON.stringify(assertToken(token))},
         pending: new Map(),
         pendingByEditor: new WeakMap(),
         bypass: null,
@@ -302,10 +303,10 @@ function composerConfirmationGuardScript(token, options = {}) {
 }
 
 function composerConfirmationFinalizeScript(token, requestId, force = false) {
-  const key = `__shareGptComposerConfirmation_${assertToken(token)}`;
+  const ownerToken = assertToken(token);
   const id = safeText(requestId);
   if (!CONFIRMATION_ID_PATTERN.test(id)) throw new Error("发送确认已失效");
-  return `(() => globalThis[${JSON.stringify(key)}]?.finalize?.(${JSON.stringify(id)}, ${JSON.stringify(Boolean(force))}) || ({ ok: false, consumed: false }))();`;
+  return `(() => { const owner = globalThis.__shareGptComposerConfirmation; return (owner?.token === ${JSON.stringify(ownerToken)} && owner.finalize?.(${JSON.stringify(id)}, ${JSON.stringify(Boolean(force))})) || ({ ok: false, consumed: false }); })();`;
 }
 
 async function readComposerConfirmationReplay(webContents, token, requestId, options = {}) {
@@ -361,10 +362,10 @@ function parseComposerConfirmationMessage(message, token) {
 }
 
 function composerConfirmationResolveScript(token, requestId, confirmed) {
-  const key = `__shareGptComposerConfirmation_${assertToken(token)}`;
+  const ownerToken = assertToken(token);
   const id = safeText(requestId);
   if (!CONFIRMATION_ID_PATTERN.test(id)) throw new Error("发送确认已失效");
-  return `(() => globalThis[${JSON.stringify(key)}]?.resolve?.(${JSON.stringify(id)}, ${JSON.stringify(Boolean(confirmed))}) || ({ ok: false, reason: 'expired' }))();`;
+  return `(() => { const owner = globalThis.__shareGptComposerConfirmation; return (owner?.token === ${JSON.stringify(ownerToken)} && owner.resolve?.(${JSON.stringify(id)}, ${JSON.stringify(Boolean(confirmed))})) || ({ ok: false, reason: 'expired' }); })();`;
 }
 
 function createComposerConfirmationStore(options = {}) {

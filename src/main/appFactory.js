@@ -19,6 +19,7 @@ const { Backend, DEFAULT_TARGET_DOMAINS } = require("./backend");
 const { buildAiRouteHealth } = require("./aiRouteHealth");
 const { loadRendererEntry, resolveRendererEntry } = require("./rendererEntry");
 const { createTrustedIpc } = require("./trustedIpc");
+const { createTerminalManager } = require("./terminalManager");
 const { createAiEnvironmentCleanup } = require("./aiEnvironmentCleanup");
 const appLog = require("./logger");
 const updateLog = appLog.scoped("update");
@@ -38,8 +39,15 @@ const {
   normalizeAiPartition,
   partitionForProfile,
 } = require("./browserFingerprint");
-const { isAllowedUrlForHosts, isWorkspaceUrlAllowed, normalizeHttpUrl } = require("./aiNavigation");
+const {
+  canEnableExternalBrowsing,
+  isAllowedUrlForHosts,
+  isWorkspaceUrlAllowed,
+  normalizeHttpUrl,
+} = require("./aiNavigation");
+const { LOCAL_PRINCIPAL_ID } = require("./principal");
 const { translateText } = require("./translation");
+const { classifyIpAddress, isLoopbackHostname } = require("./endpointSecurity");
 const {
   COMPOSER_OPERATION_WORLD_ID,
   assertComposerOperationCurrent,
@@ -437,6 +445,10 @@ async function openExternalUrl(rawUrl) {
 
 function createElectronApp(baseMode = "all") {
   app.setName("ShareGPT");
+  applyStableUserDataPath(app);
+  if (isBackgroundAcceptanceWindow() && process.platform === "darwin") {
+    app.setActivationPolicy("prohibited");
+  }
   if (typeof app.setAppUserModelId === "function") {
     app.setAppUserModelId("ShareGPT");
   }
@@ -587,14 +599,37 @@ function createElectronApp(baseMode = "all") {
   }
 
   function isBackgroundAcceptanceWindow() {
-    return Boolean(
-      !app.isPackaged &&
-      process.env.SHAREGPT_BACKGROUND_TEST === "1" &&
-      process.env.SHAREGPT_USER_DATA,
-    );
+    return !app.isPackaged && process.env.SHAREGPT_BACKGROUND_TEST === "1";
   }
 
+  const terminalManager = createTerminalManager({
+    context: () => backend.getPrincipalContext(),
+    directory: (principalId) => backend.principalData.directory(principalId),
+    fetchProfile: async (serverUrl, token) => {
+      const url = new URL(`${serverUrl.replace(/\/+$/, "")}/api/profile`);
+      if (!["http:", "https:"].includes(url.protocol)) throw new Error("协作服务器地址无效");
+      const response = await electronNet.fetch(url.href, {
+        headers: { Authorization: `Bearer ${token}` },
+        redirect: "error",
+        cache: "no-store",
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) {
+        const detail = (await response.text()).slice(0, 500);
+        throw new Error(
+          `终端权限验证失败（HTTP ${response.status}）：${detail || "请检查协作登录状态"}`,
+        );
+      }
+      return (await response.json()).profile;
+    },
+    emit: (event) => {
+      if (mainWindow && !mainWindow.isDestroyed())
+        mainWindow.webContents.send("terminal:event", event);
+    },
+  });
+
   function cancelPrincipalRuntime() {
+    terminalManager.reset();
     aiRuntimeEpoch += 1;
     composerConfirmations.clear();
     usageAttempts.clear();
@@ -706,12 +741,7 @@ function createElectronApp(baseMode = "all") {
   }
 
   function focusMainWindow() {
-    if (
-      !app.isPackaged &&
-      process.env.SHAREGPT_BACKGROUND_TEST === "1" &&
-      process.env.SHAREGPT_USER_DATA
-    )
-      return;
+    if (isBackgroundAcceptanceWindow()) return;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (mainWindow.isMinimized()) {
       mainWindow.restore();
@@ -793,7 +823,7 @@ function createElectronApp(baseMode = "all") {
     return aiRouteHealthCache.run(
       cacheKey,
       async () => {
-        const detected = await detectProxyEnvironment(route.port);
+        const detected = await detectProxyEnvironment(route.port, { routeOnly: true });
         return buildAiRouteHealth(route, detected);
       },
       options,
@@ -1821,6 +1851,16 @@ function createElectronApp(baseMode = "all") {
 
     wc.on("dom-ready", () => {
       if (!isCurrentView()) return;
+      // Remote pages are browser content, never native window chrome. A transparent
+      // app-region:drag header still intercepts native clicks despite pointer-events:none.
+      // User-origin !important also beats author inline rules and covers later SPA nodes.
+      void wc
+        .insertCSS("*, *::before, *::after { -webkit-app-region: initial !important; }", {
+          cssOrigin: "user",
+        })
+        .catch((error) => {
+          if (isCurrentView()) mainLog.warn("Unable to disable remote page drag regions", error);
+        });
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
       const currentUrl = normalizeAiWorkspaceUrl(workspace, wc.getURL());
       markWorkspaceDocumentReady(workspace, currentUrl);
@@ -1840,7 +1880,7 @@ function createElectronApp(baseMode = "all") {
     wc.on("did-finish-load", () => {
       if (!isCurrentView()) return;
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
-      if (workspace.kind !== "gpt") return;
+      if (workspace.kind !== "gpt" || workspace.allowExternalBrowsing) return;
       void detectRawChatGptDocument(wc)
         .then((isRawDocument) => {
           if (!isCurrentView()) return;
@@ -2081,6 +2121,7 @@ function createElectronApp(baseMode = "all") {
         click: () =>
           emitWorkspaceEvent(workspace, "translate-selection", {
             tabId: workspace.id,
+            environmentId: workspace.environmentId,
             text: text.slice(0, 30000),
           }),
       });
@@ -2243,6 +2284,11 @@ function createElectronApp(baseMode = "all") {
     if (!ownerPrincipalId || ownerPrincipalGeneration < 1) {
       throw new Error("账号身份尚未准备好");
     }
+    const externalBrowsingAllowed = canEnableExternalBrowsing({
+      kind: targetKind,
+      personalWorkspace: ownerPrincipalId === LOCAL_PRINCIPAL_ID,
+      environmentId,
+    });
 
     const workspace = {
       id: targetTabId,
@@ -2269,7 +2315,7 @@ function createElectronApp(baseMode = "all") {
       loading: false,
       visible: false,
       lastUrl: safeText(options.lastUrl) || policy.homeUrl,
-      allowExternalBrowsing: targetKind === "claude" && Boolean(options.allowExternalBrowsing),
+      allowExternalBrowsing: externalBrowsingAllowed && Boolean(options.allowExternalBrowsing),
       defaultTitle: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
       title: normalizeAiTabTitle(safeText(options.title), defaultTitleForKind(targetKind)),
       proxySignature: "",
@@ -2344,9 +2390,9 @@ function createElectronApp(baseMode = "all") {
   function createWindow() {
     // Isolated development acceptance only; packaged applications always show normally.
     const backgroundTest = isBackgroundAcceptanceWindow();
-    if (backgroundTest && process.platform === "darwin") app.dock.hide();
     mainWindow = new BrowserWindow({
       show: !backgroundTest,
+      focusable: !backgroundTest,
       width: 1180,
       height: 760,
       minWidth: 860,
@@ -2357,6 +2403,8 @@ function createElectronApp(baseMode = "all") {
       autoHideMenuBar: true,
       titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
       webPreferences: {
+        // Hidden acceptance windows still need normal frame/timer scheduling.
+        backgroundThrottling: !backgroundTest,
         preload: path.join(__dirname, "preload.js"),
         contextIsolation: true,
         nodeIntegration: false,
@@ -2415,7 +2463,9 @@ function createElectronApp(baseMode = "all") {
     mainWindow.on("leave-full-screen", reconcileOnFullScreenChange(false));
     mainWindow.on("hide", reconcileOnWindowEvent("hide"));
     mainWindow.on("minimize", reconcileOnWindowEvent("minimize"));
+    mainWindow.webContents.on("render-process-gone", () => terminalManager.reset());
     mainWindow.on("closed", () => {
+      terminalManager.reset();
       disposeAiWorkspaces();
       mainWindow = null;
     });
@@ -2429,6 +2479,9 @@ function createElectronApp(baseMode = "all") {
   }
 
   function registerIpc() {
+    trustedIpc.handle("terminal:invoke", (_event, action, payload, snapshot) =>
+      terminalManager.handle(action, payload, snapshot),
+    );
     // 让内嵌网页(ChatGPT/Gemini, 设为"跟随系统")的明暗跟随 app UI 主题。
     // nativeTheme.themeSource 影响所有 webContents 的 prefers-color-scheme;
     // 渲染层自身用 .dark class 控制, 不受此影响。
@@ -2689,7 +2742,7 @@ function createElectronApp(baseMode = "all") {
       return { ok: true, backupDir: backup.backupDir, willQuit: payload?.quitAfterOpen !== false };
     });
     trustedIpc.handle("notifications:show", (_event, payload) => {
-      if (!Notification.isSupported()) {
+      if (isBackgroundAcceptanceWindow() || !Notification.isSupported()) {
         return false;
       }
 
@@ -3221,6 +3274,14 @@ function createElectronApp(baseMode = "all") {
       const viaProxy = (host) => {
         if (workspace.proxyMode === "singbox") return true;
         if (workspace.proxyMode !== "sender") return false;
+        if (backend?.activeRouteAll) {
+          // route_all retains the private-address direct rule. Hostname DNS answers
+          // are not available here; this is a runtime-config diagnostic, not a trace.
+          return (
+            !isLoopbackHostname(host) &&
+            !["private", "loopback", "link-local", "unspecified"].includes(classifyIpAddress(host))
+          );
+        }
         return suffixes.some((s) => host === s || host.endsWith(`.${s}`));
       };
 
@@ -3295,12 +3356,14 @@ function createElectronApp(baseMode = "all") {
 
     trustedIpc.handle("profile:open", (_event, payload) => {
       if (profileWindow && !profileWindow.isDestroyed()) {
-        profileWindow.focus();
+        if (!isBackgroundAcceptanceWindow()) profileWindow.focus();
         return true;
       }
 
       profilePrincipal = backend.getPrincipalContext();
       profileWindow = new BrowserWindow({
+        show: !isBackgroundAcceptanceWindow(),
+        focusable: !isBackgroundAcceptanceWindow(),
         width: 900,
         height: 680,
         minWidth: 760,
@@ -3429,7 +3492,6 @@ function createElectronApp(baseMode = "all") {
   }
 
   app.whenReady().then(() => {
-    applyStableUserDataPath(app);
     appLog.init(app.getPath("userData"));
     const log = appLog.scoped("main");
     mainLog = log;
@@ -3473,6 +3535,7 @@ function createElectronApp(baseMode = "all") {
   });
 
   app.on("before-quit", () => {
+    terminalManager.reset();
     disposeAiRecoverySignals?.();
     disposeAiRecoverySignals = null;
     disposeAiWorkspaces();

@@ -23,3 +23,14 @@ test('actionable errors are normalized without Electron IPC wrappers', () => {
     '线路 US 未通过预检',
   )
 })
+
+test('expected cancellation and changed documents remain quiet', () => {
+  for (const message of [
+    '操作已取消',
+    '当前网页标签已经变化，请重试',
+    '发送确认已失效',
+    '账号已切换',
+  ]) {
+    assert.equal(userFacingAiWorkspaceError(new Error(message)), null, message)
+  }
+})

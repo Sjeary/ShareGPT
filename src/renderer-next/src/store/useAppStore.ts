@@ -163,6 +163,35 @@ const EMPTY_SETTINGS: AppSettings = {
   ui: {},
 }
 
+// 初始化、导入和保存共用同一个 UI 设置应用入口。
+function applySettingsUi(settings: AppSettings, current: AppState): Partial<AppState> {
+  const ui = settings.ui
+  const dark = ui?.theme === 'dark' ? true : ui?.theme === 'light' ? false : current.dark
+  const sidebarSide =
+    ui?.sidebarSide === 'left' || ui?.sidebarSide === 'right' ? ui.sidebarSide : current.sidebarSide
+  const showGemini = typeof ui?.showGemini === 'boolean' ? ui.showGemini : current.showGemini
+  const showClaude = typeof ui?.showClaude === 'boolean' ? ui.showClaude : current.showClaude
+  const hiddenNav = Array.isArray(ui?.hiddenNav) ? (ui.hiddenNav as NavKey[]) : current.hiddenNav
+  const navOrder = Array.isArray(ui?.navOrder) ? (ui.navOrder as NavKey[]) : current.navOrder
+  const unavailable =
+    (!showGemini && current.active === 'gemini') ||
+    (!showClaude && current.active === 'claude') ||
+    hiddenNav.includes(current.active)
+  const active = unavailable ? workspaceFallbackNav(current.workspaceMode) : current.active
+  applyTheme(dark)
+  void api.setThemeSource(dark ? 'dark' : 'light').catch(() => undefined)
+  try {
+    localStorage.setItem('sharegpt-sidebar-side', sidebarSide)
+    localStorage.setItem('sharegpt-show-gemini', showGemini ? '1' : '0')
+    localStorage.setItem('sharegpt-show-claude', showClaude ? '1' : '0')
+    localStorage.setItem('sharegpt-hidden-nav', JSON.stringify(hiddenNav))
+    localStorage.setItem('sharegpt-nav-order', JSON.stringify(navOrder))
+  } catch {
+    /* 浏览器存储不可用时仍应用已读取的设置。 */
+  }
+  return { dark, sidebarSide, showGemini, showClaude, hiddenNav, navOrder, active }
+}
+
 const appStoreInitialization = createSingleFlight<void>()
 let statusSubscriptionInstalled = false
 
@@ -429,45 +458,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         settingsPrincipalRuntime.assertCurrent(principalSnapshot)
         const mergedSettings = { ...EMPTY_SETTINGS, ...(settings as unknown as AppSettings) }
         set({
+          ...applySettingsUi(mergedSettings, get()),
           settings: mergedSettings,
           mode: String(mode || ''),
           meta: meta as Record<string, unknown>,
           status: status as StatusPayload,
         })
-        // [LOW] 主题优先取磁盘 settings.ui.theme (跨设备/资料包一致), 无则回退 localStorage 现值。
-        const savedTheme = mergedSettings.ui?.theme
-        if (savedTheme === 'dark' || savedTheme === 'light') {
-          const dark = savedTheme === 'dark'
-          applyTheme(dark)
-          set({ dark })
-        } else {
-          // 无磁盘设置: 用启动时 localStorage 推断的 dark 重新落实到 DOM (确保 class 同步)。
-          applyTheme(get().dark)
-        }
-        // 启动时同步内嵌网页明暗 = 当前 app 主题。
-        void api.setThemeSource(get().dark ? 'dark' : 'light').catch(() => undefined)
-        // 侧栏左右位置同样优先取磁盘设置 (跨设备一致), 无则保留 localStorage 现值。
-        const savedSide = mergedSettings.ui?.sidebarSide
-        if (savedSide === 'left' || savedSide === 'right') {
-          set({ sidebarSide: savedSide })
-        }
-        // 是否展示 Gemini 同样优先取磁盘设置, 无则保留 localStorage 现值。
-        const savedShowGemini = mergedSettings.ui?.showGemini
-        if (typeof savedShowGemini === 'boolean') {
-          set({ showGemini: savedShowGemini })
-          if (!savedShowGemini && get().active === 'gemini') set({ active: 'service' })
-        }
-        const savedHidden = mergedSettings.ui?.hiddenNav
-        if (Array.isArray(savedHidden)) set({ hiddenNav: savedHidden as NavKey[] })
-
-        const savedOrder = mergedSettings.ui?.navOrder
-        if (Array.isArray(savedOrder)) set({ navOrder: savedOrder as NavKey[] })
-
-        const savedShowClaude = mergedSettings.ui?.showClaude
-        if (typeof savedShowClaude === 'boolean') {
-          set({ showClaude: savedShowClaude })
-          if (!savedShowClaude && get().active === 'claude') set({ active: 'service' })
-        }
         if (!statusSubscriptionInstalled) {
           api.onStatus((payload) => set({ status: payload as StatusPayload }))
           statusSubscriptionInstalled = true
@@ -493,7 +489,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     })) as unknown as AppSettings
     settingsPrincipalRuntime.assertCurrent(principalSnapshot)
     const merged = { ...EMPTY_SETTINGS, ...raw }
-    set({ settings: merged })
+    set({ ...applySettingsUi(merged, get()), settings: merged })
     return merged
   },
 
@@ -505,7 +501,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       expectedPrincipalGeneration: principalSnapshot.generation,
     })) as unknown as AppSettings
     settingsPrincipalRuntime.assertCurrent(principalSnapshot)
-    set({ settings: { ...EMPTY_SETTINGS, ...saved } })
+    const merged = { ...EMPTY_SETTINGS, ...saved }
+    set({ ...applySettingsUi(merged, get()), settings: merged })
   },
 
   patchSection: async (section, patch) => {
@@ -519,6 +516,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       expectedPrincipalGeneration: principalSnapshot.generation,
     })) as unknown as AppSettings
     settingsPrincipalRuntime.assertCurrent(principalSnapshot)
-    set({ settings: { ...EMPTY_SETTINGS, ...saved } })
+    const merged = { ...EMPTY_SETTINGS, ...saved }
+    set({ ...applySettingsUi(merged, get()), settings: merged })
   },
 }))

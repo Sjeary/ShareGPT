@@ -24,13 +24,29 @@ function isAllowedUrlForHosts(rawUrl, allowedHosts) {
   );
 }
 
+function canEnableExternalBrowsing({
+  kind = "",
+  personalWorkspace = false,
+  environmentId = "",
+} = {}) {
+  if (kind === "claude") return true;
+  if (kind !== "gpt") return false;
+  return Boolean(personalWorkspace || String(environmentId || "").trim());
+}
+
 function isWorkspaceUrlAllowed(workspace, rawUrl) {
   if (!normalizeHttpUrl(rawUrl)) return false;
-  if (workspace?.kind === "claude" && workspace?.allowExternalBrowsing) return true;
+  if (
+    (workspace?.kind === "claude" || workspace?.kind === "gpt") &&
+    workspace?.allowExternalBrowsing
+  ) {
+    return true;
+  }
   return isAllowedUrlForHosts(rawUrl, workspace?.policy?.allowedHosts || []);
 }
 
 module.exports = {
+  canEnableExternalBrowsing,
   isAllowedUrlForHosts,
   isWorkspaceUrlAllowed,
   normalizeHttpUrl,

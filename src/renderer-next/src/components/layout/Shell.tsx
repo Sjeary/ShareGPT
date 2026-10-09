@@ -1,4 +1,6 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
+import { useAuthStore } from '@/store/useAuthStore'
+import { canUseAdvancedAi } from '@/lib/aiAccess'
 import { Titlebar } from './Titlebar'
 import { Sidebar } from './Sidebar'
 import { api } from '@/lib/api'
@@ -27,6 +29,8 @@ import { useUserDataTransition } from '@/lib/userDataTransitionState'
 import { Toaster } from '@/components/ui/sonner'
 import { openChatNotificationRoute } from '@/lib/notify'
 
+const TerminalPanel = lazy(() => import('@/components/panels/TerminalPanel'))
+
 function safeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
@@ -34,6 +38,15 @@ function safeText(value: unknown): string {
 export function Shell() {
   const dataSuspended = useUserDataTransition()
   const active = useAppStore((s) => s.active)
+  const workspaceMode = useAppStore((s) => s.workspaceMode)
+  const token = useAuthStore((s) => s.token)
+  const profile = useAuthStore((s) => s.profile)
+  const hiddenNav = useAppStore((s) => s.hiddenNav)
+  const terminalAllowed =
+    canUseAdvancedAi(workspaceMode, token, profile) && !hiddenNav.includes('terminal')
+  useEffect(() => {
+    if (active === 'terminal' && !terminalAllowed) useAppStore.getState().setActive('account')
+  }, [active, terminalAllowed])
   const dark = useAppStore((s) => s.dark)
   const sidebarHidden = useAppStore((s) => s.sidebarHidden)
   const sidebarSide = useAppStore((s) => s.sidebarSide)
@@ -130,6 +143,13 @@ export function Shell() {
         {active === 'claude' && <ClaudePanel />}
         {active === 'stats' && <StatsPanel />}
         {active === 'logs' && <LogsPanel />}
+        {terminalAllowed && !dataSuspended && (
+          <div className={active === 'terminal' ? 'flex min-w-0 flex-1' : 'hidden'}>
+            <Suspense fallback={null}>
+              <TerminalPanel visible={active === 'terminal'} />
+            </Suspense>
+          </div>
+        )}
         {/* 聊天面板常驻挂载(非激活时 display:none), 使协作 WS 在登录后全局常连,
             通知/在线状态随处生效, 而非仅在聊天页打开时。 */}
         <div className={active === 'chat' ? 'contents' : 'hidden'}>

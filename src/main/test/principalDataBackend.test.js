@@ -184,6 +184,8 @@ test("ambiguous old chat archives fail before changing settings or current histo
   fs.writeFileSync(
     file,
     JSON.stringify({
+      format: "sharegpt-user-data",
+      version: 1,
       settings: { ui: { theme: "light" } },
       chatHistory: { conversations: { "https://other.example\0room": [{ id: "old" }] } },
     }),
@@ -194,4 +196,122 @@ test("ambiguous old chat archives fail before changing settings or current histo
   await assert.rejects(backend.importUserData(), /旧聊天分组/);
   assert.deepEqual(fs.readFileSync(backend.settingsFile), settings);
   assert.equal(fs.existsSync(backend.chatHistoryFile), false);
+});
+
+test("startup recovery respects deleted notes in an existing data tree but recovers a missing tree", async (t) => {
+  const { backend, userData } = fixture(t);
+  backend.activatePrincipal("https://team.example", "Alice");
+  await backend.vault.create("removed.md", "backup copy");
+  await backend.vault.create("kept.md", "kept copy");
+  backend.createUpdateBackup("test-vault-deletion");
+  await backend.vault.remove("removed.md");
+  backend.init();
+  assert.equal(fs.existsSync(path.join(backend.vault.root, "removed.md")), false);
+  assert.equal((await backend.vault.read("kept.md")).content, "kept copy");
+  await backend.stopDataWatchers();
+  fs.rmSync(path.join(userData, "PrincipalData"), { recursive: true });
+  const restored = backend.restoreMissingDataFromLatestUpdateBackup();
+  assert.ok(restored.restored.includes("PrincipalData"));
+  assert.equal((await backend.vault.read("removed.md")).content, "backup copy");
+});
+
+test("data import validates the full package and rolls both files back after a write failure", async (t) => {
+  const { backend, root } = fixture(t);
+  backend.activatePrincipal("https://team.example", "Alice");
+  backend.saveChatHistory({
+    conversations: { "room:all": [{ id: "kept", text: "original", timestamp: "2026-01-01" }] },
+  });
+  const file = path.join(root, "archive.json");
+  backend.dialog = { showOpenDialog: async () => ({ canceled: false, filePaths: [file] }) };
+  backend.getWindow = () => ({});
+  const settings = fs.readFileSync(backend.settingsFile);
+  const history = fs.readFileSync(backend.chatHistoryFile);
+  const backupFiles = [`${backend.settingsFile}.bak`, `${backend.chatHistoryFile}.bak`];
+  const backups = backupFiles.map((name) => (fs.existsSync(name) ? fs.readFileSync(name) : null));
+  for (const invalid of [
+    { hello: "world" },
+    { format: "sharegpt-user-data", version: 9 },
+    { format: "sharegpt-user-data", version: 1, settings: {} },
+    {
+      format: "sharegpt-user-data",
+      version: 1,
+      settings: {},
+      chatHistory: { conversations: { room: {} } },
+    },
+  ]) {
+    fs.writeFileSync(file, JSON.stringify(invalid));
+    await assert.rejects(backend.importUserData(), /本次未导入/);
+    assert.deepEqual(fs.readFileSync(backend.settingsFile), settings);
+    assert.deepEqual(fs.readFileSync(backend.chatHistoryFile), history);
+  }
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      format: "sharegpt-user-data",
+      version: 1,
+      settings: { ui: { theme: "light" } },
+      chatHistory: { conversations: {} },
+    }),
+  );
+  const original = fs.renameSync;
+  let rejectOnce = true;
+  const stub = t.mock.method(fs, "renameSync", (from, to) => {
+    if (to === backend.chatHistoryFile && rejectOnce) {
+      rejectOnce = false;
+      throw new Error("fixture disk full");
+    }
+    return original(from, to);
+  });
+  await assert.rejects(backend.importUserData(), /fixture disk full/);
+  assert.deepEqual(fs.readFileSync(backend.settingsFile), settings);
+  assert.deepEqual(fs.readFileSync(backend.chatHistoryFile), history);
+  backupFiles.forEach((name, index) =>
+    assert.deepEqual(fs.existsSync(name) ? fs.readFileSync(name) : null, backups[index]),
+  );
+  assert.equal(backend.loadChatHistory().conversations["room:all"][0].id, "kept");
+  stub.mock.restore();
+  await backend.importUserData();
+  assert.equal(backend.loadSettings().ui.theme, "light");
+  assert.deepEqual(backend.loadChatHistory().conversations, {});
+});
+
+test("failed import rollback retains exact recovery copies and reports their directory", async (t) => {
+  const { backend, root } = fixture(t);
+  backend.activatePrincipal("https://team.example", "Alice");
+  backend.saveChatHistory({ conversations: {} });
+  const settings = fs.readFileSync(backend.settingsFile);
+  const history = fs.readFileSync(backend.chatHistoryFile);
+  const file = path.join(root, "archive.json");
+  fs.writeFileSync(
+    file,
+    JSON.stringify({
+      format: "sharegpt-user-data",
+      version: 1,
+      settings: { ui: { theme: "light" } },
+      chatHistory: { conversations: {} },
+    }),
+  );
+  backend.dialog = { showOpenDialog: async () => ({ canceled: false, filePaths: [file] }) };
+  backend.getWindow = () => ({});
+  const original = fs.renameSync;
+  let commitFailed = false;
+  t.mock.method(fs, "renameSync", (from, to) => {
+    if (to === backend.chatHistoryFile) {
+      commitFailed = true;
+      throw new Error("write failed");
+    }
+    if (commitFailed && to === backend.settingsFile) throw new Error("rollback failed");
+    return original(from, to);
+  });
+  await assert.rejects(backend.importUserData(), /部分文件无法恢复.*user-data-import-/);
+  const directories = fs
+    .readdirSync(backend.runtimeDir)
+    .filter((name) => name.startsWith("user-data-import-"));
+  assert.equal(directories.length, 1);
+  const recovery = path.join(backend.runtimeDir, directories[0]);
+  assert.deepEqual(fs.readFileSync(path.join(recovery, "0.json")), settings);
+  assert.deepEqual(fs.readFileSync(path.join(recovery, "2.json")), history);
+  const manifest = JSON.parse(fs.readFileSync(path.join(recovery, "manifest.json"), "utf8"));
+  assert.equal(manifest[0].file, backend.settingsFile);
+  assert.equal(manifest[2].file, backend.chatHistoryFile);
 });

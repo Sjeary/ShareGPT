@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { api } from '@/lib/api'
+import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
 import { useAppStore } from '@/store/useAppStore'
 import { useTranslationStore } from '@/store/useTranslationStore'
 import type { NotesAiProvider } from '@/types/api'
@@ -69,6 +70,10 @@ export const useNotesAiStore = create<NotesAiState>((set, get) => ({
     if (!session.principalId) throw new Error('当前账号登录状态已失效，请重新登录')
     const principalId = session.principalId
     const principalGeneration = session.principalGeneration
+    const settingsPrincipal = settingsPrincipalRuntime.snapshot()
+    if (settingsPrincipal.principalId !== principalId) {
+      throw new Error('当前账号登录状态已失效，请重新登录')
+    }
     const previous = currentProvider()
     const provider = {
       baseUrl: patch.baseUrl ?? previous.baseUrl,
@@ -87,8 +92,9 @@ export const useNotesAiStore = create<NotesAiState>((set, get) => ({
       ],
       expectedRevision: appSettings?.settingsRevision,
       expectedPrincipalId: principalId,
-      expectedPrincipalGeneration: principalGeneration,
+      expectedPrincipalGeneration: settingsPrincipal.generation,
     })) as unknown as AppSettings
+    settingsPrincipalRuntime.assertCurrent(settingsPrincipal)
     const current = get()
     if (
       current.principalId !== principalId ||

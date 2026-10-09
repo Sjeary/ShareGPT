@@ -1,17 +1,17 @@
+import { errorText } from './userFacingError.ts'
+
 export function userFacingAiWorkspaceError(error: unknown): string | null {
   const code =
     error && typeof error === 'object' && 'code' in error
       ? String((error as { code?: unknown }).code || '')
       : ''
-  const raw = error instanceof Error ? error.message : String(error || '')
-  const message = raw
-    .replace(/^Error invoking remote method '[^']+':\s*/i, '')
-    .replace(/^Error:\s*/i, '')
-    .trim()
+  const message = errorText(error)
 
   if (
     code === 'STALE_AI_WORKSPACE' ||
-    /网页运行状态已变化|网页或标签已经变化|设置账号已切换|旧操作已取消/.test(message)
+    /网页运行状态已变化|网页或标签已经变化|当前网页标签已经变化|账号已切换|操作已取消|发送确认已失效/.test(
+      message,
+    )
   ) {
     return null
   }

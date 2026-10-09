@@ -23,7 +23,7 @@ ShareGPT 是一个面向 AI 网页使用、个人知识管理和小团队协作�
 
 两种工作区可以随时切换，分别保留自己的设置、AI 网页登录状态和历史会话。
 
-**1.0.10 正在准备发布**：本版重点改善聊天定位、翻译停止、掉线重登与资料隔离。版本说明见 [1.0.10 更新介绍](docs/releases/v1.0.10.md)，正式可下载版本以 GitHub Releases 为准。
+**1.0.11 更新**：新增本机终端，修复 ChatGPT 顶部点击，完善连接提示、笔记保存和日历同步。完整介绍见 [1.0.11 更新说明](docs/releases/v1.0.11.md)。下载已发布版本请前往 [GitHub Releases](../../releases/latest)。
 
 整套由三部分组成：
 
@@ -78,6 +78,12 @@ ShareGPT 是一个面向 AI 网页使用、个人知识管理和小团队协作�
 - **用量统计**：查看 AI 网页成功发送的消息数；托管翻译可按用户和配置统计请求、字符、token 与估算费用。
 - **管理控制台**：集中维护用户和聊天权限、高级 AI 权限、多线路授权、各 AI 推荐线路、加密托管翻译配置、使用量和版本信息。普通成员只接收最终可用配置，不需要理解或修改内部节点凭据。
 
+### 本机终端
+
+- 管理员和获准使用高级功能的团队成员，可在“账户 → 界面设置”中开启“本机终端”，与“高级 AI 环境”分别控制。
+- 直接使用本机 shell 环境，通过 SSH 命令连接自己的远程主机；支持多标签和可选启动指令，启动指令按当前账号保存。
+- 切换页面保留会话；关闭功能、退出账号或权限撤销后结束会话，启动设置继续保留。
+
 ### 数据、界面与更新
 
 - **网页隐私与环境**：可分别清理或重建 ChatGPT / Gemini / Claude 的网页登录数据；支持与代理出口一致的语言、时区和可选粗略位置，并阻止 WebRTC 非代理 UDP 泄漏。环境策略可跨设备同步，Cookie、网页历史和登录态不会上传。
@@ -99,7 +105,7 @@ ShareGPT 是一个面向 AI 网页使用、个人知识管理和小团队协作�
 
 > ShareGPT 不附带公共团队服务器、代理节点、第三方 AI 账号或翻译 API Key。个人用户使用自己的服务；团队用户从自己的管理员处获得连接信息和授权。
 
-> 1.0.9 和本次 1.0.10 沿用未签名 Windows、未公证 Mac 的分发方式，首次安装可能出现系统安全提示。请从本仓库 [Release 页面](../../releases/latest)下载对应已发布版本并查看安装说明。
+> 1.0.9、1.0.10、1.0.11 使用未签名 Windows 安装包和未公证 Mac 应用，首次安装可能出现系统安全提示。请查看所下载版本的 Release 安装说明。
 
 ShareGPT 是独立开源项目，与 OpenAI、Anthropic、Google 无隶属关系。第三方服务需使用自己的账号，并遵守相应服务条款及当地法律法规。项目采用 [GPL-3.0 许可证](LICENSE)。
 
@@ -137,10 +143,7 @@ ShareGPT 是独立开源项目，与 OpenAI、Anthropic、Google 无隶属关系
 
 ### 3. 集中代理出口（统一出口 IP，可选）
 
-团队可以让 AI 流量使用统一出口，也可以为 ChatGPT、Gemini、Claude 分别推荐不同线路。管理员集中维护线路和授权，普通成员无需接触节点凭据或自行选择出口。两种自建出口形态做的是同一件事：
-
-- **Linux 服务器（推荐）**：公网服务器可直接作为出口，或只运行 FRP 入口、把流量转到树莓派/家中小主机上的 mihomo。完整命令见 [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)。
-- **有桌面的机器**：装「出口」GUI 版（`npm run dist:win:receiver`），界面里填同样参数、点开启即可。
+团队可以让 AI 流量使用统一出口，也可以为 ChatGPT、Gemini、Claude 分别推荐不同线路。管理员集中维护线路和授权，普通成员无需接触节点凭据或自行选择出口。自建时使用 **Linux 服务器**：公网服务器可直接作为出口，或只运行 FRP 入口、把流量转到树莓派/家中小主机上的 mihomo。完整命令见 [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)。
 
 另有一种不经过统一出口机的方式：管理端可从 Clash YAML 选择一个受支持节点，下发给本群客户端直接连接。它与统一梯子是两条不同链路，凭据暴露范围和稳定性也不同，选择前请阅读完整教程中的“方案 C”。
 
@@ -159,12 +162,16 @@ npm --prefix src/renderer-next ci
 npm --prefix admin_console/ui ci
 npm --prefix collab_server2 ci
 
-# 准备第三方二进制（sing-box；自建出口时另需转发组件），按 build/bin/README.md 放好
-# 然后打包：
-npm run dist:win:sender     # Windows 客户端
-npm run dist:mac:sender     # macOS 客户端（自动先编译渲染层）
+# 按 build/bin/README.md 准备当前平台的 sing-box
+npm run dev                # 编译界面、验证资源并启动 ShareGPT
+
+# 打包：
+npm run dist:win:installer  # Windows 客户端候选（不发布）
+npm run dist:mac            # macOS 客户端（正式签名要求见发布指南）
 npm run dist:admin:win      # 管理控制台
 ```
+
+开发数据默认保存在当前仓库的 `.cache/user-data`，重启后保留，与已安装应用的账号、浏览器会话和备份隔离。测试可用 `SHAREGPT_USER_DATA` 指定其他独立目录；指向正式 ShareGPT 数据目录或与之重叠的路径会停止启动。macOS 本地 ad-hoc 候选使用 `npm run dist:mac:local`，详见[本地签名说明](docs/MACOS_SIGNING.md)。
 
 **发布与自建更新源**：应用通过 **GitHub Releases** 获取更新。维护者和 fork 项目的构建、签名及发布步骤见[发布指南](docs/RELEASING.md)。
 

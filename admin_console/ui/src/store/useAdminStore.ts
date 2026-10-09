@@ -150,33 +150,77 @@ const EMPTY_BOOTSTRAP: Bootstrap = {
 }
 
 export const useAdminStore = create<AdminState>((set, get) => {
-  // 统一请求封装: 注入 serverUrl/token; 鉴权失效自动登出回登录页。
-  async function request<T>(pathname: string, options?: RequestInit): Promise<T> {
-    const { serverUrl, token } = get()
-    try {
-      return await serverFetch<T>(serverUrl, token, pathname, options)
-    } catch (err) {
-      if (err instanceof AuthExpiredError) {
-        forceLogout(err.message)
-      }
-      throw err
-    }
-  }
+  let generation = 0
 
-  function forceLogout(message?: string) {
-    if (!get().authed && !get().token) return
+  function clearSession() {
+    generation += 1
     set({
       role: 'none',
       token: '',
+      devToken: '',
       profile: null,
       authed: false,
+      busy: false,
+      release: null,
       users: [],
+      usersLoading: false,
       bootstrap: null,
+      feedback: [],
+      feedbackLoading: false,
+      proxyMissing: [],
+      proxyMissingLoading: false,
+      proxyRoutes: [],
+      proxyRoutesLoading: false,
+      proxyRouteHealth: [],
       translationCatalog: null,
+      translationLoading: false,
       translationUsage: null,
+      translationUsageLoading: false,
       aiUsage: null,
+      aiUsageLoading: false,
+      activeTab: 'overview',
     })
-    if (message) toast.error(message)
+  }
+
+  // Every async action owns the session that started it, including loading and
+  // error feedback. Logout invalidates it immediately, before any network wait.
+  function captureSession() {
+    const started = generation
+    const { serverUrl, token, devToken, role } = get()
+    const isCurrent = () => started === generation
+    return {
+      isCurrent,
+      set: (next: Partial<AdminState>) => {
+        if (isCurrent()) set(next)
+      },
+      toast: {
+        error: (message: string) => {
+          if (isCurrent()) toast.error(message)
+        },
+        success: (message: string) => {
+          if (isCurrent()) toast.success(message)
+        },
+      },
+      async request<T>(pathname: string, options?: RequestInit): Promise<T | undefined> {
+        if (!isCurrent()) return undefined
+        try {
+          const result = await serverFetch<T>(
+            serverUrl,
+            role === 'dev' ? devToken : token,
+            pathname,
+            options,
+          )
+          return isCurrent() ? result : undefined
+        } catch (err) {
+          if (!isCurrent()) return undefined
+          if (err instanceof AuthExpiredError) {
+            clearSession()
+            toast.error(err.message)
+          }
+          throw err
+        }
+      },
+    }
   }
 
   return {
@@ -239,9 +283,10 @@ export const useAdminStore = create<AdminState>((set, get) => {
     },
 
     init: async () => {
+      const scope = captureSession()
       applyTheme(get().dark)
       const prefs = await adminApi.loadPrefs().catch(() => ({ serverUrl: '', username: '' }))
-      set({ serverUrl: prefs.serverUrl || '', username: prefs.username || '' })
+      scope.set({ serverUrl: prefs.serverUrl || '', username: prefs.username || '' })
     },
 
     login: async (serverUrl, username, password) => {
@@ -249,7 +294,9 @@ export const useAdminStore = create<AdminState>((set, get) => {
       if (!base || !username || !password) {
         throw new Error('请先填写完整的服务地址、管理员账号和密码')
       }
-      set({ busy: true })
+      clearSession()
+      const scope = captureSession()
+      scope.set({ busy: true })
       try {
         const res = await fetch(`${base}/api/admin/login`, {
           method: 'POST',
@@ -257,12 +304,13 @@ export const useAdminStore = create<AdminState>((set, get) => {
           body: JSON.stringify({ username, password }),
         })
         const text = await res.text()
+        if (!scope.isCurrent()) return
         if (!res.ok) throw new Error(text || `登录失败（${res.status}）`)
         const payload = (text ? JSON.parse(text) : {}) as {
           token?: string
           profile?: AdminProfile
         }
-        set({
+        scope.set({
           serverUrl: base,
           username,
           token: String(payload.token || ''),
@@ -271,6 +319,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
           role: 'admin',
         })
         await adminApi.savePrefs({ serverUrl: base, username })
+        if (!scope.isCurrent()) return
         await Promise.all([
           get().loadUsers({ silent: true }),
           get().loadBootstrap({ silent: true }),
@@ -279,8 +328,10 @@ export const useAdminStore = create<AdminState>((set, get) => {
           get().loadTranslationProfiles({ silent: true }),
           get().loadTranslationUsage({ silent: true }),
         ])
+      } catch (err) {
+        if (scope.isCurrent()) throw err
       } finally {
-        set({ busy: false })
+        scope.set({ busy: false })
       }
     },
 
@@ -289,7 +340,9 @@ export const useAdminStore = create<AdminState>((set, get) => {
       if (!base || !username || !password) {
         throw new Error('请先填写服务地址、管理员账号和密码')
       }
-      set({ busy: true })
+      clearSession()
+      const scope = captureSession()
+      scope.set({ busy: true })
       try {
         const res = await fetch(`${base}/api/admin/setup`, {
           method: 'POST',
@@ -297,12 +350,13 @@ export const useAdminStore = create<AdminState>((set, get) => {
           body: JSON.stringify({ username, password, displayName: username }),
         })
         const text = await res.text()
+        if (!scope.isCurrent()) return
         if (!res.ok) throw new Error(text || `初始化失败（${res.status}）`)
         const payload = (text ? JSON.parse(text) : {}) as {
           token?: string
           profile?: AdminProfile
         }
-        set({
+        scope.set({
           serverUrl: base,
           username,
           token: String(payload.token || ''),
@@ -311,6 +365,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
           role: 'admin',
         })
         await adminApi.savePrefs({ serverUrl: base, username })
+        if (!scope.isCurrent()) return
         await Promise.all([
           get().loadUsers({ silent: true }),
           get().loadBootstrap({ silent: true }),
@@ -319,215 +374,241 @@ export const useAdminStore = create<AdminState>((set, get) => {
           get().loadTranslationProfiles({ silent: true }),
           get().loadTranslationUsage({ silent: true }),
         ])
-        toast.success('管理员已初始化，可以直接开始管理服务器。')
+        scope.toast.success('管理员已初始化，可以直接开始管理服务器。')
+      } catch (err) {
+        if (scope.isCurrent()) throw err
       } finally {
-        set({ busy: false })
+        scope.set({ busy: false })
       }
     },
 
     logout: async () => {
-      try {
-        await request('/api/admin/logout', { method: 'POST' })
-      } catch {
-        /* 忽略登出请求失败 */
-      }
-      set({
-        role: 'none',
-        token: '',
-        profile: null,
-        authed: false,
-        users: [],
-        bootstrap: null,
-        translationCatalog: null,
-        translationUsage: null,
-        aiUsage: null,
-        activeTab: 'overview',
-      })
+      const scope = captureSession()
+      const pending = scope.request('/api/admin/logout', { method: 'POST' })
+      clearSession()
+      await pending.catch(() => undefined)
     },
 
     loadUsers: async (opts) => {
-      set({ usersLoading: true })
+      const scope = captureSession()
+      scope.set({ usersLoading: true })
       try {
-        const payload = await request<{ users?: AdminUser[] }>('/api/admin/users')
-        set({ users: Array.isArray(payload.users) ? payload.users : [] })
+        const payload = await scope.request<{ users?: AdminUser[] }>('/api/admin/users')
+        if (!payload) return
+        scope.set({ users: Array.isArray(payload.users) ? payload.users : [] })
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
-          toast.error(err instanceof Error ? err.message : String(err))
+          scope.toast.error(err instanceof Error ? err.message : String(err))
         }
       } finally {
-        set({ usersLoading: false })
+        scope.set({ usersLoading: false })
       }
     },
 
     createUser: async (input) => {
-      const res = await request<{ user?: AdminUser }>('/api/admin/users', {
+      const scope = captureSession()
+      const res = await scope.request<{ user?: AdminUser }>('/api/admin/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       })
+      if (!res) return null
       await get().loadUsers({ silent: true })
-      return res.user || null
+      return scope.isCurrent() ? res.user || null : null
     },
 
     saveUser: async (username, input) => {
-      await request(`/api/admin/users/${encodeURIComponent(username)}`, {
+      const scope = captureSession()
+      await scope.request(`/api/admin/users/${encodeURIComponent(username)}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       })
+      if (!scope.isCurrent()) return
       await get().loadUsers({ silent: true })
     },
 
     loadBootstrap: async (opts) => {
+      const scope = captureSession()
       try {
-        const payload = await request<Bootstrap>('/api/admin/bootstrap')
-        set({ bootstrap: { ...EMPTY_BOOTSTRAP, ...payload } })
+        const payload = await scope.request<Bootstrap>('/api/admin/bootstrap')
+        if (!payload) return
+        scope.set({ bootstrap: { ...EMPTY_BOOTSTRAP, ...payload } })
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
-          toast.error(err instanceof Error ? err.message : String(err))
+          scope.toast.error(err instanceof Error ? err.message : String(err))
         }
       }
     },
 
     saveBootstrap: async (payload) => {
-      const res = await request<{ bootstrap?: Bootstrap }>('/api/admin/bootstrap', {
+      const scope = captureSession()
+      const res = await scope.request<{ bootstrap?: Bootstrap }>('/api/admin/bootstrap', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       })
+      if (!res) return null
       const next = res.bootstrap ? { ...EMPTY_BOOTSTRAP, ...res.bootstrap } : null
-      if (next) set({ bootstrap: next })
+      if (next) scope.set({ bootstrap: next })
       return next
     },
 
     setBootstrap: (next) => set({ bootstrap: next }),
 
     loadFeedback: async (opts) => {
-      set({ feedbackLoading: true })
+      const scope = captureSession()
+      scope.set({ feedbackLoading: true })
       try {
-        const payload = await request<{ feedback?: FeedbackItem[] }>('/api/admin/feedback')
-        set({ feedback: Array.isArray(payload.feedback) ? payload.feedback : [] })
+        const payload = await scope.request<{ feedback?: FeedbackItem[] }>('/api/admin/feedback')
+        if (!payload) return
+        scope.set({ feedback: Array.isArray(payload.feedback) ? payload.feedback : [] })
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
-          toast.error(err instanceof Error ? err.message : String(err))
+          scope.toast.error(err instanceof Error ? err.message : String(err))
         }
       } finally {
-        set({ feedbackLoading: false })
+        scope.set({ feedbackLoading: false })
       }
     },
 
     loadProxyMissing: async (opts) => {
-      set({ proxyMissingLoading: true })
+      const scope = captureSession()
+      scope.set({ proxyMissingLoading: true })
       try {
-        const payload = await request<{ domains?: ProxyMissingItem[] }>('/api/admin/proxy-missing')
-        set({ proxyMissing: Array.isArray(payload.domains) ? payload.domains : [] })
+        const payload = await scope.request<{ domains?: ProxyMissingItem[] }>(
+          '/api/admin/proxy-missing',
+        )
+        if (!payload) return
+        scope.set({ proxyMissing: Array.isArray(payload.domains) ? payload.domains : [] })
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
-          toast.error(err instanceof Error ? err.message : String(err))
+          scope.toast.error(err instanceof Error ? err.message : String(err))
         }
       } finally {
-        set({ proxyMissingLoading: false })
+        scope.set({ proxyMissingLoading: false })
       }
     },
 
     loadProxyRoutes: async (opts) => {
-      set({ proxyRoutesLoading: true })
+      const scope = captureSession()
+      scope.set({ proxyRoutesLoading: true })
       try {
-        const payload = await request<ProxyRouteCatalog>('/api/admin/proxy-routes')
-        set({ proxyRoutes: Array.isArray(payload.routes) ? payload.routes : [] })
+        const payload = await scope.request<ProxyRouteCatalog>('/api/admin/proxy-routes')
+        if (!payload) return
+        scope.set({ proxyRoutes: Array.isArray(payload.routes) ? payload.routes : [] })
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
-          toast.error(err instanceof Error ? err.message : String(err))
+          scope.toast.error(err instanceof Error ? err.message : String(err))
         }
       } finally {
-        set({ proxyRoutesLoading: false })
+        scope.set({ proxyRoutesLoading: false })
       }
     },
 
     saveProxyRoutes: async (routes) => {
-      const res = await request<ProxyRouteCatalog>('/api/admin/proxy-routes', {
+      const scope = captureSession()
+      const res = await scope.request<ProxyRouteCatalog>('/api/admin/proxy-routes', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ routes }),
       })
-      set({ proxyRoutes: Array.isArray(res.routes) ? res.routes : [] })
-      toast.success(`已下发 ${Array.isArray(res.routes) ? res.routes.length : 0} 条内置线路`)
+      if (!res) return
+      scope.set({ proxyRoutes: Array.isArray(res.routes) ? res.routes : [] })
+      scope.toast.success(`已下发 ${Array.isArray(res.routes) ? res.routes.length : 0} 条内置线路`)
     },
 
     loadProxyRouteHealth: async (opts) => {
+      const scope = captureSession()
       try {
-        const payload = await request<{ reports?: ProxyRouteHealth[] }>(
+        const payload = await scope.request<{ reports?: ProxyRouteHealth[] }>(
           '/api/admin/proxy-route-health',
         )
-        set({ proxyRouteHealth: Array.isArray(payload.reports) ? payload.reports : [] })
+        if (!payload) return
+        scope.set({ proxyRouteHealth: Array.isArray(payload.reports) ? payload.reports : [] })
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
-          toast.error(err instanceof Error ? err.message : String(err))
+          scope.toast.error(err instanceof Error ? err.message : String(err))
         }
       }
     },
 
     loadTranslationProfiles: async (opts) => {
-      set({ translationLoading: true })
+      const scope = captureSession()
+      scope.set({ translationLoading: true })
       try {
-        const payload = await request<TranslationProfileCatalog>('/api/admin/translation-profiles')
-        set({ translationCatalog: payload })
+        const payload = await scope.request<TranslationProfileCatalog>(
+          '/api/admin/translation-profiles',
+        )
+        if (!payload) return
+        scope.set({ translationCatalog: payload })
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
-          toast.error(err instanceof Error ? err.message : String(err))
+          scope.toast.error(err instanceof Error ? err.message : String(err))
         }
       } finally {
-        set({ translationLoading: false })
+        scope.set({ translationLoading: false })
       }
     },
 
     saveTranslationProfiles: async (defaultProfileId, profiles) => {
-      const payload = await request<TranslationProfileCatalog>('/api/admin/translation-profiles', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ defaultProfileId, profiles }),
-      })
-      set({ translationCatalog: payload })
-      toast.success('托管翻译配置已保存')
+      const scope = captureSession()
+      const payload = await scope.request<TranslationProfileCatalog>(
+        '/api/admin/translation-profiles',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ defaultProfileId, profiles }),
+        },
+      )
+      if (!payload) return
+      scope.set({ translationCatalog: payload })
+      scope.toast.success('托管翻译配置已保存')
     },
 
     loadTranslationUsage: async (opts) => {
-      set({ translationUsageLoading: true })
+      const scope = captureSession()
+      scope.set({ translationUsageLoading: true })
       try {
         const query = new URLSearchParams()
         if (opts?.filters?.from) query.set('from', opts.filters.from)
         if (opts?.filters?.to) query.set('to', opts.filters.to)
         if (opts?.filters?.username) query.set('username', opts.filters.username)
         if (opts?.filters?.profileId) query.set('profileId', opts.filters.profileId)
-        const payload = await request<TranslationUsageReport>(
+        const payload = await scope.request<TranslationUsageReport>(
           `/api/admin/translation-usage${query.size ? `?${query.toString()}` : ''}`,
         )
-        set({ translationUsage: payload })
+        if (!payload) return
+        scope.set({ translationUsage: payload })
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
-          toast.error(err instanceof Error ? err.message : String(err))
+          scope.toast.error(err instanceof Error ? err.message : String(err))
         }
       } finally {
-        set({ translationUsageLoading: false })
+        scope.set({ translationUsageLoading: false })
       }
     },
 
     loadAiUsage: async (opts) => {
+      const scope = captureSession()
       const requestId = ++aiUsageRequestId
-      set({ aiUsageLoading: true })
+      scope.set({ aiUsageLoading: true })
       try {
         const query = new URLSearchParams()
         query.set('service', opts?.filters?.service || 'gpt')
         if (opts?.filters?.from) query.set('from', opts.filters.from)
         if (opts?.filters?.to) query.set('to', opts.filters.to)
-        const payload = await request<AiUsageReport>(`/api/admin/ai-usage?${query.toString()}`)
-        if (requestId === aiUsageRequestId) set({ aiUsage: payload })
+        const payload = await scope.request<AiUsageReport>(
+          `/api/admin/ai-usage?${query.toString()}`,
+        )
+        if (!payload) return
+        if (requestId === aiUsageRequestId) scope.set({ aiUsage: payload })
       } catch (err) {
         if (!opts?.silent && !(err instanceof AuthExpiredError)) {
-          toast.error(err instanceof Error ? err.message : String(err))
+          scope.toast.error(err instanceof Error ? err.message : String(err))
         }
       } finally {
-        if (requestId === aiUsageRequestId) set({ aiUsageLoading: false })
+        if (requestId === aiUsageRequestId) scope.set({ aiUsageLoading: false })
       }
     },
 
@@ -535,7 +616,9 @@ export const useAdminStore = create<AdminState>((set, get) => {
     devLogin: async (serverUrl, key) => {
       const base = normalizeServerUrl(serverUrl)
       if (!base || !key) throw new Error('请填写服务地址和开发者密钥')
-      set({ busy: true })
+      clearSession()
+      const scope = captureSession()
+      scope.set({ busy: true })
       try {
         const res = await fetch(`${base}/api/dev/login`, {
           method: 'POST',
@@ -543,65 +626,57 @@ export const useAdminStore = create<AdminState>((set, get) => {
           body: JSON.stringify({ key }),
         })
         const text = await res.text()
+        if (!scope.isCurrent()) return
         if (!res.ok) throw new Error(text || `开发者登录失败（${res.status}）`)
         const payload = (text ? JSON.parse(text) : {}) as {
           token?: string
           release?: SharedRelease
         }
-        set({
+        scope.set({
           role: 'dev',
           serverUrl: base,
           devToken: String(payload.token || ''),
           release: payload.release || null,
         })
         await adminApi.savePrefs({ serverUrl: base, username: get().username })
+      } catch (err) {
+        if (scope.isCurrent()) throw err
       } finally {
-        set({ busy: false })
+        scope.set({ busy: false })
       }
     },
 
     devLogout: async () => {
-      const { serverUrl, devToken } = get()
-      try {
-        await serverFetch(serverUrl, devToken, '/api/dev/logout', { method: 'POST' })
-      } catch {
-        /* 忽略 */
-      }
-      set({ role: 'none', devToken: '', release: null })
+      const scope = captureSession()
+      const pending = scope.request('/api/dev/logout', { method: 'POST' })
+      clearSession()
+      await pending.catch(() => undefined)
     },
 
     loadDevRelease: async () => {
-      const { serverUrl, devToken } = get()
+      const scope = captureSession()
       try {
-        const res = await serverFetch<{ release?: SharedRelease }>(
-          serverUrl,
-          devToken,
-          '/api/dev/release',
-        )
-        if (res.release) set({ release: res.release })
+        const res = await scope.request<{ release?: SharedRelease }>('/api/dev/release')
+        if (!res) return
+        if (res.release) scope.set({ release: res.release })
       } catch (err) {
         if (err instanceof AuthExpiredError) {
-          set({ role: 'none', devToken: '', release: null })
-          toast.error('开发者登录已失效，请重新登录')
+          // The request owner already cleared the expired session.
         } else {
-          toast.error(err instanceof Error ? err.message : String(err))
+          scope.toast.error(err instanceof Error ? err.message : String(err))
         }
       }
     },
 
     saveDevReleaseInfo: async (patch) => {
-      const { serverUrl, devToken } = get()
-      const res = await serverFetch<{ release?: SharedRelease }>(
-        serverUrl,
-        devToken,
-        '/api/dev/release',
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(patch),
-        },
-      )
-      if (res.release) set({ release: res.release })
+      const scope = captureSession()
+      const res = await scope.request<{ release?: SharedRelease }>('/api/dev/release', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      })
+      if (!res) return
+      if (res.release) scope.set({ release: res.release })
     },
   }
 })

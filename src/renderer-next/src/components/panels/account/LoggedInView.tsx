@@ -1,3 +1,4 @@
+import { showErrorToast } from '@/lib/errorToast'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -205,7 +206,7 @@ function UpdateSection() {
       useAuthStore.getState().setUpdateInfo(update)
       toast.success('已从 GitHub 刷新更新信息')
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '检查更新失败')
+      showErrorToast(err, '检查更新')
     } finally {
       setDownloading(false)
     }
@@ -228,7 +229,7 @@ function UpdateSection() {
           toast.info('当前已经是最新版本')
         }
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : '自动更新失败')
+        showErrorToast(err, '自动更新')
       } finally {
         setDownloading(false)
       }
@@ -259,7 +260,7 @@ function UpdateSection() {
           : `更新包已保存：${filePath}。安装程序已打开，程序将自动退出。`,
       )
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '下载或安装更新失败')
+      showErrorToast(err, '下载或安装更新')
     } finally {
       setDownloading(false)
     }
@@ -373,7 +374,7 @@ function ChangelogSection() {
                 />
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="selectable text-sm font-semibold text-foreground">
-                    v{entry.version}
+                    {entry.version === 'Unreleased' ? '开发中的改进' : `v${entry.version}`}
                   </span>
                   {isCurrent && (
                     <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">

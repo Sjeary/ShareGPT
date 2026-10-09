@@ -110,6 +110,13 @@ class VaultManager {
     if (!next) throw new Error("路径为空");
     this.validateRoot(next);
     fs.mkdirSync(next, { recursive: true });
+    // Prove the destination is readable before changing the active root or metadata.
+    const candidate = new VaultManager(this.app, this.getWindow, {
+      dataRoot: this.dataRoot,
+      validateRoot: this.validateRoot,
+    });
+    candidate.root = next;
+    const files = await candidate.readAll();
     const previous = this.root;
     this.root = next;
     try {
@@ -118,8 +125,14 @@ class VaultManager {
       this.root = previous;
       throw error;
     }
-    await this.restartWatch();
-    const files = await this.list();
+    try {
+      await this.restartWatch();
+    } catch (error) {
+      this.root = previous;
+      this.#saveRoot();
+      await this.restartWatch().catch(() => {});
+      throw error;
+    }
     return { ok: true, root: this.root, count: files.length };
   }
 
@@ -141,12 +154,7 @@ class VaultManager {
     this.#ensureRoot();
     const out = [];
     const walk = async (dir, relBase) => {
-      let entries;
-      try {
-        entries = await fsp.readdir(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
+      const entries = await fsp.readdir(dir, { withFileTypes: true });
       for (const ent of entries) {
         if (ent.isDirectory()) {
           if (IGNORED_DIRS.has(ent.name) || ent.name.startsWith(".")) continue;
@@ -155,15 +163,13 @@ class VaultManager {
           const ext = path.extname(ent.name).toLowerCase();
           if (!TEXT_EXT.has(ext)) continue;
           const rel = relBase ? `${relBase}/${ent.name}` : ent.name;
-          try {
-            const st = await fsp.stat(path.join(dir, ent.name));
-            out.push({
-              path: rel,
-              mtime: st.mtimeMs,
-              ctime: st.birthtimeMs || st.ctimeMs,
-              size: st.size,
-            });
-          } catch {}
+          const st = await fsp.stat(this.#abs(rel));
+          out.push({
+            path: rel,
+            mtime: st.mtimeMs,
+            ctime: st.birthtimeMs || st.ctimeMs,
+            size: st.size,
+          });
         }
       }
     };
@@ -176,13 +182,13 @@ class VaultManager {
     const metas = await this.list();
     const out = [];
     for (const m of metas) {
-      try {
-        const abs = this.#abs(m.path);
-        const st = await fsp.stat(abs);
-        if (st.size > MAX_FILE_BYTES) continue;
-        const content = await fsp.readFile(abs, "utf-8");
-        out.push({ path: m.path, content, mtime: st.mtimeMs, ctime: m.ctime });
-      } catch {}
+      const abs = this.#abs(m.path);
+      const st = await fsp.stat(abs);
+      if (st.size > MAX_FILE_BYTES) {
+        throw new Error(`知识库文件超过 8 MB，无法读取完整快照：${m.path}`);
+      }
+      const content = await fsp.readFile(abs, "utf-8");
+      out.push({ path: m.path, content, mtime: st.mtimeMs, ctime: m.ctime });
     }
     return out;
   }

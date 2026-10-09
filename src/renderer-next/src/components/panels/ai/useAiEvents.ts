@@ -13,6 +13,7 @@ import {
   isGptAllowedUrl,
   isGeminiAllowedUrl,
   isClaudeAllowedUrl,
+  isExternalBrowsingKind,
   normalizeGptUrl,
   normalizeGeminiUrl,
   normalizeClaudeUrl,
@@ -58,7 +59,7 @@ function persistLastUrl(section: AiKind, url: string) {
 function normalizeTab(kind: AiKind, item: AiTabPayload): AiTab | null {
   const id = safeText(item?.id || item?.tabId)
   if (!id) return null
-  const allowExternalBrowsing = kind === 'claude' && Boolean(item.allowExternalBrowsing)
+  const allowExternalBrowsing = isExternalBrowsingKind(kind) && Boolean(item.allowExternalBrowsing)
   return {
     id,
     title: safeText(item?.title) || defaultTitleFor(kind),
@@ -100,7 +101,7 @@ function applyState(kind: AiKind, payload: AiEventPayload) {
   if (!tabId) return
   const currentTab = store.tabsByKind[kind].find((item) => item.id === tabId)
   const allowExternalBrowsing =
-    kind === 'claude' &&
+    isExternalBrowsingKind(kind) &&
     (typeof payload.allowExternalBrowsing === 'boolean'
       ? payload.allowExternalBrowsing
       : Boolean(currentTab?.allowExternalBrowsing))

@@ -103,6 +103,11 @@ function fixtureDocument() {
       html, body { margin: 0; min-height: 100%; background: #157a6e; color: white; }
       body { font: 18px system-ui; padding: 24px; }
     </style>
+    <!-- Reproduce the remote header found in ChatGPT: a transparent native drag band
+         after a separate button, plus an author-important declaration. -->
+    <button id="header-action" style="position:fixed;left:254px;top:8px;width:36px;height:36px;-webkit-app-region:no-drag" onclick="window.__headerClicks=(window.__headerClicks||0)+1">Search</button>
+    <header id="remote-drag-header" style="position:fixed;inset:0 0 auto;height:52px;pointer-events:none;-webkit-app-region:drag!important"></header>
+    <style>#remote-drag-header::before { content: ''; position:absolute; inset:0; -webkit-app-region:drag!important; }</style>
     <h1>AI lifecycle fixture</h1>
     <p id="location"></p>
     <form id="composer" data-testid="composer">
@@ -277,6 +282,14 @@ async function startFixtureServers(directory) {
         setTimeout(complete, requestedDelay);
       else if (request.url.includes("delay=1")) setTimeout(complete, 500);
       else complete();
+      return;
+    }
+    if (request.method === "GET" && fixtureUrl.pathname === "/gpt-external-reference") {
+      response.writeHead(200, {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      response.end("External reference page");
       return;
     }
     response.writeHead(200, {
@@ -504,7 +517,7 @@ async function verifyTranslationWorkbench({
   assert.equal(await separator.count(), 0);
   const narrowScreenshot = await electronApp.evaluate(async ({ BrowserWindow }) => {
     const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-    const image = await window.capturePage();
+    const image = await window.capturePage(undefined, { stayHidden: true });
     return image.toPNG().toString("base64");
   });
   const narrowScreenshotPath = path.join(
@@ -520,12 +533,24 @@ async function verifyTranslationWorkbench({
   if (initialLayout === "split") {
     const restoredHostBounds = await nativeHost.boundingBox();
     assert.ok(restoredHostBounds && restoredHostBounds.width > 1 && restoredHostBounds.height > 1);
-    await api(page, "syncAiViewHost", {
+    // This fixture drives native attachment directly without starting the proxy.
+    // Let the renderer's resize effects settle before applying the fixture host state.
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve(undefined))),
+        ),
+    );
+    const restoredTarget = await activateKind(page, "gpt");
+    assert.equal(restoredTarget.target.tabId, tabId);
+    const restored = await api(page, "syncAiViewHost", {
       kind: "gpt",
       tabId,
+      environmentId: restoredTarget.target.environmentId,
       visible: true,
       bounds: restoredHostBounds,
     });
+    assert.equal(restored, true, "settled restored GPT host sync must be accepted");
     await waitUntil(
       async () => visibleFixture(await appSnapshot(electronApp)).length === 1,
       "native host reattach after restoring translation split layout",
@@ -773,7 +798,7 @@ async function verifyTranslationWorkbench({
   assert.ok(bounds.y + bounds.height <= viewport.height + 1);
   const screenshot = await electronApp.evaluate(async ({ BrowserWindow }) => {
     const window = BrowserWindow.getAllWindows().find((candidate) => !candidate.isDestroyed());
-    const image = await window.capturePage();
+    const image = await window.capturePage(undefined, { stayHidden: true });
     return image.toPNG().toString("base64");
   });
   fs.writeFileSync(screenshotPath, Buffer.from(screenshot, "base64"));
@@ -855,6 +880,74 @@ async function waitForFixture(electronApp, urlPattern, label) {
     const state = await fixtureState(electronApp, urlPattern);
     return state?.value?.bootId ? state : null;
   }, label);
+}
+
+async function verifyEmbeddedDragBoundary(electronApp, urlPattern) {
+  const result = await fixtureState(
+    electronApp,
+    urlPattern,
+    `(() => {
+    const header = document.querySelector('#remote-drag-header');
+    const button = document.querySelector('#header-action');
+    const style = getComputedStyle(header);
+    return {
+      region: style.getPropertyValue('-webkit-app-region'),
+      pseudoRegion: getComputedStyle(header, '::before').getPropertyValue('-webkit-app-region'),
+      originalDeclaration: header.style.getPropertyValue('-webkit-app-region'),
+      originalPriority: header.style.getPropertyPriority('-webkit-app-region'),
+      pointerEvents: style.pointerEvents,
+      height: header.getBoundingClientRect().height,
+      buttonDisabled: button.disabled,
+    };
+  })()`,
+  );
+  assert.ok(result?.value, `drag-boundary fixture must exist: ${urlPattern}`);
+  assert.deepEqual(result.value, {
+    region: "none",
+    pseudoRegion: "none",
+    originalDeclaration: "drag",
+    originalPriority: "important",
+    pointerEvents: "none",
+    height: 52,
+    buttonDisabled: false,
+  });
+  return result.webContentsId;
+}
+
+async function verifyRemoteHeaderLifecycle(electronApp, page, tabId) {
+  const pattern = "chatgpt\\.com/gpt/a";
+  await waitForFixture(electronApp, pattern, "header fixture load");
+  await verifyEmbeddedDragBoundary(electronApp, pattern);
+  await fixtureState(
+    electronApp,
+    pattern,
+    `(() => {
+    const header = document.querySelector('#remote-drag-header');
+    header.replaceWith(header.cloneNode(true));
+    history.pushState({}, '', location.pathname + '?header-spa=1');
+    document.querySelector('#header-action').click();
+    return window.__headerClicks;
+  })()`,
+  );
+  await verifyEmbeddedDragBoundary(electronApp, pattern);
+  assert.equal((await fixtureState(electronApp, pattern, "window.__headerClicks")).value, 1);
+  await fixtureState(electronApp, pattern, "history.replaceState({}, '', location.pathname)");
+  const before = await fixtureState(electronApp, pattern);
+  await api(page, "navigateAiWorkspace", { kind: "gpt", tabId, action: "reload" });
+  await waitUntil(async () => {
+    const after = await fixtureState(electronApp, pattern);
+    return after?.value?.bootId && after.value.bootId !== before.value.bootId;
+  }, "header fixture reload");
+  await verifyEmbeddedDragBoundary(electronApp, pattern);
+  assert.equal(
+    await page
+      .locator("header.app-drag")
+      .evaluate((header) => getComputedStyle(header).getPropertyValue("-webkit-app-region")),
+    "drag",
+  );
+  process.stdout.write(
+    "[verify] remote header drag declarations neutralized across dynamic DOM, SPA and reload; native shell titlebar preserved\n",
+  );
 }
 
 async function switchTab(page, kind, tabId) {
@@ -1357,6 +1450,41 @@ async function verifyProductionComposer({ electronApp, page, principalId, tabId 
   );
   assert.equal((await composerState(electronApp, "chatgpt\\.com/composer-spa")).submits, 1);
   assert.equal((await aiEvents(page, "accepted-send", tabId)).length, 0);
+  process.stdout.write("[verify] SPA replaces the guard owner and can disable it completely\n");
+  await clearAiEvents(page);
+  const spaPattern = "chatgpt\\.com/composer-spa";
+  await api(page, "syncAiComposerGuard");
+  await writeComposer(page, tabId, "导航后仍能确认");
+  await sendTrustedEnter(electronApp, spaPattern);
+  const freshEvents = await waitForAiEvent(
+    page,
+    "composer-confirmation",
+    tabId,
+    1,
+    "post-SPA confirmation",
+  );
+  assert.equal(freshEvents.length, 1);
+  assert.deepEqual(
+    await api(page, "resolveAiComposerConfirmation", {
+      requestId: freshEvents[0].requestId,
+      confirmed: true,
+    }),
+    { ok: true, sent: true },
+  );
+  await waitUntil(
+    async () => (await composerState(electronApp, spaPattern)).submits === 2,
+    "post-SPA successful send",
+  );
+  await patchTranslation(page, principalId, { confirmNonTargetSend: false });
+  await api(page, "syncAiComposerGuard");
+  await clearAiEvents(page);
+  await writeComposer(page, tabId, "禁用后直接发送");
+  await sendTrustedEnter(electronApp, spaPattern);
+  await waitUntil(
+    async () => (await composerState(electronApp, spaPattern)).submits === 3,
+    "post-SPA disabled guard send",
+  );
+  assert.equal((await aiEvents(page, "composer-confirmation", tabId)).length, 0);
 }
 
 async function verifyConcurrentTabUsage({ electronApp, page, principalId, gptAId, gptBId }) {
@@ -1394,6 +1522,116 @@ async function verifyConcurrentTabUsage({ electronApp, page, principalId, gptAId
   assert.notEqual(acceptedA[0].usageId, acceptedB[0].usageId);
 }
 
+async function verifyContextTranslation({ electronApp, page, socksPort, basicTabId }) {
+  const selectText = async (urlPattern, text) => {
+    await clearAiEvents(page);
+    await electronApp.evaluate(
+      ({ Menu, webContents }, args) => {
+        const contents = webContents
+          .getAllWebContents()
+          .find((item) => !item.isDestroyed() && new RegExp(args.urlPattern).test(item.getURL()));
+        if (!contents) throw new Error("context menu fixture missing");
+        const original = Menu.buildFromTemplate;
+        try {
+          Menu.buildFromTemplate = (template) => ({
+            popup() {
+              const translate = template.find((item) => item.label === "翻译选中文字");
+              if (!translate) throw new Error("production translation menu item missing");
+              translate.click();
+            },
+          });
+          // Exercise the production context-menu listener and callback without opening a native menu.
+          contents.emit("context-menu", {}, { selectionText: args.text, editFlags: {} });
+        } finally {
+          Menu.buildFromTemplate = original;
+        }
+      },
+      { urlPattern, text },
+    );
+  };
+  await selectText("chatgpt\\.com/conversation/42", "BASIC-SELECTION");
+  const basic = await waitForAiEvent(
+    page,
+    "translate-selection",
+    basicTabId,
+    1,
+    "basic menu selection",
+  );
+  assert.equal(basic[0].environmentId, "");
+  assert.equal(basic[0].text, "BASIC-SELECTION");
+
+  const principal = await api(page, "getSettingsPrincipal");
+  const snapshot = {
+    expectedPrincipalId: principal.principalId,
+    expectedPrincipalGeneration: principal.generation,
+  };
+  const settings = await api(page, "loadSettings", snapshot);
+  const environmentId = "fixture-context-menu";
+  await api(page, "patchSettings", {
+    ...snapshot,
+    section: "advancedAi",
+    patch: {
+      ...settings.advancedAi,
+      enabled: true,
+      environments: [
+        { id: environmentId, kind: "gpt", name: "Context fixture", routeId: "internal-unified" },
+      ],
+      activeByKind: { ...settings.advancedAi.activeByKind, gpt: environmentId },
+    },
+  });
+  await electronApp.evaluate((_electron, port) => {
+    const backend = globalThis.__diagnosticBackend;
+    globalThis.__contextOriginalRoutes = backend.activeAiProxyRoutes;
+    // Reuse this local fixture transport; route-health behavior is covered separately.
+    backend.activeAiProxyRoutes = [
+      { id: "internal-unified", mode: "sender", label: "Fixture", host: "127.0.0.1", port },
+    ];
+  }, socksPort);
+  try {
+    await api(page, "activateAiEnvironment", { kind: "gpt", environmentId });
+    const created = await api(page, "createAiView", "gpt", {
+      environmentId,
+      lastUrl: "https://chatgpt.com/gpt/context",
+    });
+    const tabId = created.activeState.id;
+    await api(page, "setActiveAiKind", "gpt");
+    await api(page, "ensureAiWorkspace", {
+      kind: "gpt",
+      environmentId,
+      tabId,
+      host: "127.0.0.1",
+      port: socksPort,
+      lastUrl: "https://chatgpt.com/gpt/context",
+    });
+    await waitForFixture(electronApp, "chatgpt\\.com/gpt/context", "advanced context fixture");
+    await selectText("chatgpt\\.com/gpt/context", "ADVANCED-SELECTION");
+    const advanced = await waitForAiEvent(
+      page,
+      "translate-selection",
+      tabId,
+      1,
+      "advanced menu selection",
+    );
+    assert.equal(advanced[0].environmentId, environmentId);
+    assert.equal(advanced[0].text, "ADVANCED-SELECTION");
+    await api(page, "closeAiView", "gpt", { tabId });
+  } finally {
+    await api(page, "activateAiEnvironment", { kind: "gpt", environmentId: "" });
+    await api(page, "patchSettings", {
+      ...snapshot,
+      section: "advancedAi",
+      patch: settings.advancedAi,
+    });
+    await electronApp.evaluate(() => {
+      globalThis.__diagnosticBackend.activeAiProxyRoutes = globalThis.__contextOriginalRoutes;
+    });
+    await activateTab(page, "gpt", basicTabId);
+  }
+  process.stdout.write(
+    "[verify] production context menus preserve basic and advanced environment identity\n",
+  );
+}
+
 async function main() {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-app-lifecycle-"));
   const userData = path.join(temporaryRoot, "user-data");
@@ -1412,9 +1650,23 @@ async function main() {
     electronApp = await electron.launch({
       args: [ROOT, "--ignore-certificate-errors"],
       cwd: ROOT,
-      env: { ...process.env, SHAREGPT_USER_DATA: userData, SHAREGPT_LOG_LEVEL: "warn" },
+      env: {
+        ...process.env,
+        SHAREGPT_BACKGROUND_TEST: "1",
+        SHAREGPT_USER_DATA: userData,
+        SHAREGPT_LOG_LEVEL: "warn",
+      },
     });
     const page = await electronApp.firstWindow();
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      globalThis.__foregroundEvents = [];
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window.isVisible() || window.isFocused() || window.isFocusable())
+          throw new Error("Lifecycle acceptance must stay hidden and unfocusable");
+        window.on("show", () => globalThis.__foregroundEvents.push("show"));
+        window.on("focus", () => globalThis.__foregroundEvents.push("focus"));
+      }
+    });
     await page.waitForFunction(() => Boolean(window.api?.createAiView));
     const fixtureBaseUrl = `http://127.0.0.1:${httpServer.address().port}`;
     await loginThroughForm(page, fixtureBaseUrl);
@@ -1437,6 +1689,7 @@ async function main() {
     assert.notEqual(gptAId, gptBId);
 
     await ensureTab(page, { kind: "gpt", tabId: gptAId, url: gptAUrl, socksPort });
+    await verifyRemoteHeaderLifecycle(electronApp, page, gptAId);
     const firstGptA = await waitForFixture(electronApp, "chatgpt\\.com/gpt/a", "GPT A load").catch(
       async (error) => {
         error.message += `\n${JSON.stringify(
@@ -1477,6 +1730,35 @@ async function main() {
       "fixture\\.invalid/claude/a",
       "Claude load",
     );
+    await electronApp.evaluate((_electron, root) => {
+      const { Backend } = process.mainModule.require(`${root}/src/main/backend.js`);
+      const original = Backend.prototype.getStatus;
+      Backend.prototype.getStatus = function () {
+        Backend.prototype.getStatus = original;
+        globalThis.__diagnosticBackend = this;
+        return original.call(this);
+      };
+    }, ROOT);
+    await api(page, "getStatus");
+    try {
+      for (const routeAll of [false, true]) {
+        await electronApp.evaluate((_electron, value) => {
+          globalThis.__diagnosticBackend.activeRouteAll = value;
+        }, routeAll);
+        const diagnostic = await api(page, "checkAiProxy", "claude", claudeId);
+        assert.equal(
+          diagnostic.hosts.find((entry) => entry.host === "fixture.invalid")?.via,
+          routeAll ? "proxy" : "fallback",
+        );
+      }
+    } finally {
+      await electronApp.evaluate(() => {
+        globalThis.__diagnosticBackend.activeRouteAll = false;
+      });
+    }
+    process.stdout.write(
+      "[verify] production proxy diagnostic honors the active all-traffic route snapshot\n",
+    );
     await fixtureState(
       electronApp,
       "fixture\\.invalid/claude/a",
@@ -1492,6 +1774,7 @@ async function main() {
       translations,
     });
 
+    await verifyEmbeddedDragBoundary(electronApp, "fixture\\.invalid/claude/a");
     process.stdout.write("[verify] Claude loading pulse keeps the ready composer document\n");
     const claudeTargetBeforePulse = await composerTarget(page, claudeId, "claude");
     await emitFixtureWebContentsEvent(
@@ -1646,6 +1929,7 @@ async function main() {
       url: location.href
     })`,
     );
+    await verifyEmbeddedDragBoundary(electronApp, "conversation/42");
     assert.equal(beforeCrash.value.identity, "GPT-B");
     const crashedId = await electronApp.evaluate(({ webContents }) => {
       const contents = webContents
@@ -1678,6 +1962,7 @@ async function main() {
       "renderer crash recovery",
       20_000,
     );
+    await verifyEmbeddedDragBoundary(electronApp, "conversation/42");
     assert.equal(recovered.value.identity, "GPT-B");
     assert.match(recovered.value.url, /\/conversation\/42$/);
     assert.notEqual(recovered.value.fixture.bootId, beforeCrash.value.fixture.bootId);
@@ -1722,6 +2007,7 @@ async function main() {
       gptAId,
       gptBId,
     });
+    await verifyContextTranslation({ electronApp, page, socksPort, basicTabId: gptBId });
 
     process.stdout.write("[verify] delayed A events and usage are discarded after activating B\n");
     await clearAiEvents(page);
@@ -1769,7 +2055,45 @@ async function main() {
       expectedPrincipalGeneration: principalB.generation,
     });
     assert.notEqual(settingsB.gpt.last_url, "https://chatgpt.com/c/stale-from-a");
-    process.stdout.write("[verify] real appFactory AI workspace lifecycle passed\n");
+
+    process.stdout.write(
+      "[verify] personal ChatGPT external tab keeps an arbitrary text page open\n",
+    );
+    const localPrincipal = await api(page, "clearSettingsPrincipal", {
+      expectedPrincipalId: principalB.principalId,
+      expectedPrincipalGeneration: principalB.generation,
+    });
+    assert.equal(localPrincipal.principalId, "local-device");
+    const externalUrl = "http://fixture.invalid/gpt-external-reference";
+    const externalTabPayload = await api(page, "createAiView", "gpt", {
+      lastUrl: externalUrl,
+      title: "fixture.invalid",
+      allowExternalBrowsing: true,
+    });
+    const externalTabId = externalTabPayload.activeTabId;
+    const externalTab = externalTabPayload.tabs.find((tab) => tab.id === externalTabId);
+    assert.equal(externalTab?.allowExternalBrowsing, true);
+    await ensureTab(page, {
+      kind: "gpt",
+      tabId: externalTabId,
+      url: externalUrl,
+      socksPort,
+      allowExternalBrowsing: true,
+    });
+    await waitUntil(
+      async () =>
+        (await appSnapshot(electronApp)).contents.some((contents) => contents.url === externalUrl),
+      "personal GPT external text page load",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.ok(
+      (await appSnapshot(electronApp)).contents.some((contents) => contents.url === externalUrl),
+      "ChatGPT raw-document recovery must not replace an external text page",
+    );
+    assert.deepEqual(await electronApp.evaluate(() => globalThis.__foregroundEvents), []);
+    process.stdout.write(
+      "[verify] real appFactory AI workspace lifecycle passed without foreground events\n",
+    );
   } finally {
     await electronApp?.close().catch(() => undefined);
     await Promise.all([

@@ -1,3 +1,4 @@
+import { showErrorToast } from '@/lib/errorToast'
 import { useEffect, useState } from 'react'
 import { CheckCircle2, Network, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -211,7 +212,7 @@ export function AiEnvironmentPanel({
       if (result.ok) toast.success([result.route, result.ip].filter(Boolean).join(' · '))
       else toast.error('出口预期、IPv4 出口或 DNS 线路标记不符合要求，已阻止使用该线路')
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '线路检测失败')
+      showErrorToast(error, '线路检测')
     } finally {
       setCheckingId('')
     }

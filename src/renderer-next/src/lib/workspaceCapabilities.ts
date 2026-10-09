@@ -13,6 +13,7 @@ export type WorkspaceModuleId =
   | 'usage'
   | 'account'
   | 'logs'
+  | 'terminal'
 
 export interface WorkspaceModuleDefinition {
   id: WorkspaceModuleId
@@ -30,6 +31,7 @@ export const WORKSPACE_MODULES: readonly WorkspaceModuleDefinition[] = [
   { id: 'embedded-ai', personal: true, organization: true },
   { id: 'usage', personal: false, organization: true },
   { id: 'account', personal: true, organization: true },
+  { id: 'terminal', personal: false, organization: true },
   { id: 'logs', personal: true, organization: true },
 ] as const
 
@@ -49,6 +51,7 @@ const NAV_MODULE: Record<NavKey, WorkspaceModuleId> = {
   stats: 'usage',
   account: 'account',
   logs: 'logs',
+  terminal: 'terminal',
 }
 
 export function workspaceModuleAvailable(

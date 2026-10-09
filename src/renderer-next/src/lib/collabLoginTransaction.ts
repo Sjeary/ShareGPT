@@ -8,7 +8,9 @@ export async function requireConfirmedLoginResponse<T extends ConfirmedLoginResp
 ): Promise<T> {
   if (!response.ok) {
     const text = await response.text().catch(() => '')
-    throw new Error(text || `登录失败（${response.status}）`)
+    throw Object.assign(new Error(text || `登录失败（${response.status}）`), {
+      status: response.status,
+    })
   }
 
   const payload = (await response.json().catch(() => null)) as Partial<T> | null

@@ -127,7 +127,7 @@ function legacyAdminBootstrap() {
   };
 }
 
-async function createFixtureServer() {
+async function createFixtureServer({ profileFor = null } = {}) {
   const identityKey = crypto.generateKeyPairSync("ed25519");
   const publicKey = identityKey.publicKey
     .export({ format: "der", type: "spki" })
@@ -198,6 +198,7 @@ async function createFixtureServer() {
             "workspace-isolation",
             "environment-recreate",
           ].includes(body.username),
+          ...(profileFor ? profileFor(body.username) : {}),
         },
         history: [],
         users: [],
@@ -205,6 +206,17 @@ async function createFixtureServer() {
       return;
     }
 
+    if (profileFor && request.method === "GET" && url.pathname === "/api/profile") {
+      const username = tokens.get(
+        String(request.headers.authorization || "").replace(/^Bearer\s+/i, ""),
+      );
+      if (!username) {
+        json(response, 401, { error: "fixture unauthorized" });
+        return;
+      }
+      json(response, 200, { profile: { username, ...profileFor(username) } });
+      return;
+    }
     if (request.method === "GET" && url.pathname === "/api/client/bootstrap") {
       const token = String(request.headers.authorization || "").replace(/^Bearer\s+/i, "");
       const username = tokens.get(token) || "";
@@ -528,20 +540,27 @@ async function launchCase({
   events,
   username,
   password = PASSWORD,
-  mode = "all",
+  mode = "sender",
   waitForSilentRelogin = false,
+  beforeLogin,
   exercise,
   profileDirectory,
   prepareUserData,
+  launchEnv = {},
 }) {
   const userDataDir =
     profileDirectory || fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-login-compat-"));
   if (prepareUserData) await prepareUserData(userDataDir);
-  const args = mode === "all" ? [ROOT] : [ROOT, `--mode=${mode}`];
+  const args = mode === "receiver" ? [path.join(ROOT, "src/main/main_receiver.js")] : [ROOT];
   const electronApp = await electron.launch({
     args,
     cwd: ROOT,
-    env: { ...process.env, SHAREGPT_USER_DATA: userDataDir, SHAREGPT_BACKGROUND_TEST: "1" },
+    env: {
+      ...process.env,
+      ...launchEnv,
+      SHAREGPT_USER_DATA: userDataDir,
+      SHAREGPT_BACKGROUND_TEST: "1",
+    },
   });
   const blockedRequests = [];
   try {
@@ -581,13 +600,15 @@ async function launchCase({
       await chooseTeam.click();
     }
     await window.locator("#account-server").waitFor({ state: "visible" });
+    if (beforeLogin) await beforeLogin({ electronApp, window });
     await window.locator("#account-server").fill(baseUrl);
     await window.locator("#account-username").fill(username);
     await window.locator("#account-password").fill(password);
     await window.getByRole("button", { name: "登录", exact: true }).click();
 
     if (password !== PASSWORD) {
-      await window.getByText("密码错误", { exact: true }).waitFor({ state: "visible" });
+      await window.getByText("身份验证未通过", { exact: true }).waitFor({ state: "visible" });
+      assert.equal(await window.locator("#account-password").getAttribute("aria-invalid"), "true");
       const principal = await window.evaluate(() => window.api.getSettingsPrincipal());
       return { authed: false, principal, blockedRequests };
     }

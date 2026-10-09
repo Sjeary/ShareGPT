@@ -2,10 +2,19 @@ const fs = require("node:fs");
 const path = require("node:path");
 const http = require("node:http");
 const https = require("node:https");
-const { URL } = require("node:url");
+const { URL, pathToFileURL } = require("node:url");
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { configureAdminUserData } = require("./userDataPath");
+
+// Configure storage before whenReady can create Chromium sessions.
+app.setName("ShareGPT Admin");
+configureAdminUserData(app);
+const backgroundTest = !app.isPackaged && process.env.SHAREGPT_ADMIN_TEST_HIDDEN === "1";
+if (backgroundTest && process.platform === "darwin") app.setActivationPolicy("prohibited");
 
 let mainWindow = null;
+let rendererDocument = "";
+const selectedReleaseFiles = new Set();
 const prefsFile = () => path.join(app.getPath("userData"), "admin_prefs.json");
 
 function loadPrefs() {
@@ -29,8 +38,39 @@ function savePrefs(data) {
   return next;
 }
 
+function documentIdentity(value) {
+  try {
+    const url = new URL(value);
+    if (!["file:", "http:", "https:"].includes(url.protocol)) return "";
+    url.search = "";
+    url.hash = "";
+    return url.href;
+  } catch {
+    return "";
+  }
+}
+
 function getEventWindow(event) {
-  return BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  const contents = mainWindow?.webContents;
+  if (
+    !contents ||
+    contents.isDestroyed() ||
+    event?.sender !== contents ||
+    !event.senderFrame ||
+    event.senderFrame !== contents.mainFrame ||
+    !rendererDocument ||
+    documentIdentity(event.senderFrame.url) !== rendererDocument
+  ) {
+    throw new Error("此页面无权调用管理员桌面功能");
+  }
+  return mainWindow;
+}
+
+function handle(channel, handler) {
+  ipcMain.handle(channel, (event, ...args) => {
+    getEventWindow(event);
+    return handler(event, ...args);
+  });
 }
 
 function buildUploadHeaders(meta, size) {
@@ -142,7 +182,8 @@ async function uploadReleaseFile(payload = {}, onProgress = null) {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    show: process.env.SHAREGPT_ADMIN_TEST_HIDDEN !== "1",
+    show: !backgroundTest,
+    focusable: !backgroundTest,
     width: 1380,
     height: 900,
     minWidth: 1180,
@@ -163,9 +204,19 @@ function createWindow() {
     mainWindow.setWindowButtonVisibility(true);
   }
 
+  const contents = mainWindow.webContents;
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  const guardNavigation = (event, url) => {
+    if (documentIdentity(url) !== rendererDocument) event.preventDefault();
+  };
+  contents.on("will-navigate", guardNavigation);
+  contents.on("will-redirect", guardNavigation);
+  contents.on("will-attach-webview", (event) => event.preventDefault());
   loadRenderer(mainWindow);
   mainWindow.on("closed", () => {
     mainWindow = null;
+    rendererDocument = "";
+    selectedReleaseFiles.clear();
   });
 }
 
@@ -174,11 +225,14 @@ function createWindow() {
 function loadRenderer(win) {
   const devUrl = process.env.ADMIN_UI_DEV_URL;
   if (devUrl && !app.isPackaged) {
+    rendererDocument = documentIdentity(devUrl);
+    if (!rendererDocument) throw new Error("无效的管理端开发页面地址");
     win.loadURL(devUrl);
     return;
   }
   const builtUi = path.join(__dirname, "../../ui/dist/index.html");
   if (fs.existsSync(builtUi)) {
+    rendererDocument = documentIdentity(pathToFileURL(builtUi).href);
     win.loadFile(builtUi);
     return;
   }
@@ -190,21 +244,14 @@ function loadRenderer(win) {
 }
 
 app.whenReady().then(() => {
-  app.setName("ShareGPT Admin");
-  app.setPath(
-    "userData",
-    process.env.SHAREGPT_ADMIN_TEST_USER_DATA
-      ? path.resolve(process.env.SHAREGPT_ADMIN_TEST_USER_DATA)
-      : path.join(app.getPath("appData"), "ShareGPT Admin"),
-  );
-  ipcMain.handle("prefs:load", () => loadPrefs());
-  ipcMain.handle("prefs:save", (_event, data) => savePrefs(data || {}));
-  ipcMain.handle("app:version", () => app.getVersion());
-  ipcMain.handle("window:minimize", (event) => {
+  handle("prefs:load", () => loadPrefs());
+  handle("prefs:save", (_event, data) => savePrefs(data || {}));
+  handle("app:version", () => app.getVersion());
+  handle("window:minimize", (event) => {
     getEventWindow(event)?.minimize();
     return true;
   });
-  ipcMain.handle("window:toggle-maximize", (event) => {
+  handle("window:toggle-maximize", (event) => {
     const target = getEventWindow(event);
     if (!target) return false;
     if (target.isMaximized()) {
@@ -214,19 +261,19 @@ app.whenReady().then(() => {
     target.maximize();
     return true;
   });
-  ipcMain.handle("window:is-maximized", (event) => {
+  handle("window:is-maximized", (event) => {
     const target = getEventWindow(event);
     return target ? target.isMaximized() : false;
   });
-  ipcMain.handle("window:is-fullscreen", (event) => {
+  handle("window:is-fullscreen", (event) => {
     const target = getEventWindow(event);
     return target ? target.isFullScreen() : false;
   });
-  ipcMain.handle("window:close", (event) => {
+  handle("window:close", (event) => {
     getEventWindow(event)?.close();
     return true;
   });
-  ipcMain.handle("dialog:select-release", async (event) => {
+  handle("dialog:select-release", async (event) => {
     const result = await dialog.showOpenDialog(getEventWindow(event), {
       title: "选择安装包",
       properties: ["openFile"],
@@ -236,19 +283,29 @@ app.whenReady().then(() => {
       ],
     });
     if (result.canceled || !result.filePaths.length) return null;
-    const filePath = result.filePaths[0];
+    getEventWindow(event);
+    const filePath = fs.realpathSync(result.filePaths[0]);
     const stat = fs.statSync(filePath);
+    if (!stat.isFile()) throw new Error("请选择有效的安装包文件");
+    selectedReleaseFiles.add(filePath);
     return {
       filePath,
       fileName: path.basename(filePath),
       size: stat.size,
     };
   });
-  ipcMain.handle("release:upload", (event, payload) =>
-    uploadReleaseFile(payload || {}, (progress) => {
-      event.sender.send("release:upload-progress", progress);
-    }),
-  );
+  handle("release:upload", (event, payload) => {
+    const filePath = fs.realpathSync(String(payload?.filePath || ""));
+    if (!selectedReleaseFiles.has(filePath)) throw new Error("请先通过文件选择器选择安装包");
+    return uploadReleaseFile({ ...payload, filePath }, (progress) => {
+      try {
+        getEventWindow(event);
+        event.sender.send("release:upload-progress", progress);
+      } catch {
+        // The originating window may have closed while an upload was running.
+      }
+    });
+  });
 
   createWindow();
   app.on("activate", () => {

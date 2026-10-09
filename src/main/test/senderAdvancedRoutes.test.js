@@ -6,6 +6,49 @@ const path = require("node:path");
 const { Backend, resolvePersonalSenderListenPort } = require("../backend");
 const { activeAiRouteIds, managedDefaultRouteId } = require("../aiEnvironments");
 
+test("运行路由诊断快照来自实际启动配置并在停止时清除", async (t) => {
+  const backend = Object.create(Backend.prototype);
+  backend.appMode = "sender";
+  backend.runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-route-snapshot-"));
+  t.after(() => fs.rmSync(backend.runtimeDir, { recursive: true, force: true }));
+  backend.resolveBinary = () => __filename;
+  backend.checkSingboxConfig = () => {};
+  backend.spawnProcess = () => ({ kill() {}, exitCode: 0 });
+  backend.log = () => {};
+  backend.emitStatus = () => {};
+  const base = {
+    proxy_mode: "unified",
+    proxy_server: "proxy.example.com",
+    proxy_port: "443",
+    proxy_uuid: "00000000-0000-4000-8000-000000000000",
+    socks_listen_port: "19878",
+    fallback_mode: "direct",
+  };
+  for (const routeAll of [true, "true", "1", false]) {
+    await backend.startSender({ ...base, route_all: routeAll });
+    const config = JSON.parse(
+      fs.readFileSync(path.join(backend.runtimeDir, "sender.runtime.json"), "utf8"),
+    );
+    assert.equal(backend.activeRouteAll, routeAll !== false);
+    assert.equal(backend.activeRouteAll, config.route.final === "proxy-unified");
+    assert.ok(config.route.rules.some((rule) => rule.ip_is_private && rule.outbound === "direct"));
+  }
+  await backend.startSender({ ...base, route_all: true });
+  backend.stopSender();
+  assert.equal(backend.activeRouteAll, false);
+});
+
+test("出口探测的备用域名在旧版自定义规则下仍固定经代理", () => {
+  const backend = Object.create(Backend.prototype);
+  for (const appMode of ["sender", "all"]) {
+    backend.appMode = appMode;
+    const domains = backend.proxiedDomainSuffixes({ target_domains: "example.com" });
+    for (const host of ["ipwho.is", "ipinfo.io", "api.ipify.org", "cloudflare.com"]) {
+      assert.ok(domains.includes(host), `${appMode}: ${host}`);
+    }
+  }
+});
+
 test("基础 AI 工作区只接受合法的管理员默认线路", () => {
   const sender = {
     managed_default_route_by_kind: {

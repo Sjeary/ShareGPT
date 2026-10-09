@@ -3,6 +3,7 @@
 // 不纳入 node --test（需要 Electron renderer）。
 const assert = require("node:assert");
 const { app, BrowserWindow } = require("electron");
+if (process.platform === "darwin") app.setActivationPolicy("prohibited");
 const {
   buildFingerprintInjectionSource,
   collectPageFingerprint,

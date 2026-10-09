@@ -122,7 +122,9 @@ jobs:
         run: node scripts/build-legacy-release.cjs
 
       - name: Verify packaged Mac startup and data retention
-        run: node scripts/verify-packaged-startup.cjs release_sender/mac-arm64/ShareGPT.app/Contents/MacOS/ShareGPT
+        run: |
+          node scripts/verify-packaged-startup.cjs release_sender/mac-arm64/ShareGPT.app/Contents/MacOS/ShareGPT
+          node scripts/verify-packaged-upgrade.cjs release_sender/mac-arm64/ShareGPT.app/Contents/MacOS/ShareGPT
 
       - name: Verify approved legacy macOS artifacts without claiming notarization
         if: needs.source.outputs.distribution == 'legacy'
@@ -217,20 +219,30 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm --prefix src/renderer-next ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm --prefix collab_server2 ci --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify release behavior
         shell: pwsh
         run: |
           npm run verify:signing-boundaries
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:SHAREGPT_RELEASE_TAG = $env:GITHUB_REF_NAME
           npm run verify:release-contract
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run test:release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm --prefix src/renderer-next run typecheck:test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run typecheck:main
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run lint
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Download pinned Windows binaries
         shell: pwsh
@@ -254,6 +266,11 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
+      - name: Verify terminal approval and account controls on Windows
+        run: |
+          node scripts/verify-terminal.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Build signed NSIS installer
         if: needs.source.outputs.distribution == 'official'
         env:
@@ -270,6 +287,7 @@ jobs:
           npm run verify:release-win
           if ($LASTEXITCODE -ne 0) { throw "Installer verification failed" }
           $version = node -p "require('./package.json').version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           foreach ($target in @("release/sharegpt-$version.exe", "release/win-unpacked/sharegpt.exe")) {
             if ((Get-AuthenticodeSignature $target).Status -ne "NotSigned") {
               throw "Unexpected signing identity in legacy build: $target"
@@ -284,7 +302,9 @@ jobs:
         shell: pwsh
         run: |
           npm run verify:release-win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $version = node -p "require('./package.json').version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           foreach ($target in @("release/sharegpt-$version.exe", "release/win-unpacked/sharegpt.exe")) {
             if (-not (Test-Path $target)) { throw "Missing signed executable: $target" }
             $signature = Get-AuthenticodeSignature $target
@@ -300,11 +320,14 @@ jobs:
         shell: pwsh
         run: |
           $version = node -p "require('./package.json').version"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $destination = Join-Path $env:RUNNER_TEMP "ShareGPT-installed"
           $installer = Start-Process -FilePath "release/sharegpt-$version.exe" -ArgumentList @("/S", "/D=$destination") -Wait -PassThru
           if ($installer.ExitCode -ne 0) { throw "NSIS installation failed" }
           node scripts/verify-packaged-startup.cjs "$destination/sharegpt.exe"
           if ($LASTEXITCODE -ne 0) { throw "Installed app startup failed" }
+          node scripts/verify-packaged-upgrade.cjs "$destination/sharegpt.exe" "release/sharegpt-$version.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Installed app upgrade failed" }
 
       - uses: actions/upload-artifact@v4
         with:

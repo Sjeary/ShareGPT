@@ -4,6 +4,7 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const { app, BrowserWindow, WebContentsView } = require("electron");
+if (process.platform === "darwin") app.setActivationPolicy("prohibited");
 const {
   COMPOSER_OPERATION_WORLD_ID,
   composerConfirmationGuardScript,
@@ -104,8 +105,7 @@ async function main() {
   const fixture = await startFixture();
   // CDP focus emulation keeps trusted keyboard delivery deterministic on CI,
   // where the native runner window is not guaranteed to become the foreground app.
-  if (process.platform === "darwin") app.dock.hide();
-  const window = new BrowserWindow({ show: false, width: 640, height: 480 });
+  const window = new BrowserWindow({ show: false, focusable: false, width: 640, height: 480 });
   const view = new WebContentsView({
     webPreferences: {
       contextIsolation: true,
@@ -117,7 +117,7 @@ async function main() {
   window.contentView.addChildView(view);
   view.setBounds({ x: 0, y: 0, width: 640, height: 480 });
   const wc = view.webContents;
-  const guardToken = createOperationToken();
+  let guardToken = createOperationToken();
   const usageToken = createTrackerToken();
   const consoleMessages = [];
   let documentEpoch = 1;
@@ -316,6 +316,20 @@ async function main() {
       "SPA epoch",
     );
     assert.equal(composerOperationIsCurrent(beforeSpa, snapshot()), false);
+
+    guardToken = createOperationToken();
+    await runGuard(true);
+    consoleMessages.length = 0;
+    await setPrompt(wc, "页面切换后的确认");
+    await dispatchEnter();
+    await waitFor(
+      () =>
+        Promise.resolve(
+          consoleMessages.some((message) => parseComposerConfirmationMessage(message, guardToken)),
+        ),
+      "rotated SPA guard",
+    );
+    assert.equal(await acceptedCount(wc), 4);
 
     process.stdout.write(
       "[verify] disabling guard on the loaded document takes effect immediately\n",

@@ -4,7 +4,7 @@
 
 公开 DMG 只允许由 `.github/workflows/release.yml` 生成。需要以下 GitHub Secrets：
 
-**v1.0.9 / v1.0.10 兼容发布例外：** 这两个版本沿用历史分发方式，不提供 Developer ID 签名和 Apple 公证。工作流从发布源码重新构建，复用底层 ad-hoc 签名工具并验证最终 DMG 内的应用；不上传本机已安装应用或旧候选。首次打开可能被 Gatekeeper 拦截，具体操作见各版本 Release 说明。`scripts/release-distribution.cjs` 仅允许这两个精确版本及匹配 tag 使用例外，不自动扩展到 1.0.11 或其他标签。以下凭据要求适用于正式签名路径。
+**v1.0.9 / v1.0.10 / v1.0.11 兼容发布例外：** 这三个版本沿用历史分发方式，不提供 Developer ID 签名和 Apple 公证。工作流从发布源码重新构建，复用底层 ad-hoc 签名工具并验证最终 DMG 内的应用；不上传本机已安装应用或旧候选。首次打开可能被 Gatekeeper 拦截，具体操作见各版本 Release 说明。`scripts/release-distribution.cjs` 仅允许这三个精确版本及匹配 tag 使用例外，不自动扩展到 1.0.12 或其他标签。以下凭据要求适用于正式签名路径。
 
 - `MACOS_DEVELOPER_ID_P12`
 - `MACOS_DEVELOPER_ID_PASSWORD`
@@ -20,7 +20,7 @@
 本地 ad-hoc 签名只用于同一台 Mac 上测试覆盖安装、Keychain 与用户数据连续性：
 
 ```bash
-npm run dist:mac:sender:local
+npm run dist:mac:local
 ```
 
 该命令显式覆盖 `mac.notarize=false` 和 `mac.hardenedRuntime=false`，再用 ad-hoc 身份签署 `.app`。它不创建证书、不访问钥匙串，也不应要求用户输入密码。入口脚本在 `CI=true` 时拒绝运行。本地产物没有 Apple 公证，不得作为已公证产品或直接上传 GitHub Release。获准采用旧分发方式的版本经精确策略检查后，在 CI 中重新构建并调用相同的底层签名工具，不复用本机测试产物。

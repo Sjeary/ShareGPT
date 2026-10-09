@@ -8,6 +8,8 @@ import {
   Handle,
   Position,
   addEdge,
+  applyNodeChanges,
+  applyEdgeChanges,
   useNodesState,
   useEdgesState,
   useReactFlow,
@@ -15,14 +17,17 @@ import {
   type Edge,
   type Node,
   type NodeProps,
+  type NodeChange,
+  type EdgeChange,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { FileText, Plus, Type as TypeIcon } from 'lucide-react'
 import { api } from '@/lib/api'
+import { ErrorNotice } from '@/components/ErrorNotice'
 import { useAppStore } from '@/store/useAppStore'
 import { useVaultStore } from '@/store/useVaultStore'
 import { inputPrompt } from './InputPrompt'
-import { parseCanvas, toCanvas, toReactFlow } from '@/lib/notes/canvas'
+import { parseCanvas, toCanvas, toReactFlow, type CanvasDoc } from '@/lib/notes/canvas'
 
 let idc = 0
 const newId = () => `n${Date.now()}_${idc++}`
@@ -41,7 +46,6 @@ function NodeShell({ children, color }: { children: React.ReactNode; color?: str
 }
 
 function TextNode({ id, data }: NodeProps) {
-  const rf = useReactFlow()
   const [editing, setEditing] = useState(false)
   const text = (data as { text?: string }).text || ''
   const color = (data as { color?: string }).color
@@ -50,14 +54,11 @@ function TextNode({ id, data }: NodeProps) {
       {editing ? (
         <textarea
           autoFocus
-          defaultValue={text}
-          onBlur={(e) => {
-            const v = e.target.value
-            rf.setNodes((ns) =>
-              ns.map((n) => (n.id === id ? { ...n, data: { ...n.data, text: v } } : n)),
-            )
-            setEditing(false)
-          }}
+          value={text}
+          onChange={(e) =>
+            (data.onTextChange as (id: string, text: string) => void)(id, e.target.value)
+          }
+          onBlur={() => setEditing(false)}
           className="nodrag h-full w-full resize-none bg-transparent outline-none"
         />
       ) : (
@@ -125,46 +126,111 @@ function GroupNode({ data }: NodeProps) {
   )
 }
 
-function CanvasInner({ path }: { path: string }) {
-  const raw = useVaultStore((s) => s.rawByPath[path] || '')
-  const initial = useMemo(() => toReactFlow(parseCanvas(raw)), [raw])
-  const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes)
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
+function CanvasInner({ path, doc }: { path: string; doc: CanvasDoc }) {
+  const initial = useMemo(() => toReactFlow(doc), [doc])
+  const [nodes, setNodes] = useNodesState(initial.nodes)
+  const [edges, setEdges] = useEdgesState(initial.edges)
   const rf = useReactFlow()
   const dark = useAppStore((s) => s.dark)
-  const ready = useRef(false)
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const current = useRef({ ...initial, doc })
+  const lastDraft = useRef(useVaultStore.getState().draft)
+  const active = useRef(true)
 
   const nodeTypes = useMemo(
     () => ({ c_text: TextNode, c_file: FileNode, c_link: LinkNode, c_group: GroupNode }),
     [],
   )
 
+  const publish = useCallback(() => {
+    const store = useVaultStore.getState()
+    if (!active.current || store.currentPath !== path) return
+    const value = current.current
+    const next = JSON.stringify(toCanvas(value.nodes, value.edges, value.doc), null, 2)
+    lastDraft.current = next
+    store.setDraft(next)
+  }, [path])
+
+  const updateNodes = useCallback(
+    (next: Node[], persist = true) => {
+      current.current.nodes = next
+      setNodes(next)
+      if (persist) publish()
+    },
+    [setNodes, publish],
+  )
+  const updateEdges = useCallback(
+    (next: Edge[], persist = true) => {
+      current.current.edges = next
+      setEdges(next)
+      if (persist) publish()
+    },
+    [setEdges, publish],
+  )
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      const persist = changes.some(
+        (change) =>
+          change.type !== 'select' && (change.type !== 'dimensions' || change.setAttributes),
+      )
+      updateNodes(applyNodeChanges(changes, current.current.nodes), Boolean(persist))
+    },
+    [updateNodes],
+  )
+  const onEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      updateEdges(
+        applyEdgeChanges(changes, current.current.edges),
+        changes.some((change) => change.type !== 'select'),
+      )
+    },
+    [updateEdges],
+  )
   const onConnect = useCallback(
-    (c: Connection) => setEdges((eds) => addEdge({ ...c, id: newId() }, eds)),
-    [setEdges],
+    (connection: Connection) => {
+      updateEdges(addEdge({ ...connection, id: newId() }, current.current.edges))
+    },
+    [updateEdges],
+  )
+  const updateText = useCallback(
+    (id: string, text: string) => {
+      updateNodes(
+        current.current.nodes.map((node) =>
+          node.id === id ? { ...node, data: { ...node.data, text } } : node,
+        ),
+      )
+    },
+    [updateNodes],
+  )
+  const displayNodes = useMemo(
+    () => nodes.map((node) => ({ ...node, data: { ...node.data, onTextChange: updateText } })),
+    [nodes, updateText],
   )
 
-  // 防抖落盘 (JSON Canvas)。跳过首帧加载。
   useEffect(() => {
-    if (!ready.current) {
-      ready.current = true
-      return
-    }
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    saveTimer.current = setTimeout(() => {
-      const doc = toCanvas(nodes as Node[], edges as Edge[])
-      void api.vault.write(path, JSON.stringify(doc, null, 2))
-    }, 700)
+    active.current = true
+    const unsubscribe = useVaultStore.subscribe((state) => {
+      if (state.currentPath !== path || state.draft === lastDraft.current) return
+      try {
+        const nextDoc = parseCanvas(state.draft)
+        const next = toReactFlow(nextDoc)
+        lastDraft.current = state.draft
+        current.current = { ...next, doc: nextDoc }
+        setNodes(next.nodes)
+        setEdges(next.edges)
+      } catch {
+        // The parent presents the read error; never replace a damaged file with an empty graph.
+      }
+    })
     return () => {
-      if (saveTimer.current) clearTimeout(saveTimer.current)
+      active.current = false
+      unsubscribe()
     }
-  }, [nodes, edges, path])
+  }, [path, setNodes, setEdges])
 
   const addText = () => {
     const c = rf.screenToFlowPosition({ x: 300, y: 200 })
-    setNodes((ns) => [
-      ...ns,
+    updateNodes([
+      ...current.current.nodes,
       {
         id: newId(),
         type: 'c_text',
@@ -176,10 +242,10 @@ function CanvasInner({ path }: { path: string }) {
   }
   const addFile = () => {
     void inputPrompt('链接到笔记 (相对路径)', 'Welcome.md').then((name) => {
-      if (!name) return
+      if (!name || !active.current || useVaultStore.getState().currentPath !== path) return
       const c = rf.screenToFlowPosition({ x: 360, y: 240 })
-      setNodes((ns) => [
-        ...ns,
+      updateNodes([
+        ...current.current.nodes,
         {
           id: newId(),
           type: 'c_file',
@@ -210,7 +276,7 @@ function CanvasInner({ path }: { path: string }) {
         </button>
       </div>
       <ReactFlow
-        nodes={nodes}
+        nodes={displayNodes}
         edges={edges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
@@ -230,9 +296,18 @@ function CanvasInner({ path }: { path: string }) {
 
 // 画布视图: .canvas 文件用无限白板渲染/编辑 (JSON Canvas 往返), 可被 Obsidian 直接打开。
 export function CanvasView({ path }: { path: string }) {
+  const raw = useVaultStore((s) => (s.currentPath === path ? s.draft : s.rawByPath[path] || ''))
+  const parsed = useMemo(() => {
+    try {
+      return { doc: parseCanvas(raw), error: null }
+    } catch (error) {
+      return { doc: null, error }
+    }
+  }, [raw])
+  if (!parsed.doc) return <ErrorNotice error={parsed.error} context="画布" className="m-3" />
   return (
     <ReactFlowProvider>
-      <CanvasInner key={path} path={path} />
+      <CanvasInner key={path} path={path} doc={parsed.doc} />
     </ReactFlowProvider>
   )
 }

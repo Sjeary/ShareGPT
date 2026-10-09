@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { diffWords } from 'diff'
 import { Loader2, Send, Sparkles, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { useEditorBridge } from '@/store/useEditorBridge'
+import { ErrorNotice } from '@/components/ErrorNotice'
+import { useEditorBridge, type AiEdit } from '@/store/useEditorBridge'
 import { useNotesAiStore } from '@/store/useNotesAiStore'
 import { runAi } from '@/lib/notes/aiClient'
 
@@ -69,11 +70,13 @@ function DiffView({ a, b }: { a: string; b: string }) {
 // 内联 AI 编辑面板: 对选中文本(或光标处)下指令 → 流式生成 → diff 预览 → 保留/放弃/重试。
 export function InlineAiEdit() {
   const principalGeneration = useNotesAiStore((s) => s.principalGeneration)
-  return <InlineAiEditRuntime key={principalGeneration} />
+  const aiEdit = useEditorBridge((s) => s.aiEdit)
+  return aiEdit?.open ? (
+    <InlineAiEditRuntime key={`${principalGeneration}:${aiEdit.id}`} aiEdit={aiEdit} />
+  ) : null
 }
 
-function InlineAiEditRuntime() {
-  const aiEdit = useEditorBridge((s) => s.aiEdit)
+function InlineAiEditRuntime({ aiEdit }: { aiEdit: AiEdit }) {
   const close = useEditorBridge((s) => s.closeAiEdit)
   const replaceRange = useEditorBridge((s) => s.replaceRange)
   const configured = useNotesAiStore((s) => Boolean(s.apiKey && s.baseUrl))
@@ -84,21 +87,12 @@ function InlineAiEditRuntime() {
   const cancelRef = useRef<(() => void) | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const open = Boolean(aiEdit?.open)
   useEffect(() => {
-    if (!open) return
-    /* eslint-disable react-hooks/set-state-in-effect */
-    setInstruction('')
-    setResult('')
-    setErr('')
-    setRunning(false)
-    /* eslint-enable react-hooks/set-state-in-effect */
     const t = setTimeout(() => inputRef.current?.focus(), 30)
     return () => clearTimeout(t)
-  }, [open])
+  }, [])
   useEffect(() => () => cancelRef.current?.(), [])
 
-  if (!aiEdit?.open) return null
   const hasSel = aiEdit.original.trim().length > 0
 
   const run = () => {
@@ -133,9 +127,9 @@ function InlineAiEditRuntime() {
     )
   }
   const keep = () => {
-    replaceRange(aiEdit.from, aiEdit.to, result)
+    const applied = replaceRange(aiEdit, result)
     close()
-    toast.success('已应用 · Ctrl/⌘ Z 可撤回')
+    if (applied) toast.success('已应用 · Ctrl/⌘ Z 可撤回')
   }
 
   const style = {
@@ -181,7 +175,7 @@ function InlineAiEditRuntime() {
         {(result || running || err) && (
           <div className="no-scrollbar max-h-[40vh] overflow-auto border-t border-border p-2.5 text-sm">
             {err ? (
-              <p className="text-xs text-destructive">{err}</p>
+              <ErrorNotice error={err} context="内联 AI 编辑" />
             ) : hasSel && !running && result ? (
               <DiffView a={aiEdit.original} b={result} />
             ) : (

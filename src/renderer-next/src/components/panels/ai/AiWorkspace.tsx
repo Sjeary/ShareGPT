@@ -1,3 +1,5 @@
+import { showErrorToast } from '@/lib/errorToast'
+import { ErrorNotice } from '@/components/ErrorNotice'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
@@ -34,7 +36,7 @@ import { useTranslationStore } from '@/store/useTranslationStore'
 import type { AiKind } from '@/store/useAiStore'
 import { isSenderRunning } from '@/components/panels/service/helpers'
 import { api } from '@/lib/api'
-import { canUseAdvancedAi, canUseTranslation } from '@/lib/aiAccess'
+import { canBrowseExternalWeb, canUseAdvancedAi, canUseTranslation } from '@/lib/aiAccess'
 import { userFacingAiWorkspaceError } from '@/lib/aiWorkspaceError'
 import { coalesceInFlight } from '@/lib/inFlightRequest'
 import { toast } from 'sonner'
@@ -52,6 +54,7 @@ import {
   normalizeGeminiUrl,
   normalizeClaudeUrl,
   normalizeHttpUrl,
+  isExternalBrowsingKind,
 } from './constants'
 import type { AiEventPayload } from './types'
 import { AiEnvironmentPanel } from './AiEnvironmentPanel'
@@ -133,6 +136,9 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     [settings?.advancedAi],
   )
   const advancedMode = advancedAiAllowed && advancedAi.enabled
+  const externalBrowsingAvailable = useAuthStore((s) =>
+    canBrowseExternalWeb(kind, workspaceMode, s.token, s.profile, advancedMode),
+  )
   const availableRoutes = useMemo(() => availableAiRoutes(settings?.sender), [settings?.sender])
   const managedDefaultRoute = useMemo(
     () => managedDefaultRouteForKind(availableRoutes, settings?.sender, kind),
@@ -275,16 +281,10 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         })
         if (showStatus) setFeedback(kind, confirmed ? '已发送' : '已取消发送')
       } catch (error) {
-        const raw = error instanceof Error ? error.message : String(error)
-        const message = raw
-          .replace(/^Error invoking remote method '[^']+': Error:\s*/i, '')
-          .replace(/^Error:\s*/i, '')
-        if (!/网页或标签已经变化|发送确认已失效/.test(message)) {
-          setFeedback(kind, message, 'error')
-        }
+        reportWorkspaceError(error)
       }
     },
-    [activeTabId, environmentId, kind, setFeedback],
+    [activeTabId, environmentId, kind, setFeedback, reportWorkspaceError],
   )
 
   useEffect(() => {
@@ -304,15 +304,19 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const [addressValue, setAddressValue] = useState('')
   const [webAddressOpen, setWebAddressOpen] = useState(false)
 
-  if (!networkReady && webAddressOpen) setWebAddressOpen(false)
+  useEffect(() => {
+    if (networkReady && externalBrowsingAvailable) return
+    const frame = window.requestAnimationFrame(() => setWebAddressOpen(false))
+    return () => window.cancelAnimationFrame(frame)
+  }, [externalBrowsingAvailable, networkReady])
 
   useEffect(() => {
-    if (kind !== 'claude' || document.activeElement === addressInputRef.current) return
+    if (!externalBrowsingAvailable || document.activeElement === addressInputRef.current) return
     setAddressValue(activeTab?.allowExternalBrowsing ? activeTab.url : '')
-  }, [kind, activeTabId, activeTab?.allowExternalBrowsing, activeTab?.url])
+  }, [activeTabId, activeTab?.allowExternalBrowsing, activeTab?.url, externalBrowsingAvailable])
 
   useEffect(() => {
-    if (kind !== 'claude' || !networkReady) return
+    if (!externalBrowsingAvailable || !networkReady) return
     const focusAddressBar = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'l') return
       event.preventDefault()
@@ -320,7 +324,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     }
     window.addEventListener('keydown', focusAddressBar)
     return () => window.removeEventListener('keydown', focusAddressBar)
-  }, [kind, networkReady])
+  }, [externalBrowsingAvailable, networkReady])
 
   useEffect(() => {
     if (!webAddressOpen) return
@@ -430,7 +434,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       toast.success('已加入并重启代理，正在重新检测…')
       window.setTimeout(() => void runProxyCheck(), 1500)
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : '重启代理失败')
+      showErrorToast(err, '重启代理')
     } finally {
       setRestartingProxy(false)
     }
@@ -624,7 +628,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   }, [kind, environmentId, networkReady, ensureWorkspace, reportWorkspaceError])
 
   const openWebPage = useCallback(async () => {
-    if (kind !== 'claude') return
+    if (!externalBrowsingAvailable || !isExternalBrowsingKind(kind)) return
     const url = normalizeHttpUrl(addressValue, { assumeHttps: true })
     if (!url) {
       setFeedback(kind, '请输入有效的 HTTP 或 HTTPS 网址', 'error')
@@ -647,6 +651,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     }
   }, [
     kind,
+    externalBrowsingAvailable,
     addressValue,
     environmentId,
     setFeedback,
@@ -832,7 +837,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
                 </Button>
               </>
             )}
-            {kind === 'claude' && (
+            {externalBrowsingAvailable && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -951,7 +956,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           />
         )}
 
-        {kind === 'claude' && webAddressOpen && (
+        {externalBrowsingAvailable && webAddressOpen && (
           <form
             className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/20 px-3 py-1.5"
             onSubmit={(event) => {
@@ -965,7 +970,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
             <Globe2 className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <Input
               ref={addressInputRef}
-              data-testid="claude-address-input"
+              data-testid={`${kind}-address-input`}
               type="text"
               inputMode="url"
               value={addressValue}
@@ -1012,15 +1017,18 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           </div>
         )}
 
-        {feedback.text && (
+        {feedback.text && feedback.tone === 'error' ? (
+          <ErrorNotice
+            error={feedback.text}
+            context={meta.title}
+            className="shrink-0 rounded-none border-x-0 border-t-0 border-border px-4 py-1.5"
+            onDismiss={() => setFeedback(kind, '')}
+            dismissLabel={`关闭 ${meta.title} 提示`}
+          />
+        ) : feedback.text ? (
           <div
-            role={feedback.tone === 'error' ? 'alert' : 'status'}
-            className={cn(
-              'flex shrink-0 items-start gap-2 border-b border-border px-4 py-1.5 text-xs',
-              feedback.tone === 'error'
-                ? 'bg-destructive/10 text-destructive'
-                : 'bg-muted/40 text-muted-foreground',
-            )}
+            role="status"
+            className="flex shrink-0 items-start gap-2 border-b border-border bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground"
           >
             <span className="min-w-0 flex-1 break-words">{feedback.text}</span>
             <button
@@ -1028,17 +1036,12 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               title="关闭提示"
               aria-label={`关闭 ${meta.title} 提示`}
               onClick={() => setFeedback(kind, '')}
-              className={cn(
-                'shrink-0 rounded p-0.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                feedback.tone === 'error'
-                  ? 'text-destructive/70 hover:bg-destructive/10 hover:text-destructive'
-                  : 'text-muted-foreground/70 hover:bg-muted hover:text-muted-foreground',
-              )}
+              className="shrink-0 rounded p-0.5 text-muted-foreground/70 transition-colors hover:bg-muted hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <X className="size-3.5" />
             </button>
           </div>
-        )}
+        ) : null}
 
         {pendingComposerConfirmation && (
           <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-amber-500/45 bg-amber-500/10 px-4 py-2 text-xs text-amber-800 dark:text-amber-200">

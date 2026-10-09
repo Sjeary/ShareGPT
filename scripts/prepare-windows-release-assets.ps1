@@ -57,14 +57,6 @@ try {
     "sing-box-$singBoxVersion-windows-amd64\sing-box.exe" `
     ([string]$checksums."sing-box".windows.sha256) `
     "sing-box.exe"
-  $frpcVersion = [string]$checksums.frpc.windows.version
-  Get-VerifiedAsset `
-    "frpc" `
-    "https://github.com/fatedier/frp/releases/download/v$frpcVersion/frp_${frpcVersion}_windows_amd64.zip" `
-    "frpc.zip" `
-    "frp_${frpcVersion}_windows_amd64\frpc.exe" `
-    ([string]$checksums.frpc.windows.sha256) `
-    "frpc.exe"
 } finally {
   if (Test-Path -LiteralPath $temporaryDirectory) {
     Remove-Item -LiteralPath $temporaryDirectory -Recurse -Force

@@ -3,37 +3,19 @@ import {
   userDataTransitionState,
 } from '@/lib/userDataTransitionState'
 import { useEffect } from 'react'
-import { create } from 'zustand'
-import { userDataApiFor } from '@/lib/api'
+import { useNotesSyncStore } from '@/store/useNotesSyncStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useVaultStore } from '@/store/useVaultStore'
 import { wsBus } from '@/lib/wsBus'
 import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
-import { mergeVault, type MergeReport, type VaultFiles } from '@/lib/notes/merge'
+import { type VaultFiles } from '@/lib/notes/merge'
 
 // 知识库云端同步 (单会话顺序模型, 无实时强依赖):
 //  - 保存后防抖推送整库 blob (kind=notes) 到 user-store; rev 乐观并发。
 //  - 打开/登录时拉取, 与本地三方合并(防止旧版本覆盖新版本), 有差异弹「同步对比」。
 //  - 未登录 / 服务器不支持 -> 静默纯本地。
 
-export type NotesSyncState = 'off' | 'local' | 'syncing' | 'synced' | 'error'
-
-interface NotesSyncStore {
-  state: NotesSyncState
-  lastReport: MergeReport | null
-  compareOpen: boolean
-  setState: (s: NotesSyncState) => void
-  showReport: (r: MergeReport) => void
-  setCompareOpen: (v: boolean) => void
-}
-export const useNotesSyncStore = create<NotesSyncStore>((set) => ({
-  state: 'off',
-  lastReport: null,
-  compareOpen: false,
-  setState: (state) => set({ state }),
-  showReport: (lastReport) => set({ lastReport, compareOpen: true }),
-  setCompareOpen: (compareOpen) => set({ compareOpen }),
-}))
+export { useNotesSyncStore, type NotesSyncState } from '@/store/useNotesSyncStore'
 
 const PUSH_DEBOUNCE_MS = 900
 const POLL_MS = 25000
@@ -83,22 +65,26 @@ export function useNotesSync(): void {
   const serverUrl = useChatStore((s) => s.identity.serverUrl)
   const token = useChatStore((s) => s.identity.token)
   const username = useChatStore((s) => s.identity.username)
+  const vaultRoot = useVaultStore((s) => s.root)
+  const vaultLoaded = useVaultStore((s) => s.loaded)
 
   useEffect(() => {
+    useNotesSyncStore.getState().resetForPrincipal()
     const setState = useNotesSyncStore.getState().setState
-    if (dataSuspended || !serverUrl || !token) {
+    if (dataSuspended || !vaultLoaded || !serverUrl || !token) {
       setState('local')
       return
     }
     let cancelled = false
     const transitionRevision = userDataTransitionState.revision()
     const snapshot = settingsPrincipalRuntime.current()
-    const api = userDataApiFor(snapshot)
     const controller = new AbortController()
     const isCurrent = () => {
       const current = settingsPrincipalRuntime.current()
       return (
         !cancelled &&
+        useVaultStore.getState().root === vaultRoot &&
+        useVaultStore.getState().loaded &&
         !userDataTransitionState.isSuspended() &&
         userDataTransitionState.revision() === transitionRevision &&
         current.principalId === snapshot.principalId &&
@@ -127,7 +113,8 @@ export function useNotesSync(): void {
 
     const ours = (): VaultFiles => {
       assertCurrent()
-      return { ...useVaultStore.getState().rawByPath }
+      const { rawByPath, currentPath, draft, dirty } = useVaultStore.getState()
+      return { ...rawByPath, ...(dirty && currentPath ? { [currentPath]: draft } : {}) }
     }
 
     // 串行化同步操作, 避免 poll / ws / 409 重试 触发的合并相互交叠。
@@ -140,22 +127,6 @@ export function useNotesSync(): void {
         })
         .catch(() => undefined)
       return syncChain
-    }
-
-    // 把合并结果落盘 (写改动/删多余) 后刷新本地。
-    async function applyMerged(merged: VaultFiles): Promise<void> {
-      const cur = ours()
-      for (const [p, content] of Object.entries(merged)) {
-        assertCurrent()
-        if (cur[p] !== content) await api.vault.write(p, content)
-      }
-      for (const p of Object.keys(cur)) {
-        assertCurrent()
-        if (merged[p] === undefined) await api.vault.remove(p)
-      }
-      assertCurrent()
-      await useVaultStore.getState().reload()
-      assertCurrent()
     }
 
     async function push(baseRev: number, depth = 0): Promise<void> {
@@ -209,10 +180,7 @@ export function useNotesSync(): void {
         const local = ours()
 
         if (remote.rev > storedRev) {
-          const report = mergeVault(base, local, theirs)
-          if (report.changed) {
-            await applyMerged(report.merged)
-          }
+          const report = await useVaultStore.getState().mergeFromCloud(base, theirs)
           assertCurrent()
           saveBase(snapshot.principalId, report.merged)
           saveRev(snapshot.principalId, remote.rev)
@@ -299,5 +267,5 @@ export function useNotesSync(): void {
         }
       }
     }
-  }, [serverUrl, token, username, dataSuspended, dataVersion])
+  }, [serverUrl, token, username, dataSuspended, dataVersion, vaultRoot, vaultLoaded])
 }

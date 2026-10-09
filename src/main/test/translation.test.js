@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { PassThrough } = require("node:stream");
+const http = require("node:http");
 
 const {
   assertOfflineEndpoint,
@@ -159,3 +160,55 @@ test("translation rejects an already aborted request before DNS or network acces
   );
   assert.equal(lookupCalled, false);
 });
+
+for (const responseEvent of ["aborted", "error", "close"]) {
+  test(`translation rejects a partial response on ${responseEvent}`, async () => {
+    await assert.rejects(
+      translateText(
+        { baseUrl: "https://translate.example", text: "hello" },
+        {
+          lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+          httpsRequest: (_options, callback) => {
+            const request = /** @type {any} */ (new EventEmitter());
+            request.destroy = () => {};
+            request.end = () => {
+              const response = /** @type {any} */ (new PassThrough());
+              response.statusCode = 200;
+              callback(response);
+              response.write('{"translatedText":"part');
+              response.emit(responseEvent, new Error("connection reset"));
+              response.emit("error", new Error("late response error"));
+              response.emit("close");
+              request.emit("error", new Error("late request error"));
+            };
+            return request;
+          },
+        },
+      ),
+      /连接中断|connection reset/,
+    );
+  });
+}
+
+test(
+  "translation rejects a real socket disconnect after response headers",
+  { timeout: 5000 },
+  async (t) => {
+    const server = http.createServer((_request, response) => {
+      response.writeHead(200, { "Content-Type": "application/json", "Content-Length": "1000" });
+      response.write('{"translatedText":"partial');
+      setImmediate(() => response.socket?.destroy());
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve(undefined)));
+    t.after(() => server.close());
+    const address = /** @type {import("node:net").AddressInfo} */ (server.address());
+    await assert.rejects(
+      translateText({
+        mode: "offline",
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        text: "hello",
+      }),
+      /连接中断|aborted|socket hang up/,
+    );
+  },
+);

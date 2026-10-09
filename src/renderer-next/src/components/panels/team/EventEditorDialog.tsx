@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Trash2, Users } from 'lucide-react'
 import { toast } from 'sonner'
+import { StaleSettingsPrincipalError } from '@/lib/settingsPrincipalRuntime'
 import { cn } from '@/lib/utils'
 import {
   Dialog,
@@ -190,6 +191,7 @@ function EventEditorForm({
       }
       onClose()
     } catch (err) {
+      if (err instanceof StaleSettingsPrincipalError) return
       toast.error(err instanceof Error ? err.message : '保存失败')
     } finally {
       setSaving(false)
@@ -204,6 +206,7 @@ function EventEditorForm({
       toast.success('事件已删除')
       onClose()
     } catch (err) {
+      if (err instanceof StaleSettingsPrincipalError) return
       toast.error(err instanceof Error ? err.message : '删除失败')
     } finally {
       setSaving(false)

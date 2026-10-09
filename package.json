@@ -1,8 +1,8 @@
 {
   "name": "sharegpt-desktop",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "ShareGPT desktop client with built-in messaging and embedded ChatGPT, Gemini and Claude web access (Gemini/Claude optional).",
-  "main": "src/main/main.js",
+  "main": "src/main/main_sender.js",
   "author": "Sjeary",
   "license": "GPL-3.0-or-later",
   "engines": {
@@ -35,6 +35,7 @@
     "typecheck:main": "tsc -p src/main/jsconfig.json",
     "verify:browser-privacy": "electron scripts/verify-browser-privacy.js",
     "verify:browser-privacy-ui": "npm run build:next && node scripts/verify-browser-privacy-ui.js",
+    "verify:error-feedback": "npm run build:next && node scripts/verify-error-feedback.js",
     "verify:collab-login-compatibility": "npm run build:next && node scripts/verify-collab-login-compatibility.js",
     "verify:advanced-environment-recreate": "npm run build:next && node scripts/verify-collab-login-compatibility.js --case=advanced-environment-recreate",
     "verify:ai-composer": "electron scripts/verify-ai-composer.js",
@@ -57,25 +58,24 @@
     "verify:release-contract": "node scripts/verify-release-contract.mjs",
     "verify:release-source": "node scripts/verify-release-source.mjs",
     "verify:signing-boundaries": "node scripts/verify-signing-boundaries.mjs",
-    "prepare:assets": "node scripts/prepare-assets.mjs all",
+    "prepare:assets": "node scripts/prepare-assets.mjs sender",
     "prepare:release-mac-assets": "bash scripts/prepare-macos-release-assets.sh",
     "build:next": "npm --prefix src/renderer-next run build",
-    "dev": "npm run build:next && node scripts/prepare-assets.mjs all && npm exec -- electron .",
-    "dev:sender": "npm run build:next && node scripts/prepare-assets.mjs sender && npm exec -- electron . --mode=sender",
-    "dev:receiver": "npm run build:next && node scripts/prepare-assets.mjs receiver && npm exec -- electron . --mode=receiver",
-    "dist:win": "npm run build:next && node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --win portable",
-    "dist:win:sender": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --win nsis --config build.sender.json",
-    "dist:win:receiver": "node scripts/prepare-assets.mjs receiver --required && npm exec -- electron-builder --win portable --config build.receiver.json",
-    "dist:win:split": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --win portable --config build.sender.json && node scripts/prepare-assets.mjs receiver --required && npm exec -- electron-builder --win portable --config build.receiver.json",
-    "dist:win:installer": "npm run build:next && node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --win nsis --publish never",
-    "dist:win:release": "npm run build:next && node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --win nsis -c.forceCodeSigning=true",
-    "dist:mac": "npm run build:next && node scripts/prepare-assets.mjs sender --required && npm exec -- electron-builder --mac --config build.sender.json",
+    "dev": "npm run build:next && npm run prepare:assets -- --required && npm exec -- electron .",
+    "dev:sender": "npm run dev",
+    "dist:win": "npm run build:next && npm run prepare:assets -- --required && npm exec -- electron-builder --win portable",
+    "dist:win:sender": "npm run dist:win:installer",
+    "dist:win:installer": "npm run build:next && npm run prepare:assets -- --required && npm exec -- electron-builder --win nsis --publish never",
+    "dist:win:release": "npm run build:next && npm run prepare:assets -- --required && npm exec -- electron-builder --win nsis -c.forceCodeSigning=true",
+    "dist:mac": "npm run build:next && npm run prepare:assets -- --required && npm exec -- electron-builder --mac --config build.sender.json",
     "dist:mac:sender": "npm run dist:mac",
-    "dist:mac:sender:local": "npm run build:next && node scripts/prepare-assets.mjs sender --required && CSC_IDENTITY_AUTO_DISCOVERY=false npm exec -- electron-builder --mac dir --config build.sender.json -c.mac.notarize=false -c.mac.hardenedRuntime=false && bash scripts/sign-local-macos.sh release_sender/mac-arm64/ShareGPT.app",
-    "dist:linux": "node scripts/prepare-assets.mjs all --required && npm exec -- electron-builder --linux AppImage",
+    "dist:mac:sender:local": "npm run dist:mac:local",
+    "dist:linux": "npm run build:next && npm run prepare:assets -- --required && npm exec -- electron-builder --linux AppImage",
     "dev:admin": "npm --prefix admin_console run dev",
     "dist:admin:win": "npm --prefix admin_console run dist:win",
-    "dist:admin:mac": "npm --prefix admin_console run dist:mac"
+    "dist:admin:mac": "npm --prefix admin_console run dist:mac",
+    "dist:mac:local": "npm run build:next && npm run prepare:assets -- --required && CSC_IDENTITY_AUTO_DISCOVERY=false npm exec -- electron-builder --mac dir --config build.sender.json -c.mac.notarize=false -c.mac.hardenedRuntime=false && node scripts/verify-packaged-dependencies.cjs release_sender/mac-arm64/ShareGPT.app/Contents/Resources/app.asar && bash scripts/sign-local-macos.sh release_sender/mac-arm64/ShareGPT.app",
+    "postinstall": "node scripts/prepare-terminal.cjs"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",
@@ -96,6 +96,7 @@
     "files": [
       "src/**/*",
       "!src/**/.npm-cache{,/**/*}",
+      "!src/**/.cache{,/**/*}",
       "!src/renderer-next/node_modules/**",
       "!src/renderer-next/src/**",
       "!src/renderer-next/public/**",
@@ -113,7 +114,8 @@
         "from": "build/bin",
         "to": "bin",
         "filter": [
-          "**/*"
+          "sing-box",
+          "sing-box.exe"
         ]
       }
     ],
@@ -155,12 +157,16 @@
         "AppImage"
       ],
       "category": "Network"
-    }
+    },
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ]
   },
   "dependencies": {
     "chokidar": "^5.0.0",
     "electron-updater": "^6.8.9",
     "https-proxy-agent": "^7.0.6",
+    "node-pty": "1.1.0",
     "socks-proxy-agent": "^8.0.5"
   }
 }

@@ -5,6 +5,7 @@ import {
   type SettingsPrincipalSnapshot,
 } from '@/lib/settingsPrincipalRuntime'
 import { assertUserDataWritable, userDataTransitionState } from '@/lib/userDataTransitionState'
+import { mergeVault, type MergeReport, type VaultFiles } from '@/lib/notes/merge'
 import { coalesceInFlight } from '@/lib/inFlightRequest'
 import type { VaultChangeEvent, VaultFileMeta, VaultImportReport } from '@/types/api'
 import { dump as yamlDump } from 'js-yaml'
@@ -17,6 +18,7 @@ import type { ParsedNote } from '@/lib/notes/types'
 
 interface VaultState {
   loaded: boolean
+  loadError: string
   root: string
   rawByPath: Record<string, string> // 磁盘原文 (含 frontmatter)
   notesByPath: Record<string, ParsedNote>
@@ -32,6 +34,7 @@ interface VaultState {
   flushPending: () => Promise<void>
   resetForPrincipal: () => void
   reload: () => Promise<void>
+  mergeFromCloud: (base: VaultFiles, theirs: VaultFiles) => Promise<MergeReport>
   openNote: (path: string) => Promise<void>
   setDraft: (content: string) => void
   saveCurrent: () => Promise<void>
@@ -59,6 +62,9 @@ export const useVaultStore = create<VaultState>((set, get) => {
   let owner: SettingsPrincipalSnapshot | null = null
   const loads = new Map<string, Promise<void>>()
   const operations = new Set<Promise<unknown>>()
+  let operationChain: Promise<unknown> = Promise.resolve()
+  let rootEpoch = 0
+  let changingRoot = false
   const snapshotForOperation = () => {
     const snapshot = owner ?? settingsPrincipalRuntime.snapshot()
     settingsPrincipalRuntime.assertCurrent(snapshot)
@@ -67,7 +73,16 @@ export const useVaultStore = create<VaultState>((set, get) => {
   const track =
     <T extends unknown[], R>(operation: (...args: T) => Promise<R>) =>
     (...args: T): Promise<R> => {
-      const pending = operation(...args)
+      const snapshot = settingsPrincipalRuntime.current()
+      const epoch = rootEpoch
+      const pending = operationChain
+        .catch(() => undefined)
+        .then(() => {
+          settingsPrincipalRuntime.assertCurrent(snapshot)
+          if (epoch !== rootEpoch) throw new Error('知识库已切换，请重试')
+          return operation(...args)
+        })
+      operationChain = pending
       operations.add(pending)
       void pending.finally(() => operations.delete(pending)).catch(() => undefined)
       return pending
@@ -82,8 +97,15 @@ export const useVaultStore = create<VaultState>((set, get) => {
     }, 600)
   }
 
+  const flushDraft = async () => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = null
+    while (get().dirty && get().currentPath) await state.saveCurrent()
+  }
+
   const state: VaultState = {
     loaded: false,
+    loadError: '',
     root: '',
     rawByPath: {},
     notesByPath: {},
@@ -97,11 +119,14 @@ export const useVaultStore = create<VaultState>((set, get) => {
 
     resetForPrincipal: () => {
       owner = null
+      rootEpoch++
+      changingRoot = false
       loads.clear()
       if (saveTimer) clearTimeout(saveTimer)
       saveTimer = null
       set({
         loaded: false,
+        loadError: '',
         root: '',
         rawByPath: {},
         notesByPath: {},
@@ -122,7 +147,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
         (entry): entry is PromiseRejectedResult => entry.status === 'rejected',
       )
       if (failed) throw failed.reason
-      if (get().dirty) await get().saveCurrent()
+      await flushDraft()
     },
     init: async () => {
       const snapshot = settingsPrincipalRuntime.snapshot()
@@ -140,17 +165,22 @@ export const useVaultStore = create<VaultState>((set, get) => {
         } catch {
           /* 监听不可用不致命 */
         }
-        let root = ''
         try {
-          root = await api.vault.getRoot()
+          const root = await api.vault.getRoot()
+          settingsPrincipalRuntime.assertCurrent(snapshot)
+          set({ root })
+          await state.reload()
+          settingsPrincipalRuntime.assertCurrent(snapshot)
+          set({ loaded: true, loadError: '' })
         } catch {
-          /* 取不到 root 则保持空串 */
+          if (
+            settingsPrincipalRuntime.current().principalId === snapshot.principalId &&
+            settingsPrincipalRuntime.current().generation === snapshot.generation
+          )
+            set({
+              loadError: '无法完整读取知识库，原有资料已保留。请检查文件和目录访问权限后重新加载。',
+            })
         }
-        settingsPrincipalRuntime.assertCurrent(snapshot)
-        set({ root })
-        await get().reload()
-        settingsPrincipalRuntime.assertCurrent(snapshot)
-        set({ loaded: true })
       })
     },
 
@@ -168,7 +198,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
         }
         const index = rebuild(notesByPath)
         const cur = get().currentPath
-        const keepCur = cur && notesByPath[cur] ? cur : null
+        const keepCur = cur && (notesByPath[cur] || get().dirty) ? cur : null
         set((s) => ({
           fileList,
           rawByPath,
@@ -194,16 +224,16 @@ export const useVaultStore = create<VaultState>((set, get) => {
       const snapshot = snapshotForOperation()
       const api = userDataApiFor(snapshot)
       // 保存上一篇未落盘的改动
-      if (get().dirty && get().currentPath) await get().saveCurrent()
+      await flushDraft()
       let content = get().rawByPath[path]
       if (content === undefined) {
         try {
           const f = await api.vault.read(path)
           content = f.content
           set((s) => ({ rawByPath: { ...s.rawByPath, [path]: content } }))
-        } catch {
+        } catch (error) {
           settingsPrincipalRuntime.assertCurrent(snapshot)
-          content = ''
+          throw error
         }
       }
       set({ currentPath: path, draft: content, dirty: false })
@@ -212,6 +242,8 @@ export const useVaultStore = create<VaultState>((set, get) => {
     setDraft: (content) => {
       assertUserDataWritable()
       snapshotForOperation()
+      if (changingRoot) throw new Error('正在切换知识库，请稍后编辑')
+      if (!get().currentPath || get().draft === content) return
       set({ draft: content, dirty: true })
       scheduleSave()
     },
@@ -220,7 +252,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
       const snapshot = snapshotForOperation()
       const api = userDataApiFor(snapshot)
       const { currentPath, draft } = get()
-      if (!currentPath) return
+      if (!currentPath || !get().dirty) return
       await api.vault.write(currentPath, draft)
       const parsed = parseNote({
         path: currentPath,
@@ -260,7 +292,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
           indexVersion: s.indexVersion + 1,
         }
       })
-      await get().openNote(f.path)
+      await state.openNote(f.path)
       return f.path
     },
 
@@ -268,6 +300,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
       assertUserDataWritable()
       const snapshot = snapshotForOperation()
       const api = userDataApiFor(snapshot)
+      await flushDraft()
       let target = to.trim()
       // 无扩展名才补 .md; 保留 .canvas/.base 等已有扩展。
       if (!/\.[a-z0-9]+$/i.test(target)) target += '.md'
@@ -288,7 +321,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
       }
       await api.vault.rename(from, target)
       if (get().currentPath === from) set({ currentPath: target })
-      await get().reload()
+      await state.reload()
     },
 
     deleteNote: async (path) => {
@@ -318,6 +351,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
       assertUserDataWritable()
       const snapshot = snapshotForOperation()
       const api = userDataApiFor(snapshot)
+      await flushDraft()
       const raw = get().rawByPath[path] ?? ''
       const { body } = splitFrontmatter(raw)
       const keys = Object.keys(data)
@@ -341,12 +375,13 @@ export const useVaultStore = create<VaultState>((set, get) => {
       assertUserDataWritable()
       const snapshot = snapshotForOperation()
       const api = userDataApiFor(snapshot)
+      await flushDraft()
       for (const { path, text } of items) {
         const raw = get().rawByPath[path] ?? ''
         if (raw.includes(text.trim())) continue
         await api.vault.write(path, raw.replace(/\s*$/, '') + '\n\n' + text + '\n')
       }
-      await get().reload()
+      await state.reload()
     },
 
     openToday: async () => {
@@ -358,10 +393,10 @@ export const useVaultStore = create<VaultState>((set, get) => {
       const name = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
       const path = `Daily/${name}.md`
       if (get().notesByPath[path]) {
-        await get().openNote(path)
+        await state.openNote(path)
         return
       }
-      await get().createNote(path, `# ${name}\n\n`)
+      await state.createNote(path, `# ${name}\n\n`)
     },
 
     moveToFolder: async (from, folder) => {
@@ -371,13 +406,14 @@ export const useVaultStore = create<VaultState>((set, get) => {
       const base = from.split('/').pop() as string
       const to = folder ? `${folder.replace(/\/$/, '')}/${base}` : base
       if (to === from) return
-      await get().renameNote(from, to)
+      await state.renameNote(from, to)
     },
 
     renameFolder: async (oldPrefix, newPrefix) => {
       assertUserDataWritable()
       const snapshot = snapshotForOperation()
       const api = userDataApiFor(snapshot)
+      await flushDraft()
       const op = oldPrefix.replace(/\/$/, '')
       const np = newPrefix.replace(/\/$/, '')
       if (!np || np === op) return
@@ -389,7 +425,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
           /* 单个失败跳过 */
         }
       }
-      await get().reload()
+      await state.reload()
     },
 
     deleteFolder: async (prefix) => {
@@ -405,7 +441,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
           /* 跳过 */
         }
       }
-      await get().reload()
+      await state.reload()
     },
 
     setRootViaDialog: async () => {
@@ -414,10 +450,38 @@ export const useVaultStore = create<VaultState>((set, get) => {
       const api = userDataApiFor(snapshot)
       const picked = await api.vault.pickFolder()
       if (!picked) return false
-      const res = await api.vault.setRoot(picked)
-      set({ root: res.root })
-      await get().reload()
-      return true
+      await flushDraft()
+      changingRoot = true
+      const wasLoaded = get().loaded
+      let switched = false
+      set({ loaded: false, busy: true, loadError: '' })
+      try {
+        const res = await api.vault.setRoot(picked)
+        rootEpoch++
+        switched = true
+        set({
+          root: res.root,
+          currentPath: null,
+          draft: '',
+          dirty: false,
+          rawByPath: {},
+          notesByPath: {},
+          fileList: [],
+          index: null,
+        })
+        await state.reload()
+        set({ loaded: true })
+        return true
+      } catch (error) {
+        set({
+          loaded: switched ? false : wasLoaded,
+          loadError: switched ? '新知识库暂时无法完整读取，请重新加载。原知识库的修改已保存。' : '',
+        })
+        throw error
+      } finally {
+        changingRoot = false
+        set({ busy: false })
+      }
     },
 
     importVault: async () => {
@@ -429,10 +493,60 @@ export const useVaultStore = create<VaultState>((set, get) => {
       set({ busy: true })
       try {
         const report = await api.vault.importFrom(picked)
-        await get().reload()
+        await state.reload()
         return report
       } finally {
         set({ busy: false })
+      }
+    },
+
+    mergeFromCloud: async (base, theirs) => {
+      const snapshot = snapshotForOperation()
+      const api = userDataApiFor(snapshot)
+      await flushDraft()
+      let local = { ...get().rawByPath }
+      const persisted = { ...local }
+      let report = mergeVault(base, local, theirs)
+      const includeNewDraft = () => {
+        const { currentPath, draft, dirty } = get()
+        if (!dirty || !currentPath || draft === local[currentPath]) return false
+        const nextLocal = { ...local, [currentPath]: draft }
+        const next = mergeVault(local, nextLocal, report.merged)
+        local = nextLocal
+        report = {
+          ...next,
+          changed: report.changed || next.changed,
+          fromCloud: [...new Set([...report.fromCloud, ...next.fromCloud])],
+          keptLocal: [...new Set([...report.keptLocal, ...next.keptLocal])],
+          autoMerged: [...new Set([...report.autoMerged, ...next.autoMerged])],
+          deleted: [...new Set([...report.deleted, ...next.deleted])],
+          conflicts: [...report.conflicts, ...next.conflicts],
+        }
+        return true
+      }
+      // Typing can continue during every IPC write and reload. Rebase it onto the
+      // pending merge until the persisted result includes both sides.
+      for (;;) {
+        for (const [path, content] of Object.entries(report.merged)) {
+          if (persisted[path] !== content) {
+            await api.vault.write(path, content)
+            persisted[path] = content
+          }
+        }
+        for (const path of Object.keys(persisted)) {
+          if (report.merged[path] === undefined) {
+            await api.vault.remove(path)
+            delete persisted[path]
+          }
+        }
+        if (includeNewDraft()) continue
+        await state.reload()
+        if (includeNewDraft()) continue
+        if (saveTimer) clearTimeout(saveTimer)
+        saveTimer = null
+        const path = get().currentPath
+        set({ draft: path ? (report.merged[path] ?? '') : '', dirty: false })
+        return report
       }
     },
 
@@ -485,6 +599,7 @@ export const useVaultStore = create<VaultState>((set, get) => {
       }))
     },
   }
+  const wrapped = { ...state }
   for (const name of [
     'init',
     'reload',
@@ -502,10 +617,11 @@ export const useVaultStore = create<VaultState>((set, get) => {
     'setRootViaDialog',
     'importVault',
     'applyExternalChanges',
+    'mergeFromCloud',
   ]) {
     const key = name as keyof VaultState
     const original = state[key] as (...args: unknown[]) => Promise<unknown>
-    Object.assign(state, { [key]: track(original) })
+    Object.assign(wrapped, { [key]: track(original) })
   }
-  return state
+  return wrapped
 })

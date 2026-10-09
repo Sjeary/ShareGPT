@@ -1,11 +1,12 @@
 import { create } from 'zustand'
+import type { SettingsPrincipalSnapshot } from '@/lib/settingsPrincipalRuntime'
 
 // 组队(共享)日历 store 切片 (本面板自有, 不污染 useAppStore/useChatStore)。
 // 数据来源:
 //  - 协作服务器 REST: {server}/api/team-calendar/events  (鉴权复用聊天 token)
 //  - 实时: 协作 WebSocket (wss?://host/ws?token=...) 的 calendar_event_* 消息;
 //    若服务端不支持则降级到 ~15s 轮询。
-//  - 未登录 / 服务端无该接口(404/error): 降级为本地团队日历, 持久化到 localStorage。
+//  - 未登录: 使用 Principal 隔离的本地日历；服务端故障保留当前账号镜像并显示错误。
 // 事件按房间(subnetKey)隔离, 由服务端盖章; 本地模式下全部归到本地房间。
 
 // RSVP 状态 (对齐飞书): 接受 / 拒绝 / 待定 / 未响应。
@@ -46,6 +47,9 @@ export type CalendarView = 'month' | 'week'
 interface TeamCalendarState {
   events: Record<string, TeamEvent> // id -> event
   source: CalendarSource
+  owner: SettingsPrincipalSnapshot | null
+  loading: boolean
+  loadError: string
   view: CalendarView
   // 锚点日期(当前视图所在的某一天), ISO 字符串。
   anchor: string
@@ -73,6 +77,9 @@ interface TeamCalendarState {
 export const useTeamCalendarStore = create<TeamCalendarState>((set) => ({
   events: {},
   source: 'loading',
+  owner: null,
+  loading: false,
+  loadError: '',
   view: 'month',
   anchor: new Date().toISOString(),
   hiddenOrganizers: [],
@@ -108,6 +115,9 @@ export const useTeamCalendarStore = create<TeamCalendarState>((set) => ({
     set({
       events: {},
       source: 'loading',
+      owner: null,
+      loading: false,
+      loadError: '',
       view: 'month',
       anchor: new Date().toISOString(),
       hiddenOrganizers: [],

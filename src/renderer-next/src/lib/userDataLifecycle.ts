@@ -2,6 +2,7 @@ import { useCalendarStore } from '@/store/useCalendarStore'
 import { useTasksStore } from '@/store/useTasksStore'
 import { useFocusStore } from '@/store/useFocusStore'
 import { useVaultStore } from '@/store/useVaultStore'
+import { useNotesSyncStore } from '@/store/useNotesSyncStore'
 import { chatPersistence } from './chatPersistence'
 import { userDataTransitionState } from './userDataTransitionState'
 import type { LegacyDataCategory } from '@/types/api'
@@ -21,7 +22,10 @@ export async function reloadUserDataRuntime(
   if (categories.includes('calendar')) useCalendarStore.getState().resetForPrincipal()
   if (categories.includes('tasks')) useTasksStore.getState().resetForPrincipal()
   if (categories.includes('focus')) useFocusStore.getState().resetForPrincipal()
-  if (categories.includes('notes')) useVaultStore.getState().resetForPrincipal()
+  if (categories.includes('notes')) {
+    useVaultStore.getState().resetForPrincipal()
+    useNotesSyncStore.getState().resetForPrincipal()
+  }
   if (categories.includes('chat')) chatPersistence.resetForPrincipal()
   await Promise.all([
     loaded.calendar && categories.includes('calendar')

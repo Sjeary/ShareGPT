@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { MapPin, FileText, Link2, Trash2, Repeat, Check, Users } from 'lucide-react'
+import { showErrorToast } from '@/lib/errorToast'
+import { StaleSettingsPrincipalError } from '@/lib/settingsPrincipalRuntime'
 import { shareEventToTeam } from '@/lib/integrations'
 import {
   Dialog,
@@ -182,7 +184,7 @@ export function EventEditorDialog({
   }
 
   // 共享到组队日历: 把当前表单内容作为一条团队事件发出 (登录则同步服务器, 否则本地预览)。
-  const handleShareToTeam = () => {
+  const handleShareToTeam = async () => {
     const trimmed = title.trim()
     if (!trimmed) {
       toast.error('请输入标题')
@@ -190,16 +192,20 @@ export function EventEditorDialog({
     }
     const { startIso, endIso } = computeTimes()
     const color = calendars.find((c) => c.id === calendarId)?.color
-    shareEventToTeam({
-      title: trimmed,
-      start: startIso,
-      end: endIso,
-      allDay,
-      location: location.trim() || undefined,
-      description: notes.trim() || undefined,
-      color,
-    })
-    toast.success('已共享到组队日历')
+    try {
+      await shareEventToTeam({
+        title: trimmed,
+        start: startIso,
+        end: endIso,
+        allDay,
+        location: location.trim() || undefined,
+        description: notes.trim() || undefined,
+        color,
+      })
+      toast.success('已共享到组队日历')
+    } catch (error) {
+      if (!(error instanceof StaleSettingsPrincipalError)) showErrorToast(error, '共享日历失败')
+    }
   }
 
   return (

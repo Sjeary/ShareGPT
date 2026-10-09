@@ -2,6 +2,7 @@ const assert = require("node:assert");
 const http = require("node:http");
 const os = require("node:os");
 const { app, BrowserWindow, session } = require("electron");
+if (process.platform === "darwin") app.setActivationPolicy("prohibited");
 const { applyEnvironmentToWebContents, clearAiSessionData } = require("../src/main/browserPrivacy");
 
 // 开发者自测：只访问 127.0.0.1，不打开 ChatGPT/Gemini/Claude，也不触发第三方风控。

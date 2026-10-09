@@ -106,6 +106,27 @@ async function main() {
       "created AI workspace must be present in the main-process tab registry",
     );
 
+    const personalExternalWorkspace = await page.evaluate(() =>
+      window.api.createAiView("gpt", {
+        lastUrl: "https://example.com/personal-reference",
+        title: "example.com",
+        allowExternalBrowsing: true,
+      }),
+    );
+    const personalExternalTab = personalExternalWorkspace.tabs?.find(
+      (tab) => tab.id === personalExternalWorkspace.activeTabId,
+    );
+    assert.equal(
+      personalExternalTab?.allowExternalBrowsing,
+      true,
+      "personal ChatGPT workspace must accept an explicit external web tab",
+    );
+    assert.equal(personalExternalTab?.url, "https://example.com/personal-reference");
+    await page.evaluate(
+      (tabId) => window.api.closeAiView("gpt", { tabId }),
+      personalExternalTab.id,
+    );
+
     await page.locator('[data-tour="nav-service"]').click();
     assert.equal(await page.getByText(/请先登录账号并保持在线/).count(), 0);
     assert.equal(await page.getByText("代理协议", { exact: true }).count(), 1);
@@ -126,6 +147,18 @@ async function main() {
     const senderStatus = await page.evaluate(() => window.api.getStatus());
     assert.equal(senderStatus.senderRunning, true);
     assert.notEqual(senderStatus.senderSocksPort, 1080);
+
+    await page.locator('[data-tour="nav-gpt"]').click();
+    const personalOpenWebPageButton = page.getByRole("button", {
+      name: "打开网页",
+      exact: true,
+    });
+    await personalOpenWebPageButton.waitFor({ state: "visible" });
+    assert.equal(await personalOpenWebPageButton.isEnabled(), true);
+    await personalOpenWebPageButton.click();
+    await page.getByTestId("gpt-address-input").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: "收起网址输入", exact: true }).click();
+    await page.getByTestId("gpt-address-input").waitFor({ state: "detached" });
 
     const ensuredWorkspace = await page.evaluate(
       async ({ tabId, port }) => {
@@ -148,6 +181,16 @@ async function main() {
     assert.equal(ensuredWorkspace.rendererAlive, true);
     assert.equal(await page.getByText("账号身份尚未准备好", { exact: true }).count(), 0);
     await page.evaluate(() => window.api.setActiveAiKind(""));
+
+    await page.locator('[data-tour="nav-account"]').click();
+    await page.locator("#browser-environment-mode").selectOption("proxy");
+    const activeExitSync = page.getByRole("button", {
+      name: "从当前出口同步",
+      exact: true,
+    });
+    await activeExitSync.waitFor({ state: "visible" });
+    assert.equal(await activeExitSync.isEnabled(), true);
+    await page.locator('[data-tour="nav-service"]').click();
 
     await page.getByRole("button", { name: "停止代理" }).click();
     await page.getByRole("button", { name: "开启代理" }).waitFor({ state: "visible" });
@@ -177,13 +220,37 @@ async function main() {
     assert.doesNotMatch(await serviceNav.getAttribute("class"), /text-sidebar-accent-foreground/);
     assert.equal(await page.getByText("当前：个人工作区", { exact: true }).count(), 1);
     assert.equal(await page.locator("#account-server").count(), 0);
+    const interfaceCard = page
+      .getByText("界面设置", { exact: true })
+      .locator("xpath=ancestor::*[@data-slot='card'][1]");
+    const localDataCard = page
+      .getByText("本机资料", { exact: true })
+      .locator("xpath=ancestor::*[@data-slot='card'][1]");
+    const [interfaceBounds, localDataBounds] = await Promise.all([
+      interfaceCard.boundingBox(),
+      localDataCard.boundingBox(),
+    ]);
+    assert.ok(interfaceBounds && localDataBounds);
+    assert.ok(
+      Math.abs(interfaceBounds.x - localDataBounds.x) < 1,
+      JSON.stringify({ interfaceBounds, localDataBounds }),
+    );
+    assert.ok(Math.abs(interfaceBounds.width - localDataBounds.width) < 1);
     assert.equal(await page.getByRole("button", { name: "清除", exact: true }).count(), 3);
     assert.equal(await page.getByRole("button", { name: "重建资料环境", exact: true }).count(), 3);
+    assert.equal(
+      await page.getByRole("button", { name: "代理未开启", exact: true }).isDisabled(),
+      true,
+    );
+    assert.equal(await page.getByText(/请先到“网络 \/ 代理”开启个人代理/).count(), 1);
     assert.equal(await page.locator("#browser-privacy-sync").count(), 0);
     await page.getByText("界面设置", { exact: true }).waitFor({ state: "visible" });
     assert.equal(await page.locator("#ui-show-calendar").getAttribute("aria-checked"), "false");
     assert.equal(await page.locator("#ui-show-notes").getAttribute("aria-checked"), "false");
     assert.equal(await page.locator("#ui-show-team").count(), 0);
+    assert.equal(await page.locator("#advanced-ai-environments").count(), 0);
+    assert.equal(await page.locator("#ui-show-terminal").count(), 0);
+    assert.equal(await page.locator('[data-tour="nav-terminal"]').count(), 0);
     assert.equal(await page.getByText("协作通知", { exact: true }).count(), 0);
     await page.locator("#ui-show-calendar").click();
     await page.locator("#ui-show-notes").click();

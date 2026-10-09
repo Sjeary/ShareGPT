@@ -139,7 +139,7 @@ export function OverviewPanel() {
         </div>
 
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatCard icon={Sparkles} label="高级 AI 授权" value={stats.advancedAi} tone="primary" />
+          <StatCard icon={Sparkles} label="高级功能授权" value={stats.advancedAi} tone="primary" />
           <StatCard icon={Network} label="可用团队线路" value={managedStats.routes} />
           <StatCard
             icon={Languages}

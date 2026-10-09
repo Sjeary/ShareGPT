@@ -28,10 +28,10 @@ const {
 const { buildUpdateReleaseInfo } = require("./updateRelease");
 const { copyMissingChromiumPartitions } = require("./userDataPath");
 const { resolvePrincipalIdentity } = require("./principalIdentity");
-const { readLocalJson, writeLocalJson } = require("./localJsonStore");
+const { readLocalJson, writeLocalJson, atomicReplace } = require("./localJsonStore");
 const { PrincipalData } = require("./principalData");
 const {
-  LOCAL_SECRET_KEYS,
+  isLocalSecretPath,
   LEGACY_SECRET_DECRYPTION_FAILED,
   decodeLegacyEncryptedSettings,
   protectSettingsSecrets,
@@ -64,6 +64,8 @@ const DEFAULT_TARGET_DOMAINS = [
   "cloudflare.com",
   // 设置页用它查询代理出口的时区与城市级位置；必须经发送代理，不能回落真实出口。
   "ipwho.is",
+  "ipinfo.io",
+  "api.ipify.org",
   "wp.com",
   "gemini.google.com",
   "google.com",
@@ -795,13 +797,12 @@ class Backend {
       requirePrincipalContext: true,
     });
     this.runtimeDir = path.join(this.app.getPath("userData"), "runtime");
-    const isolatedDevelopment = !this.app.isPackaged && Boolean(process.env.SHAREGPT_USER_DATA);
+    const isolatedDevelopment = !this.app.isPackaged;
     this.updatesDir = path.join(
       this.app.getPath(isolatedDevelopment ? "userData" : "downloads"),
       "ShareGPT Updates",
     );
-    // An explicitly isolated development profile must not import the user's
-    // installed-app backups (including saved login and browser state).
+    // Development must not import installed-app backups, including saved logins.
     this.updateBackupsDir = path.join(
       this.app.getPath(isolatedDevelopment ? "userData" : "appData"),
       "ShareGPT Backups",
@@ -813,6 +814,7 @@ class Backend {
     // 当前运行中的发送端 SOCKS 端口 / 实际走代理的域名后缀集合 (供更新代理、代理检测分类复用)。
     this.activeSocksPort = null;
     this.activeProxiedSuffixes = null;
+    this.activeRouteAll = false;
     this.activeAiProxyRoutes = [];
     this.activePrincipalId = LOCAL_PRINCIPAL_ID;
     this.activePrincipalServerUrl = "";
@@ -942,6 +944,9 @@ class Backend {
       ...autoDomains,
       // 环境检测必须始终经远端出口，即使 all/dev 模式仍保存着旧版可编辑域名清单。
       "ipwho.is",
+      "ipinfo.io",
+      "api.ipify.org",
+      "cloudflare.com",
     ]
       .map((s) => String(s).trim().replace(/^\./, ""))
       .filter(Boolean);
@@ -1012,15 +1017,18 @@ class Backend {
     }
 
     // Default templates describe setup; credentials are entered and protected through settings.
-    // Never materialize a plaintext saved password/API key from a distributed example file.
-    const withoutExampleSecrets = (value, key = "") => {
-      if (LOCAL_SECRET_KEYS.has(key.toLowerCase())) return "";
-      if (Array.isArray(value)) return value.map((nested) => withoutExampleSecrets(nested, key));
+    // Never materialize plaintext credentials from a distributed example file.
+    const withoutExampleSecrets = (value, keys = []) => {
+      if (isLocalSecretPath(keys)) return "";
+      if (Array.isArray(value))
+        return value.map((nested, index) =>
+          withoutExampleSecrets(nested, [...keys, String(index)]),
+        );
       if (!value || typeof value !== "object") return value;
       return Object.fromEntries(
         Object.entries(value).map(([nestedKey, nested]) => [
           nestedKey,
-          withoutExampleSecrets(nested, nestedKey),
+          withoutExampleSecrets(nested, [...keys, nestedKey]),
         ]),
       );
     };
@@ -1051,6 +1059,9 @@ class Backend {
       if (!fs.existsSync(sourcePath)) continue;
 
       const before = fs.existsSync(targetPath);
+      // An existing data tree is authoritative, including intentional file deletions.
+      // Chromium partitions retain their separate whole-partition recovery policy.
+      if (before && entryName !== "Partitions") continue;
       copyImportantPath(sourcePath, targetPath, errors, {
         overwrite: false,
         chromiumPartitionConflicts: conflicts,
@@ -1955,13 +1966,109 @@ class Backend {
     try {
       const filePath = result.filePaths[0];
       const raw = JSON.parse(fs.readFileSync(filePath, "utf-8"));
-      if (Object.keys(raw?.chatHistory?.conversations || {}).some((key) => key.includes("\0"))) {
-        throw new Error("资料包包含旧聊天分组，请先使用旧资料接续确认来源；本次未导入");
+      const isObject = (value) => value && typeof value === "object" && !Array.isArray(value);
+      if (!isObject(raw) || raw.format !== "sharegpt-user-data" || raw.version !== 1) {
+        throw new Error("请选择 ShareGPT 导出的版本 1 资料包，当前文件格式不受支持；本次未导入");
       }
-      const settings = this.saveImportedSettingsForPrincipal(raw?.settings, principal);
+      if (
+        !isObject(raw.settings) ||
+        !isObject(raw.chatHistory) ||
+        !isObject(raw.chatHistory.conversations)
+      ) {
+        throw new Error("资料包缺少有效的设置或聊天记录；本次未导入");
+      }
+      for (const [key, messages] of Object.entries(raw.chatHistory.conversations)) {
+        if (key.includes("\0")) {
+          throw new Error("资料包包含旧聊天分组，请先使用旧资料接续确认来源；本次未导入");
+        }
+        if (
+          !key.trim() ||
+          !Array.isArray(messages) ||
+          messages.some((message) => !isObject(message) || !normalizeStoredMessage(message))
+        ) {
+          throw new Error("资料包的聊天记录结构不完整；本次未导入");
+        }
+      }
+      for (const section of [
+        "sender",
+        "receiver",
+        "collab",
+        "gpt",
+        "gemini",
+        "claude",
+        "browserPrivacy",
+        "advancedAi",
+        "translation",
+        "ui",
+      ]) {
+        if (section in raw.settings && !isObject(raw.settings[section])) {
+          throw new Error("资料包的设置结构不完整；本次未导入");
+        }
+      }
       this.assertSettingsPrincipalSnapshot(principal);
-      const chatHistory = this.saveChatHistory(raw?.chatHistory || {});
-      return { settings, chatHistory, filePath };
+      // Validate/recover current files before taking the rollback copy. Both writes below
+      // are synchronous, so no account transition can interleave with this import.
+      this.loadSettings();
+      this.loadChatHistory();
+      const files = [
+        this.settingsFile,
+        `${this.settingsFile}.bak`,
+        this.chatHistoryFile,
+        `${this.chatHistoryFile}.bak`,
+      ];
+      const originals = files.map((file) => {
+        try {
+          return fs.readFileSync(file);
+        } catch (error) {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        }
+      });
+      const secrets = [...this.legacyEncryptedSecrets];
+      fs.mkdirSync(this.runtimeDir, { recursive: true });
+      const recovery = fs.mkdtempSync(path.join(this.runtimeDir, "user-data-import-"));
+      try {
+        for (let i = 0; i < files.length; i++) {
+          if (originals[i] !== null)
+            fs.writeFileSync(path.join(recovery, `${i}.json`), originals[i], { mode: 0o600 });
+        }
+        fs.writeFileSync(
+          path.join(recovery, "manifest.json"),
+          JSON.stringify(
+            files.map((file, i) => ({
+              file,
+              snapshot: originals[i] === null ? null : `${i}.json`,
+            })),
+          ),
+          { mode: 0o600 },
+        );
+        const settings = this.saveImportedSettingsForPrincipal(raw.settings, principal);
+        const chatHistory = this.saveChatHistory(raw.chatHistory);
+        fs.rmSync(recovery, { recursive: true, force: true });
+        return { settings, chatHistory, filePath };
+      } catch (error) {
+        this.legacyEncryptedSecrets = secrets;
+        const failures = [];
+        for (let i = 0; i < files.length; i++) {
+          try {
+            const current = fs.existsSync(files[i]) ? fs.readFileSync(files[i]) : null;
+            const original = originals[i];
+            if (original === null) {
+              if (current !== null) fs.unlinkSync(files[i]);
+            } else if (!current || !current.equals(original))
+              atomicReplace(files[i], original.toString("utf8"));
+          } catch (rollbackError) {
+            failures.push(rollbackError);
+          }
+        }
+        if (failures.length)
+          throw new Error(
+            `导入未完成，部分文件无法恢复。原资料副本保存在 ${recovery}；请恢复后重试。`,
+            { cause: error },
+          );
+        fs.rmSync(recovery, { recursive: true, force: true });
+        throw error;
+      }
     } catch (err) {
       throw new Error(`无法导入资料包: ${err.message}`);
     }
@@ -2550,6 +2657,7 @@ class Backend {
       this.log(source, `进程启动失败：${err.message || err}`);
       if (source === "sender" && this.senderProcess === child) {
         this.senderProcess = null;
+        this.activeRouteAll = false;
         this.activeAiProxyRoutes = [];
       }
       if (source === "receiver-frpc" && this.receiverFrpc === child) this.receiverFrpc = null;
@@ -2562,6 +2670,7 @@ class Backend {
       this.log(source, `进程退出，code=${code}`);
       if (source === "sender" && this.senderProcess === child) {
         this.senderProcess = null;
+        this.activeRouteAll = false;
         this.activeAiProxyRoutes = [];
       }
       if (source === "receiver-frpc" && this.receiverFrpc === child) this.receiverFrpc = null;
@@ -2625,6 +2734,7 @@ class Backend {
     this.senderProcess = null;
     this.activeSocksPort = null;
     this.activeProxiedSuffixes = null;
+    this.activeRouteAll = false;
     this.activeAiProxyRoutes = [];
     this.emitStatus();
   }
@@ -2669,6 +2779,7 @@ class Backend {
     this.senderProcess = null;
     this.activeSocksPort = null;
     this.activeProxiedSuffixes = null;
+    this.activeRouteAll = false;
     this.activeAiProxyRoutes = [];
     this.emitStatus();
     await this.stopChildAndWait(child, "sender");
@@ -3000,6 +3111,8 @@ class Backend {
     // 记下「当前运行中的配置」实际走代理的域名后缀, 供代理检测按真实路由分类
     // (而非写死的内置清单), 加入域名并重启后检测才会从"回落"翻到"已走代理"。
     this.activeProxiedSuffixes = this.proxiedDomainSuffixes(runtimeSettings);
+    // Read the generated runtime route, rather than independently interpreting settings.
+    this.activeRouteAll = String(config.route.final).startsWith("proxy-");
     // 运行日志标明当前代理方式, 便于观察走的是统一梯子还是下发的机场节点。
     const usePersonalLog = settings.proxy_mode === "personal";
     const useAirportLog =

@@ -56,6 +56,10 @@ async function run() {
     assert.equal(await app.evaluate(({ app }) => app.getPath("userData")), identity.data);
     assert.equal(fs.readFileSync(sentinel, "utf8"), "preserve");
     assert.deepEqual(errors, []);
+    fs.writeFileSync(
+      path.join(process.env.RUNNER_TEMP, "sharegpt-packaged-startup.json"),
+      JSON.stringify(identity),
+    );
     console.log(
       "Packaged startup passed: real entry/preload, onboarding, personal Principal, restart login gate, explicit personal re-entry and data retention.",
     );

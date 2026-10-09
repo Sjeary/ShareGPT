@@ -250,7 +250,17 @@ function keyForMessage(message: ChatMessage, self: string, roomScope: string): s
 }
 
 function dedupeFingerprint(m: ChatMessage): string {
-  return [m.scope, m.from, m.to, m.timestamp, m.text, m.recalled, m.attachments.length].join('|')
+  return JSON.stringify([
+    m.scope,
+    m.from,
+    m.to,
+    m.timestamp,
+    m.text,
+    m.recalled,
+    m.attachments,
+    m.replyTo,
+    m.forwardedFrom,
+  ])
 }
 
 const MAX_MESSAGES_PER_CONVERSATION = 300
@@ -437,10 +447,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }
         }
       }
-      // 指纹去重
-      const fp = dedupeFingerprint(message)
-      if (next.some((x) => dedupeFingerprint(x) === fp)) {
-        return s
+      // 仅无稳定 ID 的旧消息使用内容去重；不同服务端 ID 始终是不同消息。
+      if (!message.id) {
+        const fp = dedupeFingerprint(message)
+        if (next.some((x) => !x.id && dedupeFingerprint(x) === fp)) return s
       }
       next.push(message)
       return {

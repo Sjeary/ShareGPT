@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { CalendarClock, MapPin, Pencil, Trash2, User } from 'lucide-react'
 import { toast } from 'sonner'
+import { StaleSettingsPrincipalError } from '@/lib/settingsPrincipalRuntime'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
@@ -57,6 +58,7 @@ export function EventDetailDialog({
       await onRsvp(event.id, status)
       toast.success('已更新你的回复')
     } catch (err) {
+      if (err instanceof StaleSettingsPrincipalError) return
       toast.error(err instanceof Error ? err.message : '更新失败')
     } finally {
       setBusy(false)
@@ -69,6 +71,7 @@ export function EventDetailDialog({
       await onDelete(event.id)
       toast.success('事件已删除')
     } catch (err) {
+      if (err instanceof StaleSettingsPrincipalError) return
       toast.error(err instanceof Error ? err.message : '删除失败')
     } finally {
       setBusy(false)

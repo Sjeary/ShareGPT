@@ -152,6 +152,16 @@ test("language detection only flags clearly non-target input", () => {
 
 function createConfirmationHarness(token, enabled = true) {
   const listeners = new Map();
+  const dispatch = (type, event) => {
+    let stopped = false;
+    event.stopImmediatePropagation = () => {
+      stopped = true;
+    };
+    for (const listener of [...(listeners.get(type) || [])]) {
+      if (stopped) break;
+      listener(event);
+    }
+  };
   const logs = [];
   let cleared = 0;
   const editor = {
@@ -169,7 +179,7 @@ function createConfirmationHarness(token, enabled = true) {
     closest: () => button,
     getBoundingClientRect: () => ({ width: 80, height: 32 }),
     click() {
-      listeners.get("click")?.({
+      dispatch("click", {
         target: button,
         defaultPrevented: false,
         preventDefault() {
@@ -181,9 +191,13 @@ function createConfirmationHarness(token, enabled = true) {
   };
   const document = {
     activeElement: editor,
-    addEventListener: (type, listener) => listeners.set(type, listener),
+    addEventListener: (type, listener) => {
+      if (!listeners.has(type)) listeners.set(type, new Set());
+      listeners.get(type).add(listener);
+    },
     removeEventListener: (type, listener) => {
-      if (listeners.get(type) === listener) listeners.delete(type);
+      listeners.get(type)?.delete(listener);
+      if (listeners.get(type)?.size === 0) listeners.delete(type);
     },
     querySelectorAll: () => [editor],
   };
@@ -221,7 +235,7 @@ function createConfirmationHarness(token, enabled = true) {
       },
       stopImmediatePropagation() {},
     };
-    listeners.get("keydown")?.(event);
+    dispatch("keydown", event);
     return event;
   };
   return {
@@ -333,6 +347,39 @@ test("guard settings reconfigure an already-loaded document immediately", () => 
   );
   assert.equal(harness.listeners.has("keydown"), false);
   assert.equal(harness.listeners.has("click"), false);
+});
+
+test("SPA token rotation replaces the single guard owner and rejects old resolutions", () => {
+  const oldToken = createOperationToken();
+  const nextToken = createOperationToken();
+  const harness = createConfirmationHarness(oldToken);
+  harness.editor.value = "中文请求";
+  harness.enter();
+  const pending = parseComposerConfirmationMessage(harness.logs[0], oldToken);
+  harness.context.location.href = "https://chatgpt.com/c/two";
+  vm.runInNewContext(
+    composerConfirmationGuardScript(nextToken, { enabled: true }),
+    harness.context,
+  );
+  assert.equal(harness.listeners.get("keydown").size, 1);
+  assert.equal(harness.listeners.get("click").size, 1);
+  assert.equal(
+    vm.runInNewContext(
+      composerConfirmationResolveScript(oldToken, pending.id, true),
+      harness.context,
+    ).ok,
+    false,
+  );
+  harness.logs.length = 0;
+  assert.equal(harness.enter().defaultPrevented, true);
+  assert.ok(parseComposerConfirmationMessage(harness.logs[0], nextToken));
+  assert.equal(parseComposerConfirmationMessage(harness.logs[0], oldToken), null);
+  vm.runInNewContext(
+    composerConfirmationGuardScript(nextToken, { enabled: false }),
+    harness.context,
+  );
+  assert.equal(harness.listeners.size, 0);
+  assert.equal(harness.enter().defaultPrevented, false);
 });
 
 test("confirmation storage is opaque, expiring, and one-shot", () => {

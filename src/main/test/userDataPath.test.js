@@ -6,7 +6,7 @@ const path = require("node:path");
 const { applyStableUserDataPath, copyMissingUserDataEntries } = require("../userDataPath");
 
 function tempRoot(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-user-data-"));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-user-data-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
 }
@@ -87,7 +87,69 @@ test("development may use an explicit isolated directory without migration", (t)
   };
   assert.equal(applyStableUserDataPath(app, { SHAREGPT_USER_DATA: isolated }), isolated);
   assert.equal(paths.userData, isolated);
+  assert.equal(paths.sessionData, isolated);
   assert.equal(fs.existsSync(isolated), true);
+});
+
+test("development defaults to a persistent checkout profile without importing installed data", (t) => {
+  const root = tempRoot(t);
+  const live = path.join(root, "ShareGPT");
+  fs.mkdirSync(live);
+  fs.writeFileSync(path.join(live, "settings.json"), "live-account");
+  const paths = { userData: live, appData: root, sessionData: live };
+  const app = {
+    isPackaged: false,
+    getAppPath: () => path.join(root, "checkout"),
+    getPath: (name) => paths[name],
+    setPath: (name, value) => (paths[name] = value),
+  };
+  const isolated = applyStableUserDataPath(app, {});
+  assert.equal(isolated, path.join(app.getAppPath(), ".cache", "user-data"));
+  assert.equal(paths.sessionData, isolated);
+  assert.equal(fs.existsSync(path.join(isolated, "settings.json")), false);
+  fs.writeFileSync(path.join(isolated, "settings.json"), "dev-account");
+  assert.equal(applyStableUserDataPath(app, {}), isolated);
+  assert.equal(fs.readFileSync(path.join(isolated, "settings.json"), "utf8"), "dev-account");
+  assert.equal(fs.readFileSync(path.join(live, "settings.json"), "utf8"), "live-account");
+  app.getAppPath = () => path.join(root, "other-checkout");
+  assert.notEqual(applyStableUserDataPath(app, {}), isolated);
+});
+
+test("development rejects live profile overlap and symlink aliases before writing", (t) => {
+  const root = tempRoot(t);
+  const live = path.join(root, "ShareGPT");
+  fs.mkdirSync(live);
+  const alias = path.join(root, "alias");
+  fs.symlinkSync(live, alias, "junction");
+  const app = {
+    isPackaged: false,
+    getPath: () => root,
+    setPath: () => assert.fail("unsafe profile must not be applied"),
+  };
+  for (const profile of [live, root, path.join(live, "child"), alias, path.join(alias, "child")]) {
+    assert.throws(
+      () => applyStableUserDataPath(app, { SHAREGPT_USER_DATA: profile }),
+      /must be separate/,
+    );
+  }
+  assert.deepEqual(fs.readdirSync(live), []);
+});
+
+test("an unusable development directory stops startup without falling back to live data", (t) => {
+  const root = tempRoot(t);
+  const file = path.join(root, "file");
+  fs.writeFileSync(file, "keep");
+  const app = {
+    isPackaged: false,
+    getPath: () => root,
+    setPath: () => assert.fail("failed profile must not be applied"),
+  };
+  assert.throws(() => applyStableUserDataPath(app, { SHAREGPT_USER_DATA: file }), /EEXIST/);
+  assert.throws(
+    () => applyStableUserDataPath(app, { SHAREGPT_USER_DATA: path.join(file, "child") }),
+    /ENOTDIR/,
+  );
+  assert.equal(fs.readFileSync(file, "utf8"), "keep");
 });
 
 test("a migration read failure keeps the legacy directory active", (t) => {

@@ -108,12 +108,20 @@ async function translateText(request, dependencies = {}) {
         },
         (res) => {
           let raw = "";
+          let responseEnded = false;
+          const failResponse = (error) => finish(reject, error);
+          res.on("error", failResponse);
+          res.on("aborted", () => failResponse(new Error("翻译接口连接中断，请重试")));
+          res.on("close", () => {
+            if (!responseEnded) failResponse(new Error("翻译接口连接中断，请重试"));
+          });
           res.setEncoding("utf8");
           res.on("data", (chunk) => {
             raw += chunk;
             if (raw.length > 2_000_000) req.destroy(new Error("翻译接口响应过大"));
           });
           res.on("end", () => {
+            responseEnded = true;
             if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
               finish(reject, new Error(`翻译接口错误 ${res.statusCode || 0}`));
               return;

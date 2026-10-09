@@ -33,7 +33,11 @@ async function main() {
     electronApp = await electron.launch({
       args: [ROOT],
       cwd: ROOT,
-      env: { ...process.env, SHAREGPT_USER_DATA: path.join(temporaryRoot, "user-data") },
+      env: {
+        ...process.env,
+        SHAREGPT_BACKGROUND_TEST: "1",
+        SHAREGPT_USER_DATA: path.join(temporaryRoot, "user-data"),
+      },
     });
     const page = await electronApp.firstWindow();
     await loginThroughForm(page, fixture.baseUrl);

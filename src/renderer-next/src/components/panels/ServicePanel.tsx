@@ -15,7 +15,7 @@ export function ServicePanel() {
     <PanelScaffold
       icon={Cable}
       title="代理转发"
-      hint="内嵌 sing-box · 把指定流量转发到接收端"
+      hint="管理 AI 网页使用的代理连接"
       toolbar={
         <Badge variant={running ? 'default' : 'outline'} className="gap-1.5">
           <span

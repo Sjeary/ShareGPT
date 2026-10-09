@@ -132,3 +132,22 @@ test("failed root metadata persistence leaves the existing vault selected", asyn
   await assert.rejects(vault.setRoot(path.join(directory, "new-root")), /disk full/);
   assert.equal(vault.root, previous);
 });
+
+test("vault snapshots reject unreadable directories, metadata and contents instead of omitting notes", async (t) => {
+  const { vault } = fixture(t);
+  const fsp = require("node:fs/promises");
+  await vault.create("folder/kept.md", "kept note");
+  for (const operation of /** @type {const} */ (["readdir", "stat", "readFile"])) {
+    const original = /** @type {(...args: any[]) => Promise<any>} */ (fsp[operation]);
+    const stub = t.mock.method(fsp, operation, async (...args) => {
+      if (String(args[0]).includes("folder"))
+        throw Object.assign(new Error("fixture unreadable"), { code: "EACCES" });
+      return original(...args);
+    });
+    await assert.rejects(vault.readAll(), /fixture unreadable/);
+    stub.mock.restore();
+    assert.equal((await vault.readAll())[0].content, "kept note");
+  }
+  fs.truncateSync(path.join(vault.root, "folder/kept.md"), 8 * 1024 * 1024 + 1);
+  await assert.rejects(vault.readAll(), /超过 8 MB/);
+});

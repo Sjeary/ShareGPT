@@ -21,7 +21,7 @@ for (const file of tracked) {
   }
 }
 const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
-const localBuild = String(packageJson?.scripts?.["dist:mac:sender:local"] || "");
+const localBuild = String(packageJson?.scripts?.["dist:mac:local"] || "");
 const localShell = fs.readFileSync("scripts/sign-local-macos.sh", "utf8");
 const localSigner = fs.readFileSync("scripts/sign-local-macos.mjs", "utf8");
 if (packageJson?.scripts?.["setup:mac-signing:local"]) {

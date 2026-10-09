@@ -1,6 +1,8 @@
 import { useMemo } from 'react'
 import { ClipboardList, CalendarPlus } from 'lucide-react'
 import { toast } from 'sonner'
+import { showErrorToast } from '@/lib/errorToast'
+import { StaleSettingsPrincipalError } from '@/lib/settingsPrincipalRuntime'
 import { Button } from '@/components/ui/button'
 import { syncAllTasksToCalendar } from '@/lib/integrations'
 import { QuickAddBar } from './QuickAddBar'
@@ -99,9 +101,16 @@ export function TaskListView({
             variant="outline"
             size="sm"
             title="把有到期日的待办一键同步到个人日历"
-            onClick={() => {
-              const n = syncAllTasksToCalendar()
-              toast.success(n > 0 ? `已同步 ${n} 个任务到个人日历` : '没有可同步的任务(需有到期日)')
+            onClick={async () => {
+              try {
+                const n = await syncAllTasksToCalendar()
+                toast.success(
+                  n > 0 ? `已同步 ${n} 个任务到个人日历` : '没有可同步的任务(需有到期日)',
+                )
+              } catch (error) {
+                if (!(error instanceof StaleSettingsPrincipalError))
+                  showErrorToast(error, '同步日历失败')
+              }
             }}
           >
             <CalendarPlus className="size-4" />

@@ -3,6 +3,8 @@ import { CalendarDays, ChevronLeft, ChevronRight, Plus, WifiOff } from 'lucide-r
 import { addDays, addMonths, parseISO } from 'date-fns'
 import { cn } from '@/lib/utils'
 import { PanelScaffold } from '@/components/panels/PanelScaffold'
+import { LocalDataStatus } from '@/components/LocalDataStatus'
+import { ErrorNotice } from '@/components/ErrorNotice'
 import { Button } from '@/components/ui/button'
 import { useTeamCalendar } from '@/hooks/useTeamCalendar'
 import { useTeamCalendarStore } from '@/store/useTeamCalendarStore'
@@ -21,8 +23,19 @@ import {
 // 组队(共享)日历主面板。月/周视图 + 成员筛选 + 事件编辑器 + RSVP。
 // Shell 通过该精确路径与导出名引入: export function TeamCalendarPanel()。
 export function TeamCalendarPanel() {
-  const { source, username, events, createEvent, updateEvent, deleteEvent, setRsvp } =
-    useTeamCalendar()
+  const {
+    ownsSnapshot,
+    source,
+    loading,
+    loadError,
+    reload,
+    username,
+    events,
+    createEvent,
+    updateEvent,
+    deleteEvent,
+    setRsvp,
+  } = useTeamCalendar()
 
   const view = useTeamCalendarStore((s) => s.view)
   const anchor = useTeamCalendarStore((s) => s.anchor)
@@ -75,6 +88,13 @@ export function TeamCalendarPanel() {
     openNew(d.toISOString())
   }
 
+  if (!ownsSnapshot)
+    return (
+      <PanelScaffold icon={CalendarDays} title="组队日历" hint="团队共享日历" scrollable={false}>
+        <LocalDataStatus loading={loading} error={loadError} onRetry={reload} />
+      </PanelScaffold>
+    )
+
   const toolbar = (
     <div className="flex items-center gap-1.5">
       <div className="mr-1 flex items-center rounded-md border border-border p-0.5">
@@ -123,6 +143,14 @@ export function TeamCalendarPanel() {
       scrollable={false}
     >
       <div className="flex h-full min-h-0 flex-col">
+        {loadError && (
+          <div className="shrink-0 space-y-2 border-b border-border p-3">
+            <ErrorNotice error={loadError} context="组队日历加载失败" />
+            <Button variant="outline" size="sm" disabled={loading} onClick={() => void reload()}>
+              重新加载
+            </Button>
+          </div>
+        )}
         {source === 'local' && (
           <div className="flex shrink-0 items-center gap-2 border-b border-border bg-amber-50 px-4 py-2.5 text-sm text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
             <WifiOff className="size-4" />
