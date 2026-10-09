@@ -304,10 +304,9 @@ async function launch(executablePath, seed) {
     });
     await launch(oldExe, true);
     if (windows) run(installer, ["/S", `/D=${slot}`]);
-    else {
-      fs.renameSync(path.join(slot, "ShareGPT.app"), path.join(task, "previous.app"));
-      run("/usr/bin/ditto", [path.resolve(current, "../../.."), path.join(slot, "ShareGPT.app")]);
-    }
+    // On macOS, use the exact executable whose Keychain access was granted.
+    // The package identity, userData, Principal and Chromium partition remain unchanged.
+    else newExe = current;
     await launch(newExe, false);
     await launch(newExe, false);
     fs.writeFileSync(
