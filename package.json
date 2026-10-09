@@ -74,7 +74,8 @@
     "dev:admin": "npm --prefix admin_console run dev",
     "dist:admin:win": "npm --prefix admin_console run dist:win",
     "dist:admin:mac": "npm --prefix admin_console run dist:mac",
-    "dist:mac:local": "npm run build:next && npm run prepare:assets -- --required && CSC_IDENTITY_AUTO_DISCOVERY=false npm exec -- electron-builder --mac dir --config build.sender.json -c.mac.notarize=false -c.mac.hardenedRuntime=false && node scripts/verify-packaged-dependencies.cjs release_sender/mac-arm64/ShareGPT.app/Contents/Resources/app.asar && bash scripts/sign-local-macos.sh release_sender/mac-arm64/ShareGPT.app"
+    "dist:mac:local": "npm run build:next && npm run prepare:assets -- --required && CSC_IDENTITY_AUTO_DISCOVERY=false npm exec -- electron-builder --mac dir --config build.sender.json -c.mac.notarize=false -c.mac.hardenedRuntime=false && node scripts/verify-packaged-dependencies.cjs release_sender/mac-arm64/ShareGPT.app/Contents/Resources/app.asar && bash scripts/sign-local-macos.sh release_sender/mac-arm64/ShareGPT.app",
+    "postinstall": "node scripts/prepare-terminal.cjs"
   },
   "devDependencies": {
     "@electron/asar": "3.4.1",
@@ -156,12 +157,16 @@
         "AppImage"
       ],
       "category": "Network"
-    }
+    },
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ]
   },
   "dependencies": {
     "chokidar": "^5.0.0",
     "electron-updater": "^6.8.9",
     "https-proxy-agent": "^7.0.6",
+    "node-pty": "1.1.0",
     "socks-proxy-agent": "^8.0.5"
   }
 }
