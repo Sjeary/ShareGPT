@@ -12,6 +12,8 @@ module.exports = [
     // 只保留三类目标文件, 其它一律忽略 (含本配置文件自身)。
     ignores: [
       "**/node_modules/**",
+      "**/.cache/**",
+      "**/.npm-cache/**",
       "**/dist/**",
       "release*/**",
       "build/bin/**",
