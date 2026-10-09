@@ -238,6 +238,11 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
+      - name: Verify terminal approval and account controls on Windows
+        run: |
+          node scripts/verify-terminal.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: 构建并验收 Windows NSIS 安装包
         run: |
           npm run dist:win:installer

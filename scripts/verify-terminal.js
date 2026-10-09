@@ -5,15 +5,25 @@ const os = require("node:os");
 const { createFixtureServer, launchCase } = require("./verify-collab-login-compatibility");
 
 async function main() {
-  if (process.platform === "win32")
-    throw new Error(
-      "This acceptance uses a disposable zsh environment; use the native PTY probe on Windows",
-    );
+  const windows = process.platform === "win32";
+  if (windows && process.env.GITHUB_ACTIONS !== "true")
+    throw new Error("PowerShell UI acceptance requires a disposable GitHub runner.");
   const shellConfig = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-terminal-shell-"));
   fs.writeFileSync(
     path.join(shellConfig, ".zshrc"),
     "unset HISTFILE\nPROMPT='fixture> '\nexport TERMINAL_RC_FIXTURE=loaded\n",
   );
+  const launchEnv = windows
+    ? { TERMINAL_RC_FIXTURE: "loaded" }
+    : { SHELL: "/bin/zsh", ZDOTDIR: shellConfig };
+  const prompt = windows ? "PS " : "fixture> ";
+  const startupCommand = windows
+    ? "$env:TERMINAL_STARTUP_FIXTURE='once'"
+    : "export TERMINAL_STARTUP_FIXTURE=once";
+  const printVariable = (prefix, variable) =>
+    windows
+      ? `Write-Output ('${prefix}_' + $env:${variable})`
+      : `printf '\\n${prefix}_%s\\n' "$${variable}"`;
   let allowed = true;
   let administrator = false;
   const fixture = await createFixtureServer({
@@ -23,7 +33,7 @@ async function main() {
     await launchCase({
       ...fixture,
       username: "terminal-approved",
-      launchEnv: { SHELL: "/bin/zsh", ZDOTDIR: shellConfig },
+      launchEnv,
       beforeLogin: async ({ electronApp, window }) => {
         await electronApp.evaluate(({ BrowserWindow }) => {
           globalThis.__terminalForeground = [];
@@ -65,10 +75,15 @@ async function main() {
         await window.getByRole("button", { name: "打开本地终端", exact: true }).click();
         const input = () => window.locator('[data-state="active"] .xterm-helper-textarea');
         await input().waitFor({ state: "attached" });
-        await window.waitForFunction(() =>
-          window.__terminalEvents.some((e) => e.data?.includes("fixture> ")),
+        await window.waitForFunction(
+          (ready) =>
+            window.__terminalEvents
+              .map((e) => e.data || "")
+              .join("")
+              .includes(ready),
+          prompt,
         );
-        await input().pressSequentially("printf '\\nREADY_%s\\n' \"$TERMINAL_RC_FIXTURE\"");
+        await input().pressSequentially(printVariable("READY", "TERMINAL_RC_FIXTURE"));
         await input().press("Enter");
         await window.waitForFunction(() =>
           window.__terminalEvents.some((e) => e.type === "data" && e.data.includes("READY_loaded")),
@@ -79,37 +94,41 @@ async function main() {
         await window.locator('[data-tour="nav-account"]').click();
         await nav.click();
         assert.equal(await window.getByRole("tab").count(), 1);
-        await input().pressSequentially("export KEEP_SESSION=kept");
+        await input().pressSequentially(
+          windows ? "$env:KEEP_SESSION='kept'" : "export KEEP_SESSION=kept",
+        );
         await input().press("Enter");
         await window.getByRole("button", { name: "新建终端", exact: true }).click();
         await window.getByRole("tab").nth(1).waitFor();
         assert.equal(await window.getByRole("tab").count(), 2);
         await window.getByRole("tab").first().click();
-        await input().pressSequentially("printf '\\nSTATE_%s\\n' \"$KEEP_SESSION\"");
+        await input().pressSequentially(printVariable("STATE", "KEEP_SESSION"));
         await input().press("Enter");
         await window.waitForFunction(() =>
           window.__terminalEvents.some((e) => e.data?.includes("STATE_kept")),
         );
-        await input().pressSequentially("sleep 30");
+        await input().pressSequentially(windows ? "Start-Sleep -Seconds 30" : "sleep 30");
         await input().press("Enter");
         await input().press("Control+c");
-        await input().pressSequentially("printf '\\nCTRL_C_OK\\n'");
+        await input().pressSequentially(
+          windows ? "Write-Output ('CTRL_C_' + 'OK')" : "printf '\\nCTRL_C_OK\\n'",
+        );
         await input().press("Enter");
         await window.waitForFunction(() =>
           window.__terminalEvents.some((e) => e.data?.includes("\r\nCTRL_C_OK\r\n")),
         );
         await window.getByRole("button", { name: "启动设置", exact: true }).click();
-        await window.getByLabel("启动指令（可选）").fill("export TERMINAL_STARTUP_FIXTURE=once");
+        await window.getByLabel("启动指令（可选）").fill(startupCommand);
         await window.getByRole("button", { name: "保存", exact: true }).click();
         await window.getByRole("button", { name: "新建终端", exact: true }).click();
         await window.getByRole("tab").nth(2).waitFor();
-        await window.waitForFunction(() => {
+        await window.waitForFunction((ready) => {
           const streams = new Map();
           for (const e of window.__terminalEvents)
             if (e.type === "data") streams.set(e.id, (streams.get(e.id) || "") + e.data);
-          return streams.size === 3 && [...streams.values()].every((s) => s.includes("fixture> "));
-        });
-        await input().pressSequentially("printf '\\nSTART_%s\\n' \"$TERMINAL_STARTUP_FIXTURE\"");
+          return streams.size === 3 && [...streams.values()].every((s) => s.includes(ready));
+        }, prompt);
+        await input().pressSequentially(printVariable("START", "TERMINAL_STARTUP_FIXTURE"));
         await input().press("Enter");
         await window.waitForFunction(() =>
           window.__terminalEvents.some((e) => e.data?.includes("START_once")),
@@ -210,10 +229,7 @@ async function main() {
         await window.getByRole("button", { name: "打开本地终端", exact: true }).waitFor();
         assert.equal(await window.getByRole("tab").count(), 0, "disabling ends old sessions");
         await window.getByRole("button", { name: "启动设置", exact: true }).click();
-        assert.equal(
-          await window.getByLabel("启动指令（可选）").inputValue(),
-          "export TERMINAL_STARTUP_FIXTURE=once",
-        );
+        assert.equal(await window.getByLabel("启动指令（可选）").inputValue(), startupCommand);
         await window.getByRole("button", { name: "保存", exact: true }).click();
         await window.getByRole("button", { name: "打开本地终端", exact: true }).click();
         await input().waitFor({ state: "attached" });
@@ -242,14 +258,16 @@ async function main() {
               "utf8",
             ),
           ).startupCommand,
-          "export TERMINAL_STARTUP_FIXTURE=once",
+          startupCommand,
         );
         assert.deepEqual(await electronApp.evaluate(() => globalThis.__terminalForeground), []);
         assert.deepEqual(errors, []);
         console.log(
           JSON.stringify({
             localShell: true,
-            rcLoaded: true,
+            rcLoaded: !windows,
+            inheritedEnvironment: true,
+            platform: process.platform,
             tabContinuity: true,
             interrupt: true,
             startup: true,
@@ -266,7 +284,7 @@ async function main() {
       await launchCase({
         ...fixture,
         username: isAdmin ? "terminal-admin" : "terminal-regular",
-        launchEnv: { SHELL: "/bin/zsh", ZDOTDIR: shellConfig },
+        launchEnv,
         exercise: async ({ window }) => {
           await window.locator('[data-tour="nav-account"]').click();
           assert.equal(await window.locator("#advanced-ai-environments").count(), isAdmin ? 1 : 0);

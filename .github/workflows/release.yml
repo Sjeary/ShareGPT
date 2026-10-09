@@ -264,6 +264,11 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
 
+      - name: Verify terminal approval and account controls on Windows
+        run: |
+          node scripts/verify-terminal.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Build signed NSIS installer
         if: needs.source.outputs.distribution == 'official'
         env:
