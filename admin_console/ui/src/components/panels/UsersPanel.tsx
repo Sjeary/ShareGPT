@@ -184,7 +184,7 @@ export function UsersPanel() {
                     </span>
                     {u.online && <Badge className="bg-success text-white">在线</Badge>}
                     {u.isAdmin && <Badge variant="secondary">管理员</Badge>}
-                    {!u.isAdmin && u.advancedAiAllowed && <Badge variant="outline">高级 AI</Badge>}
+                    {!u.isAdmin && u.advancedAiAllowed && <Badge variant="outline">高级功能</Badge>}
                     {u.disabled && <Badge variant="destructive">已禁用</Badge>}
                     {u.chatDisabled && <Badge variant="outline">禁聊天</Badge>}
                   </div>
@@ -336,9 +336,9 @@ function EditUserCard({
         </div>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <Label className="cursor-default">允许高级 AI 环境</Label>
+            <Label className="cursor-default">允许高级功能</Label>
             <p className="truncate text-xs text-muted-foreground">
-              多账号隔离环境和内置 sing-box 线路分配
+              多账号 AI 环境与本机终端（可运行本机命令及 SSH）
             </p>
           </div>
           <Switch
@@ -476,9 +476,9 @@ function CreateUserCard({
         </div>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <Label className="cursor-default">允许高级 AI 环境</Label>
+            <Label className="cursor-default">允许高级功能</Label>
             <p className="truncate text-xs text-muted-foreground">
-              多账号隔离环境和内置 sing-box 线路分配
+              多账号 AI 环境与本机终端（可运行本机命令及 SSH）
             </p>
           </div>
           <Switch
