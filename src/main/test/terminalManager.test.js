@@ -166,13 +166,14 @@ test("expired or failed authorization blocks input and does not delete saved con
 });
 test("shell inherits local environment without injecting proxy or startup commands", () => {
   const config = shellLaunch("", "darwin", {
-    SHELL: "/bin/zsh",
+    SHELL: process.execPath,
     PATH: "/fixture/bin",
     SSH_AUTH_SOCK: "/fixture/agent",
     HTTPS_PROXY: "http://existing",
     ELECTRON_RUN_AS_NODE: "1",
     SHAREGPT_USER_DATA: "/private",
   });
+  assert.equal(config.shell, process.execPath);
   assert.deepEqual(config.args, ["-il"]);
   assert.equal(config.env.PATH, "/fixture/bin");
   assert.equal(config.env.SSH_AUTH_SOCK, "/fixture/agent");
