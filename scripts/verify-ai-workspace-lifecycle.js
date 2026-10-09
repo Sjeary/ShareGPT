@@ -533,12 +533,24 @@ async function verifyTranslationWorkbench({
   if (initialLayout === "split") {
     const restoredHostBounds = await nativeHost.boundingBox();
     assert.ok(restoredHostBounds && restoredHostBounds.width > 1 && restoredHostBounds.height > 1);
-    await api(page, "syncAiViewHost", {
+    // This fixture drives native attachment directly without starting the proxy.
+    // Let the renderer's resize effects settle before applying the fixture host state.
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve(undefined))),
+        ),
+    );
+    const restoredTarget = await activateKind(page, "gpt");
+    assert.equal(restoredTarget.target.tabId, tabId);
+    const restored = await api(page, "syncAiViewHost", {
       kind: "gpt",
       tabId,
+      environmentId: restoredTarget.target.environmentId,
       visible: true,
       bounds: restoredHostBounds,
     });
+    assert.equal(restored, true, "settled restored GPT host sync must be accepted");
     await waitUntil(
       async () => visibleFixture(await appSnapshot(electronApp)).length === 1,
       "native host reattach after restoring translation split layout",
