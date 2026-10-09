@@ -69,11 +69,11 @@ function isolatedKeychain(oldExe, newExe) {
     security("unlock-keychain", "-p", password, keychain);
     security("list-keychains", "-d", "user", "-s", keychain);
     security("default-keychain", "-d", "user", "-s", keychain);
-    // Electron 43.1.0 sets service=app_name+" Safe Storage", account=app_name.
+    // The packaged legacy entry is service="ShareGPT Safe Storage", account="ShareGPT Key".
     security(
       "add-generic-password",
       "-a",
-      "ShareGPT",
+      "ShareGPT Key",
       "-s",
       "ShareGPT Safe Storage",
       "-w",
@@ -98,7 +98,7 @@ function isolatedKeychain(oldExe, newExe) {
     security(
       "set-generic-password-partition-list",
       "-a",
-      "ShareGPT",
+      "ShareGPT Key",
       "-s",
       "ShareGPT Safe Storage",
       "-S",
