@@ -40,7 +40,7 @@ export function InterfaceSettings() {
   const advancedAiAllowed = canUseAdvancedAi(workspaceMode, token, profile)
 
   return (
-    <Card>
+    <Card className="w-full">
       <CardHeader>
         <CardTitle className="text-base">界面设置</CardTitle>
       </CardHeader>

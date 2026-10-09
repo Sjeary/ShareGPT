@@ -231,7 +231,10 @@ async function main() {
       localDataCard.boundingBox(),
     ]);
     assert.ok(interfaceBounds && localDataBounds);
-    assert.ok(Math.abs(interfaceBounds.x - localDataBounds.x) < 1);
+    assert.ok(
+      Math.abs(interfaceBounds.x - localDataBounds.x) < 1,
+      JSON.stringify({ interfaceBounds, localDataBounds }),
+    );
     assert.ok(Math.abs(interfaceBounds.width - localDataBounds.width) < 1);
     assert.equal(await page.getByRole("button", { name: "清除", exact: true }).count(), 3);
     assert.equal(await page.getByRole("button", { name: "重建资料环境", exact: true }).count(), 3);
@@ -245,6 +248,9 @@ async function main() {
     assert.equal(await page.locator("#ui-show-calendar").getAttribute("aria-checked"), "false");
     assert.equal(await page.locator("#ui-show-notes").getAttribute("aria-checked"), "false");
     assert.equal(await page.locator("#ui-show-team").count(), 0);
+    assert.equal(await page.locator("#advanced-ai-environments").count(), 0);
+    assert.equal(await page.locator("#ui-show-terminal").count(), 0);
+    assert.equal(await page.locator('[data-tour="nav-terminal"]').count(), 0);
     assert.equal(await page.getByText("协作通知", { exact: true }).count(), 0);
     await page.locator("#ui-show-calendar").click();
     await page.locator("#ui-show-notes").click();
