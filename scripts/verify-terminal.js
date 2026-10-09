@@ -169,7 +169,9 @@ async function main() {
           true,
         );
         await window.locator('[data-tour="nav-account"]').click();
-        const interfaceCard = window.locator('[data-slot="card"]').filter({ hasText: "界面设置" });
+        const interfaceCard = window
+          .getByText("界面设置", { exact: true })
+          .locator("xpath=ancestor::*[@data-slot='card'][1]");
         await interfaceCard.screenshot({
           path: path.join(screenshots, "account-terminal-light.png"),
         });
@@ -192,14 +194,17 @@ async function main() {
           ),
           /权限/,
         );
-        await window.waitForFunction(async () => {
-          const principal = await window.api.getSettingsPrincipal();
-          const settings = await window.api.loadSettings({
-            expectedPrincipalId: principal.principalId,
-            expectedPrincipalGeneration: principal.generation,
-          });
-          return settings.ui.hiddenNav.includes("terminal");
-        });
+        assert.equal(
+          await window.evaluate(async () => {
+            const principal = await window.api.getSettingsPrincipal();
+            const settings = await window.api.loadSettings({
+              expectedPrincipalId: principal.principalId,
+              expectedPrincipalGeneration: principal.generation,
+            });
+            return settings.ui.hiddenNav.includes("terminal");
+          }),
+          true,
+        );
         await window.locator("#ui-show-terminal").click();
         await nav.click();
         await window.getByRole("button", { name: "打开本地终端", exact: true }).waitFor();
