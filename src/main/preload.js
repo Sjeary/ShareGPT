@@ -7,6 +7,13 @@ async function dataInvoke(channel, payload, expected) {
 
 contextBridge.exposeInMainWorld("api", {
   platform: process.platform,
+  terminal: (action, payload, snapshot) =>
+    ipcRenderer.invoke("terminal:invoke", action, payload, snapshot),
+  onTerminalEvent: (handler) => {
+    const listener = (_event, payload) => handler(payload);
+    ipcRenderer.on("terminal:event", listener);
+    return () => ipcRenderer.removeListener("terminal:event", listener);
+  },
   setThemeSource: (source) => ipcRenderer.invoke("app:set-theme-source", source),
   loadSettings: (payload) => ipcRenderer.invoke("settings:load", payload),
   activateSettingsPrincipal: (payload) =>

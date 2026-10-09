@@ -19,6 +19,7 @@ const { Backend, DEFAULT_TARGET_DOMAINS } = require("./backend");
 const { buildAiRouteHealth } = require("./aiRouteHealth");
 const { loadRendererEntry, resolveRendererEntry } = require("./rendererEntry");
 const { createTrustedIpc } = require("./trustedIpc");
+const { createTerminalManager } = require("./terminalManager");
 const { createAiEnvironmentCleanup } = require("./aiEnvironmentCleanup");
 const appLog = require("./logger");
 const updateLog = appLog.scoped("update");
@@ -601,7 +602,34 @@ function createElectronApp(baseMode = "all") {
     return !app.isPackaged && process.env.SHAREGPT_BACKGROUND_TEST === "1";
   }
 
+  const terminalManager = createTerminalManager({
+    context: () => backend.getPrincipalContext(),
+    directory: (principalId) => backend.principalData.directory(principalId),
+    fetchProfile: async (serverUrl, token) => {
+      const url = new URL(`${serverUrl.replace(/\/+$/, "")}/api/profile`);
+      if (!["http:", "https:"].includes(url.protocol)) throw new Error("协作服务器地址无效");
+      const response = await electronNet.fetch(url.href, {
+        headers: { Authorization: `Bearer ${token}` },
+        redirect: "error",
+        cache: "no-store",
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) {
+        const detail = (await response.text()).slice(0, 500);
+        throw new Error(
+          `终端权限验证失败（HTTP ${response.status}）：${detail || "请检查协作登录状态"}`,
+        );
+      }
+      return (await response.json()).profile;
+    },
+    emit: (event) => {
+      if (mainWindow && !mainWindow.isDestroyed())
+        mainWindow.webContents.send("terminal:event", event);
+    },
+  });
+
   function cancelPrincipalRuntime() {
+    terminalManager.reset();
     aiRuntimeEpoch += 1;
     composerConfirmations.clear();
     usageAttempts.clear();
@@ -2423,7 +2451,9 @@ function createElectronApp(baseMode = "all") {
     mainWindow.on("leave-full-screen", reconcileOnFullScreenChange(false));
     mainWindow.on("hide", reconcileOnWindowEvent("hide"));
     mainWindow.on("minimize", reconcileOnWindowEvent("minimize"));
+    mainWindow.webContents.on("render-process-gone", () => terminalManager.reset());
     mainWindow.on("closed", () => {
+      terminalManager.reset();
       disposeAiWorkspaces();
       mainWindow = null;
     });
@@ -2437,6 +2467,9 @@ function createElectronApp(baseMode = "all") {
   }
 
   function registerIpc() {
+    trustedIpc.handle("terminal:invoke", (_event, action, payload, snapshot) =>
+      terminalManager.handle(action, payload, snapshot),
+    );
     // 让内嵌网页(ChatGPT/Gemini, 设为"跟随系统")的明暗跟随 app UI 主题。
     // nativeTheme.themeSource 影响所有 webContents 的 prefers-color-scheme;
     // 渲染层自身用 .dark class 控制, 不受此影响。
@@ -3490,6 +3523,7 @@ function createElectronApp(baseMode = "all") {
   });
 
   app.on("before-quit", () => {
+    terminalManager.reset();
     disposeAiRecoverySignals?.();
     disposeAiRecoverySignals = null;
     disposeAiWorkspaces();

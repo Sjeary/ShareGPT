@@ -6,6 +6,10 @@ import type { SettingsPrincipalSnapshot } from './settingsPrincipalRuntime'
 const noop = () => undefined
 const fallback = {
   platform: 'web',
+  terminal: async () => {
+    throw new Error('终端仅在桌面客户端中可用')
+  },
+  onTerminalEvent: () => noop,
   setThemeSource: async () => undefined,
   loadSettings: async () => ({}),
   activateSettingsPrincipal: async () => ({

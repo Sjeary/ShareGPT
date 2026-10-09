@@ -226,7 +226,30 @@ export type BrowserDestructiveConfirmation =
       expectedPrincipalGeneration: number
     }
 
+export interface TerminalSession {
+  id: string
+  title: string
+  ended: boolean
+  exitCode: number | null
+}
+export interface TerminalEvent {
+  type: 'data' | 'exit' | 'unavailable'
+  id?: string
+  data?: string
+  sequence?: number
+  message?: string
+  exitCode?: number
+  principalId: string
+  generation: number
+}
 export interface ShareGptApi {
+  terminal: (
+    action: string,
+    payload: unknown,
+    snapshot: { principalId: string; generation: number },
+  ) => Promise<unknown>
+  onTerminalEvent: (handler: (event: TerminalEvent) => void) => () => void
+
   platform: NodeJS.Platform | string
 
   // 让内嵌网页明暗跟随 app 主题 (nativeTheme.themeSource)。
