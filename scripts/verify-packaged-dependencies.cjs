@@ -17,7 +17,7 @@ function verifyPackagedDependencies(archive) {
     if (visited.has(directory)) continue;
     visited.add(directory);
     const manifest = JSON.parse(
-      asar.extractFile(archive, path.posix.join(directory, "package.json")).toString(),
+      asar.extractFile(archive, path.join(directory, "package.json")).toString(),
     );
     for (const dependency of Object.keys(manifest.dependencies || {})) {
       if (Object.hasOwn(manifest.optionalDependencies || {}, dependency)) continue;
