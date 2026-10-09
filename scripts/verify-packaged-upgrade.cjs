@@ -87,7 +87,7 @@ function isolatedKeychain(oldExe, newExe) {
     // Keychain also checks the code-signing partition, independently of the app ACL.
     // Ad-hoc builds have distinct cdhash partitions (securityd ClientIdentification).
     const partitions = [oldExe, newExe].map((executable) => {
-      const details = spawnSync("/usr/bin/codesign", ["-d", "--verbose=2", executable], {
+      const details = spawnSync("/usr/bin/codesign", ["-d", "--verbose=4", executable], {
         encoding: "utf8",
       });
       assert.equal(details.status, 0);
