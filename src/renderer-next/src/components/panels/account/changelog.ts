@@ -11,7 +11,7 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     version: '1.0.11',
-    date: '待发布',
+    date: '2026-10-09',
     highlights: [
       '新增本机终端：使用本机 shell、自行连接 SSH，支持多标签和按账号保存启动指令。管理员与获准的高级用户可在“账户 → 界面设置”分别控制高级 AI 环境和本机终端。',
       '终端切页保留会话；关闭功能、退出账号或失去授权时结束会话，保留启动设置。',
