@@ -3,6 +3,7 @@ const path = require("node:path");
 const os = require("node:os");
 const { spawnSync } = require("node:child_process");
 const asar = require("@electron/asar");
+const { finished } = require("node:stream/promises");
 const { verifyPackagedDependencies } = require("./verify-packaged-dependencies.cjs");
 
 async function main() {
@@ -21,7 +22,10 @@ async function main() {
         { recursive: true },
       );
     const archive = path.join(temp, "app.asar");
-    await asar.createPackageWithOptions(source, archive, { unpackDir: "node_modules/node-pty" });
+    const output = await asar.createPackageWithOptions(source, archive, {
+      unpackDir: "node_modules/node-pty",
+    });
+    await finished(output);
     verifyPackagedDependencies(archive);
     const code = `
       const pty=require(${JSON.stringify(path.join(archive, "node_modules/node-pty"))});

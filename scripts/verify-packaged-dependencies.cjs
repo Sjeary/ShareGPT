@@ -5,7 +5,9 @@ const asar = require("@electron/asar");
 // can resolve during tests while being absent from the installed application.
 function verifyPackagedDependencies(archive) {
   const files = new Set(
-    asar.listPackage(archive, { isPack: false }).map((file) => file.replace(/^\//, "")),
+    asar
+      .listPackage(archive, { isPack: false })
+      .map((file) => file.replace(/\\/g, "/").replace(/^\//, "")),
   );
   const visited = new Set();
   const pending = [""];

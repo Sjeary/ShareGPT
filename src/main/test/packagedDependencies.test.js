@@ -40,3 +40,15 @@ for (const location of ["node_modules/transport", "node_modules/agent/node_modul
     assert.equal(verifyPackagedDependencies(archive), 3);
   });
 }
+
+test("packaged verification resolves Windows archive separators", async (t) => {
+  const archive = await fixture(t, {
+    "": { name: "app", dependencies: { transport: "1" } },
+    "node_modules/transport": { name: "transport" },
+  });
+  const listPackage = asar.listPackage.bind(asar);
+  t.mock.method(asar, "listPackage", (...args) =>
+    listPackage(...args).map((file) => file.replace(/\//g, "\\")),
+  );
+  assert.equal(verifyPackagedDependencies(archive), 2);
+});
