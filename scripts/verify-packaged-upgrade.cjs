@@ -46,12 +46,67 @@ const run = (file, args) => {
   const result = spawnSync(file, args, { encoding: "utf8", timeout: 180000, windowsHide: true });
   if (result.error || result.status !== 0)
     throw new Error(`${file} failed: ${result.error || result.stderr || result.stdout}`);
+  return result.stdout;
 };
+// Only generated fixture secrets live in this temporary Keychain. Explicit old/new
+// application ACLs represent user approval; this does not test a silent ad-hoc upgrade.
+function isolatedKeychain(oldExe, newExe) {
+  if (windows) return () => {};
+  const security = (...args) => run("/usr/bin/security", args);
+  const paths = (value) => [...value.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  const originalDefault = paths(security("default-keychain", "-d", "user"))[0];
+  const originalSearch = paths(security("list-keychains", "-d", "user"));
+  assert.ok(originalDefault && originalSearch.length);
+  const keychain = path.join(task, "upgrade-fixture.keychain-db");
+  const password = crypto.randomBytes(24).toString("hex");
+  security("create-keychain", "-p", password, keychain);
+  const restore = () => {
+    security("default-keychain", "-d", "user", "-s", originalDefault);
+    security("list-keychains", "-d", "user", "-s", ...originalSearch);
+    security("delete-keychain", keychain);
+  };
+  try {
+    security("unlock-keychain", "-p", password, keychain);
+    security("list-keychains", "-d", "user", "-s", keychain);
+    security("default-keychain", "-d", "user", "-s", keychain);
+    // Electron 43.1.0 sets service=app_name+" Safe Storage", account=app_name.
+    security(
+      "add-generic-password",
+      "-a",
+      "ShareGPT",
+      "-s",
+      "ShareGPT Safe Storage",
+      "-w",
+      crypto.randomBytes(16).toString("base64"),
+      "-T",
+      oldExe,
+      "-T",
+      newExe,
+      keychain,
+    );
+    return restore;
+  } catch (error) {
+    restore();
+    throw error;
+  }
+}
 const results = [];
 let fixture, encrypted;
 async function launch(executablePath, seed) {
   let app;
+  let phase = "launch";
+  const watchdog = setTimeout(() => {
+    console.error(`Packaged upgrade timed out: seed=${seed}, phase=${phase}`);
+    const child = app?.process();
+    if (child) child.kill("SIGKILL");
+  }, 180000);
+  watchdog.unref();
+  const mark = (value) => {
+    phase = value;
+    console.log(`Upgrade seed=${seed}: ${phase}`);
+  };
   try {
+    mark("launch");
     app = await electron.launch({ executablePath, timeout: 90000 });
     const page = await app.firstWindow();
     const errors = [];
@@ -62,6 +117,7 @@ async function launch(executablePath, seed) {
         ? route.continue()
         : route.abort();
     });
+    mark("fixture login");
     await Promise.all([
       loginThroughForm(page, fixture.baseUrl, "upgrade-member"),
       (async () => {
@@ -113,6 +169,7 @@ async function launch(executablePath, seed) {
     assert.equal(state.settings.ui.upgradeAcceptance, "retained");
     assert.equal(state.history.conversations["room:all"][0].text, "retained");
     assert.equal(state.local, "retained");
+    mark("persistent browser cookie");
     const cookie = await app.evaluate(
       async ({ session }, { partition, seed }) => {
         const s = session.fromPartition(partition);
@@ -130,6 +187,7 @@ async function launch(executablePath, seed) {
       { partition: state.settings.gpt.partition, seed },
     );
     assert.equal(cookie[0]?.value, "retained");
+    mark("real secure storage");
     encrypted = await app.evaluate(
       ({ safeStorage, app }, { seed, encrypted }) => {
         if (
@@ -148,6 +206,7 @@ async function launch(executablePath, seed) {
       { seed, encrypted },
     );
     if (!seed) {
+      mark("packaged terminal");
       assert.equal(identity.data, results[0].data);
       assert.equal(state.principal, results[0].principal);
       assert.equal(state.settings.gpt.partition, results[0].partition);
@@ -186,7 +245,12 @@ async function launch(executablePath, seed) {
     });
     console.log(JSON.stringify(results.at(-1)));
   } finally {
-    if (app) await app.close();
+    mark("shutdown");
+    try {
+      if (app) await app.close();
+    } finally {
+      clearTimeout(watchdog);
+    }
   }
 }
 (async () => {
@@ -233,10 +297,11 @@ async function launch(executablePath, seed) {
     oldExe = path.join(slot, "ShareGPT.app/Contents/MacOS/ShareGPT");
     newExe = oldExe;
   }
-  fixture = await createFixtureServer({
-    profileFor: () => ({ isAdmin: false, advancedAiAllowed: true }),
-  });
+  const restoreKeychain = isolatedKeychain(oldExe, current);
   try {
+    fixture = await createFixtureServer({
+      profileFor: () => ({ isAdmin: false, advancedAiAllowed: true }),
+    });
     await launch(oldExe, true);
     if (windows) run(installer, ["/S", `/D=${slot}`]);
     else {
@@ -252,6 +317,9 @@ async function launch(executablePath, seed) {
           passed: true,
           previousVersion: "1.0.10",
           previousAssetSha256: previous.sha256,
+          keychainFixture: windows
+            ? "native Windows secure storage"
+            : "isolated native Keychain, explicit old/new app approval",
           results,
           limits: [
             "Synthetic accounts and browser cookies; no third-party AI credentials are sent to CI.",
@@ -262,7 +330,11 @@ async function launch(executablePath, seed) {
       ),
     );
   } finally {
-    await fixture.close();
+    try {
+      if (fixture) await fixture.close();
+    } finally {
+      restoreKeychain();
+    }
   }
 })().catch((error) => {
   console.error(error);
