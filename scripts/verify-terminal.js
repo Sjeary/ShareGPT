@@ -35,7 +35,15 @@ async function main() {
       username: "terminal-approved",
       launchEnv,
       beforeLogin: async ({ electronApp, window }) => {
-        await electronApp.evaluate(({ BrowserWindow }) => {
+        await electronApp.evaluate(({ BrowserWindow, ipcMain }) => {
+          const original = ipcMain._invokeHandlers.get("terminal:invoke");
+          globalThis.__terminalInterrupts = 0;
+          ipcMain.removeHandler("terminal:invoke");
+          ipcMain.handle("terminal:invoke", (event, action, payload, snapshot) => {
+            if (action === "write" && payload?.data?.includes("\x03"))
+              globalThis.__terminalInterrupts++;
+            return original(event, action, payload, snapshot);
+          });
           globalThis.__terminalForeground = [];
           for (const win of BrowserWindow.getAllWindows()) {
             if (win.isVisible() || win.isFocusable() || win.isFocused())
@@ -113,9 +121,47 @@ async function main() {
             .join("")
             .includes("STATE_kept"),
         );
-        await input().pressSequentially(windows ? "Start-Sleep -Seconds 30" : "sleep 30");
+        await input().pressSequentially(
+          windows
+            ? "Write-Output ('SLEEP_' + 'STARTED'); Start-Sleep -Seconds 30"
+            : "printf '%s%s\\n' SLEEP_ STARTED; sleep 30",
+        );
         await input().press("Enter");
+        await window.waitForFunction(() =>
+          window.__terminalEvents
+            .map((e) => e.data || "")
+            .join("")
+            .includes("SLEEP_STARTED"),
+        );
+        const interruptStart = await window.evaluate(() => window.__terminalEvents.length);
         await input().press("Control+c");
+        await window
+          .waitForFunction(
+            ({ start, ready }) =>
+              window.__terminalEvents
+                .slice(start)
+                .map((e) => e.data || "")
+                .join("")
+                .includes(ready),
+            { start: interruptStart, ready: prompt },
+            { timeout: 10000 },
+          )
+          .catch(async (error) => {
+            console.error(
+              "Interrupt diagnostic",
+              await electronApp.evaluate(() => globalThis.__terminalInterrupts),
+              await window.evaluate(
+                (start) =>
+                  window.__terminalEvents
+                    .slice(start)
+                    .map((e) => e.data || "")
+                    .join("")
+                    .slice(-4000),
+                interruptStart,
+              ),
+            );
+            throw error;
+          });
         await input().pressSequentially(
           windows ? "Write-Output ('CTRL_C_' + 'OK')" : "printf '\\n%s%s\\n' CTRL_C_ OK",
         );
