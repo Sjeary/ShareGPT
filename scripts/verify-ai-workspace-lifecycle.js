@@ -103,6 +103,11 @@ function fixtureDocument() {
       html, body { margin: 0; min-height: 100%; background: #157a6e; color: white; }
       body { font: 18px system-ui; padding: 24px; }
     </style>
+    <!-- Reproduce the remote header found in ChatGPT: a transparent native drag band
+         after a separate button, plus an author-important declaration. -->
+    <button id="header-action" style="position:fixed;left:254px;top:8px;width:36px;height:36px;-webkit-app-region:no-drag" onclick="window.__headerClicks=(window.__headerClicks||0)+1">Search</button>
+    <header id="remote-drag-header" style="position:fixed;inset:0 0 auto;height:52px;pointer-events:none;-webkit-app-region:drag!important"></header>
+    <style>#remote-drag-header::before { content: ''; position:absolute; inset:0; -webkit-app-region:drag!important; }</style>
     <h1>AI lifecycle fixture</h1>
     <p id="location"></p>
     <form id="composer" data-testid="composer">
@@ -865,6 +870,74 @@ async function waitForFixture(electronApp, urlPattern, label) {
   }, label);
 }
 
+async function verifyEmbeddedDragBoundary(electronApp, urlPattern) {
+  const result = await fixtureState(
+    electronApp,
+    urlPattern,
+    `(() => {
+    const header = document.querySelector('#remote-drag-header');
+    const button = document.querySelector('#header-action');
+    const style = getComputedStyle(header);
+    return {
+      region: style.getPropertyValue('-webkit-app-region'),
+      pseudoRegion: getComputedStyle(header, '::before').getPropertyValue('-webkit-app-region'),
+      originalDeclaration: header.style.getPropertyValue('-webkit-app-region'),
+      originalPriority: header.style.getPropertyPriority('-webkit-app-region'),
+      pointerEvents: style.pointerEvents,
+      height: header.getBoundingClientRect().height,
+      buttonDisabled: button.disabled,
+    };
+  })()`,
+  );
+  assert.ok(result?.value, `drag-boundary fixture must exist: ${urlPattern}`);
+  assert.deepEqual(result.value, {
+    region: "none",
+    pseudoRegion: "none",
+    originalDeclaration: "drag",
+    originalPriority: "important",
+    pointerEvents: "none",
+    height: 52,
+    buttonDisabled: false,
+  });
+  return result.webContentsId;
+}
+
+async function verifyRemoteHeaderLifecycle(electronApp, page, tabId) {
+  const pattern = "chatgpt\\.com/gpt/a";
+  await waitForFixture(electronApp, pattern, "header fixture load");
+  await verifyEmbeddedDragBoundary(electronApp, pattern);
+  await fixtureState(
+    electronApp,
+    pattern,
+    `(() => {
+    const header = document.querySelector('#remote-drag-header');
+    header.replaceWith(header.cloneNode(true));
+    history.pushState({}, '', location.pathname + '?header-spa=1');
+    document.querySelector('#header-action').click();
+    return window.__headerClicks;
+  })()`,
+  );
+  await verifyEmbeddedDragBoundary(electronApp, pattern);
+  assert.equal((await fixtureState(electronApp, pattern, "window.__headerClicks")).value, 1);
+  await fixtureState(electronApp, pattern, "history.replaceState({}, '', location.pathname)");
+  const before = await fixtureState(electronApp, pattern);
+  await api(page, "navigateAiWorkspace", { kind: "gpt", tabId, action: "reload" });
+  await waitUntil(async () => {
+    const after = await fixtureState(electronApp, pattern);
+    return after?.value?.bootId && after.value.bootId !== before.value.bootId;
+  }, "header fixture reload");
+  await verifyEmbeddedDragBoundary(electronApp, pattern);
+  assert.equal(
+    await page
+      .locator("header.app-drag")
+      .evaluate((header) => getComputedStyle(header).getPropertyValue("-webkit-app-region")),
+    "drag",
+  );
+  process.stdout.write(
+    "[verify] remote header drag declarations neutralized across dynamic DOM, SPA and reload; native shell titlebar preserved\n",
+  );
+}
+
 async function switchTab(page, kind, tabId) {
   return api(page, "switchAiView", kind, { tabId });
 }
@@ -1604,6 +1677,7 @@ async function main() {
     assert.notEqual(gptAId, gptBId);
 
     await ensureTab(page, { kind: "gpt", tabId: gptAId, url: gptAUrl, socksPort });
+    await verifyRemoteHeaderLifecycle(electronApp, page, gptAId);
     const firstGptA = await waitForFixture(electronApp, "chatgpt\\.com/gpt/a", "GPT A load").catch(
       async (error) => {
         error.message += `\n${JSON.stringify(
@@ -1688,6 +1762,7 @@ async function main() {
       translations,
     });
 
+    await verifyEmbeddedDragBoundary(electronApp, "fixture\\.invalid/claude/a");
     process.stdout.write("[verify] Claude loading pulse keeps the ready composer document\n");
     const claudeTargetBeforePulse = await composerTarget(page, claudeId, "claude");
     await emitFixtureWebContentsEvent(
@@ -1842,6 +1917,7 @@ async function main() {
       url: location.href
     })`,
     );
+    await verifyEmbeddedDragBoundary(electronApp, "conversation/42");
     assert.equal(beforeCrash.value.identity, "GPT-B");
     const crashedId = await electronApp.evaluate(({ webContents }) => {
       const contents = webContents
@@ -1874,6 +1950,7 @@ async function main() {
       "renderer crash recovery",
       20_000,
     );
+    await verifyEmbeddedDragBoundary(electronApp, "conversation/42");
     assert.equal(recovered.value.identity, "GPT-B");
     assert.match(recovered.value.url, /\/conversation\/42$/);
     assert.notEqual(recovered.value.fixture.bootId, beforeCrash.value.fixture.bootId);

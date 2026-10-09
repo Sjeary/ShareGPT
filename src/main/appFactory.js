@@ -1851,6 +1851,16 @@ function createElectronApp(baseMode = "all") {
 
     wc.on("dom-ready", () => {
       if (!isCurrentView()) return;
+      // Remote pages are browser content, never native window chrome. A transparent
+      // app-region:drag header still intercepts native clicks despite pointer-events:none.
+      // User-origin !important also beats author inline rules and covers later SPA nodes.
+      void wc
+        .insertCSS("*, *::before, *::after { -webkit-app-region: initial !important; }", {
+          cssOrigin: "user",
+        })
+        .catch((error) => {
+          if (isCurrentView()) mainLog.warn("Unable to disable remote page drag regions", error);
+        });
       if (workspace.environmentBootstrapping || !isWorkspaceDocumentAllowed(workspace)) return;
       const currentUrl = normalizeAiWorkspaceUrl(workspace, wc.getURL());
       markWorkspaceDocumentReady(workspace, currentUrl);
