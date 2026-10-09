@@ -8,6 +8,7 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
+import { canUseAdvancedAi } from '@/lib/aiAccess'
 import { normalizeAdvancedAiSettings } from '@/lib/aiEnvironments'
 import type { NavKey } from '@/lib/nav'
 
@@ -35,8 +36,8 @@ export function InterfaceSettings() {
   const advancedAiRaw = useAppStore((s) => s.settings?.advancedAi)
   const advancedAi = useMemo(() => normalizeAdvancedAiSettings(advancedAiRaw), [advancedAiRaw])
   const profile = useAuthStore((s) => s.profile)
-  const advancedAiAllowed =
-    workspaceMode === 'organization' && Boolean(profile?.isAdmin || profile?.advancedAiAllowed)
+  const token = useAuthStore((s) => s.token)
+  const advancedAiAllowed = canUseAdvancedAi(workspaceMode, token, profile)
 
   return (
     <Card>
@@ -90,8 +91,7 @@ export function InterfaceSettings() {
               显示 Gemini
             </Label>
             <p className="text-xs text-muted-foreground">
-              默认隐藏。Gemini 需要 Google 登录，而内嵌客户端无法完成 Google
-              登录——我们尝试集成过，但实际用不了。如仍需要可在此开启。
+              默认隐藏。内嵌页面暂不支持 Google 登录；需要时可开启 Gemini 入口。
             </p>
           </div>
           <Switch id="ui-show-gemini" checked={showGemini} onCheckedChange={setShowGemini} />
@@ -133,6 +133,24 @@ export function InterfaceSettings() {
                     toast.error('保存高级功能设置失败'),
                   )
                 }
+              />
+            </div>
+
+            <Separator className="my-1" />
+
+            <div className="flex items-center justify-between gap-3 py-1.5">
+              <div className="min-w-0">
+                <Label htmlFor="ui-show-terminal" className="cursor-pointer">
+                  本机终端
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  使用本机 shell 或 SSH。关闭后结束当前终端会话，保留启动设置。
+                </p>
+              </div>
+              <Switch
+                id="ui-show-terminal"
+                checked={!hiddenNav.includes('terminal')}
+                onCheckedChange={(enabled) => setNavHidden('terminal', !enabled)}
               />
             </div>
 

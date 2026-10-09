@@ -15,8 +15,9 @@ async function main() {
     "unset HISTFILE\nPROMPT='fixture> '\nexport TERMINAL_RC_FIXTURE=loaded\n",
   );
   let allowed = true;
+  let administrator = false;
   const fixture = await createFixtureServer({
-    profileFor: () => ({ isAdmin: false, advancedAiAllowed: allowed }),
+    profileFor: () => ({ isAdmin: administrator, advancedAiAllowed: allowed }),
   });
   try {
     await launchCase({
@@ -48,6 +49,18 @@ async function main() {
         const errors = [];
         window.on("pageerror", (e) => errors.push(e.message));
         const nav = window.locator('[data-tour="nav-terminal"]');
+        await window.locator('[data-tour="nav-account"]').click();
+        await window.locator("#advanced-ai-environments").waitFor();
+        assert.equal(
+          await window.locator("#ui-show-terminal").getAttribute("aria-checked"),
+          "true",
+        );
+        if (
+          (await window.locator("#advanced-ai-environments").getAttribute("aria-checked")) ===
+          "true"
+        )
+          await window.locator("#advanced-ai-environments").click();
+        assert.equal(await nav.innerText(), "终端\n本机终端");
         await nav.click();
         await window.getByRole("button", { name: "打开本地终端", exact: true }).click();
         const input = () => window.locator('[data-state="active"] .xterm-helper-textarea');
@@ -155,6 +168,50 @@ async function main() {
           }),
           true,
         );
+        await window.locator('[data-tour="nav-account"]').click();
+        const interfaceCard = window.locator('[data-slot="card"]').filter({ hasText: "界面设置" });
+        await interfaceCard.screenshot({
+          path: path.join(screenshots, "account-terminal-light.png"),
+        });
+        await window.locator('button[aria-label="切换主题"]').click();
+        await interfaceCard.screenshot({
+          path: path.join(screenshots, "account-terminal-dark.png"),
+        });
+        await window.locator("#ui-show-terminal").click();
+        await nav.waitFor({ state: "detached" });
+        await window.waitForFunction(() => document.querySelectorAll(".xterm").length === 0);
+        await assert.rejects(
+          window.evaluate(
+            async (id) =>
+              window.api.terminal(
+                "write",
+                { id, data: "ignored" },
+                await window.api.getSettingsPrincipal(),
+              ),
+            first,
+          ),
+          /权限/,
+        );
+        await window.waitForFunction(async () => {
+          const principal = await window.api.getSettingsPrincipal();
+          const settings = await window.api.loadSettings({
+            expectedPrincipalId: principal.principalId,
+            expectedPrincipalGeneration: principal.generation,
+          });
+          return settings.ui.hiddenNav.includes("terminal");
+        });
+        await window.locator("#ui-show-terminal").click();
+        await nav.click();
+        await window.getByRole("button", { name: "打开本地终端", exact: true }).waitFor();
+        assert.equal(await window.getByRole("tab").count(), 0, "disabling ends old sessions");
+        await window.getByRole("button", { name: "启动设置", exact: true }).click();
+        assert.equal(
+          await window.getByLabel("启动指令（可选）").inputValue(),
+          "export TERMINAL_STARTUP_FIXTURE=once",
+        );
+        await window.getByRole("button", { name: "保存", exact: true }).click();
+        await window.getByRole("button", { name: "打开本地终端", exact: true }).click();
+        await input().waitFor({ state: "attached" });
         allowed = false;
         await window
           .getByRole("button", { name: "重新验证权限", exact: true })
@@ -199,6 +256,25 @@ async function main() {
         );
       },
     });
+    for (const isAdmin of [false, true]) {
+      administrator = isAdmin;
+      await launchCase({
+        ...fixture,
+        username: isAdmin ? "terminal-admin" : "terminal-regular",
+        launchEnv: { SHELL: "/bin/zsh", ZDOTDIR: shellConfig },
+        exercise: async ({ window }) => {
+          await window.locator('[data-tour="nav-account"]').click();
+          assert.equal(await window.locator("#advanced-ai-environments").count(), isAdmin ? 1 : 0);
+          assert.equal(await window.locator("#ui-show-terminal").count(), isAdmin ? 1 : 0);
+          assert.equal(await window.locator('[data-tour="nav-terminal"]').count(), isAdmin ? 1 : 0);
+          if (isAdmin) {
+            await window.locator('[data-tour="nav-terminal"]').click();
+            await window.getByRole("button", { name: "打开本地终端", exact: true }).click();
+            await window.locator(".xterm-helper-textarea").waitFor({ state: "attached" });
+          }
+        },
+      });
+    }
   } finally {
     await fixture.close();
     fs.rmSync(shellConfig, { recursive: true, force: true });

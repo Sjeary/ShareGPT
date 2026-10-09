@@ -41,7 +41,9 @@ export function Shell() {
   const workspaceMode = useAppStore((s) => s.workspaceMode)
   const token = useAuthStore((s) => s.token)
   const profile = useAuthStore((s) => s.profile)
-  const terminalAllowed = canUseAdvancedAi(workspaceMode, token, profile)
+  const hiddenNav = useAppStore((s) => s.hiddenNav)
+  const terminalAllowed =
+    canUseAdvancedAi(workspaceMode, token, profile) && !hiddenNav.includes('terminal')
   useEffect(() => {
     if (active === 'terminal' && !terminalAllowed) useAppStore.getState().setActive('account')
   }, [active, terminalAllowed])

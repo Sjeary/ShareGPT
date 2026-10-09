@@ -50,6 +50,6 @@ export const NAV: NavItem[] = [
   { key: 'claude', label: 'Claude', icon: ClaudeIcon, hint: '内嵌 Claude 网页' },
   { key: 'stats', label: '使用统计', icon: BarChart3, hint: '查询量与排行' },
   { key: 'account', label: '账户', icon: UserRound, hint: '登录与协作服务' },
-  { key: 'terminal', label: '终端', icon: TerminalSquare, hint: '本机 shell 与 SSH · 高级功能' },
+  { key: 'terminal', label: '终端', icon: TerminalSquare, hint: '本机终端' },
   { key: 'logs', label: '运行日志', icon: ScrollText, hint: '服务输出日志' },
 ]
