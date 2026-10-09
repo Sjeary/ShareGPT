@@ -48,6 +48,8 @@ async function main() {
           for (const win of BrowserWindow.getAllWindows()) {
             if (win.isVisible() || win.isFocusable() || win.isFocused())
               throw new Error("Terminal verification must remain hidden");
+            if (win.webContents.getBackgroundThrottling() !== false)
+              throw new Error("Hidden verification must retain frame scheduling");
             for (const event of ["show", "focus"])
               win.on(event, () => globalThis.__terminalForeground.push(event));
           }

@@ -2403,6 +2403,8 @@ function createElectronApp(baseMode = "all") {
       autoHideMenuBar: true,
       titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
       webPreferences: {
+        // Hidden acceptance windows still need normal frame/timer scheduling.
+        backgroundThrottling: !backgroundTest,
         preload: path.join(__dirname, "preload.js"),
         contextIsolation: true,
         nodeIntegration: false,
