@@ -86,7 +86,10 @@ async function main() {
         await input().pressSequentially(printVariable("READY", "TERMINAL_RC_FIXTURE"));
         await input().press("Enter");
         await window.waitForFunction(() =>
-          window.__terminalEvents.some((e) => e.type === "data" && e.data.includes("READY_loaded")),
+          window.__terminalEvents
+            .map((e) => e.data || "")
+            .join("")
+            .includes("READY_loaded"),
         );
         const first = await window.evaluate(
           () => window.__terminalEvents.find((e) => e.type === "data").id,
@@ -105,17 +108,23 @@ async function main() {
         await input().pressSequentially(printVariable("STATE", "KEEP_SESSION"));
         await input().press("Enter");
         await window.waitForFunction(() =>
-          window.__terminalEvents.some((e) => e.data?.includes("STATE_kept")),
+          window.__terminalEvents
+            .map((e) => e.data || "")
+            .join("")
+            .includes("STATE_kept"),
         );
         await input().pressSequentially(windows ? "Start-Sleep -Seconds 30" : "sleep 30");
         await input().press("Enter");
         await input().press("Control+c");
         await input().pressSequentially(
-          windows ? "Write-Output ('CTRL_C_' + 'OK')" : "printf '\\nCTRL_C_OK\\n'",
+          windows ? "Write-Output ('CTRL_C_' + 'OK')" : "printf '\\n%s%s\\n' CTRL_C_ OK",
         );
         await input().press("Enter");
         await window.waitForFunction(() =>
-          window.__terminalEvents.some((e) => e.data?.includes("\r\nCTRL_C_OK\r\n")),
+          window.__terminalEvents
+            .map((e) => e.data || "")
+            .join("")
+            .includes("CTRL_C_OK"),
         );
         await window.getByRole("button", { name: "启动设置", exact: true }).click();
         await window.getByLabel("启动指令（可选）").fill(startupCommand);
@@ -131,7 +140,10 @@ async function main() {
         await input().pressSequentially(printVariable("START", "TERMINAL_STARTUP_FIXTURE"));
         await input().press("Enter");
         await window.waitForFunction(() =>
-          window.__terminalEvents.some((e) => e.data?.includes("START_once")),
+          window.__terminalEvents
+            .map((e) => e.data || "")
+            .join("")
+            .includes("START_once"),
         );
         const screenshots = path.resolve(__dirname, "../.cache/terminal-20261009/screenshots");
         fs.mkdirSync(screenshots, { recursive: true });
