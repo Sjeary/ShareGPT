@@ -150,6 +150,11 @@ jobs:
       - name: Verify notes editor lifecycle
         run: node scripts/verify-notes-lifecycle.js
 
+      - name: Verify embedded terminal approval and native startup
+        run: |
+          node scripts/verify-terminal-native.cjs
+          node scripts/verify-terminal.js
+
       - name: Verify notes AI cancellation and error feedback
         run: node scripts/verify-notes-ai.js
 
@@ -191,6 +196,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm --prefix collab_server2 ci --no-audit --no-fund
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify native terminal startup on Windows
+        run: node scripts/verify-terminal-native.cjs
 
       - name: Windows 发布逻辑回归
         run: |
