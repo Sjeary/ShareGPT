@@ -176,7 +176,9 @@ async function main() {
   try {
     const page = await electronApp.firstWindow();
     await page.getByLabel("服务地址").waitFor();
-    await page.getByText("v1.0.10", { exact: true }).waitFor();
+    await page
+      .getByText(`v${require("../admin_console/package.json").version}`, { exact: true })
+      .waitFor();
     await page.getByLabel("服务地址").fill(baseUrl);
     await page.getByLabel("管理员账号").fill("admin");
     await page.getByLabel("管理员密码").fill("password");
