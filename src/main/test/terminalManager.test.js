@@ -217,3 +217,42 @@ test("an older denial cannot revoke a newer successful authorization", async (t)
   await f.call("create");
   assert.equal(f.children.length, 1);
 });
+
+test("Windows terminal exit releases worker and input handles without killing an exited PID", () => {
+  const { trackTerminalExit } = require("../terminalManager");
+  const calls = [];
+  let exited = () => {
+    throw new Error("exit listener was not registered");
+  };
+  const pty = {
+    onExit(callback) {
+      exited = callback;
+      return {
+        dispose() {
+          calls.push("unsubscribe");
+        },
+      };
+    },
+    kill() {
+      throw new Error("must not kill an exited PID");
+    },
+    _agent: {
+      inSocket: {
+        destroy() {
+          calls.push("input");
+        },
+      },
+      _conoutSocketWorker: {
+        dispose() {
+          calls.push("worker");
+        },
+      },
+    },
+  };
+  assert.equal(trackTerminalExit(pty, "win32"), pty);
+  exited();
+  assert.deepEqual(calls, ["unsubscribe", "input", "worker"]);
+  calls.length = 0;
+  trackTerminalExit(pty, "darwin");
+  assert.deepEqual(calls, []);
+});

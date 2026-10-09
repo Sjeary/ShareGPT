@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const assert = require("node:assert/strict");
 const path = require("node:path");
 const os = require("node:os");
 const { spawnSync } = require("node:child_process");
@@ -21,17 +22,39 @@ async function main() {
         path.join(source, "node_modules", name),
         { recursive: true },
       );
+    fs.mkdirSync(path.join(source, "src", "main"), { recursive: true });
+    for (const name of ["terminalManager.js", "localJsonStore.js"])
+      fs.copyFileSync(
+        path.join(__dirname, "../src/main", name),
+        path.join(source, "src", "main", name),
+      );
     const archive = path.join(temp, "app.asar");
     const output = await asar.createPackageWithOptions(source, archive, {
-      unpackDir: "node_modules/node-pty",
+      unpackDir: path.join("node_modules", "node-pty"),
     });
     await finished(output);
     verifyPackagedDependencies(archive);
+    assert.ok(
+      fs.existsSync(
+        path.join(
+          archive + ".unpacked",
+          "node_modules",
+          "node-pty",
+          "lib",
+          "worker",
+          "conoutSocketWorker.js",
+        ),
+      ),
+      "PTY worker must exist outside the ASAR archive",
+    );
     const code = `
-      const pty=require(${JSON.stringify(path.join(archive, "node_modules/node-pty"))});
+      const {spawnTerminal}=require(${JSON.stringify(path.join(archive, "src/main/terminalManager.js"))});
+      console.log('PTY_MODULE_LOADED');
       const windows=process.platform==='win32';
-      const child=pty.spawn(windows?'powershell.exe':'/bin/sh',windows?['-NoLogo','-NoProfile','-Command',"[Console]::Write('PACKAGED_PTY_OK')"]:['-c','printf PACKAGED_PTY_OK'],{cols:80,rows:24,cwd:${JSON.stringify(temp)},env:{...process.env}});
-      let output=''; child.onData(d=>output+=d);
+      const child=spawnTerminal(windows?'powershell.exe':'/bin/sh',windows?['-NoLogo','-NoProfile','-Command',"[Console]::Write('PACKAGED_PTY_OK')"]:['-c','printf PACKAGED_PTY_OK'],{cols:80,rows:24,cwd:${JSON.stringify(temp)},env:{...process.env}});
+      console.log('PTY_CREATED');
+      let output=''; child.onData(d=>{output+=d;console.log('PTY_DATA',JSON.stringify(d));});
+      setTimeout(()=>console.error('PTY_STILL_RUNNING',JSON.stringify({pid:child.pid,output})),10000).unref();
       child.onExit(e=>{console.log(JSON.stringify({exit:e.exitCode,output}));if(e.exitCode||!output.includes('PACKAGED_PTY_OK'))process.exitCode=1;});
     `;
     const result = spawnSync(require("electron"), ["-e", code], {
@@ -41,7 +64,7 @@ async function main() {
     });
     if (result.error || result.status !== 0)
       throw new Error(
-        `Packaged PTY did not start: ${result.error || result.stderr || result.stdout}`,
+        `Packaged PTY did not start: ${result.error || result.status}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
       );
     console.log(result.stdout.trim());
   } finally {

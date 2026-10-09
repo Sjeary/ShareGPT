@@ -39,6 +39,24 @@ function shellLaunch(command = "", platform = process.platform, environment = pr
   };
 }
 
+// node-pty 1.1.0 leaves ConPTY's worker/input socket alive after a natural exit.
+// Keep this pinned-version adapter at the process owner; never kill an exited PID.
+// https://github.com/microsoft/node-pty/issues/887
+function trackTerminalExit(pty, platform = process.platform) {
+  if (platform === "win32") {
+    const subscription = pty.onExit(() => {
+      subscription.dispose();
+      pty._agent?.inSocket?.destroy();
+      pty._agent?._conoutSocketWorker?.dispose();
+    });
+  }
+  return pty;
+}
+
+function spawnTerminal(file, args, options) {
+  return trackTerminalExit(require("node-pty").spawn(file, args, options));
+}
+
 /** @param {{
  * context: () => any, directory: (id: string) => string,
  * fetchProfile: (server: string, token: string) => Promise<any>, emit: (event: any) => void,
@@ -50,7 +68,7 @@ function createTerminalManager({
   directory,
   fetchProfile,
   emit,
-  spawn = (file, args, options) => require("node-pty").spawn(file, args, options),
+  spawn = spawnTerminal,
   now = Date.now,
   launch = shellLaunch,
 }) {
@@ -281,4 +299,4 @@ function createTerminalManager({
   };
 }
 
-module.exports = { createTerminalManager, shellLaunch };
+module.exports = { createTerminalManager, shellLaunch, spawnTerminal, trackTerminalExit };
