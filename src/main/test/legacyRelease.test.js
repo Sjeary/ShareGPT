@@ -8,7 +8,9 @@ const { releaseDistribution } = require("../../../scripts/release-distribution.c
 
 test("legacy publishing is restricted to the exact approved version and tag", () => {
   for (const [version, tag] of [
-    ["1.0.11", "v1.0.11"],
+    ["1.0.12", "v1.0.12"],
+    ["1.0.11-beta.1", "v1.0.11-beta.1"],
+    ["1.0.11", "v1.0.10"],
     ["1.0.10-beta.1", "v1.0.10-beta.1"],
     ["1.0.10", "v1.0.9"],
     ["1.0.9", "main"],
@@ -26,7 +28,7 @@ test("legacy publishing is restricted to the exact approved version and tag", ()
   );
 });
 
-for (const version of ["1.0.9", "1.0.10"]) {
+for (const version of ["1.0.9", "1.0.10", "1.0.11"]) {
   test(`${version} macOS builds fresh, signs ad-hoc, verifies, then packages`, () => {
     const steps = legacyReleaseCommands({ version, tag: `v${version}`, platform: "darwin" });
     assert.equal(steps.length, 7);
@@ -61,10 +63,10 @@ for (const version of ["1.0.9", "1.0.10"]) {
 }
 
 test("unapproved versions always retain the official signing policy", () => {
-  for (const version of ["1.0.8", "1.0.11", "1.0.100", "2.0.0", "1.0.10-beta.1"]) {
+  for (const version of ["1.0.8", "1.0.12", "1.0.100", "2.0.0", "1.0.11-beta.1"]) {
     assert.equal(releaseDistribution({ version, tag: `v${version}` }), "official");
   }
-  for (const version of ["1.0.9", "1.0.10"]) {
+  for (const version of ["1.0.9", "1.0.10", "1.0.11"]) {
     assert.equal(releaseDistribution({ version, tag: `v${version}` }), "legacy");
   }
   assert.throws(() => releaseDistribution({ version: "invalid", tag: "vinvalid" }), /matching/);

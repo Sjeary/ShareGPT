@@ -1,7 +1,7 @@
 const { RELEASE_VERSION_PATTERN } = require("./releaseContract.cjs");
 
 // Explicit version approvals, never a prefix/range or a fallback for missing credentials.
-const LEGACY_VERSIONS = Object.freeze(["1.0.9", "1.0.10"]);
+const LEGACY_VERSIONS = Object.freeze(["1.0.9", "1.0.10", "1.0.11"]);
 
 function releaseDistribution({ version, tag }) {
   if (!RELEASE_VERSION_PATTERN.test(version) || tag !== `v${version}`) {

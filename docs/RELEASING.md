@@ -36,9 +36,9 @@ npm --prefix admin_console/ui run build
 
 Windows 任务要求正式 Authenticode PFX 和 `WINDOWS_PUBLISHER_NAME`，复验安装器、unpacked exe 与 `app-update.yml` 的发布者身份、有效签名及时间戳。macOS 任务要求 Developer ID、`MACOS_TEAM_ID` 和 App Store Connect API 凭据，按 [MACOS_SIGNING.md](MACOS_SIGNING.md) 验证发布者 Team ID、签名、公证和 Gatekeeper。
 
-### v1.0.9 / v1.0.10 历史分发方式例外
+### v1.0.9 / v1.0.10 / v1.0.11 历史分发方式例外
 
-v1.0.9 与 v1.0.10 明确采用旧分发方式：Windows 使用未签名 NSIS，macOS 使用 ad-hoc 签名且未经 Apple 公证，不要求以上正式签名凭据。`scripts/release-distribution.cjs` 是版本策略入口，只有精确匹配包版本与 tag 的 `v1.0.9`、`v1.0.10` 返回 `legacy`。工作流和 `scripts/build-legacy-release.cjs` 共用这一判断；1.0.11、预发布标签及其他版本仍走正式签名路径，不能因凭据缺失自动降级。
+v1.0.9、v1.0.10 与 v1.0.11 明确采用旧分发方式：Windows 使用未签名 NSIS，macOS 使用 ad-hoc 签名且未经 Apple 公证，不要求以上正式签名凭据。`scripts/release-distribution.cjs` 是版本策略入口，只有精确匹配包版本与 tag 的 `v1.0.9`、`v1.0.10`、`v1.0.11` 返回 `legacy`。工作流和 `scripts/build-legacy-release.cjs` 共用这一判断；1.0.12、预发布标签及其他版本仍走正式签名路径，不能因凭据缺失自动降级。
 
 例外不跳过源码归属、CI、行为测试、固定二进制校验、应用身份、更新元数据及资产完整性检查。Mac 应用从源码构建、签署、验证后再封装；Windows 验证安装器及主程序为预期的未签名状态。不得宣称这些版本已经公证或能在所有设备上免提示打开。公开说明使用对应的 `docs/releases/vX.Y.Z.md`，该文件在平台构建前检查存在，不使用提交记录自动生成的技术摘要。
 
@@ -62,7 +62,7 @@ npm run verify:release-win
 
 使用干净、固定提交的构建目录，并先运行 `npm ci`。不要把整个 `node_modules` 目录链接到另一个检出后直接打包：打包器可能遗漏间接运行依赖，源码运行成功不能证明最终应用包完整。保留旧候选，在新的输出目录验证实际 ASAR 内容与运行依赖。
 
-1.0.10 本地可按批准的版本策略构建待验收产物：准备对应平台的固定二进制后，设置 `SHAREGPT_RELEASE_TAG=v1.0.10` 并运行 `node scripts/build-legacy-release.cjs`。脚本始终禁止自动上传。这里的版本参数不代表已经创建 tag 或通过 GitHub CI。
+1.0.11 本地可按批准的版本策略构建待验收产物：准备对应平台的固定二进制后，设置 `SHAREGPT_RELEASE_TAG=v1.0.11` 并运行 `node scripts/build-legacy-release.cjs`。脚本始终禁止自动上传。这里的版本参数不代表已经创建 tag 或通过 GitHub CI。
 
 正式发布前仍须以最终 main/tag 源码重新构建，并在隔离环境验证安装启动和从上一公开版本升级。不要在个人正在使用的数据目录中运行仅限一次性 CI 机器的安装测试。
 
