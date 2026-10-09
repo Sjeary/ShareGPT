@@ -8,6 +8,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useTasksStore } from '@/store/useTasksStore'
 import { NavList } from './NavList'
+import { canUseAdvancedAi } from '@/lib/aiAccess'
 import { workspaceNavAvailable } from '@/lib/workspaceCapabilities'
 
 // 可收起侧栏 (对齐 shadcn Sidebar collapsible="icon" 成熟实践):
@@ -25,6 +26,9 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const setNavOrder = useAppStore((s) => s.setNavOrder)
   const meta = useAppStore((s) => s.meta)
   const workspaceMode = useAppStore((s) => s.workspaceMode)
+  const token = useAuthStore((s) => s.token)
+  const profile = useAuthStore((s) => s.profile)
+  const terminalAllowed = canUseAdvancedAi(workspaceMode, token, profile)
   // 管理员可禁止某人用协作聊天: 禁用则隐藏「协作聊天」入口 (服务端不投递消息, 这里只隐藏入口)。
   const chatDisabled = useAuthStore((s) => Boolean(s.profile?.chatDisabled))
 
@@ -33,6 +37,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const navItems = useMemo(() => {
     const filtered = NAV.filter(
       (item) =>
+        (item.key !== 'terminal' || terminalAllowed) &&
         (item.key !== 'gemini' || showGemini) &&
         (item.key !== 'claude' || showClaude) &&
         workspaceNavAvailable(workspaceMode, item.key, { chatDisabled }) &&
@@ -44,7 +49,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
       return i >= 0 ? i : navOrder.length + NAV.findIndex((n) => n.key === k)
     }
     return [...filtered].sort((a, b) => rank(a.key) - rank(b.key))
-  }, [showGemini, showClaude, chatDisabled, hiddenNav, navOrder, workspaceMode])
+  }, [showGemini, showClaude, chatDisabled, hiddenNav, navOrder, workspaceMode, terminalAllowed])
 
   // 侧栏在右时: 边框换到左侧, 收起态 Tooltip 弹向左侧 (避免被自身遮挡/出屏)。
   const onRight = sidebarSide === 'right'

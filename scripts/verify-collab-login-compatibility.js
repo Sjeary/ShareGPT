@@ -127,7 +127,7 @@ function legacyAdminBootstrap() {
   };
 }
 
-async function createFixtureServer() {
+async function createFixtureServer({ profileFor = null } = {}) {
   const identityKey = crypto.generateKeyPairSync("ed25519");
   const publicKey = identityKey.publicKey
     .export({ format: "der", type: "spki" })
@@ -198,6 +198,7 @@ async function createFixtureServer() {
             "workspace-isolation",
             "environment-recreate",
           ].includes(body.username),
+          ...(profileFor ? profileFor(body.username) : {}),
         },
         history: [],
         users: [],
@@ -205,6 +206,17 @@ async function createFixtureServer() {
       return;
     }
 
+    if (profileFor && request.method === "GET" && url.pathname === "/api/profile") {
+      const username = tokens.get(
+        String(request.headers.authorization || "").replace(/^Bearer\s+/i, ""),
+      );
+      if (!username) {
+        json(response, 401, { error: "fixture unauthorized" });
+        return;
+      }
+      json(response, 200, { profile: { username, ...profileFor(username) } });
+      return;
+    }
     if (request.method === "GET" && url.pathname === "/api/client/bootstrap") {
       const token = String(request.headers.authorization || "").replace(/^Bearer\s+/i, "");
       const username = tokens.get(token) || "";
@@ -534,6 +546,7 @@ async function launchCase({
   exercise,
   profileDirectory,
   prepareUserData,
+  launchEnv = {},
 }) {
   const userDataDir =
     profileDirectory || fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-login-compat-"));
@@ -542,7 +555,12 @@ async function launchCase({
   const electronApp = await electron.launch({
     args,
     cwd: ROOT,
-    env: { ...process.env, SHAREGPT_USER_DATA: userDataDir, SHAREGPT_BACKGROUND_TEST: "1" },
+    env: {
+      ...process.env,
+      ...launchEnv,
+      SHAREGPT_USER_DATA: userDataDir,
+      SHAREGPT_BACKGROUND_TEST: "1",
+    },
   });
   const blockedRequests = [];
   try {
