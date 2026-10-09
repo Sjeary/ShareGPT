@@ -122,7 +122,9 @@ jobs:
         run: node scripts/build-legacy-release.cjs
 
       - name: Verify packaged Mac startup and data retention
-        run: node scripts/verify-packaged-startup.cjs release_sender/mac-arm64/ShareGPT.app/Contents/MacOS/ShareGPT
+        run: |
+          node scripts/verify-packaged-startup.cjs release_sender/mac-arm64/ShareGPT.app/Contents/MacOS/ShareGPT
+          node scripts/verify-packaged-upgrade.cjs release_sender/mac-arm64/ShareGPT.app/Contents/MacOS/ShareGPT
 
       - name: Verify approved legacy macOS artifacts without claiming notarization
         if: needs.source.outputs.distribution == 'legacy'
@@ -324,6 +326,8 @@ jobs:
           if ($installer.ExitCode -ne 0) { throw "NSIS installation failed" }
           node scripts/verify-packaged-startup.cjs "$destination/sharegpt.exe"
           if ($LASTEXITCODE -ne 0) { throw "Installed app startup failed" }
+          node scripts/verify-packaged-upgrade.cjs "$destination/sharegpt.exe" "release/sharegpt-$version.exe"
+          if ($LASTEXITCODE -ne 0) { throw "Installed app upgrade failed" }
 
       - uses: actions/upload-artifact@v4
         with:
