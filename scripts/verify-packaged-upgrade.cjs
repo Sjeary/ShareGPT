@@ -51,7 +51,7 @@ const run = (file, args) => {
 // Only generated fixture secrets live in this temporary Keychain. Explicit old/new
 // application ACLs represent user approval; this does not test a silent ad-hoc upgrade.
 function isolatedKeychain(oldExe, newExe) {
-  if (windows) return () => {};
+  if (windows) return { restore() {}, inspect() {} };
   const security = (...args) => run("/usr/bin/security", args);
   const paths = (value) => [...value.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
   const originalDefault = paths(security("default-keychain", "-d", "user"))[0];
@@ -84,7 +84,35 @@ function isolatedKeychain(oldExe, newExe) {
       newExe,
       keychain,
     );
-    return restore;
+    // Keychain also checks the code-signing partition, independently of the app ACL.
+    // Ad-hoc builds have distinct cdhash partitions (securityd ClientIdentification).
+    const partitions = [oldExe, newExe].map((executable) => {
+      const details = spawnSync("/usr/bin/codesign", ["-d", "--verbose=2", executable], {
+        encoding: "utf8",
+      });
+      assert.equal(details.status, 0);
+      const digest = /CDHash=([0-9a-f]+)/i.exec(details.stderr)?.[1];
+      assert.ok(digest, "Missing code identity for Keychain test approval");
+      return `cdhash:${digest}`;
+    });
+    security(
+      "set-generic-password-partition-list",
+      "-a",
+      "ShareGPT",
+      "-s",
+      "ShareGPT Safe Storage",
+      "-S",
+      ["apple-tool:", ...partitions].join(","),
+      "-k",
+      password,
+      keychain,
+    );
+    return {
+      restore,
+      inspect() {
+        console.log(security("dump-keychain", "-a", keychain));
+      },
+    };
   } catch (error) {
     restore();
     throw error;
@@ -297,12 +325,13 @@ async function launch(executablePath, seed) {
     oldExe = path.join(slot, "ShareGPT.app/Contents/MacOS/ShareGPT");
     newExe = oldExe;
   }
-  const restoreKeychain = isolatedKeychain(oldExe, current);
+  const keychain = isolatedKeychain(oldExe, current);
   try {
     fixture = await createFixtureServer({
       profileFor: () => ({ isAdmin: false, advancedAiAllowed: true }),
     });
     await launch(oldExe, true);
+    keychain.inspect();
     if (windows) run(installer, ["/S", `/D=${slot}`]);
     // On macOS, use the exact executable whose Keychain access was granted.
     // The package identity, userData, Principal and Chromium partition remain unchanged.
@@ -332,7 +361,7 @@ async function launch(executablePath, seed) {
     try {
       if (fixture) await fixture.close();
     } finally {
-      restoreKeychain();
+      keychain.restore();
     }
   }
 })().catch((error) => {
