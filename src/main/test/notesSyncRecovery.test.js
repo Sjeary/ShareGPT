@@ -70,6 +70,7 @@ function fixture(t) {
     },
     fetch: async (_url, options) => {
       requests.push(options.method);
+      if (options.method === "GET" && !getStatus) throw new Error("offline");
       if (options.method === "GET")
         return {
           ok: getStatus === 200,
@@ -162,3 +163,42 @@ test("continuous notes revision conflicts have a bounded retry count", async (t)
   assert.equal(f.state(), "error");
   assert.equal(f.raw["local.md"], "not uploaded");
 });
+
+for (const status of [503, 0]) {
+  test(`initial notes failure (${status || "network"}) keeps polling and resumes uploads`, async (t) => {
+    const f = fixture(t);
+    f.getStatus(status);
+    await f.start();
+    assert.equal(f.state(), "error");
+    assert.equal(f.polls.size, 1);
+    assert.equal(f.raw["local.md"], "not uploaded");
+    f.getStatus(200);
+    f.putStatus(200);
+    await f.poll();
+    assert.equal(f.state(), "synced");
+    assert.equal(f.remote().data.files["local.md"], "not uploaded");
+  });
+}
+
+test("temporary notes failure after syncing recovers without remounting", async (t) => {
+  const f = fixture(t);
+  f.putStatus(200);
+  await f.start();
+  f.getStatus(503);
+  await f.poll();
+  assert.equal(f.state(), "error");
+  f.getStatus(200);
+  await f.poll();
+  assert.equal(f.state(), "synced");
+});
+
+for (const status of [404, 405, 501]) {
+  test(`legacy notes endpoint (${status}) stays local without repeated requests`, async (t) => {
+    const f = fixture(t);
+    f.getStatus(status);
+    await f.start();
+    assert.equal(f.state(), "local");
+    await f.poll();
+    assert.deepEqual(f.requests, ["GET"]);
+  });
+}

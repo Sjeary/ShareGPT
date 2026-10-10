@@ -95,6 +95,7 @@ export function useNotesSync(): void {
       if (!isCurrent()) throw new Error('同步账号已切换')
     }
     let supported = false
+    let unsupported = false
     let lastSynced = ''
     let pushTimer: number | null = null
     let pollTimer: number | null = null
@@ -163,10 +164,12 @@ export function useNotesSync(): void {
         assertCurrent()
         if (!res.ok) {
           supported = false
-          if (isCurrent()) setState('local')
+          unsupported = [404, 405, 501].includes(res.status)
+          if (isCurrent()) setState(unsupported ? 'local' : 'error')
           return
         }
         supported = true
+        unsupported = false
         const remote = (await res.json()) as {
           rev: number
           data: { files?: VaultFiles } | null
@@ -246,9 +249,9 @@ export function useNotesSync(): void {
       if (!isCurrent()) return
       watchLocal()
       subscribeRealtime()
-      if (isCurrent() && supported) {
+      if (isCurrent() && !unsupported) {
         pollTimer = window.setInterval(() => {
-          if (isCurrent()) void enqueue(() => pullAndMerge())
+          if (isCurrent() && !unsupported) void enqueue(() => pullAndMerge())
         }, POLL_MS)
       }
     })()
