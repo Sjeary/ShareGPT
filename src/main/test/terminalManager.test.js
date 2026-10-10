@@ -256,3 +256,48 @@ test("Windows terminal exit releases worker and input handles without killing an
   trackTerminalExit(pty, "darwin");
   assert.deepEqual(calls, []);
 });
+
+test("startup settings renew approval after an idle panel without opening a shell", async (t) => {
+  const f = fixture(t);
+  await f.call("authorize", { token: "token" });
+  f.expire();
+  await f.call("settings", { startupCommand: "export WORK=idle" });
+  const restored = await f.call("authorize", { token: "token" });
+  assert.equal(restored.settings.startupCommand, "export WORK=idle");
+  assert.equal(f.children.length, 0);
+});
+
+test("idle settings renewal rejects revocation and preserves the saved command", async (t) => {
+  const f = fixture(t);
+  await f.call("authorize", { token: "token" });
+  await f.call("settings", { startupCommand: "echo original" });
+  f.expire();
+  f.profile({ username: "Alice", advancedAiAllowed: false });
+  await assert.rejects(f.call("settings", { startupCommand: "echo rejected" }), /批准/);
+  f.profile({ username: "Alice", advancedAiAllowed: true });
+  assert.equal(
+    (await f.call("authorize", { token: "token" })).settings.startupCommand,
+    "echo original",
+  );
+});
+
+test("a pending settings renewal cannot write after an account switch", async (t) => {
+  const f = fixture(t);
+  await f.call("authorize", { token: "token" });
+  /** @type {(value: unknown) => void} */
+  let release = () => {
+    throw new Error("authorization request not started");
+  };
+  f.responder(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const pending = f.call("settings", { startupCommand: "echo stale" });
+  f.switch();
+  release({ username: "Alice", advancedAiAllowed: true });
+  await assert.rejects(pending, /账号/);
+  assert.equal(fs.existsSync(path.join(f.root, "A", "terminal.json")), false);
+  assert.equal(fs.existsSync(path.join(f.root, "B", "terminal.json")), false);
+});
