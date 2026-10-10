@@ -1898,6 +1898,12 @@ function resolveSessionByToken(token) {
   return session;
 }
 
+function requireCurrentSession(req, res, session) {
+  if (resolveSessionByToken(extractBearer(req)) === session) return true;
+  sendText(res, 401, "登录已失效，请重新登录");
+  return false;
+}
+
 function applyProfileUpdate(session, user, payload) {
   const displayName = safeText(payload?.displayName).slice(0, 30) || user.username;
   const bio = safeText(payload?.bio).slice(0, 200);
@@ -2890,6 +2896,7 @@ async function handleRequest(req, res) {
     }
     try {
       const payload = safeParseJson(await readBody(req, 64 * 1024)) || {};
+      if (!requireCurrentSession(req, res, session)) return;
       const report = saveProxyRouteHealthReport(session.username, payload);
       sendJson(res, 200, { ok: true, report });
     } catch (err) {
@@ -2908,6 +2915,7 @@ async function handleRequest(req, res) {
 
     try {
       const body = await readBody(req, MAX_AVATAR_LENGTH + 64 * 1024);
+      if (!requireCurrentSession(req, res, session)) return;
       const payload = safeParseJson(body);
       const { store, user } = findUser(session.username);
       if (!user) {
@@ -2952,6 +2960,7 @@ async function handleRequest(req, res) {
 
     try {
       const body = await readBody(req);
+      if (!requireCurrentSession(req, res, session)) return;
       const payload = safeParseJson(body);
       const avatar = safeText(payload?.avatar);
 
@@ -3053,6 +3062,7 @@ async function handleRequest(req, res) {
     }
     try {
       const body = await readBody(req, 64 * 1024);
+      if (!requireCurrentSession(req, res, session)) return;
       const payload = safeParseJson(body) || {};
       const text = safeText(payload.text);
       if (!text) {
@@ -3093,6 +3103,7 @@ async function handleRequest(req, res) {
     }
     try {
       const body = await readBody(req, 64 * 1024);
+      if (!requireCurrentSession(req, res, session)) return;
       const payload = safeParseJson(body) || {};
       recordMissingDomains(session.username, payload.domains, payload.version);
       sendJson(res, 200, { ok: true });
@@ -3231,6 +3242,7 @@ async function handleRequest(req, res) {
     }
     try {
       const payload = safeParseJson(await readBody(req)) || {};
+      if (!requireCurrentSession(req, res, session)) return;
       const title = safeText(payload.title).slice(0, 200);
       const start = safeText(payload.start);
       if (!title || !start) {
@@ -3274,6 +3286,7 @@ async function handleRequest(req, res) {
     if (isRsvp && req.method === "POST") {
       try {
         const payload = safeParseJson(await readBody(req)) || {};
+        if (!requireCurrentSession(req, res, session)) return;
         const status = normalizeRsvp(payload.status);
         const store = loadCalendarStore();
         const event = store.events.find(
@@ -3309,6 +3322,7 @@ async function handleRequest(req, res) {
     if (req.method === "PATCH") {
       try {
         const payload = safeParseJson(await readBody(req)) || {};
+        if (!requireCurrentSession(req, res, session)) return;
         const store = loadCalendarStore();
         const idx = store.events.findIndex(
           (e) => e.id === eventId && e.subnetKey === session.subnetKey,
@@ -3377,6 +3391,7 @@ async function handleRequest(req, res) {
     }
     try {
       const payload = safeParseJson(await readBody(req)) || {};
+      if (!requireCurrentSession(req, res, session)) return;
       const d = reportFocus(session.username, payload.minutes, payload.count ?? 1);
       sendJson(res, 200, { ok: true, today: d });
     } catch (err) {

@@ -154,3 +154,54 @@ test("developer logout while reading metadata or installer also prevents writes"
     );
   }
 });
+
+test("revocation during ordinary request bodies blocks calendar and profile writes", async () => {
+  await request("/api/admin/setup", "POST", "", {
+    username: "admin",
+    password: "fixture-password",
+  }).result;
+  const login = async () => {
+    const response = await request("/api/login", "POST", "", {
+      username: "admin",
+      password: "fixture-password",
+    }).result;
+    assert.equal(response.status, 200, response.body);
+    return JSON.parse(response.body).token;
+  };
+  const draft = {
+    title: "fixture",
+    start: "2026-10-10T12:00:00Z",
+    end: "2026-10-10T13:00:00Z",
+    attendees: [],
+  };
+  const seed = await request("/api/team-calendar/events", "POST", await login(), draft).result;
+  assert.equal(seed.status, 200, seed.body);
+  const id = JSON.parse(seed.body).event.id;
+  const routes = [
+    ["/api/team-calendar/events", "POST", draft],
+    [`/api/team-calendar/events/${id}`, "PATCH", { title: "edited" }],
+    [`/api/team-calendar/events/${id}/rsvp`, "POST", { status: "accept" }],
+    ["/api/profile/update", "POST", { displayName: "changed" }],
+    ["/api/profile/avatar", "POST", { avatar: "A" }],
+    ["/api/focus/report", "POST", { minutes: 25, count: 1 }],
+    ["/api/feedback", "POST", { text: "fixture" }],
+    ["/api/proxy/missing", "POST", { domains: ["example.com"] }],
+    ["/api/client/proxy-route-health", "POST", {}],
+  ];
+  for (const [url, method, body] of routes) {
+    const token = await login();
+    const pending = request(url, method, token, null, true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.ok(pending.req.listenerCount("data") > 0, url);
+    revokeUserSessions("admin");
+    assert.equal((await request("/api/profile", "GET", token).result).status, 401);
+    const before = snapshot();
+    pending.req.end(JSON.stringify(body));
+    assert.equal((await pending.result).status, 401, url);
+    assert.deepEqual(snapshot(), before, url);
+    if (url !== "/api/client/proxy-route-health") {
+      const allowed = await request(url, method, await login(), body).result;
+      assert.equal(allowed.status, 200, `${url}: ${allowed.body}`);
+    }
+  }
+});
