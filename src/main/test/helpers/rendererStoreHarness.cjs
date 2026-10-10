@@ -40,12 +40,19 @@ function rendererStoreHarness(overrides = {}) {
     }
   }
   function load(relative) {
-    const file = path.resolve(root, "src", relative);
+    let file = path.resolve(root, "src", relative);
+    if (!fs.existsSync(file) && file.endsWith(".ts")) file = file.slice(0, -3);
+    if (!path.extname(file))
+      file = fs.existsSync(`${file}.ts`) ? `${file}.ts` : path.join(file, "index.ts");
     if (modules.has(file)) return modules.get(file).exports;
     const module = { exports: {} };
     modules.set(file, module);
     const compiled = ts.transpileModule(fs.readFileSync(file, "utf8"), {
-      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ES2022,
+        esModuleInterop: true,
+      },
     }).outputText;
     vm.runInNewContext(
       compiled,
@@ -84,6 +91,7 @@ function rendererStoreHarness(overrides = {}) {
           clearInterval() {},
           setTimeout: () => 1,
           clearTimeout() {},
+          ...overrides.window,
         },
         document: overrides.document,
         setTimeout: (callback) => {

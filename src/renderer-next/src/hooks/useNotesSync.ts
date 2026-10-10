@@ -148,9 +148,7 @@ export function useNotesSync(): void {
           return
         }
         if (res.status === 409 && depth < 2) {
-          await pullAndMerge(true)
-          assertCurrent()
-          await push(loadRev(snapshot.principalId), depth + 1)
+          await pullAndMerge(true, depth + 1)
           return
         }
         if (isCurrent()) setState('error')
@@ -159,7 +157,7 @@ export function useNotesSync(): void {
       }
     }
 
-    async function pullAndMerge(silent = false): Promise<void> {
+    async function pullAndMerge(silent = false, depth = 0): Promise<void> {
       try {
         const res = await authFetch('/api/user-store/notes', { method: 'GET' })
         assertCurrent()
@@ -182,17 +180,18 @@ export function useNotesSync(): void {
         if (remote.rev > storedRev) {
           const report = await useVaultStore.getState().mergeFromCloud(base, theirs)
           assertCurrent()
-          saveBase(snapshot.principalId, report.merged)
+          // The base must describe this cloud revision, including when the upload fails.
+          saveBase(snapshot.principalId, theirs)
           saveRev(snapshot.principalId, remote.rev)
-          lastSynced = stable(report.merged)
+          lastSynced = stable(theirs)
           // 回推合并结果, 拿到新 rev (保持服务器与本地一致)。
-          await push(remote.rev)
+          await push(remote.rev, depth)
           assertCurrent()
           const incoming = report.fromCloud.length + report.conflicts.length + report.deleted.length
           if (!silent && incoming > 0) useNotesSyncStore.getState().showReport(report)
         } else {
           // 云端无新内容: 本地若有改动则推送。
-          if (stable(local) !== lastSynced) await push(storedRev)
+          if (stable(local) !== lastSynced) await push(storedRev, depth)
           else if (isCurrent()) setState('synced')
         }
       } catch {
