@@ -3,7 +3,9 @@ import { api } from '@/lib/api'
 import {
   requireSettingsPrincipalSnapshot,
   settingsPrincipalRuntime,
+  type SettingsPrincipalSnapshot,
 } from '@/lib/settingsPrincipalRuntime'
+import { showErrorToast } from '@/lib/errorToast'
 import { createSingleFlight } from '@/lib/singleFlight'
 import type { NavKey } from '@/lib/nav'
 import type { AppSettings, StatusPayload } from '@/types/settings'
@@ -163,9 +165,47 @@ const EMPTY_SETTINGS: AppSettings = {
   ui: {},
 }
 
+const settingsWrites = new Map<string, Promise<void>>()
+const pendingUiWrites = new Set<{
+  snapshot: SettingsPrincipalSnapshot
+  patch: AppSettings['ui']
+}>()
+
+function queueSettingsWrite(snapshot: SettingsPrincipalSnapshot, write: () => Promise<void>) {
+  const key = JSON.stringify(snapshot)
+  const result = (settingsWrites.get(key) ?? Promise.resolve()).catch(() => {}).then(write)
+  settingsWrites.set(key, result)
+  void result
+    .finally(() => {
+      if (settingsWrites.get(key) === result) settingsWrites.delete(key)
+    })
+    .catch(() => {})
+  return result
+}
+
+function persistUi(patch: AppSettings['ui']) {
+  const snapshot = settingsPrincipalRuntime.current()
+  void useAppStore
+    .getState()
+    .patchSection('ui', patch)
+    .catch((error) => {
+      try {
+        settingsPrincipalRuntime.assertCurrent(snapshot)
+      } catch {
+        return
+      }
+      showErrorToast(error, '界面设置保存失败')
+    })
+}
+
 // 初始化、导入和保存共用同一个 UI 设置应用入口。
 function applySettingsUi(settings: AppSettings, current: AppState): Partial<AppState> {
-  const ui = settings.ui
+  const ui = { ...settings.ui }
+  const owner = settingsPrincipalRuntime.current()
+  for (const { snapshot, patch } of pendingUiWrites) {
+    if (snapshot.principalId === owner.principalId && snapshot.generation === owner.generation)
+      Object.assign(ui, patch)
+  }
   const dark = ui?.theme === 'dark' ? true : ui?.theme === 'light' ? false : current.dark
   const sidebarSide =
     ui?.sidebarSide === 'left' || ui?.sidebarSide === 'right' ? ui.sidebarSide : current.sidebarSide
@@ -216,10 +256,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ dark: next })
     // 内嵌网页(GPT/Gemini)明暗跟随 app 主题。
     void api.setThemeSource(next ? 'dark' : 'light').catch(() => undefined)
-    // 异步回写, 不阻塞 UI; 失败忽略 (localStorage 已兜底)。
-    void get()
-      .patchSection('ui', { theme: next ? 'dark' : 'light' })
-      .catch(() => undefined)
+    // 异步回写；失败恢复已保存的设置并显示提示。
+    persistUi({ theme: next ? 'dark' : 'light' })
   },
 
   sidebarCollapsed: (() => {
@@ -256,9 +294,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       } catch {
         /* ignore */
       }
-      void get()
-        .patchSection('ui', { sidebarSide: side })
-        .catch(() => undefined)
+      persistUi({ sidebarSide: side })
       return { sidebarSide: side }
     }),
 
@@ -280,9 +316,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       } catch {
         /* ignore */
       }
-      void get()
-        .patchSection('ui', { showGemini: v })
-        .catch(() => undefined)
+      persistUi({ showGemini: v })
       const nextActive = !v && s.active === 'gemini' ? 'service' : s.active
       return { showGemini: v, active: nextActive }
     }),
@@ -302,9 +336,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       } catch {
         /* ignore */
       }
-      void get()
-        .patchSection('ui', { showClaude: v })
-        .catch(() => undefined)
+      persistUi({ showClaude: v })
       const nextActive = !v && s.active === 'claude' ? 'service' : s.active
       return { showClaude: v, active: nextActive }
     }),
@@ -329,9 +361,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       } catch {
         /* ignore */
       }
-      void get()
-        .patchSection('ui', { hiddenNav: next })
-        .catch(() => undefined)
+      persistUi({ hiddenNav: next })
       const nextActive = hidden && s.active === key ? 'service' : s.active
       return { hiddenNav: next, active: nextActive }
     }),
@@ -352,9 +382,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       } catch {
         /* ignore */
       }
-      void get()
-        .patchSection('ui', { navOrder: order })
-        .catch(() => undefined)
+      persistUi({ navOrder: order })
       return { navOrder: order }
     }),
 
@@ -507,16 +535,30 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   patchSection: async (section, patch) => {
     const principalSnapshot = settingsPrincipalRuntime.snapshot()
-    const cur = get().settings ?? EMPTY_SETTINGS
-    const saved = (await api.patchSettings({
-      section: String(section),
-      patch: patch as Record<string, unknown>,
-      expectedRevision: cur.settingsRevision,
-      expectedPrincipalId: principalSnapshot.principalId,
-      expectedPrincipalGeneration: principalSnapshot.generation,
-    })) as unknown as AppSettings
-    settingsPrincipalRuntime.assertCurrent(principalSnapshot)
-    const merged = { ...EMPTY_SETTINGS, ...saved }
-    set({ ...applySettingsUi(merged, get()), settings: merged })
+    const capturedPatch = structuredClone(patch)
+    const pending = { snapshot: principalSnapshot, patch: capturedPatch as AppSettings['ui'] }
+    if (section === 'ui') pendingUiWrites.add(pending)
+    return queueSettingsWrite(principalSnapshot, async () => {
+      try {
+        settingsPrincipalRuntime.assertCurrent(principalSnapshot)
+        const cur = get().settings ?? EMPTY_SETTINGS
+        const saved = (await api.patchSettings({
+          section: String(section),
+          patch: capturedPatch as Record<string, unknown>,
+          expectedRevision: cur.settingsRevision,
+          expectedPrincipalId: principalSnapshot.principalId,
+          expectedPrincipalGeneration: principalSnapshot.generation,
+        })) as unknown as AppSettings
+        settingsPrincipalRuntime.assertCurrent(principalSnapshot)
+        pendingUiWrites.delete(pending)
+        const merged = { ...EMPTY_SETTINGS, ...saved }
+        set({ ...applySettingsUi(merged, get()), settings: merged })
+      } catch (error) {
+        pendingUiWrites.delete(pending)
+        settingsPrincipalRuntime.assertCurrent(principalSnapshot)
+        set(applySettingsUi(get().settings ?? EMPTY_SETTINGS, get()))
+        throw error
+      }
+    })
   },
 }))

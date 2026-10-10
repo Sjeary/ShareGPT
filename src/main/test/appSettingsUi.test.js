@@ -70,3 +70,130 @@ test("late imported UI settings never change a newer principal theme or navigati
   assert.equal(app.themes.length, 0);
   assert.equal(app.dom.length, 0);
 });
+
+function concurrentSettings() {
+  let stored = { settingsRevision: 0, ui: { hiddenNav: [], showClaude: true, showGemini: false } };
+  const calls = [],
+    failures = [];
+  const app = rendererStoreHarness({
+    modules: { "@/lib/errorToast": { showErrorToast: (e) => failures.push(e.message) } },
+    document: { documentElement: { classList: { toggle() {} } } },
+    api: {
+      setThemeSource: async () => {},
+      patchSettings: async (payload) => {
+        const response = deferred();
+        calls.push({ payload, response });
+        await response.promise;
+        assert.equal(payload.expectedRevision, stored.settingsRevision);
+        stored = {
+          ...stored,
+          settingsRevision: stored.settingsRevision + 1,
+          [payload.section]: { ...stored[payload.section], ...payload.patch },
+        };
+        return structuredClone(stored);
+      },
+    },
+  });
+  const store = app.load("store/useAppStore.ts").useAppStore;
+  store.setState({
+    settings: structuredClone(stored),
+    hiddenNav: [],
+    workspaceMode: "organization",
+  });
+  return { ...app, store, calls, failures, stored: () => stored };
+}
+
+test("rapid navigation edits serialize revisions without rolling back pending UI", async () => {
+  const f = concurrentSettings();
+  f.store.getState().setNavHidden("terminal", true);
+  f.store.getState().setNavHidden("notes", true);
+  await f.settle();
+  assert.equal(f.calls.length, 1);
+  f.calls[0].response.resolve();
+  await f.settle();
+  assert.equal(f.calls.length, 2);
+  assert.deepEqual([...f.store.getState().hiddenNav], ["terminal", "notes"]);
+  assert.equal(f.calls[1].payload.expectedRevision, 1);
+  f.calls[1].response.resolve();
+  await f.settle();
+  assert.deepEqual([...f.stored().ui.hiddenNav], ["terminal", "notes"]);
+  assert.deepEqual(f.failures, []);
+});
+
+test("an earlier non-UI save cannot re-enable a terminal being disabled", async () => {
+  const f = concurrentSettings();
+  const earlier = f.store.getState().patchSection("advancedAi", { enabled: false });
+  f.store.getState().setNavHidden("terminal", true);
+  await f.settle();
+  f.calls[0].response.resolve();
+  await earlier;
+  await f.settle();
+  assert.deepEqual([...f.store.getState().hiddenNav], ["terminal"]);
+  f.calls[1].response.resolve();
+  await f.settle();
+  assert.equal(f.stored().ui.hiddenNav[0], "terminal");
+});
+
+test("failed UI persistence reports the error, restores saved state and permits retry", async () => {
+  const f = concurrentSettings();
+  f.store.getState().setNavHidden("terminal", true);
+  await f.settle();
+  f.calls[0].response.reject(new Error("disk full"));
+  await f.settle();
+  assert.deepEqual([...f.store.getState().hiddenNav], []);
+  assert.equal(f.storage.get("sharegpt-hidden-nav"), "[]");
+  assert.deepEqual(f.failures, ["disk full"]);
+  f.store.getState().setNavHidden("terminal", true);
+  await f.settle();
+  f.calls[1].response.resolve();
+  await f.settle();
+  assert.equal(f.stored().ui.hiddenNav[0], "terminal");
+});
+
+test("queued old-account UI changes cancel quietly without blocking a new account", async () => {
+  const f = concurrentSettings();
+  f.store.getState().setNavHidden("terminal", true);
+  f.store.getState().setNavHidden("notes", true);
+  await f.settle();
+  f.load("lib/settingsPrincipalRuntime.ts").settingsPrincipalRuntime.activate("B", 2);
+  f.store.setState({ hiddenNav: [], settings: { settingsRevision: 0, ui: { hiddenNav: [] } } });
+  f.store.getState().setNavHidden("focus", true);
+  await f.settle();
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls[1].payload.expectedPrincipalId, "B");
+  f.calls[0].response.reject(new Error("old failure"));
+  await f.settle();
+  assert.deepEqual([...f.store.getState().hiddenNav], ["focus"]);
+  assert.deepEqual(f.failures, []);
+  f.calls[1].response.resolve();
+  await f.settle();
+  assert.equal(f.calls.length, 2);
+});
+
+test("rapidly reversing one switch preserves the newest intent until both saves finish", async () => {
+  const f = concurrentSettings();
+  f.store.getState().setNavHidden("terminal", true);
+  f.store.getState().setNavHidden("terminal", false);
+  await f.settle();
+  f.calls[0].response.resolve();
+  await f.settle();
+  assert.deepEqual([...f.store.getState().hiddenNav], []);
+  f.calls[1].response.resolve();
+  await f.settle();
+  assert.deepEqual([...f.stored().ui.hiddenNav], []);
+});
+
+test("a failed first UI write does not discard the next queued selection", async () => {
+  const f = concurrentSettings();
+  f.store.getState().setNavHidden("terminal", true);
+  f.store.getState().setNavHidden("notes", true);
+  await f.settle();
+  f.calls[0].response.reject(new Error("temporary failure"));
+  await f.settle();
+  assert.deepEqual([...f.store.getState().hiddenNav], ["terminal", "notes"]);
+  assert.equal(f.calls[1].payload.expectedRevision, 0);
+  f.calls[1].response.resolve();
+  await f.settle();
+  assert.deepEqual([...f.stored().ui.hiddenNav], ["terminal", "notes"]);
+  assert.deepEqual(f.failures, ["temporary failure"]);
+});
