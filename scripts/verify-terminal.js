@@ -101,6 +101,43 @@ async function main() {
             .join("")
             .includes("READY_loaded"),
         );
+        // Keep acceptance away from the user's OS clipboard. Exercise the real
+        // xterm mouse selection and renderer key handler with a local clipboard sink.
+        await window.evaluate(() => {
+          window.__terminalCopies = [];
+          Object.defineProperty(navigator.clipboard, "writeText", {
+            configurable: true,
+            value: async (text) => {
+              window.__terminalCopies.push(text);
+            },
+          });
+        });
+        const selectedLine = window
+          .locator(".xterm-rows > div")
+          .filter({ hasText: "READY_loaded" })
+          .first();
+        const selectedBounds = await selectedLine.boundingBox();
+        assert.ok(selectedBounds);
+        // xterm-screen owns mouse selection; rendered rows intentionally ignore pointers.
+        await window.mouse.dblclick(
+          selectedBounds.x + 5,
+          selectedBounds.y + selectedBounds.height / 2,
+        );
+        const interruptsBeforeCopy = await electronApp.evaluate(
+          () => globalThis.__terminalInterrupts,
+        );
+        await input().dispatchEvent("keydown", {
+          key: "c",
+          code: "KeyC",
+          keyCode: 67,
+          metaKey: process.platform === "darwin",
+          ctrlKey: process.platform !== "darwin",
+        });
+        await window.waitForFunction(() => window.__terminalCopies[0] === "READY_loaded");
+        assert.equal(
+          await electronApp.evaluate(() => globalThis.__terminalInterrupts),
+          interruptsBeforeCopy,
+        );
         const first = await window.evaluate(
           () => window.__terminalEvents.find((e) => e.type === "data").id,
         );
