@@ -266,7 +266,14 @@ async function startFixtureServers(directory) {
       }
       return;
     }
-    if (request.method === "POST" && request.url?.startsWith("/backend-api/conversation")) {
+    if (
+      request.method === "POST" &&
+      [
+        "/backend-api/conversation",
+        "/api/organizations/org/chat_conversations/chat/completion",
+        "/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate",
+      ].includes(fixtureUrl.pathname)
+    ) {
       const requestedStatus = Number(fixtureUrl.searchParams.get("status"));
       const status =
         Number.isInteger(requestedStatus) && requestedStatus >= 100 ? requestedStatus : 200;
@@ -390,7 +397,11 @@ async function api(page, method, ...args) {
   });
 }
 
-async function loginThroughForm(page, baseUrl) {
+async function loginThroughForm(
+  page,
+  baseUrl,
+  { username = "lifecycle-fixture", expectTour = true } = {},
+) {
   const startSetup = page.getByRole("button", { name: "开始设置", exact: true });
   if ((await page.locator("#account-server").count()) === 0) {
     await Promise.race([
@@ -406,13 +417,22 @@ async function loginThroughForm(page, baseUrl) {
   }
   await page.locator("#account-server").waitFor({ state: "visible" });
   await page.locator("#account-server").fill(baseUrl);
-  await page.locator("#account-username").fill("lifecycle-fixture");
+  await page.locator("#account-username").fill(username);
   await page.locator("#account-password").fill("fixture-password");
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByRole("button", { name: /账户/ }).waitFor({ state: "visible" });
   const skipTour = page.getByRole("button", { name: "跳过", exact: true });
-  await skipTour.waitFor({ state: "visible", timeout: 8000 });
-  await skipTour.click();
+  if (expectTour) {
+    await skipTour.waitFor({ state: "visible", timeout: 8000 });
+    await skipTour.click();
+  } else {
+    await waitUntil(
+      async () => (await api(page, "getSettingsPrincipal")).username === username,
+      "logged-in principal restored",
+    );
+    await page.locator('[data-tour="nav-account"]').click();
+    await page.getByRole("button", { name: "退出登录", exact: true }).waitFor();
+  }
   const closeGuide = page.getByRole("button", { name: "关闭引导", exact: true });
   if (await closeGuide.isVisible().catch(() => false)) await closeGuide.click();
 }
@@ -2104,7 +2124,23 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error.stack || error}\n`);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    process.stderr.write(`${error.stack || error}\n`);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  startFixtureServers,
+  startFixtureSocks,
+  closeServer,
+  waitUntil,
+  api,
+  loginThroughForm,
+  ensureTab,
+  fixtureState,
+  waitForFixture,
+  sendTrustedEnter,
+  sendTrustedClick,
+};

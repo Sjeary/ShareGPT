@@ -143,6 +143,9 @@ jobs:
       - name: 用户错误提示与恢复验收
         run: npm run verify:error-feedback
 
+      - name: Verify AI send reporting and statistics end to end
+        run: npm run verify:usage-e2e
+
       - name: 协作登录与客户端/服务端兼容验收
         run: npm run verify:collab-login-compatibility
 
