@@ -426,6 +426,27 @@ async function main() {
       async () => (await acceptedCount(wc)) === 1,
       "normal Enter after consumed stale operation",
     );
+    for (const mutation of ["remove", "hide"]) {
+      await wc.loadURL(fixture.url);
+      consoleMessages.length = 0;
+      await runGuard(false);
+      await installAcceptedSendTracker(wc, usageToken);
+      await wc.executeJavaScript(`document.querySelector('#composer').addEventListener('submit', () => {
+        const editor = document.querySelector('#prompt');
+        if (${JSON.stringify(mutation)} === 'remove') editor.remove();
+        else editor.style.display = 'none';
+      });`);
+      await setPrompt(wc, "page replaces composer after sending");
+      await dispatchEnter();
+      await waitFor(async () => (await acceptedCount(wc)) === 1, "send before editor " + mutation);
+      await waitFor(
+        () =>
+          consoleMessages.filter((message) => parseSendAttemptMessage(message, usageToken))
+            .length === 1,
+        "usage marker after editor " + mutation,
+      );
+      process.stdout.write(`[verify] usage attempt survives editor ${mutation}\n`);
+    }
     process.stdout.write("[verify] AI composer behavior passed\n");
   } finally {
     try {

@@ -57,9 +57,8 @@ function sendAttemptTrackerScript(token) {
         globalThis.setTimeout(() => {
           if (state.pendingEditors.get(editor) !== reservation) return;
           state.pendingEditors.delete(editor);
-          if (!visible(editor)) {
-            return;
-          }
+          // The page may replace its composer while submitting. Acceptance is
+          // determined by the matching network response, not the old DOM node.
           const id = globalThis.crypto?.randomUUID?.();
           if (id) console.log(marker + JSON.stringify({ id, attemptedAt: reservation.attemptedAt }));
         }, 0);
