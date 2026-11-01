@@ -7,7 +7,7 @@ function createAdminAccountHandler({
   readBody,
   safeParseJson,
   safeText,
-  normalizeIp,
+  clientIp,
   loginLockState,
   recordLoginFail,
   clearLoginFails,
@@ -41,7 +41,7 @@ function createAdminAccountHandler({
         const payload = safeParseJson(body);
         const username = safeText(payload?.username);
         const password = String(payload?.password || "");
-        const attemptKey = `admin:${normalizeIp(req.socket?.remoteAddress)}`;
+        const attemptKey = `admin:${clientIp(req)}`;
         const lock = loginLockState(attemptKey);
         if (lock.locked) {
           res.setHeader("Retry-After", String(Math.ceil(lock.retryAfterMs / 1000)));
