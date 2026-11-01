@@ -183,9 +183,11 @@ export function EventDetailDialog({
           <Button variant="outline" size="sm" onClick={onClose}>
             关闭
           </Button>
-          <Button size="sm" onClick={() => onEdit(event.id)}>
-            <Pencil className="size-4" /> 编辑
-          </Button>
+          {isOrganizer && (
+            <Button size="sm" onClick={() => onEdit(event.id)}>
+              <Pencil className="size-4" /> 编辑
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

@@ -244,6 +244,21 @@ export function UsersPanel() {
   )
 }
 
+// 表单字段跟随服务端值: 未被管理员改动的字段在列表刷新 / 快捷切换后自动同步为最新值,
+// 保存时只提交改动过的字段, 避免用打开卡片时的旧值覆盖别处刚做的禁用 / 降权。
+function useServerField<T>(serverValue: T, same: (a: T, b: T) => boolean = Object.is) {
+  const [edit, setEdit] = useState<{ value: T } | null>(null)
+  const dirty = edit !== null && !same(edit.value, serverValue)
+  const value = edit === null ? serverValue : edit.value
+  // 改回与服务端相同的值即视为未改动, 之后继续跟随服务端。
+  const set = (next: T) => setEdit(same(next, serverValue) ? null : { value: next })
+  const reset = () => setEdit(null)
+  return { value, set, dirty, reset }
+}
+
+const sameIds = (a: string[], b: string[]) =>
+  a.length === b.length && [...a].sort().join('\n') === [...b].sort().join('\n')
+
 function EditUserCard({
   user,
   onSave,
@@ -251,36 +266,46 @@ function EditUserCard({
   user: AdminUser | null
   onSave: (username: string, input: Record<string, unknown>) => Promise<void>
 }) {
-  const [displayName, setDisplayName] = useState(user?.displayName || '')
+  const displayName = useServerField(user?.displayName || '')
   const [password, setPassword] = useState('')
-  const [avatar, setAvatar] = useState(user?.avatar || '')
-  const [bio, setBio] = useState(user?.bio || '')
-  const [isAdmin, setIsAdmin] = useState(Boolean(user?.isAdmin))
-  const [advancedAiAllowed, setAdvancedAiAllowed] = useState(Boolean(user?.advancedAiAllowed))
-  const [allowedProxyRouteIds, setAllowedProxyRouteIds] = useState<string[]>(
-    user?.allowedProxyRouteIds || [],
-  )
+  const avatar = useServerField(user?.avatar || '')
+  const bio = useServerField(user?.bio || '')
+  const isAdmin = useServerField(Boolean(user?.isAdmin))
+  // 服务端摘要对管理员报告 isAdmin || advancedAiAllowed; 不能拿它当管理员的真实取值,
+  // 否则取消管理员时会连带提交 advancedAiAllowed=true, 绕过服务端的自动收回。
+  const advancedAiAllowed = useServerField(!user?.isAdmin && Boolean(user?.advancedAiAllowed))
+  const allowedProxyRouteIds = useServerField<string[]>(user?.allowedProxyRouteIds || [], sameIds)
   const proxyRoutes = useAdminStore((state) => state.proxyRoutes)
-  const [disabled, setDisabled] = useState(Boolean(user?.disabled))
-  const [chatDisabled, setChatDisabled] = useState(Boolean(user?.chatDisabled))
+  const disabled = useServerField(Boolean(user?.disabled))
+  const chatDisabled = useServerField(Boolean(user?.chatDisabled))
   const [busy, setBusy] = useState(false)
+  const fields = {
+    displayName,
+    avatar,
+    bio,
+    isAdmin,
+    advancedAiAllowed,
+    allowedProxyRouteIds,
+    disabled,
+    chatDisabled,
+  }
 
   async function submit() {
     if (!user) return
+    const changes: Record<string, unknown> = {}
+    for (const [name, field] of Object.entries(fields)) {
+      if (field.dirty) changes[name] = field.value
+    }
+    if (password) changes.password = password
+    if (!Object.keys(changes).length) {
+      toast.info('没有需要保存的修改')
+      return
+    }
     setBusy(true)
     try {
-      await onSave(user.username, {
-        displayName,
-        password,
-        avatar,
-        bio,
-        isAdmin,
-        advancedAiAllowed,
-        allowedProxyRouteIds,
-        disabled,
-        chatDisabled,
-      })
+      await onSave(user.username, changes)
       setPassword('')
+      for (const field of Object.values(fields)) field.reset()
       toast.success(`已保存用户 ${user.username}`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -309,7 +334,7 @@ function EditUserCard({
       </CardHeader>
       <CardContent className="grid gap-3">
         <Field label="显示名">
-          <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+          <Input value={displayName.value} onChange={(e) => displayName.set(e.target.value)} />
         </Field>
         <Field label="重设密码">
           <Input
@@ -320,19 +345,19 @@ function EditUserCard({
           />
         </Field>
         <Field label="头像">
-          <Input value={avatar} onChange={(e) => setAvatar(e.target.value)} />
+          <Input value={avatar.value} onChange={(e) => avatar.set(e.target.value)} />
         </Field>
         <Field label="简介">
           <textarea
-            value={bio}
-            onChange={(e) => setBio(e.target.value)}
+            value={bio.value}
+            onChange={(e) => bio.set(e.target.value)}
             rows={3}
             className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
         </Field>
         <div className="flex items-center justify-between">
           <Label className="cursor-default">管理员</Label>
-          <Switch checked={isAdmin} onCheckedChange={setIsAdmin} />
+          <Switch checked={isAdmin.value} onCheckedChange={isAdmin.set} />
         </div>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -342,24 +367,24 @@ function EditUserCard({
             </p>
           </div>
           <Switch
-            checked={isAdmin || advancedAiAllowed}
-            disabled={isAdmin}
-            onCheckedChange={setAdvancedAiAllowed}
+            checked={isAdmin.value || advancedAiAllowed.value}
+            disabled={isAdmin.value}
+            onCheckedChange={advancedAiAllowed.set}
           />
         </div>
         <RouteAuthorization
-          isAdmin={isAdmin}
-          advancedAiAllowed={advancedAiAllowed}
+          isAdmin={isAdmin.value}
+          advancedAiAllowed={advancedAiAllowed.value}
           routes={[
             { id: 'internal-unified', name: '内置统一代理' },
             ...proxyRoutes.map((route) => ({ id: route.id, name: route.name })),
           ]}
-          selected={allowedProxyRouteIds}
-          onChange={setAllowedProxyRouteIds}
+          selected={allowedProxyRouteIds.value}
+          onChange={allowedProxyRouteIds.set}
         />
         <div className="flex items-center justify-between">
           <Label className="cursor-default">禁用账号</Label>
-          <Switch checked={disabled} onCheckedChange={setDisabled} />
+          <Switch checked={disabled.value} onCheckedChange={disabled.set} />
         </div>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -368,7 +393,7 @@ function EditUserCard({
               无聊天入口、不收消息、别人发他也不弹窗
             </p>
           </div>
-          <Switch checked={chatDisabled} onCheckedChange={setChatDisabled} />
+          <Switch checked={chatDisabled.value} onCheckedChange={chatDisabled.set} />
         </div>
         <Button disabled={busy} onClick={() => void submit()}>
           {busy ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}

@@ -226,6 +226,12 @@ MAX_ATTACHMENT_BYTES=31457280
 # 通常不必设置 MAX_CHAT_PAYLOAD_BYTES；服务会根据上面两项计算安全且可用的协议上限。
 LOGIN_MAX_FAILS=10
 LOGIN_LOCK_MS=900000
+# 单个账号 (不分来源) 的失败上限, 默认 LOGIN_MAX_FAILS 的 5 倍。
+# LOGIN_ACCOUNT_MAX_FAILS=50
+# 来自 127.0.0.1 的请求 (即本机 Caddy/Nginx) 按 X-Forwarded-For 最后一跳识别真实客户端,
+# 用于登录失败锁定; 公网直连的请求不会采信该头。默认开启, 设为 0 关闭。
+# Nginx 需配置 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; (Caddy 默认已带)。
+# TRUST_PROXY=1
 
 CORS_ORIGIN=*
 ```

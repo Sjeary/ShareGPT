@@ -89,6 +89,12 @@ const RECALL_EDITABLE_WINDOW_MS = Number.parseInt(
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
 const LOGIN_MAX_FAILS = Number.parseInt(process.env.LOGIN_MAX_FAILS || "10", 10);
 const LOGIN_LOCK_MS = Number.parseInt(process.env.LOGIN_LOCK_MS || `${15 * 60 * 1000}`, 10);
+// 单个账号跨所有来源的失败上限; 比按 IP 的上限高, 避免他人轻易锁死某个已知用户名。
+const LOGIN_ACCOUNT_MAX_FAILS = Number.parseInt(
+  process.env.LOGIN_ACCOUNT_MAX_FAILS || `${LOGIN_MAX_FAILS * 5}`,
+  10,
+);
+const TRUST_PROXY = process.env.TRUST_PROXY !== "0";
 const SERVER_SENDER_BOOTSTRAP = {
   proxy_server:
     process.env.SHAREGPT_SENDER_PROXY_SERVER ||
@@ -724,7 +730,21 @@ function normalizeHistoryMessage(record, fallbackSequence = 0) {
     editedAt: Boolean(record?.edited) ? safeText(record?.editedAt) || nowIso() : "",
     recalled,
     recalledAt: recalled ? safeText(record?.recalledAt) || nowIso() : "",
+    ...(recalled ? {} : normalizeReactions(record?.reactions)),
   };
+}
+
+// 历史加载时保留表情回应 (emoji -> 去重后的用户名列表); 空集合不落字段, 与写入路径一致。
+function normalizeReactions(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const reactions = {};
+  for (const [emoji, users] of Object.entries(value)) {
+    const key = safeText(emoji).slice(0, 16);
+    if (!key || !Array.isArray(users)) continue;
+    const names = [...new Set(users.map((user) => safeText(user)).filter(Boolean))];
+    if (names.length) reactions[key] = names;
+  }
+  return Object.keys(reactions).length ? { reactions } : {};
 }
 
 function messageActivityTimestamp(record) {
@@ -817,19 +837,14 @@ function buildServiceUsageStats(service, fromRaw, toRaw) {
 const FEEDBACK_FILE =
   process.env.FEEDBACK_FILE || path.join(path.dirname(GPT_USAGE_FILE), "feedback.json");
 const FEEDBACK_MAX = 5000;
+// 损坏时从 .backup 恢复, 无有效备份则拒绝读写 (不再静默返回空数据并在下次保存时覆盖原件)。
 function loadFeedbackStore() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(FEEDBACK_FILE, "utf-8"));
-    return { items: Array.isArray(raw.items) ? raw.items : [] };
-  } catch {
-    return { items: [] };
-  }
+  return { items: readJsonStore(FEEDBACK_FILE, "items").items };
 }
 function saveFeedbackStore(store) {
   const items = Array.isArray(store && store.items) ? store.items : [];
   if (items.length > FEEDBACK_MAX) items.splice(0, items.length - FEEDBACK_MAX);
-  fs.mkdirSync(path.dirname(FEEDBACK_FILE), { recursive: true });
-  fs.writeFileSync(FEEDBACK_FILE, JSON.stringify({ items }, null, 2), "utf-8");
+  saveJsonStore(FEEDBACK_FILE, { items }, "items");
 }
 let feedbackSeq = 0;
 function addFeedback(entry) {
@@ -853,15 +868,16 @@ function addFeedback(entry) {
 const PROXY_MISSING_FILE =
   process.env.PROXY_MISSING_FILE || path.join(path.dirname(GPT_USAGE_FILE), "proxy_missing.json");
 const PROXY_MISSING_MAX = 2000;
+function plainObjectField(field) {
+  const object = (value) => Boolean(value && typeof value === "object" && !Array.isArray(value));
+  return {
+    empty: () => ({ [field]: {} }),
+    valid: (value) => object(value) && object(value[field]),
+  };
+}
+const proxyMissingShape = plainObjectField("domains");
 function loadProxyMissingStore() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(PROXY_MISSING_FILE, "utf-8"));
-    return {
-      domains: raw && typeof raw.domains === "object" && raw.domains ? raw.domains : {},
-    };
-  } catch {
-    return { domains: {} };
-  }
+  return { domains: readJsonStore(PROXY_MISSING_FILE, proxyMissingShape).domains };
 }
 function saveProxyMissingStore(store) {
   const domains = store && typeof store.domains === "object" ? store.domains : {};
@@ -872,8 +888,7 @@ function saveProxyMissingStore(store) {
     );
     for (const k of keys.slice(0, keys.length - PROXY_MISSING_MAX)) delete domains[k];
   }
-  fs.mkdirSync(path.dirname(PROXY_MISSING_FILE), { recursive: true });
-  fs.writeFileSync(PROXY_MISSING_FILE, JSON.stringify({ domains }, null, 2), "utf-8");
+  saveJsonStore(PROXY_MISSING_FILE, { domains }, proxyMissingShape);
 }
 function recordMissingDomains(username, domains, version) {
   const list = Array.isArray(domains) ? domains : [];
@@ -1321,6 +1336,23 @@ function normalizeIp(rawIp) {
   return raw;
 }
 
+// 部署文档要求 Node 只监听回环地址并由 Caddy/Nginx 反代, 这时 socket 地址恒为 127.0.0.1,
+// 按它计数会让任何人用 10 次错误密码锁住全体用户。仅当直连方是回环 (即本机反代) 时才信任
+// X-Forwarded-For 的最后一跳; 公网直连的请求无法伪造该头。TRUST_PROXY=0 可关闭。
+function clientIp(req) {
+  const peer = normalizeIp(req.socket?.remoteAddress);
+  if (!TRUST_PROXY || peer !== "127.0.0.1") return peer;
+  const forwarded = String(req.headers?.["x-forwarded-for"] || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return forwarded.length ? normalizeIp(forwarded[forwarded.length - 1]) : peer;
+}
+
+function accountAttemptKey(username) {
+  return `account:${safeText(username).toLowerCase()}`;
+}
+
 function loginLockState(ip) {
   const rec = loginAttempts.get(ip);
   if (rec && rec.lockUntil && rec.lockUntil > Date.now()) {
@@ -1329,10 +1361,10 @@ function loginLockState(ip) {
   return { locked: false, retryAfterMs: 0 };
 }
 
-function recordLoginFail(ip) {
+function recordLoginFail(ip, maxFails = LOGIN_MAX_FAILS) {
   const rec = loginAttempts.get(ip) || { fails: 0, lockUntil: 0 };
   rec.fails += 1;
-  if (rec.fails >= LOGIN_MAX_FAILS) {
+  if (rec.fails >= maxFails) {
     rec.lockUntil = Date.now() + LOGIN_LOCK_MS;
     rec.fails = 0;
   }
@@ -1999,13 +2031,6 @@ function buildGptUsageStats(usageEvents, fromRaw, toRaw) {
 // ===== v1.0.2 新增辅助: 原子写 / 组队日历 / 个人云端存储 / 单用户多端广播 =====
 const CALENDAR_RSVP_VALUES = ["needs_action", "accept", "decline", "tentative"];
 
-function ensureCalendarsFile() {
-  fs.mkdirSync(path.dirname(CALENDARS_FILE), { recursive: true });
-  if (!fs.existsSync(CALENDARS_FILE)) {
-    fs.writeFileSync(CALENDARS_FILE, JSON.stringify({ events: [] }, null, 2), "utf-8");
-  }
-}
-
 function normalizeRsvp(value) {
   const v = safeText(value);
   return CALENDAR_RSVP_VALUES.includes(v) ? v : "needs_action";
@@ -2060,23 +2085,15 @@ function normalizeTeamEvent(record) {
 }
 
 function loadCalendarStore() {
-  ensureCalendarsFile();
-  try {
-    const raw = JSON.parse(fs.readFileSync(CALENDARS_FILE, "utf-8"));
-    const events = Array.isArray(raw.events)
-      ? raw.events.map(normalizeTeamEvent).filter(Boolean)
-      : [];
-    return { events };
-  } catch {
-    return { events: [] };
-  }
+  const raw = readJsonStore(CALENDARS_FILE, "events");
+  return { events: raw.events.map(normalizeTeamEvent).filter(Boolean) };
 }
 
 function saveCalendarStore(store) {
   const events = Array.isArray(store?.events)
     ? store.events.map(normalizeTeamEvent).filter(Boolean)
     : [];
-  writeJsonAtomic(CALENDARS_FILE, { events });
+  saveJsonStore(CALENDARS_FILE, { events }, "events");
 }
 
 function eventsForSubnet(subnetKey) {
@@ -2158,17 +2175,12 @@ function focusDateStr(d = new Date()) {
   const p = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
+const focusShape = plainObjectField("daily");
 function loadFocusStore() {
-  try {
-    if (!fs.existsSync(FOCUS_FILE)) return { daily: {} };
-    const raw = JSON.parse(fs.readFileSync(FOCUS_FILE, "utf8"));
-    return raw && typeof raw.daily === "object" && raw.daily ? raw : { daily: {} };
-  } catch {
-    return { daily: {} };
-  }
+  return { daily: readJsonStore(FOCUS_FILE, focusShape).daily };
 }
 function saveFocusStore(store) {
-  writeJsonAtomic(FOCUS_FILE, { daily: store?.daily || {} });
+  saveJsonStore(FOCUS_FILE, { daily: store?.daily || {} }, focusShape);
 }
 function reportFocus(username, minutes, count) {
   const store = loadFocusStore();
@@ -2222,7 +2234,7 @@ const handleAdminAccountRequest = createAdminAccountHandler({
   readBody,
   safeParseJson,
   safeText,
-  normalizeIp,
+  clientIp,
   loginLockState,
   recordLoginFail,
   clearLoginFails,
@@ -2311,8 +2323,11 @@ async function handleRequest(req, res) {
         return;
       }
 
-      const remoteIp = normalizeIp(req.socket?.remoteAddress);
-      const lock = loginLockState(remoteIp);
+      const remoteIp = clientIp(req);
+      const accountKey = accountAttemptKey(username);
+      const ipLock = loginLockState(remoteIp);
+      const accountLock = loginLockState(accountKey);
+      const lock = ipLock.locked ? ipLock : accountLock;
       if (lock.locked) {
         sendText(res, 429, `登录失败次数过多，请 ${Math.ceil(lock.retryAfterMs / 1000)} 秒后再试`);
         return;
@@ -2321,10 +2336,12 @@ async function handleRequest(req, res) {
       const { store, user } = findUser(username);
       if (!user || !verifyPassword(user, password)) {
         recordLoginFail(remoteIp);
+        recordLoginFail(accountKey, LOGIN_ACCOUNT_MAX_FAILS);
         sendText(res, 401, "账号或密码错误");
         return;
       }
       clearLoginFails(remoteIp);
+      clearLoginFails(accountKey);
 
       // Additive: old clients keep the existing login response and need no challenge.
       const identity = payload?.identityNonce
@@ -3318,9 +3335,23 @@ async function handleRequest(req, res) {
           return;
         }
         const prev = store.events[idx];
+        if (prev.organizer !== session.username) {
+          sendText(res, 403, "只有组织者可以编辑事件");
+          return;
+        }
+        // 组织者可改邀请名单, 但每人的 RSVP 只能由本人经 /rsvp 修改, 这里沿用原值。
+        const attendees = Array.isArray(payload.attendees)
+          ? payload.attendees.map((a) => ({
+              ...a,
+              rsvp:
+                prev.attendees.find((old) => old.username === safeText(a?.username))?.rsvp ||
+                "needs_action",
+            }))
+          : prev.attendees;
         const merged = normalizeTeamEvent({
           ...prev,
           ...payload,
+          attendees,
           id: prev.id,
           subnetKey: prev.subnetKey,
           organizer: prev.organizer,
@@ -3446,7 +3477,7 @@ server.on("upgrade", (request, socket, head) => {
     ws.avatar = session.avatar || "";
     ws.avatarKind = session.avatarKind || inferAvatarKind(session.avatar);
     ws.clientInfo = normalizeClientInfo(session.clientInfo);
-    ws.clientIp = normalizeIp(request.socket?.remoteAddress);
+    ws.clientIp = clientIp(request);
     ws.subnetKey = subnetKeyFromIp(ws.clientIp);
     ws.subnetLabel = subnetLabelFromIp(ws.clientIp);
     wss.emit("connection", ws, request);
@@ -3960,6 +3991,7 @@ module.exports = {
   verifyPassword,
   writeJsonAtomic,
   normalizeIp,
+  clientIp,
   loginLockState,
   recordLoginFail,
   clearLoginFails,
