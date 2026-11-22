@@ -4,7 +4,7 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const { app, BrowserWindow, WebContentsView } = require("electron");
-if (process.platform === "darwin") app.setActivationPolicy("prohibited");
+require("./lib/background-acceptance.cjs").prepareBackgroundAcceptance(app);
 const {
   COMPOSER_OPERATION_WORLD_ID,
   composerConfirmationGuardScript,
