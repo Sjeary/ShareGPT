@@ -31,6 +31,7 @@ flowchart LR
 - **客户端 `src/`**
   - `main/`（纯 Node 主进程）：窗口与 `WebContentsView` 生命周期、持久 Chromium 分区、路由授权、`spawn` sing-box、受限 composer/翻译桥接和自动更新。核心在 `backend.js`、`appFactory.js`。
   - `renderer-next/`（React + TS）：首次使用引导、个人/团队工作区、AI 多标签与多环境、翻译、协作聊天和设置。通过 `preload.js` 暴露的受限 IPC 与主进程通信。
+  - `updateService.js`：独立负责 GitHub Latest 解析、更新传输代理选择和候选下载。`backend.js` 保留现有更新调用入口，设置、账号资料和升级备份仍由原模块管理。
 - **协作服务端 `collab_server2/`**：Node `http` + `ws` 服务。负责账号、会话、聊天、客户端 bootstrap、线路授权、托管翻译与用量。数据以原子写方式保存到独立 JSON 文件；不同实例必须使用不同端口、数据目录和翻译主密钥。
 - **管理控制台 `admin_console/`**：独立 Electron，调用 `/api/admin/*` 管理用户、团队网络、多线路授权、各 AI 推荐线路、托管翻译、反馈和版本信息。
 
