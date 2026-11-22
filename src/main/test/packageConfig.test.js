@@ -26,10 +26,17 @@ test("Electron packaging excludes development profiles and caches while retainin
       "src/renderer-next/.npm-cache/_logs/install.log",
       "legacy/renderer/index.html",
       "legacy/receiver/build.json",
+      "collab_server2/server.js",
+      "collab_server2/data/users.json",
+      "collab_server2/translation_profiles.js",
     ]) {
       assert.equal(filter(path.join(root, relative), fileStat), false, `${name}: ${relative}`);
     }
-    for (const relative of ["src/main/main_sender.js", "src/renderer-next/dist/index.html"]) {
+    for (const relative of [
+      "src/main/main_sender.js",
+      "src/renderer-next/dist/index.html",
+      "collab_server2/shared/endpointSecurity.js",
+    ]) {
       assert.equal(filter(path.join(root, relative), fileStat), true, `${name}: ${relative}`);
     }
   }

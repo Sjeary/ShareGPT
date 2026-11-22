@@ -1,11 +1,14 @@
 const crypto = require("node:crypto");
-const dns = require("node:dns");
 const http = require("node:http");
 const https = require("node:https");
 const fs = require("node:fs");
-const net = require("node:net");
 const path = require("node:path");
 const { URL } = require("node:url");
+const {
+  classifyIpAddress,
+  resolveEndpoint,
+  endpointRequestOptions,
+} = require("./shared/endpointSecurity");
 
 const MAX_PROFILES = 20;
 const MAX_TRANSLATION_CHARS = 30_000;
@@ -299,65 +302,12 @@ function publicCatalog(catalog, actor = {}, encryptionReady = true) {
   return { version: 1, defaultProfileId, profiles };
 }
 
-function parseIpv4(address) {
-  if (net.isIP(address) !== 4) return null;
-  return address.split(".").map(Number);
-}
-
 function isBlockedAddress(address) {
-  if (net.isIP(address) === 4) {
-    const [a, b, c, d] = parseIpv4(address);
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 100 && b === 100 && c === 100 && d === 200) ||
-      (a === 168 && b === 63 && c === 129 && d === 16) ||
-      a >= 224
-    );
-  }
-  if (net.isIP(address) !== 6) return true;
-  const normalized = address.toLowerCase();
-  if (normalized === "::" || normalized === "::1") return true;
-  if (/^(?:fc|fd|fe8|fe9|fea|feb|ff)/.test(normalized)) return true;
-  const dottedMapped = /^(?:::ffff:)?(\d+\.\d+\.\d+\.\d+)$/.exec(normalized);
-  if (dottedMapped) return isBlockedAddress(dottedMapped[1]);
-  const hexMapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(normalized);
-  if (hexMapped) {
-    const high = Number.parseInt(hexMapped[1], 16);
-    const low = Number.parseInt(hexMapped[2], 16);
-    return isBlockedAddress(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
-  }
-  return false;
+  return classifyIpAddress(address) !== "public";
 }
 
-async function resolvePublicEndpoint(endpoint, lookup = dns.promises.lookup) {
-  const hostname = endpoint.hostname.replace(/^\[|\]$/g, "");
-  const records = net.isIP(hostname)
-    ? [{ address: hostname, family: net.isIP(hostname) }]
-    : await lookup(hostname, { all: true, verbatim: true });
-  if (!Array.isArray(records) || !records.length) throw new Error("翻译接口域名无法解析");
-  for (const record of records) {
-    if (!record?.address || isBlockedAddress(record.address)) {
-      throw new Error("翻译接口解析到了禁止访问的内网、回环或 metadata 地址");
-    }
-  }
-  return { address: records[0].address, family: Number(records[0].family) };
-}
-
-function pinnedLookup(record) {
-  return (_hostname, options, callback) => {
-    const done = typeof options === "function" ? options : callback;
-    if (options && typeof options === "object" && options.all) {
-      done(null, [record]);
-      return;
-    }
-    done(null, record.address, record.family);
-  };
+function resolvePublicEndpoint(endpoint, lookup = undefined) {
+  return resolveEndpoint(endpoint, { lookup, allowExplicitLoopback: false });
 }
 
 async function requestJson(endpoint, body, headers = {}, dependencies = {}) {
@@ -393,16 +343,9 @@ async function requestJson(endpoint, body, headers = {}, dependencies = {}) {
     try {
       req = requestImpl(
         {
+          ...endpointRequestOptions(endpoint, resolved),
           protocol: endpoint.protocol,
-          hostname: endpoint.hostname,
-          port: endpoint.port || undefined,
-          path: endpoint.pathname + endpoint.search,
           method: "POST",
-          agent: false,
-          lookup: pinnedLookup(resolved),
-          ...(endpoint.protocol === "https:" && !net.isIP(endpoint.hostname)
-            ? { servername: endpoint.hostname }
-            : {}),
           headers: {
             "content-type": "application/json",
             "content-length": encoded.length,

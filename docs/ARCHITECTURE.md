@@ -51,6 +51,8 @@ flowchart LR
 
 `node_modules/`、各界面的 `dist/` 及 `release*` 构建产物不是源码；依赖按对应锁文件安装，生成文件通过现有构建命令更新。版本由 Git 提交和发布标签标识。
 
+出站接口的地址分类、DNS 结果检查与固定地址连接共用 `collab_server2/shared/endpointSecurity.js`。它不依赖 Electron，随独立服务器目录部署；客户端通过 `src/main/endpointSecurity.js` 保留原导入入口，打包配置只纳入这份共享模块，不包含服务器业务或资料文件。客户端明确配置的本机离线接口保留回环例外，服务端翻译上游使用仅公网策略。
+
 ## 关键协议 / 链路
 
 | 链路                | 方式                  | 说明                                                                      |

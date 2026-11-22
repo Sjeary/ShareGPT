@@ -141,9 +141,9 @@ test("翻译上游地址阻止回环、内网、metadata 和 IPv4-mapped IPv6", 
   );
   assert.deepStrictEqual(
     await resolvePublicEndpoint(new URL("https://translation.example.com"), async () => [
-      { address: "198.51.100.8", family: 4 },
+      { address: "8.8.8.8", family: 4 },
     ]),
-    { address: "198.51.100.8", family: 4 },
+    { address: "8.8.8.8", family: 4 },
   );
 });
 
@@ -164,7 +164,7 @@ test("托管翻译取消会销毁上游请求且不会返回成功结果", async
     file: path.join(fs.mkdtempSync(path.join(os.tmpdir(), "translation-abort-")), "profiles.json"),
     masterKey: Buffer.alloc(32, 5).toString("base64"),
     dependencies: {
-      lookup: async () => [{ address: "198.51.100.8", family: 4 }],
+      lookup: async () => [{ address: "8.8.8.8", family: 4 }],
       request: pendingRequest,
     },
   });
