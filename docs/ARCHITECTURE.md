@@ -55,6 +55,10 @@ flowchart LR
 
 出站接口的地址分类、DNS 结果检查与固定地址连接共用 `collab_server2/shared/endpointSecurity.js`。它不依赖 Electron，随独立服务器目录部署；客户端通过 `src/main/endpointSecurity.js` 保留原导入入口，打包配置只纳入这份共享模块，不包含服务器业务或资料文件。客户端明确配置的本机离线接口保留回环例外，服务端翻译上游使用仅公网策略。
 
+界面同步由 `src/renderer-next/src/lib/accountSync.ts` 统一管理账号归属、取消、传输、版本、队列与恢复。日历/待办、笔记和网页环境的 hook 只提供各自的数据适配，保留删除标记、笔记三方合并和网页策略的不同规则。网页策略使用 `browserPrivacySyncPolicy.ts` 中的实际运行算法，保存和应用交由 `browserPrivacyRuntime.ts`，手动/自动出口检测复用同一账号边界。
+
+AI 页面中的 `useProxyHealth.ts` 独立管理代理巡检、缺失域名处理和重试，工作区组件负责页面布局与操作组合。原生网页的创建、附着与恢复继续通过主进程原有的统一协调入口处理。
+
 ## 关键协议 / 链路
 
 | 链路                | 方式                  | 说明                                                                      |
