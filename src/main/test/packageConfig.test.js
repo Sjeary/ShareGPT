@@ -14,7 +14,7 @@ test("Electron packaging excludes development profiles and caches while retainin
   const configs = [
     ["package.json", readJson("package.json").build],
     ["build.sender.json", readJson("build.sender.json")],
-    ["build.receiver.json", readJson("build.receiver.json")],
+    ["legacy/receiver/build.json", readJson("legacy/receiver/build.json")],
   ];
 
   for (const [name, config] of configs) {
@@ -24,6 +24,8 @@ test("Electron packaging excludes development profiles and caches while retainin
       "src/main/.cache/user-data/settings.json",
       "src/main/.cache/user-data/Partitions/gpt/Cookies",
       "src/renderer-next/.npm-cache/_logs/install.log",
+      "legacy/renderer/index.html",
+      "legacy/receiver/build.json",
     ]) {
       assert.equal(filter(path.join(root, relative), fileStat), false, `${name}: ${relative}`);
     }

@@ -1,6 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createPrincipalSessionCoordinator } = require("../../renderer/principalSessionCoordinator");
+const {
+  createPrincipalSessionCoordinator,
+} = require("../../../legacy/renderer/principalSessionCoordinator");
 
 function deferred() {
   /** @type {(value?: unknown) => void} */
