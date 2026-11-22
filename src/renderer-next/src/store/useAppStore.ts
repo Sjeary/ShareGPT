@@ -89,6 +89,7 @@ interface AppState {
   patchSection: <K extends keyof AppSettings>(
     section: K,
     patch: Partial<AppSettings[K]>,
+    expectedPrincipal?: SettingsPrincipalSnapshot,
   ) => Promise<void>
 }
 
@@ -533,8 +534,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ ...applySettingsUi(merged, get()), settings: merged })
   },
 
-  patchSection: async (section, patch) => {
-    const principalSnapshot = settingsPrincipalRuntime.snapshot()
+  patchSection: async (section, patch, expectedPrincipal) => {
+    const principalSnapshot = expectedPrincipal
+      ? { ...expectedPrincipal }
+      : settingsPrincipalRuntime.snapshot()
+    settingsPrincipalRuntime.assertCurrent(principalSnapshot)
     const capturedPatch = structuredClone(patch)
     const pending = { snapshot: principalSnapshot, patch: capturedPatch as AppSettings['ui'] }
     if (section === 'ui') pendingUiWrites.add(pending)

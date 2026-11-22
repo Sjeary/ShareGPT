@@ -40,6 +40,26 @@ function setup(api = {}) {
   return { ...app, store, themes, dom };
 }
 
+for (const next of ["B", "A"])
+  test(`settings reject an explicit old request owner after switching to ${next}`, async () => {
+    let writes = 0;
+    const app = setup({
+      patchSettings: async () => {
+        writes++;
+        return imported;
+      },
+    });
+    const runtime = app.load("lib/settingsPrincipalRuntime.ts").settingsPrincipalRuntime;
+    runtime.activate("A", 1);
+    const owner = runtime.snapshot();
+    runtime.activate(next, 3);
+    await assert.rejects(
+      app.store.getState().patchSection("browserPrivacy", { updatedAt: "stale" }, owner),
+      /旧操作已取消/,
+    );
+    assert.equal(writes, 0);
+  });
+
 for (const action of ["reloadSettings", "saveSettings", "patchSection"]) {
   test(`${action} applies imported UI fields, DOM theme, native theme and startup cache together`, async () => {
     const app = setup();
