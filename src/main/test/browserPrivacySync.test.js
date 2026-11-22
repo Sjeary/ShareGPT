@@ -55,6 +55,7 @@ function fixture(t, pending) {
       setThemeSource: async () => {},
       applyBrowserPrivacy: async () => {
         applies++;
+        return { ok: true };
       },
       patchSettings: async (request) => {
         assert.equal(request.expectedPrincipalId, current);

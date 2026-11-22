@@ -26,6 +26,9 @@ import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { api } from '@/lib/api'
+import { createAccountScope } from '@/lib/accountSync'
+import { saveBrowserPrivacySettings } from '@/lib/browserPrivacyRuntime'
+import { useProxyEnvironmentSync } from '@/hooks/useProxyEnvironmentSync'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
@@ -74,7 +77,6 @@ export function BrowserPrivacySection() {
     Boolean(state.profile?.isAdmin || state.profile?.advancedAiAllowed),
   )
   const advancedAiEnabled = advancedAiConfigured && advancedAiAllowed
-  const patchSection = useAppStore((state) => state.patchSection)
   const token = useAuthStore((state) => state.token)
   const identity = useChatStore((state) => state.identity)
   const [destructiveAction, setDestructiveAction] = useState<{
@@ -83,7 +85,7 @@ export function BrowserPrivacySection() {
   } | null>(null)
   const [password, setPassword] = useState('')
   const [clearing, setClearing] = useState(false)
-  const [syncingExit, setSyncingExit] = useState(false)
+  const { busy: syncingExit, synchronize } = useProxyEnvironmentSync()
 
   if (!privacy) return null
 
@@ -97,10 +99,11 @@ export function BrowserPrivacySection() {
   )
 
   async function savePrivacy(next: BrowserPrivacySettings, apply = true): Promise<void> {
-    await patchSection('browserPrivacy', next)
-    if (apply) {
-      const result = await api.applyBrowserPrivacy()
-      if (!result.ok) throw new Error('部分已打开的网页环境应用失败，请关闭网页标签后重试')
+    const scope = createAccountScope()
+    try {
+      await saveBrowserPrivacySettings(scope, next, apply)
+    } finally {
+      scope.close()
     }
   }
 
@@ -181,34 +184,14 @@ export function BrowserPrivacySection() {
   }
 
   async function syncFromExit(): Promise<void> {
-    if (syncingExit) return
-    setSyncingExit(true)
     try {
-      const detected = await api.detectProxyEnvironment()
-      await patchEnvironment({
-        mode: 'proxy',
-        locale: 'en-US',
-        acceptLanguages: 'en-US,en',
-        timezone: detected.timezone,
-        latitude: detected.latitude,
-        longitude: detected.longitude,
-        accuracy: detected.accuracy,
-        sourceIp: detected.ip,
-        countryCode: detected.countryCode,
-        country: detected.country,
-        region: detected.region,
-        city: detected.city,
-        sourceUpdatedAt: detected.checkedAt,
-      })
-      if (detected.countryCode === 'US') {
+      const detected = await synchronize()
+      if (!detected) return
+      if (detected.countryCode === 'US')
         toast.success(`已同步美国出口：${detected.region || detected.city || detected.timezone}`)
-      } else {
-        toast.info(`出口位于 ${detected.country || detected.countryCode}，环境已按真实出口同步`)
-      }
+      else toast.info(`出口位于 ${detected.country || detected.countryCode}，环境已按真实出口同步`)
     } catch (error) {
       showErrorToast(error, '同步代理出口环境')
-    } finally {
-      setSyncingExit(false)
     }
   }
 

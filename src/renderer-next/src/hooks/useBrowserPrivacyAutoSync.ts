@@ -1,79 +1,38 @@
 import { useEffect, useRef } from 'react'
-import { api } from '@/lib/api'
+import { createAccountScope } from '@/lib/accountSync'
+import { proxyEnvironmentBinding, synchronizeProxyEnvironment } from '@/lib/browserPrivacyRuntime'
+import { useUserDataTransitionVersion } from '@/lib/userDataTransitionState'
 import { useAppStore } from '@/store/useAppStore'
 
-function senderIsRunning(status: Record<string, unknown>): boolean {
-  return Boolean(status.senderRunning)
-}
-
-// 用户显式开启后，在代理由“未运行”变为“运行”或节点配置改变时同步一次出口环境。
-// 失败保持原配置，不在后台反复请求；设置页仍可手动重试并看到明确错误。
 export function useBrowserPrivacyAutoSync(): void {
-  const status = useAppStore((state) => state.status)
-  const privacy = useAppStore((state) => state.settings?.browserPrivacy)
-  const sender = useAppStore((state) => state.settings?.sender)
-  const attemptedSignature = useRef('')
-
+  const version = useUserDataTransitionVersion()
+  const running = useAppStore((s) => Boolean(s.status.senderRunning))
+  const mode = useAppStore((s) => s.settings?.browserPrivacy.environment.mode)
+  const enabled = useAppStore((s) => s.settings?.browserPrivacy.environment.autoSyncFromProxy)
+  const sender = useAppStore((s) => s.settings?.sender)
+  const binding = proxyEnvironmentBinding(sender)
+  const attempted = useRef('')
   useEffect(() => {
-    const running = senderIsRunning(status)
-    if (!running) {
-      attemptedSignature.current = ''
+    if (version % 2 || !running || mode !== 'proxy' || !enabled) {
+      attempted.current = ''
       return
     }
-    if (
-      !privacy ||
-      privacy.environment.mode !== 'proxy' ||
-      !privacy.environment.autoSyncFromProxy
-    ) {
-      attemptedSignature.current = ''
-      return
-    }
-
-    const signature = JSON.stringify({
-      proxyMode: sender?.proxy_mode ?? 'unified',
-      proxyServer: sender?.proxy_server ?? '',
-      proxyPort: sender?.proxy_port ?? '',
-      personalProtocol: sender?.personal_proxy_protocol ?? 'socks5',
-      personalHost: sender?.personal_proxy_host ?? '',
-      personalPort: sender?.personal_proxy_port ?? '',
-      airportName: sender?.airport_name ?? '',
-      airport: sender?.airport_outbound ?? null,
+    const scope = createAccountScope(() => {
+      const settings = useAppStore.getState().settings
+      return (
+        settings?.browserPrivacy.environment.mode === 'proxy' &&
+        settings.browserPrivacy.environment.autoSyncFromProxy &&
+        proxyEnvironmentBinding(settings.sender) === binding
+      )
     })
-    if (attemptedSignature.current === signature) return
-    attemptedSignature.current = signature
-
-    let cancelled = false
-    void api
-      .detectProxyEnvironment()
-      .then(async (detected) => {
-        if (cancelled) return
-        const current = useAppStore.getState().settings?.browserPrivacy
-        if (!current || current.environment.mode !== 'proxy') return
-        await useAppStore.getState().patchSection('browserPrivacy', {
-          ...current,
-          updatedAt: new Date().toISOString(),
-          environment: {
-            ...current.environment,
-            timezone: detected.timezone,
-            latitude: detected.latitude,
-            longitude: detected.longitude,
-            accuracy: detected.accuracy,
-            sourceIp: detected.ip,
-            countryCode: detected.countryCode,
-            country: detected.country,
-            region: detected.region,
-            city: detected.city,
-            sourceUpdatedAt: detected.checkedAt,
-          },
-        })
-        await api.applyBrowserPrivacy()
-      })
-      .catch(() => {
-        // 自动同步不打扰用户；设置页的手动同步会展示具体错误。
-      })
-
-    return () => {
-      cancelled = true
+    const key = JSON.stringify([scope.snapshot, binding])
+    if (attempted.current === key) {
+      scope.close()
+      return
     }
-  }, [status, privacy, sender])
+    attempted.current = key
+    // Only routing/ownership changes restart a detection; unrelated status/settings do not cancel it.
+    void synchronizeProxyEnvironment(scope).catch(() => undefined)
+    return () => scope.close()
+  }, [running, mode, enabled, binding, version])
 }

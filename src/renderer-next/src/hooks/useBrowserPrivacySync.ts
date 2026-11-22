@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { api } from '@/lib/api'
+import { saveBrowserPrivacySettings } from '@/lib/browserPrivacyRuntime'
 import { useAppStore } from '@/store/useAppStore'
 import { useChatStore } from '@/store/useChatStore'
 import { createAccountSync } from '@/lib/accountSync'
@@ -58,10 +58,7 @@ export function useBrowserPrivacySync(): void {
         const local = useAppStore.getState().settings!.browserPrivacy
         const merged = mergeBrowserPrivacySync(local, remote.data)
         if (merged === local) return
-        await useAppStore.getState().patchSection('browserPrivacy', merged, scope.snapshot)
-        scope.assertCurrent()
-        await api.applyBrowserPrivacy()
-        scope.assertCurrent()
+        await saveBrowserPrivacySettings(scope, merged)
       },
       subscribeLocal: (notify) => useAppStore.subscribe(notify),
     })
