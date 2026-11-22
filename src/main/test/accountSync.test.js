@@ -10,7 +10,7 @@ function fixture(t, overrides = {}) {
     polls = new Map();
   let nextTimer = 0,
     notify = () => {},
-    receive = (_message) => {},
+    receive = (message) => void message,
     transition = 0;
   let remote = { rev: 1, data: { items: ["remote"] } };
   let local = { items: ["local"] };
@@ -198,6 +198,7 @@ for (const boundary of ["account", "same-account transition", "stop"])
     if (boundary === "account") f.runtime.activate("B", 2);
     else if (boundary === "same-account transition") f.transition();
     else f.sync.stop();
+    if (boundary === "stop") assert.equal(f.requests[0].signal.aborted, true);
     response.resolve({
       ok: true,
       status: 200,
@@ -248,4 +249,58 @@ test("concurrent refresh triggers serialize requests rather than racing versions
   await Promise.all([start, refresh]);
   assert.equal(f.states.at(-1), "synced");
   assert.deepEqual(f.local().items, ["local", "remote"]);
+});
+
+test("ownership is checked again after a delayed response body finishes parsing", async (t) => {
+  const body = deferred();
+  let parsing = false;
+  const f = fixture(t, {
+    fetch: async () => ({
+      ok: true,
+      status: 200,
+      json: () => {
+        parsing = true;
+        return body.promise;
+      },
+    }),
+  });
+  const start = f.sync.start();
+  await f.settle();
+  assert.equal(parsing, true);
+  f.runtime.activate("B", 2);
+  body.resolve({ rev: 8, data: { items: ["old account"] } });
+  await start;
+  assert.deepEqual(f.local().items, ["local"]);
+  assert.deepEqual(f.revisions, []);
+  assert.equal(f.requests.length, 1);
+});
+
+test("edits made while an upload is awaiting confirmation are uploaded with the next revision", async (t) => {
+  const first = deferred();
+  let puts = 0;
+  const f = fixture(t, {
+    fetch: async (options) => {
+      if (options.method === "GET")
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ rev: 1, data: { items: ["remote"] } }),
+        };
+      puts++;
+      return puts === 1 ? first.promise : { ok: true, status: 200, json: async () => ({ rev: 3 }) };
+    },
+  });
+  const start = f.sync.start();
+  await f.settle();
+  assert.equal(puts, 1);
+  f.change("latest edit");
+  first.resolve({ ok: true, status: 200, json: async () => ({ rev: 2 }) });
+  await start;
+  assert.equal(f.states.at(-1), "syncing");
+  await f.pushTimers();
+  const uploads = f.requests.filter((request) => request.method === "PUT");
+  assert.equal(uploads.length, 2);
+  assert.equal(uploads[1].payload.baseRev, 2);
+  assert.deepEqual(uploads[1].payload.data.items, ["local", "remote", "latest edit"]);
+  assert.equal(f.states.at(-1), "synced");
 });
