@@ -66,6 +66,7 @@ interface MergeContext {
   scope: AccountScope
   previousRevision: number
   initial: boolean
+  conflict: boolean
 }
 
 export interface AccountSyncOptions<D> {
@@ -80,7 +81,10 @@ export interface AccountSyncOptions<D> {
   serialize?: (data: D | null | undefined) => string
   getRevision: (scope: AccountScope) => number
   setRevision: (revision: number, scope: AccountScope) => void
-  mergeRemote: (remote: SyncRecord<D>, context: MergeContext) => void | Promise<void>
+  mergeRemote: (
+    remote: SyncRecord<D>,
+    context: MergeContext,
+  ) => void | { publish: boolean } | Promise<void | { publish: boolean }>
   acknowledge?: (sent: D, remote: SyncRecord<D>, scope: AccountScope) => void | Promise<void>
   subscribeLocal: (notify: () => void) => () => void
   setState?: (state: AccountSyncState) => void
@@ -156,12 +160,18 @@ export function createAccountSync<D>(options: AccountSyncOptions<D>) {
     }
   }
 
-  async function merge(remote: SyncRecord<D>, initial: boolean) {
+  async function merge(remote: SyncRecord<D>, initial: boolean, conflict = false) {
     scope.assertCurrent()
     if (remote.rev < revision) throw new Error('同步版本早于已确认版本，已保留本机资料')
-    await options.mergeRemote(remote, { scope, previousRevision: revision, initial })
+    const result = await options.mergeRemote(remote, {
+      scope,
+      previousRevision: revision,
+      initial,
+      conflict,
+    })
     scope.assertCurrent()
     remember(remote)
+    return result?.publish === true
   }
 
   async function push() {
@@ -171,7 +181,7 @@ export function createAccountSync<D>(options: AccountSyncOptions<D>) {
       const baseRev = revision
       const { remote, conflict } = await request('PUT', sent)
       if (conflict) {
-        await merge(remote, false)
+        await merge(remote, false, true)
         if (attempt === 2) throw new Error('同步资料持续变化，请稍后重试')
         continue
       }
@@ -215,9 +225,10 @@ export function createAccountSync<D>(options: AccountSyncOptions<D>) {
     enqueue(async () => {
       const initial = !initialized
       const { remote } = await request('GET')
-      if (initial || remote.rev > revision) await merge(remote, initial)
+      let publish = false
+      if (initial || remote.rev > revision) publish = await merge(remote, initial)
       else if (remote.rev < revision) throw new Error('同步版本回退，已保留本机资料')
-      if (remote.rev === 0 || serialize(options.getLocal()) !== confirmed) await push()
+      if (publish || remote.rev === 0 || serialize(options.getLocal()) !== confirmed) await push()
     })
 
   function schedulePush() {

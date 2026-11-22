@@ -78,7 +78,8 @@ function fixture(t) {
           json: async () => structuredClone(remote),
         };
       const payload = JSON.parse(options.body);
-      if (putStatus !== 200) return { ok: false, status: putStatus };
+      if (putStatus !== 200)
+        return { ok: false, status: putStatus, json: async () => structuredClone(remote) };
       assert.equal(payload.baseRev, remote.rev);
       remote = { rev: remote.rev + 1, data: payload.data };
       return { ok: true, json: async () => ({ rev: remote.rev }) };

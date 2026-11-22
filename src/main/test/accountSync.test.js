@@ -10,7 +10,7 @@ function fixture(t, overrides = {}) {
     polls = new Map();
   let nextTimer = 0,
     notify = () => {},
-    receive = () => {},
+    receive = (_message) => {},
     transition = 0;
   let remote = { rev: 1, data: { items: ["remote"] } };
   let local = { items: ["local"] };

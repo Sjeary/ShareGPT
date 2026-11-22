@@ -107,6 +107,7 @@ async function exercise(cancel) {
         return requireRenderer(name);
       },
       AbortController,
+      structuredClone,
       console,
       setTimeout: () => 1,
       clearTimeout() {},
