@@ -78,6 +78,9 @@ async function main() {
         await card.getByText("canvas original", { exact: true }).dblclick();
         await card.locator("textarea").fill("canvas edited immediately before switching");
         await window.getByText("EXTERNAL", { exact: true }).first().click();
+        // The click starts openNote asynchronously; its new editor appears only after flushDraft.
+        await editor.waitFor({ state: "visible" });
+        assert.match(await editor.innerText(), /new remote body/);
         const savedCanvas = JSON.parse(fs.readFileSync(path.join(root, "board.canvas"), "utf8"));
         assert.equal(savedCanvas.nodes[0].text, "canvas edited immediately before switching");
         assert.equal(savedCanvas.nodes[0].color, "2");
