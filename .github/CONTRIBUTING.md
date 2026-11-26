@@ -11,6 +11,8 @@
 
 ## 本地跑起来
 
+Windows 与 Apple Silicon Mac 可运行 `npm run setup:dev` 一次准备全部依赖、Electron 和经过校验的代理资源，随后用 `npm run dev` 启动。跨电脑同步与云端测试说明见 [开发指南](../docs/DEVELOPMENT.md)。
+
 ```bash
 # 1. 按锁文件安装全部 CI 依赖
 npm ci
