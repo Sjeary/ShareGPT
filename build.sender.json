@@ -4,6 +4,7 @@
   "asar": true,
   "files": [
     "src/**/*",
+    "collab_server2/shared/endpointSecurity.js",
     "!src/**/.npm-cache{,/**/*}",
     "!src/**/.cache{,/**/*}",
     "!src/renderer-next/node_modules/**",

@@ -19,6 +19,7 @@ const { createUserStore } = require("./user_store");
 const { mergeUserStoreData } = require("./user_store_merge");
 const { createAdminAccountHandler } = require("./admin_accounts");
 const { createUserDataHandler } = require("./user_data_routes");
+const { createTeamCalendarHandler } = require("./team_calendar");
 
 process.on("uncaughtException", (err) => {
   try {
@@ -1898,6 +1899,12 @@ function resolveSessionByToken(token) {
   return session;
 }
 
+function requireCurrentSession(req, res, session) {
+  if (resolveSessionByToken(extractBearer(req)) === session) return true;
+  sendText(res, 401, "登录已失效，请重新登录");
+  return false;
+}
+
 function applyProfileUpdate(session, user, payload) {
   const displayName = safeText(payload?.displayName).slice(0, 30) || user.username;
   const bio = safeText(payload?.bio).slice(0, 200);
@@ -1994,93 +2001,6 @@ function buildGptUsageStats(usageEvents, fromRaw, toRaw) {
     users,
     serverTime: nowIso(),
   };
-}
-
-// ===== v1.0.2 新增辅助: 原子写 / 组队日历 / 个人云端存储 / 单用户多端广播 =====
-const CALENDAR_RSVP_VALUES = ["needs_action", "accept", "decline", "tentative"];
-
-function ensureCalendarsFile() {
-  fs.mkdirSync(path.dirname(CALENDARS_FILE), { recursive: true });
-  if (!fs.existsSync(CALENDARS_FILE)) {
-    fs.writeFileSync(CALENDARS_FILE, JSON.stringify({ events: [] }, null, 2), "utf-8");
-  }
-}
-
-function normalizeRsvp(value) {
-  const v = safeText(value);
-  return CALENDAR_RSVP_VALUES.includes(v) ? v : "needs_action";
-}
-
-function normalizeAttendee(record) {
-  const username = safeText(record?.username);
-  if (!username) return null;
-  return {
-    username,
-    displayName: safeText(record?.displayName) || username,
-    rsvp: normalizeRsvp(record?.rsvp),
-  };
-}
-
-function normalizeTeamEvent(record) {
-  const id = safeText(record?.id);
-  const title = safeText(record?.title).slice(0, 200);
-  const start = safeText(record?.start);
-  const end = safeText(record?.end);
-  if (!id || !start) return null;
-  const attendees = Array.isArray(record?.attendees)
-    ? record.attendees.map(normalizeAttendee).filter(Boolean)
-    : [];
-  const dedupAttendees = [];
-  const seen = new Set();
-  for (const a of attendees) {
-    if (seen.has(a.username)) {
-      const idx = dedupAttendees.findIndex((x) => x.username === a.username);
-      if (idx >= 0) dedupAttendees[idx] = a;
-      continue;
-    }
-    seen.add(a.username);
-    dedupAttendees.push(a);
-  }
-  return {
-    id,
-    subnetKey: safeText(record?.subnetKey),
-    title,
-    description: safeText(record?.description).slice(0, 2000),
-    location: safeText(record?.location).slice(0, 200),
-    start,
-    end: end || start,
-    allDay: Boolean(record?.allDay),
-    organizer: safeText(record?.organizer),
-    attendees: dedupAttendees,
-    color: safeText(record?.color).slice(0, 32),
-    createdBy: safeText(record?.createdBy),
-    createdAt: safeText(record?.createdAt) || nowIso(),
-    updatedAt: safeText(record?.updatedAt) || nowIso(),
-  };
-}
-
-function loadCalendarStore() {
-  ensureCalendarsFile();
-  try {
-    const raw = JSON.parse(fs.readFileSync(CALENDARS_FILE, "utf-8"));
-    const events = Array.isArray(raw.events)
-      ? raw.events.map(normalizeTeamEvent).filter(Boolean)
-      : [];
-    return { events };
-  } catch {
-    return { events: [] };
-  }
-}
-
-function saveCalendarStore(store) {
-  const events = Array.isArray(store?.events)
-    ? store.events.map(normalizeTeamEvent).filter(Boolean)
-    : [];
-  writeJsonAtomic(CALENDARS_FILE, { events });
-}
-
-function eventsForSubnet(subnetKey) {
-  return loadCalendarStore().events.filter((e) => e.subnetKey === subnetKey);
 }
 
 // 个人云端存储 (按用户隔离: calendar / tasks)。rev 单调递增, 写入须带 baseRev=当前 rev, 防止老版本覆盖新版本。
@@ -2247,6 +2167,19 @@ const handleAdminAccountRequest = createAdminAccountHandler({
   nowIso,
   revokeUserSessions,
   normalizeUserRecord,
+});
+
+const handleTeamCalendarRequest = createTeamCalendarHandler({
+  file: CALENDARS_FILE,
+  nowIso,
+  safeText,
+  sessionForRequest: (req) => resolveSessionByToken(extractBearer(req)),
+  requireCurrentSession,
+  readBody,
+  safeParseJson,
+  sendText,
+  sendJson,
+  broadcastToSubnet,
 });
 
 const handleUserDataRequest = createUserDataHandler({
@@ -2890,6 +2823,7 @@ async function handleRequest(req, res) {
     }
     try {
       const payload = safeParseJson(await readBody(req, 64 * 1024)) || {};
+      if (!requireCurrentSession(req, res, session)) return;
       const report = saveProxyRouteHealthReport(session.username, payload);
       sendJson(res, 200, { ok: true, report });
     } catch (err) {
@@ -2908,6 +2842,7 @@ async function handleRequest(req, res) {
 
     try {
       const body = await readBody(req, MAX_AVATAR_LENGTH + 64 * 1024);
+      if (!requireCurrentSession(req, res, session)) return;
       const payload = safeParseJson(body);
       const { store, user } = findUser(session.username);
       if (!user) {
@@ -2952,6 +2887,7 @@ async function handleRequest(req, res) {
 
     try {
       const body = await readBody(req);
+      if (!requireCurrentSession(req, res, session)) return;
       const payload = safeParseJson(body);
       const avatar = safeText(payload?.avatar);
 
@@ -3053,6 +2989,7 @@ async function handleRequest(req, res) {
     }
     try {
       const body = await readBody(req, 64 * 1024);
+      if (!requireCurrentSession(req, res, session)) return;
       const payload = safeParseJson(body) || {};
       const text = safeText(payload.text);
       if (!text) {
@@ -3093,6 +3030,7 @@ async function handleRequest(req, res) {
     }
     try {
       const body = await readBody(req, 64 * 1024);
+      if (!requireCurrentSession(req, res, session)) return;
       const payload = safeParseJson(body) || {};
       recordMissingDomains(session.username, payload.domains, payload.version);
       sendJson(res, 200, { ok: true });
@@ -3208,162 +3146,7 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // ===== 组队(共享)日历 REST (v1.0.2) =====
-  // 鉴权复用聊天 token; 一律以 session.subnetKey 落库; 变更经 WS broadcastToSubnet 实时下发。
-  if (pathname === "/api/team-calendar/events" && req.method === "GET") {
-    const session = resolveSessionByToken(extractBearer(req));
-    if (!session) {
-      sendText(res, 401, "未授权");
-      return;
-    }
-    sendJson(res, 200, {
-      events: eventsForSubnet(session.subnetKey),
-      serverTime: nowIso(),
-    });
-    return;
-  }
-
-  if (pathname === "/api/team-calendar/events" && req.method === "POST") {
-    const session = resolveSessionByToken(extractBearer(req));
-    if (!session) {
-      sendText(res, 401, "未授权");
-      return;
-    }
-    try {
-      const payload = safeParseJson(await readBody(req)) || {};
-      const title = safeText(payload.title).slice(0, 200);
-      const start = safeText(payload.start);
-      if (!title || !start) {
-        sendText(res, 400, "标题与开始时间必填");
-        return;
-      }
-      const store = loadCalendarStore();
-      const event = normalizeTeamEvent({
-        ...payload,
-        id: crypto.randomUUID(),
-        subnetKey: session.subnetKey,
-        title,
-        organizer: session.username,
-        createdBy: session.username,
-        createdAt: nowIso(),
-        updatedAt: nowIso(),
-      });
-      store.events.push(event);
-      saveCalendarStore(store);
-      broadcastToSubnet(session.subnetKey, {
-        type: "calendar_event_created",
-        event,
-      });
-      sendJson(res, 200, { event });
-    } catch (err) {
-      sendText(res, 500, err.message || "创建事件失败");
-    }
-    return;
-  }
-
-  if (pathname.startsWith("/api/team-calendar/events/")) {
-    const session = resolveSessionByToken(extractBearer(req));
-    if (!session) {
-      sendText(res, 401, "未授权");
-      return;
-    }
-    const rest = pathname.slice("/api/team-calendar/events/".length);
-    const isRsvp = rest.endsWith("/rsvp");
-    const eventId = decodeURIComponent(isRsvp ? rest.slice(0, -"/rsvp".length) : rest);
-
-    if (isRsvp && req.method === "POST") {
-      try {
-        const payload = safeParseJson(await readBody(req)) || {};
-        const status = normalizeRsvp(payload.status);
-        const store = loadCalendarStore();
-        const event = store.events.find(
-          (e) => e.id === eventId && e.subnetKey === session.subnetKey,
-        );
-        if (!event) {
-          sendText(res, 404, "事件不存在");
-          return;
-        }
-        const existing = event.attendees.find((a) => a.username === session.username);
-        if (existing) {
-          existing.rsvp = status;
-        } else {
-          event.attendees.push({
-            username: session.username,
-            displayName: session.displayName || session.username,
-            rsvp: status,
-          });
-        }
-        event.updatedAt = nowIso();
-        saveCalendarStore(store);
-        broadcastToSubnet(session.subnetKey, {
-          type: "calendar_event_updated",
-          event,
-        });
-        sendJson(res, 200, { event });
-      } catch (err) {
-        sendText(res, 500, err.message || "更新 RSVP 失败");
-      }
-      return;
-    }
-
-    if (req.method === "PATCH") {
-      try {
-        const payload = safeParseJson(await readBody(req)) || {};
-        const store = loadCalendarStore();
-        const idx = store.events.findIndex(
-          (e) => e.id === eventId && e.subnetKey === session.subnetKey,
-        );
-        if (idx < 0) {
-          sendText(res, 404, "事件不存在");
-          return;
-        }
-        const prev = store.events[idx];
-        const merged = normalizeTeamEvent({
-          ...prev,
-          ...payload,
-          id: prev.id,
-          subnetKey: prev.subnetKey,
-          organizer: prev.organizer,
-          createdBy: prev.createdBy,
-          createdAt: prev.createdAt,
-          updatedAt: nowIso(),
-        });
-        store.events[idx] = merged;
-        saveCalendarStore(store);
-        broadcastToSubnet(session.subnetKey, {
-          type: "calendar_event_updated",
-          event: merged,
-        });
-        sendJson(res, 200, { event: merged });
-      } catch (err) {
-        sendText(res, 500, err.message || "编辑事件失败");
-      }
-      return;
-    }
-
-    if (req.method === "DELETE") {
-      const store = loadCalendarStore();
-      const idx = store.events.findIndex(
-        (e) => e.id === eventId && e.subnetKey === session.subnetKey,
-      );
-      if (idx < 0) {
-        sendText(res, 404, "事件不存在");
-        return;
-      }
-      if (store.events[idx].organizer !== session.username) {
-        sendText(res, 403, "只有组织者可以删除事件");
-        return;
-      }
-      store.events.splice(idx, 1);
-      saveCalendarStore(store);
-      broadcastToSubnet(session.subnetKey, {
-        type: "calendar_event_deleted",
-        id: eventId,
-      });
-      sendJson(res, 200, { ok: true, id: eventId });
-      return;
-    }
-  }
+  if (await handleTeamCalendarRequest(req, res, pathname)) return;
 
   // 个人云端存储 (按用户隔离, 多端同步 + 乐观并发防覆盖)。/api/user-store/:kind  kind=calendar|tasks
   if (await handleUserDataRequest(req, res, pathname)) return;
@@ -3377,6 +3160,7 @@ async function handleRequest(req, res) {
     }
     try {
       const payload = safeParseJson(await readBody(req)) || {};
+      if (!requireCurrentSession(req, res, session)) return;
       const d = reportFocus(session.username, payload.minutes, payload.count ?? 1);
       sendJson(res, 200, { ok: true, today: d });
     } catch (err) {

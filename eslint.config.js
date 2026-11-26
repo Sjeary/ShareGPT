@@ -5,7 +5,7 @@ const globals = require("globals");
 //   - src/main/**/*.js (Electron 主进程)
 //   - collab_server2/**/*.js (协作服务端)
 //   - scripts/**/*.mjs (构建脚本)
-// 其余目录 (渲染层 src/renderer-next、admin_console、旧 src/renderer 等)
+// 其余目录 (渲染层 src/renderer-next、admin_console、历史代码 legacy 等)
 // 各自有独立配置或无需在此 lint, 全部忽略。
 module.exports = [
   {
@@ -17,7 +17,7 @@ module.exports = [
       "**/dist/**",
       "release*/**",
       "build/bin/**",
-      "src/renderer/**",
+      "legacy/**",
       "src/renderer-next/**",
       "admin_console/**",
       "eslint.config.js",

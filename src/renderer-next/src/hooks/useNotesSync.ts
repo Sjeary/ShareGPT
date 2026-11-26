@@ -1,24 +1,12 @@
-import {
-  useUserDataTransitionVersion,
-  userDataTransitionState,
-} from '@/lib/userDataTransitionState'
 import { useEffect } from 'react'
+import { useUserDataTransitionVersion } from '@/lib/userDataTransitionState'
+import { createAccountSync } from '@/lib/accountSync'
 import { useNotesSyncStore } from '@/store/useNotesSyncStore'
 import { useChatStore } from '@/store/useChatStore'
 import { useVaultStore } from '@/store/useVaultStore'
-import { wsBus } from '@/lib/wsBus'
-import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
 import { type VaultFiles } from '@/lib/notes/merge'
 
-// 知识库云端同步 (单会话顺序模型, 无实时强依赖):
-//  - 保存后防抖推送整库 blob (kind=notes) 到 user-store; rev 乐观并发。
-//  - 打开/登录时拉取, 与本地三方合并(防止旧版本覆盖新版本), 有差异弹「同步对比」。
-//  - 未登录 / 服务器不支持 -> 静默纯本地。
-
 export { useNotesSyncStore, type NotesSyncState } from '@/store/useNotesSyncStore'
-
-const PUSH_DEBOUNCE_MS = 900
-const POLL_MS = 25000
 
 function baseKey(principal: string) {
   return `notesync:base:${principal}`
@@ -61,7 +49,6 @@ function stable(files: VaultFiles): string {
 
 export function useNotesSync(): void {
   const dataVersion = useUserDataTransitionVersion()
-  const dataSuspended = dataVersion % 2 === 1
   const serverUrl = useChatStore((s) => s.identity.serverUrl)
   const token = useChatStore((s) => s.identity.token)
   const username = useChatStore((s) => s.identity.username)
@@ -71,201 +58,53 @@ export function useNotesSync(): void {
   useEffect(() => {
     useNotesSyncStore.getState().resetForPrincipal()
     const setState = useNotesSyncStore.getState().setState
-    if (dataSuspended || !vaultLoaded || !serverUrl || !token) {
+    if (dataVersion % 2 || !vaultLoaded || !serverUrl || !token) {
       setState('local')
       return
     }
-    let cancelled = false
-    const transitionRevision = userDataTransitionState.revision()
-    const snapshot = settingsPrincipalRuntime.current()
-    const controller = new AbortController()
-    const isCurrent = () => {
-      const current = settingsPrincipalRuntime.current()
-      return (
-        !cancelled &&
-        useVaultStore.getState().root === vaultRoot &&
-        useVaultStore.getState().loaded &&
-        !userDataTransitionState.isSuspended() &&
-        userDataTransitionState.revision() === transitionRevision &&
-        current.principalId === snapshot.principalId &&
-        current.generation === snapshot.generation
-      )
-    }
-    const assertCurrent = () => {
-      if (!isCurrent()) throw new Error('同步账号已切换')
-    }
-    let supported = false
-    let lastSynced = ''
-    let pushTimer: number | null = null
-    let pollTimer: number | null = null
-    const unsubs: Array<() => void> = []
-
-    const authFetch = (path: string, init?: RequestInit) =>
-      fetch(`${serverUrl}${path}`, {
-        ...init,
-        signal: controller.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-          ...(init?.headers ?? {}),
-        },
-      })
-
-    const ours = (): VaultFiles => {
-      assertCurrent()
-      const { rawByPath, currentPath, draft, dirty } = useVaultStore.getState()
-      return { ...rawByPath, ...(dirty && currentPath ? { [currentPath]: draft } : {}) }
-    }
-
-    // 串行化同步操作, 避免 poll / ws / 409 重试 触发的合并相互交叠。
-    let syncChain: Promise<void> = Promise.resolve()
-    const enqueue = (fn: () => Promise<void>): Promise<void> => {
-      syncChain = syncChain
-        .then(() => {
-          assertCurrent()
-          return fn()
-        })
-        .catch(() => undefined)
-      return syncChain
-    }
-
-    async function push(baseRev: number, depth = 0): Promise<void> {
-      if (!isCurrent()) return
-      const data = ours()
-      try {
-        const res = await authFetch('/api/user-store/notes', {
-          method: 'PUT',
-          body: JSON.stringify({ baseRev, data: { files: data } }),
-        })
-        assertCurrent()
-        if (res.ok) {
-          const j = (await res.json()) as { rev: number }
-          assertCurrent()
-          saveRev(snapshot.principalId, j.rev)
-          saveBase(snapshot.principalId, data)
-          lastSynced = stable(data)
-          if (isCurrent()) setState('synced')
-          return
+    const controller = createAccountSync<{ files: VaultFiles }>({
+      kind: 'notes',
+      serverUrl,
+      token,
+      pollMs: 25000,
+      debounceMs: 900,
+      isActive: () =>
+        useVaultStore.getState().root === vaultRoot && useVaultStore.getState().loaded,
+      isReady: () => useVaultStore.getState().loaded,
+      getLocal: () => {
+        const { rawByPath, currentPath, draft, dirty } = useVaultStore.getState()
+        return {
+          files: { ...rawByPath, ...(dirty && currentPath ? { [currentPath]: draft } : {}) },
         }
-        if (res.status === 409 && depth < 2) {
-          await pullAndMerge(true)
-          assertCurrent()
-          await push(loadRev(snapshot.principalId), depth + 1)
-          return
-        }
-        if (isCurrent()) setState('error')
-      } catch {
-        if (isCurrent()) setState('error')
-      }
-    }
-
-    async function pullAndMerge(silent = false): Promise<void> {
-      try {
-        const res = await authFetch('/api/user-store/notes', { method: 'GET' })
-        assertCurrent()
-        if (!res.ok) {
-          supported = false
-          if (isCurrent()) setState('local')
-          return
-        }
-        supported = true
-        const remote = (await res.json()) as {
-          rev: number
-          data: { files?: VaultFiles } | null
-        }
-        if (!isCurrent()) return
-        const theirs = remote.data?.files ?? {}
-        const storedRev = loadRev(snapshot.principalId)
-        const base = loadBase(snapshot.principalId)
-        const local = ours()
-
-        if (remote.rev > storedRev) {
-          const report = await useVaultStore.getState().mergeFromCloud(base, theirs)
-          assertCurrent()
-          saveBase(snapshot.principalId, report.merged)
-          saveRev(snapshot.principalId, remote.rev)
-          lastSynced = stable(report.merged)
-          // 回推合并结果, 拿到新 rev (保持服务器与本地一致)。
-          await push(remote.rev)
-          assertCurrent()
-          const incoming = report.fromCloud.length + report.conflicts.length + report.deleted.length
-          if (!silent && incoming > 0) useNotesSyncStore.getState().showReport(report)
-        } else {
-          // 云端无新内容: 本地若有改动则推送。
-          if (stable(local) !== lastSynced) await push(storedRev)
-          else if (isCurrent()) setState('synced')
-        }
-      } catch {
-        if (isCurrent()) setState('error')
-      }
-    }
-
-    function watchLocal(): void {
-      const handler = () => {
-        if (!isCurrent() || !supported) return
-        const data = ours()
-        if (stable(data) === lastSynced) return
-        if (isCurrent()) setState('syncing')
-        if (pushTimer) window.clearTimeout(pushTimer)
-        pushTimer = window.setTimeout(() => {
-          pushTimer = null
-          if (!isCurrent() || !supported) return
-          if (stable(ours()) === lastSynced) {
-            setState('synced')
-            return
-          }
-          void enqueue(() => push(loadRev(snapshot.principalId)))
-        }, PUSH_DEBOUNCE_MS)
-      }
-      unsubs.push(useVaultStore.subscribe(handler))
-    }
-
-    function subscribeRealtime(): void {
-      unsubs.push(
-        wsBus.subscribe((p) => {
-          if (!isCurrent() || p.type !== 'user_store_updated' || p.kind !== 'notes') return
-          if (typeof p.rev === 'number' && p.rev > loadRev(snapshot.principalId)) {
-            void enqueue(() => pullAndMerge())
-          }
-        }),
-      )
-    }
-
-    void (async () => {
-      // 等 vault 就绪
-      for (let i = 0; i < 100 && !useVaultStore.getState().loaded; i++) {
-        await new Promise((r) => setTimeout(r, 100))
-        if (!isCurrent()) return
-      }
-      if (!isCurrent()) return
-      if (!useVaultStore.getState().loaded) {
-        setState('error')
-        return
-      }
-      setState('syncing')
-      await enqueue(() => pullAndMerge(false))
-      if (!isCurrent()) return
-      watchLocal()
-      subscribeRealtime()
-      if (isCurrent() && supported) {
-        pollTimer = window.setInterval(() => {
-          if (isCurrent()) void enqueue(() => pullAndMerge())
-        }, POLL_MS)
-      }
-    })()
-
-    return () => {
-      cancelled = true
-      controller.abort()
-      if (pushTimer) window.clearTimeout(pushTimer)
-      if (pollTimer) window.clearInterval(pollTimer)
-      for (const fn of unsubs) {
-        try {
-          fn()
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-  }, [serverUrl, token, username, dataSuspended, dataVersion, vaultRoot, vaultLoaded])
+      },
+      serialize: (data) => stable(data?.files ?? {}),
+      getRevision: ({ snapshot }) => loadRev(snapshot.principalId),
+      setRevision: (rev, { snapshot }) => saveRev(snapshot.principalId, rev),
+      mergeRemote: async (remote, { scope, previousRevision, conflict }) => {
+        if (remote.rev <= previousRevision) return
+        const files = remote.data?.files
+        if (
+          !files ||
+          typeof files !== 'object' ||
+          Array.isArray(files) ||
+          Object.values(files).some((value) => typeof value !== 'string')
+        )
+          throw new Error('云端笔记格式不合法，已保留本机资料')
+        const report = await useVaultStore
+          .getState()
+          .mergeFromCloud(loadBase(scope.snapshot.principalId), files)
+        scope.assertCurrent()
+        saveBase(scope.snapshot.principalId, files)
+        const incoming = report.fromCloud.length + report.conflicts.length + report.deleted.length
+        if (!conflict && incoming > 0) useNotesSyncStore.getState().showReport(report)
+        // A new cloud revision is acknowledged with the complete merged vault, as before.
+        return { publish: true }
+      },
+      acknowledge: (sent, _remote, scope) => saveBase(scope.snapshot.principalId, sent.files),
+      subscribeLocal: (notify) => useVaultStore.subscribe(notify),
+      setState,
+    })
+    void controller.start()
+    return () => controller.stop()
+  }, [serverUrl, token, username, dataVersion, vaultRoot, vaultLoaded])
 }

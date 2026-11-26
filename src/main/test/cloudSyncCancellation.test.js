@@ -1,9 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const vm = require("node:vm");
-const ts = require("typescript");
+const { rendererStoreHarness } = require("./helpers/rendererStoreHarness.cjs");
 
 for (const boundary of ["account", "same-account transition"])
   test(`late cloud 409 cannot cross ${boundary} boundaries`, async () => {
@@ -14,13 +11,6 @@ for (const boundary of ["account", "same-account transition"])
     let reads = 0,
       applies = 0,
       puts = 0;
-    const hookSource = fs.readFileSync(
-      path.join(__dirname, "../../renderer-next/src/hooks/useCloudSync.ts"),
-      "utf8",
-    );
-    const output = ts.transpileModule(hookSource, {
-      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-    }).outputText;
     const store = () => ({ getState: () => ({ init: async () => {} }) });
     const config = {
       isLoaded: () => true,
@@ -34,7 +24,6 @@ for (const boundary of ["account", "same-account transition"])
       merge: () => ({}),
       subscribe: () => () => {},
     };
-    const exports = {};
     const mocks = {
       "@/lib/userDataTransitionState": {
         useUserDataTransitionVersion: () => 0,
@@ -55,6 +44,7 @@ for (const boundary of ["account", "same-account transition"])
       "@/store/useTasksStore": { useTasksStore: store() },
       "@/lib/wsBus": { wsBus: { subscribe: () => () => {} } },
       "@/lib/settingsPrincipalRuntime": {
+        StaleSettingsPrincipalError: Error,
         settingsPrincipalRuntime: {
           current: () => ({ principalId: generation === 1 ? "A" : "B", generation }),
         },
@@ -67,11 +57,8 @@ for (const boundary of ["account", "same-account transition"])
         useSyncStatus: { getState: () => ({ setState: () => {} }) },
       },
     };
-    vm.runInNewContext(output, {
-      exports,
-      require: (key) => mocks[key],
-      AbortController,
-      console,
+    const app = rendererStoreHarness({
+      modules: mocks,
       window: {
         setTimeout: () => 1,
         clearTimeout: () => {},
@@ -93,7 +80,7 @@ for (const boundary of ["account", "same-account transition"])
         return { ok: true, json: async () => ({ rev: 0, data: null }) };
       },
     });
-    exports.useCloudSync();
+    app.load("hooks/useCloudSync.ts").useCloudSync();
     for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
     assert.equal(puts, 1);
     const readsBefore = reads;

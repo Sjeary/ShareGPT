@@ -1,73 +1,48 @@
-# React + TypeScript + Vite
+# ShareGPT 客户端界面
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+这里是当前桌面客户端的 React、TypeScript 和 Vite 界面。主窗口由 `index.html` 进入 `src/main.tsx`，个人资料窗口由 `profile.html` 进入 `src/profile.tsx`；两者共用主题和组件。历史 HTML 界面位于仓库的 `legacy/renderer/`。
 
-Currently, two official plugins are available:
+## 目录职责
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+| 位置                             | 内容                                |
+| -------------------------------- | ----------------------------------- |
+| `src/App.tsx`                    | 初始化、工作区选择与登录入口        |
+| `src/components/layout/`         | 窗口标题栏、侧栏和应用布局          |
+| `src/components/panels/`         | 功能页面及各页面相邻组件            |
+| `src/components/ui/`             | 共享 shadcn/Radix 基础组件          |
+| `src/components/ErrorNotice.tsx` | 各功能共用的错误提示                |
+| `src/hooks/`                     | 登录、同步、聊天、AI 宿主等界面行为 |
+| `src/store/`                     | 应用与各功能的 Zustand 状态         |
+| `src/lib/`                       | 通信、业务辅助及可独立检查的逻辑    |
+| `src/types/`                     | 主进程通信与设置类型                |
+| `src/index.css`                  | 主题变量、基础样式与共享样式        |
+| `src/**/*.test.ts`               | 与被检查逻辑相邻的前端测试          |
 
-## React Compiler
+界面经 `window.api` 调用 Electron preload 暴露的能力。本机能力及其调用者校验由 `src/main/` 维护；协作服务接口由 `collab_server2/` 提供。界面组件、共享状态、通信类型和实际执行方分别位于上述目录。
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 开发命令
 
-## Expanding the ESLint configuration
+从仓库根目录执行：
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+```bash
+# 安装本界面的锁定依赖
+npm --prefix src/renderer-next ci
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+# 只启动 Vite 开发服务
+npm --prefix src/renderer-next run dev
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+# 构建界面后启动完整桌面客户端
+npm run dev
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+# 前端测试、测试类型、规范和生产构建
+npm --prefix src/renderer-next test
+npm --prefix src/renderer-next run typecheck:test
+npm --prefix src/renderer-next run lint
+npm run build:next
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Vite 服务使用端口 `5234`。独立浏览器预览没有完整的本机通信桥；涉及账号、AI 网页、资料保存或本机能力的验证使用仓库现有的对应 `verify:*` 入口。后台验收的窗口与资料隔离说明见[贡献指南](../../.github/CONTRIBUTING.md)。
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+生产构建生成 `dist/index.html`、`dist/profile.html` 和静态资源，主进程通过 `rendererEntry.js` 加载。`dist/` 与 `node_modules/` 不提交；完整客户端不依赖 Vite 服务运行。
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+整体组件关系、数据链路及其他服务见[架构总览](../../docs/ARCHITECTURE.md)。

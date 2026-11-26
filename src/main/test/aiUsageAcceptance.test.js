@@ -387,3 +387,46 @@ test("a bound streaming request can complete after the gesture ttl", () => {
     acceptedAt: 20_000,
   });
 });
+
+for (const action of ["keydown", "click"]) {
+  for (const mutation of ["removed", "hidden"]) {
+    test(`a ${action} send survives an editor ${mutation} by the page before its deferred marker`, () => {
+      const token = createTrackerToken();
+      const page = createTrackerHarness(token);
+      page.listeners.get(action)(
+        action === "keydown" ? enterEvent(page.editor) : { target: page.sendButton },
+      );
+      if (mutation === "removed") page.editor.isConnected = false;
+      else page.editor.getBoundingClientRect = () => ({ width: 0, height: 0 });
+      page.runNextTimeout();
+      assert.equal(page.logs.length, 1);
+      const attempt = parseSendAttemptMessage(page.logs[0], token);
+      assert.ok(attempt);
+      for (const [kind, url] of [
+        ["gpt", "https://chatgpt.com/backend-api/conversation"],
+        ["claude", "https://claude.ai/api/organizations/org/chat_conversations/chat/completion"],
+        [
+          "gemini",
+          "https://gemini.google.com/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate",
+        ],
+      ]) {
+        for (const statusCode of [200, 500]) {
+          const tracker = createUsageAttemptTracker({ now: () => attempt.attemptedAt });
+          tracker.record(attempt, 7);
+          const request = { id: "request", webContentsId: 7, method: "POST", url, statusCode };
+          tracker.recordRequestStart(kind, request);
+          assert.equal(Boolean(tracker.acceptResponse(kind, request)), statusCode === 200);
+          assert.equal(tracker.acceptResponse(kind, request), null);
+        }
+      }
+    });
+  }
+}
+
+test("an editor already hidden before Enter does not create a usage attempt", () => {
+  const page = createTrackerHarness(createTrackerToken());
+  page.editor.getBoundingClientRect = () => ({ width: 0, height: 0 });
+  page.listeners.get("keydown")(enterEvent(page.editor));
+  page.runNextTimeout();
+  assert.deepEqual(page.logs, []);
+});

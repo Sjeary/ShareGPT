@@ -1,4 +1,3 @@
-import { showErrorToast } from '@/lib/errorToast'
 import { ErrorNotice } from '@/components/ErrorNotice'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -27,7 +26,6 @@ import { PanelScaffold } from '@/components/panels/PanelScaffold'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import type { AiProxyReport } from '@/types/api'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { useAiStore } from '@/store/useAiStore'
@@ -42,7 +40,7 @@ import { coalesceInFlight } from '@/lib/inFlightRequest'
 import { toast } from 'sonner'
 import { useAiHostSync } from '@/hooks/useAiWorkspace'
 import { useAiEvents, applyAiTabsPayload } from './useAiEvents'
-import { reportMissingDomains } from './reportGptUsage'
+import { useProxyHealth } from './useProxyHealth'
 import { GptTabBar } from './GptTabBar'
 import {
   GPT_PROXY_HOST,
@@ -337,9 +335,23 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
 
   // 代理检测面板 (展示该页面流量是否全部经代理)。作为宿主上方的可折叠块渲染,
   // 这样不会被原生 webview 盖住 (centered Dialog 会被原生 view 覆盖)。
-  const [proxyOpen, setProxyOpen] = useState(false)
-  const [proxyChecking, setProxyChecking] = useState(false)
-  const [proxyReport, setProxyReport] = useState<AiProxyReport | null>(null)
+  const {
+    proxyOpen,
+    setProxyOpen,
+    proxyChecking,
+    proxyReport,
+    runProxyCheck,
+    toggleProxyPanel,
+    restartingProxy,
+    applyMissingDomains,
+  } = useProxyHealth({
+    kind,
+    tabId: activeTabId,
+    environmentId,
+    networkReady,
+    initialized: Boolean(activeTab?.webviewInitialized),
+    advancedMode,
+  })
 
   // 窗口全屏 (类似 F11): 工具栏按钮切换; 用 resize 事件同步图标状态。
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -360,85 +372,6 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const toggleFullscreen = useCallback(() => {
     void api.toggleWindowFullScreen?.().then((v) => setIsFullscreen(Boolean(v)))
   }, [])
-
-  const runProxyCheck = useCallback(async () => {
-    setProxyChecking(true)
-    try {
-      const report = await api.checkAiProxy(kind, activeTabId)
-      setProxyReport(report)
-    } catch (err) {
-      setProxyReport({ ok: false, reason: err instanceof Error ? err.message : String(err) })
-    } finally {
-      setProxyChecking(false)
-    }
-  }, [kind, activeTabId])
-
-  const toggleProxyPanel = useCallback(() => {
-    const next = !proxyOpen
-    setProxyOpen(next)
-    if (next) void runProxyCheck()
-  }, [proxyOpen, runProxyCheck, setProxyOpen])
-
-  // 自动巡检: 代理运行 + 页面已初始化时, 周期性跑代理检测, 让"有域名没走代理"能自动爆红,
-  // 不必每次手点。(检测只是被动读取已记录的主机, 开销很小。)
-  // 注意: 不立即检测 —— 页面刚加载时流量尚未稳定, 马上检测容易误报爆红。前 20s 保持中性默认色,
-  // 首次自动检测延后到 interval 第一次触发(约 20s)后, 之后每 20s 一次; 用户手点仍即时检测。
-  useEffect(() => {
-    if (!networkReady || !activeTab?.webviewInitialized || !activeTabId) return
-    const id = window.setInterval(() => void runProxyCheck(), 20000)
-    return () => window.clearInterval(id)
-  }, [networkReady, activeTab?.webviewInitialized, activeTabId, runProxyCheck])
-
-  // 代理检测发现"会用到但没走代理"的域名: 自动累积到本机额外清单(持久化) + 上报管理员。
-  // 实际生效需重启 singbox —— 由代理面板的"一键加入并重启"按钮触发, 避免静默打断当前会话。
-  const reportedDomainsRef = useRef<Set<string>>(new Set())
-  const [restartingProxy, setRestartingProxy] = useState(false)
-  const fallbackDomains = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (proxyReport?.hosts ?? [])
-            .filter((h) => h.via === 'fallback')
-            .map((h) => String(h.host || '').trim())
-            .filter(Boolean),
-        ),
-      ),
-    [proxyReport],
-  )
-  useEffect(() => {
-    if (advancedMode) return
-    if (!fallbackDomains.length) return
-    const sender = useAppStore.getState().settings?.sender
-    const existing = new Set(sender?.auto_domains ?? [])
-    const fresh = fallbackDomains.filter((d) => !existing.has(d))
-    if (fresh.length) {
-      void useAppStore
-        .getState()
-        .patchSection('sender', { auto_domains: [...existing, ...fresh] })
-        .catch(() => undefined)
-    }
-    const toReport = fallbackDomains.filter((d) => !reportedDomainsRef.current.has(d))
-    if (toReport.length) {
-      toReport.forEach((d) => reportedDomainsRef.current.add(d))
-      void reportMissingDomains(toReport)
-    }
-  }, [advancedMode, fallbackDomains])
-
-  // 一键加入并重启 singbox: 用已持久化(含 auto_domains)的发送端配置重启, 使新域名即时走代理。
-  const applyMissingDomains = useCallback(async () => {
-    const sender = useAppStore.getState().settings?.sender
-    if (!sender) return
-    setRestartingProxy(true)
-    try {
-      await api.startSender(sender)
-      toast.success('已加入并重启代理，正在重新检测…')
-      window.setTimeout(() => void runProxyCheck(), 1500)
-    } catch (err) {
-      showErrorToast(err, '重启代理')
-    } finally {
-      setRestartingProxy(false)
-    }
-  }, [runProxyCheck])
 
   // 代理检测状态色: 只要有任何域名没走代理(回落) 或会话未走代理/检测失败 -> 直接爆红;
   // 全部走代理才是绿。(按需求: 一旦发现有域名没走代理就红色告警, 提醒补进清单。)

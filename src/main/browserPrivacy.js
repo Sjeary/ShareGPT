@@ -206,76 +206,6 @@ function normalizeBrowserPrivacySettings(raw = {}) {
   };
 }
 
-function syncedBrowserPrivacyPayload(raw) {
-  const normalized = normalizeBrowserPrivacySettings(raw);
-  return {
-    version: 1,
-    updatedAt: normalized.updatedAt,
-    // 只同步用户选择的策略。代理出口检测结果属于设备本地状态，否则另一台设备使用不同
-    // 节点时会得到与当前 IP 不一致的时区/位置。
-    environment: {
-      mode: normalized.environment.mode,
-      locale: normalized.environment.locale,
-      acceptLanguages: normalized.environment.acceptLanguages,
-      geolocationMode: normalized.environment.geolocationMode,
-      autoSyncFromProxy: normalized.environment.autoSyncFromProxy,
-      ...(normalized.environment.mode === "proxy"
-        ? {}
-        : { timezone: normalized.environment.timezone }),
-    },
-    fingerprint: normalized.fingerprint,
-  };
-}
-
-function mergeSyncedBrowserPrivacy(localRaw, remoteRaw) {
-  const local = normalizeBrowserPrivacySettings(localRaw);
-  const remoteEnvironment =
-    remoteRaw?.environment && typeof remoteRaw.environment === "object"
-      ? remoteRaw.environment
-      : {};
-  const remoteMode = ENVIRONMENT_MODES.has(remoteEnvironment.mode)
-    ? remoteEnvironment.mode
-    : local.environment.mode;
-  const keepLocalProxyDetection = local.environment.mode === "proxy" && remoteMode === "proxy";
-  const remote = normalizeBrowserPrivacySettings({
-    ...local,
-    updatedAt: safeText(remoteRaw?.updatedAt, 40) || local.updatedAt,
-    syncEnabled: local.syncEnabled,
-    lastClearedAt: local.lastClearedAt,
-    environment: {
-      ...local.environment,
-      mode: remoteMode,
-      locale: remoteEnvironment.locale,
-      acceptLanguages: remoteEnvironment.acceptLanguages,
-      // 跟随代理时必须继续使用本机节点的检测结果；美国预设时区才跨设备同步。
-      timezone: remoteMode === "proxy" ? local.environment.timezone : remoteEnvironment.timezone,
-      geolocationMode: remoteEnvironment.geolocationMode,
-      autoSyncFromProxy: remoteEnvironment.autoSyncFromProxy,
-    },
-    fingerprint: remoteRaw?.fingerprint || local.fingerprint,
-  });
-  return {
-    ...remote,
-    syncEnabled: local.syncEnabled,
-    lastClearedAt: local.lastClearedAt,
-    localProfiles: local.localProfiles,
-    audit: local.audit,
-    environment: {
-      ...remote.environment,
-      // 节点派生信息只在检测它的设备保留。
-      sourceIp: keepLocalProxyDetection ? local.environment.sourceIp : "",
-      countryCode: keepLocalProxyDetection ? local.environment.countryCode : "",
-      country: keepLocalProxyDetection ? local.environment.country : "",
-      region: keepLocalProxyDetection ? local.environment.region : "",
-      city: keepLocalProxyDetection ? local.environment.city : "",
-      latitude: keepLocalProxyDetection ? local.environment.latitude : null,
-      longitude: keepLocalProxyDetection ? local.environment.longitude : null,
-      accuracy: keepLocalProxyDetection ? local.environment.accuracy : null,
-      sourceUpdatedAt: keepLocalProxyDetection ? local.environment.sourceUpdatedAt : "",
-    },
-  };
-}
-
 function runtimeEnvironment(raw) {
   const settings = normalizeBrowserPrivacySettings(raw);
   const environment = settings.environment;
@@ -656,8 +586,6 @@ function isAiKind(value) {
 module.exports = {
   DEFAULT_BROWSER_PRIVACY_SETTINGS,
   normalizeBrowserPrivacySettings,
-  syncedBrowserPrivacyPayload,
-  mergeSyncedBrowserPrivacy,
   runtimeEnvironment,
   ENVIRONMENT_BOOTSTRAP_URL,
   isTransientAiLoadError,

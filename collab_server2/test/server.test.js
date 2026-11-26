@@ -1250,6 +1250,22 @@ test("旧客户端契约兼容 + 密码复核与隐私配置增量接口", async
   });
   assert.strictEqual(geminiUsage.status, 200);
 
+  const claudeUsage = await fetch(`${baseUrl}/api/claude/usage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders },
+    body: JSON.stringify({ count: 1, usageId: "claude-usage-once-1" }),
+  });
+  assert.strictEqual(claudeUsage.status, 200);
+  for (const [kind, total] of [
+    ["gpt", 4],
+    ["gemini", 2],
+    ["claude", 1],
+  ]) {
+    const result = await fetch(`${baseUrl}/api/${kind}/stats`, { headers: authHeaders });
+    assert.strictEqual(result.status, 200);
+    assert.strictEqual((await result.json()).totalQueries, total, kind);
+  }
+
   const unauthenticatedAdminUsage = await fetch(`${baseUrl}/api/admin/ai-usage`);
   assert.strictEqual(unauthenticatedAdminUsage.status, 401);
 

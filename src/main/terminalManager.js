@@ -198,7 +198,8 @@ function createTerminalManager({
           sessions: [...sessions.values()].map(describe),
         };
       }
-      if (action !== "create") assertGrant(snapshot);
+      if (action === "create" || action === "settings") await authorize(snapshot, grant?.token);
+      else assertGrant(snapshot);
       if (action === "settings") {
         if (!validSettings(payload)) throw new Error("启动指令不合法或超过 8192 字符");
         return writeLocalJson(
@@ -208,7 +209,6 @@ function createTerminalManager({
         );
       }
       if (action === "create") {
-        await authorize(snapshot, grant?.token);
         if (sessions.size >= MAX_SESSIONS)
           throw new Error("最多同时保留 8 个终端，请先关闭不需要的会话");
         const settings = readLocalJson(

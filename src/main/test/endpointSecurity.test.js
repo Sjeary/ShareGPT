@@ -7,6 +7,58 @@ const {
   parseEndpoint,
   resolveEndpoint,
 } = require("../endpointSecurity");
+const {
+  isBlockedAddress,
+  resolvePublicEndpoint,
+} = require("../../../collab_server2/translation_profiles");
+
+test("desktop and server reject private, translated, reserved and invalid DNS addresses", async () => {
+  for (const address of [
+    "127.0.0.1",
+    "10.0.0.1",
+    "169.254.169.254",
+    "64:ff9b::7f00:1",
+    "64:ff9b::a9fe:a9fe",
+    "64:ff9b::a00:1",
+    "0:0:0:0:0:ffff:7f00:1",
+    "2002:0a00:0001::1",
+    "198.51.100.8",
+    "::",
+    "invalid",
+  ]) {
+    assert.notEqual(classifyIpAddress(address), "public", address);
+    assert.equal(isBlockedAddress(address), true, address);
+    const lookup = async () => [{ address, family: address.includes(":") ? 6 : 4 }];
+    await assert.rejects(resolveEndpoint(new URL("https://fixture.invalid"), { lookup }));
+    await assert.rejects(resolvePublicEndpoint(new URL("https://fixture.invalid"), lookup));
+  }
+});
+
+test("both resolvers pin public DNS and reject mixed or incorrectly typed answers", async () => {
+  const url = new URL("https://fixture.invalid");
+  for (const record of [
+    { address: "1.1.1.1", family: 4 },
+    { address: "2001:4860:4860::8888", family: 6 },
+  ]) {
+    const lookup = async () => [record];
+    assert.deepEqual(await resolveEndpoint(url, { lookup }), record);
+    assert.deepEqual(await resolvePublicEndpoint(url, lookup), record);
+  }
+  for (const records of [
+    [
+      { address: "1.1.1.1", family: 4 },
+      { address: "64:ff9b::a00:1", family: 6 },
+    ],
+    [{ address: "1.1.1.1", family: 6 }],
+  ])
+    await assert.rejects(resolvePublicEndpoint(url, async () => records));
+});
+
+test("desktop explicit offline loopback remains allowed while server upstreams stay public-only", async () => {
+  const url = new URL("http://127.0.0.1:5000");
+  assert.deepEqual(await resolveEndpoint(url), { address: "127.0.0.1", family: 4 });
+  await assert.rejects(resolvePublicEndpoint(url), /禁止访问/);
+});
 
 test("remote HTTP is opt-in while credentials, fragments, and non-HTTP schemes stay blocked", () => {
   assert.throws(() => parseEndpoint("http://api.example"), /必须使用 HTTPS/);

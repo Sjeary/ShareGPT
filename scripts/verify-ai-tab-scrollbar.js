@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const path = require("node:path");
 const { app, BrowserWindow } = require("electron");
-if (process.platform === "darwin") app.setActivationPolicy("prohibited");
+require("./lib/background-acceptance.cjs").prepareBackgroundAcceptance(app);
 
 const ROOT = path.resolve(__dirname, "..");
 

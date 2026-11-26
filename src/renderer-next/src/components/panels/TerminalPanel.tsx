@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/dialog'
 import { ErrorNotice } from '@/components/ErrorNotice'
 import { api } from '@/lib/api'
+import { handleTerminalCopy } from '@/lib/terminalClipboard'
 import { settingsPrincipalRuntime } from '@/lib/settingsPrincipalRuntime'
 import { useUserDataTransitionVersion } from '@/lib/userDataTransitionState'
 import { useAuthStore } from '@/store/useAuthStore'
@@ -63,6 +64,17 @@ function TerminalSurface({
     terminal.current = term
     fit.current = sizing
     let disposed = false
+    term.attachCustomKeyEventHandler((event) =>
+      handleTerminalCopy(
+        event,
+        api.platform,
+        () => term.getSelection(),
+        (text) => navigator.clipboard.writeText(text),
+        (error) => {
+          if (!disposed) onError(error)
+        },
+      ),
+    )
     let attached = false
     let sequence = -1
     const queue: TerminalEvent[] = []

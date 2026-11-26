@@ -2,8 +2,6 @@ const test = require("node:test");
 const assert = require("node:assert");
 const {
   normalizeBrowserPrivacySettings,
-  syncedBrowserPrivacyPayload,
-  mergeSyncedBrowserPrivacy,
   runtimeEnvironment,
   ENVIRONMENT_BOOTSTRAP_URL,
   loadUrlWithTransientRetry,
@@ -32,60 +30,6 @@ test("浏览器环境设置会校验模式、时区、语言和位置范围", ()
   assert.strictEqual(normalized.environment.geolocationMode, "disabled");
   assert.strictEqual(normalized.environment.latitude, null);
   assert.strictEqual(normalized.environment.longitude, null);
-});
-
-test("跨设备只同步策略，不包含节点检测结果和本机清理记录", () => {
-  const local = normalizeBrowserPrivacySettings({
-    updatedAt: "2026-07-10T10:00:00.000Z",
-    environment: {
-      mode: "proxy",
-      sourceIp: "203.0.113.9",
-      timezone: "America/New_York",
-      latitude: 40.7,
-      longitude: -74,
-      sourceUpdatedAt: "2026-07-10T09:30:00.000Z",
-    },
-    lastClearedAt: { claude: "2026-07-10T09:00:00.000Z" },
-  });
-  const payload = syncedBrowserPrivacyPayload(local);
-  assert.strictEqual(Object.hasOwn(payload.environment, "sourceIp"), false);
-  assert.strictEqual(Object.hasOwn(payload.environment, "sourceUpdatedAt"), false);
-  assert.strictEqual(Object.hasOwn(payload.environment, "timezone"), false);
-  assert.strictEqual(Object.hasOwn(payload.environment, "latitude"), false);
-  assert.strictEqual(Object.hasOwn(payload.environment, "longitude"), false);
-  assert.strictEqual(Object.hasOwn(payload.environment, "country"), false);
-  assert.strictEqual(Object.hasOwn(payload, "lastClearedAt"), false);
-  assert.strictEqual(Object.hasOwn(payload, "localProfiles"), false);
-  assert.strictEqual(Object.hasOwn(payload, "audit"), false);
-  assert.strictEqual(payload.fingerprint.enabled, false);
-
-  const merged = mergeSyncedBrowserPrivacy(local, {
-    ...payload,
-    environment: {
-      ...payload.environment,
-      timezone: "America/Chicago",
-      sourceIp: "198.51.100.2",
-      latitude: 1,
-      longitude: 2,
-      sourceUpdatedAt: "2099-01-01T00:00:00.000Z",
-    },
-  });
-  assert.strictEqual(merged.environment.sourceIp, "203.0.113.9");
-  assert.strictEqual(merged.environment.latitude, 40.7);
-  assert.strictEqual(merged.environment.longitude, -74);
-  assert.strictEqual(merged.environment.timezone, "America/New_York");
-  assert.strictEqual(merged.lastClearedAt.claude, "2026-07-10T09:00:00.000Z");
-
-  const enteringProxyOnAnotherDevice = mergeSyncedBrowserPrivacy(
-    {
-      ...local,
-      environment: { ...local.environment, mode: "system" },
-    },
-    payload,
-  );
-  assert.strictEqual(enteringProxyOnAnotherDevice.environment.sourceUpdatedAt, "");
-  assert.strictEqual(enteringProxyOnAnotherDevice.environment.latitude, null);
-  assert.strictEqual(runtimeEnvironment(enteringProxyOnAnotherDevice).overridden, false);
 });
 
 test("只有代理环境且用户允许时才向网页提供出口位置", () => {

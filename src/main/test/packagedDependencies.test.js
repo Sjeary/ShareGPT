@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { finished } = require("node:stream/promises");
 const asar = require("@electron/asar");
+const { FileMatcher } = require("app-builder-lib/out/fileMatcher");
 const { verifyPackagedDependencies } = require("../../../scripts/verify-packaged-dependencies.cjs");
 
 async function fixture(t, packages) {
@@ -51,4 +52,29 @@ test("packaged verification resolves Windows archive separators", async (t) => {
     listPackage(...args).map((file) => file.replace(/\//g, "\\")),
   );
   assert.equal(verifyPackagedDependencies(archive), 2);
+});
+
+test("desktop package filters produce a portable shared policy and server ships its own policy closure", async (t) => {
+  const root = path.resolve(__dirname, "../../..");
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "sharegpt-shared-policy-"));
+  t.after(() => fs.rm(temp, { recursive: true, force: true }));
+  const config = JSON.parse(await fs.readFile(path.join(root, "build.sender.json"), "utf8"));
+  const filter = new FileMatcher(root, root, (value) => value, config.files).createFilter();
+  for (const relative of [
+    "src/main/endpointSecurity.js",
+    "collab_server2/shared/endpointSecurity.js",
+  ]) {
+    const source = path.join(root, relative);
+    assert.equal(filter(source, await fs.stat(source)), true, relative);
+    const target = path.join(temp, "source", relative);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.copyFile(source, target);
+  }
+  const archive = path.join(temp, "policy.asar");
+  await finished(await asar.createPackage(path.join(temp, "source"), archive));
+  asar.extractAll(archive, path.join(temp, "unpacked"));
+  const desktop = require(path.join(temp, "unpacked/src/main/endpointSecurity.js"));
+  const standalone = require(path.join(temp, "unpacked/collab_server2/shared/endpointSecurity.js"));
+  assert.equal(desktop.classifyIpAddress("64:ff9b::a00:1"), "private");
+  assert.equal(standalone.classifyIpAddress("1.1.1.1"), "public");
 });
