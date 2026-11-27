@@ -9,6 +9,7 @@ import {
   Network,
   Languages,
   BarChart3,
+  Link2,
   type LucideIcon,
 } from 'lucide-react'
 import type { AdminTab } from '@/types/admin'
@@ -26,6 +27,7 @@ export const NAV: NavItem[] = [
   { key: 'airport', label: 'AI 线路策略', icon: Network, hint: '线路目录、默认出口与预检' },
   { key: 'translation', label: '翻译服务', icon: Languages, hint: '托管 API、授权与用量' },
   { key: 'users', label: '成员与权限', icon: Users, hint: '账号、功能与线路授权' },
+  { key: 'invites', label: '邀请链接', icon: Link2, hint: '生成自助注册链接与撤销' },
   { key: 'bootstrap', label: '团队统一代理', icon: Cable, hint: '连接参数与代理域名' },
   { key: 'releases', label: '版本发布', icon: Rocket, hint: '上传安装包与说明' },
   { key: 'feedback', label: '反馈建议', icon: MessageSquareText, hint: '用户提交的反馈' },

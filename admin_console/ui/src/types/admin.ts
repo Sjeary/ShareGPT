@@ -70,6 +70,7 @@ export type AdminTab =
   | 'overview'
   | 'ai-usage'
   | 'users'
+  | 'invites'
   | 'bootstrap'
   | 'releases'
   | 'extras'
@@ -77,6 +78,30 @@ export type AdminTab =
   | 'proxy-missing'
   | 'airport'
   | 'translation'
+
+export type AdminInviteStatus = 'active' | 'expired' | 'exhausted' | 'revoked'
+
+export interface AdminInviteRegistration {
+  username: string
+  registeredAt: string
+}
+
+export interface AdminInvite {
+  id: string
+  code: string
+  note: string
+  createdBy: string
+  createdAt: string
+  expiresAt: string
+  maxUses: number | null
+  usedCount: number
+  remainingUses: number | null
+  revokedAt: string
+  chatDisabled: boolean
+  allowedProxyRouteIds: string[]
+  registrations: AdminInviteRegistration[]
+  status: AdminInviteStatus
+}
 
 export interface ProxyRoute {
   id: string

@@ -6,6 +6,7 @@ import {
   type AdminProfile,
   type AdminTab,
   type AdminUser,
+  type AdminInvite,
   type ProxyRoute,
   type ProxyRouteCatalog,
   type ProxyRouteHealth,
@@ -48,6 +49,14 @@ interface SaveUserInput {
   chatDisabled?: boolean
 }
 
+interface CreateInviteInput {
+  note?: string
+  maxUses?: number | null
+  expiresInHours?: number | null
+  chatDisabled?: boolean
+  allowedProxyRouteIds?: string[]
+}
+
 interface AdminState {
   // 主题
   dark: boolean
@@ -71,6 +80,8 @@ interface AdminState {
   // 数据
   users: AdminUser[]
   usersLoading: boolean
+  invites: AdminInvite[]
+  invitesLoading: boolean
   bootstrap: Bootstrap | null
   feedback: FeedbackItem[]
   feedbackLoading: boolean
@@ -100,6 +111,9 @@ interface AdminState {
   loadUsers: (opts?: { silent?: boolean }) => Promise<void>
   createUser: (input: CreateUserInput) => Promise<AdminUser | null>
   saveUser: (username: string, input: SaveUserInput) => Promise<void>
+  loadInvites: (opts?: { silent?: boolean }) => Promise<void>
+  createInvite: (input: CreateInviteInput) => Promise<AdminInvite | null>
+  revokeInvite: (id: string) => Promise<void>
   loadBootstrap: (opts?: { silent?: boolean }) => Promise<void>
   saveBootstrap: (payload: Bootstrap) => Promise<Bootstrap | null>
   setBootstrap: (next: Bootstrap) => void
@@ -164,6 +178,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
       release: null,
       users: [],
       usersLoading: false,
+      invites: [],
+      invitesLoading: false,
       bootstrap: null,
       feedback: [],
       feedbackLoading: false,
@@ -249,6 +265,8 @@ export const useAdminStore = create<AdminState>((set, get) => {
 
     users: [],
     usersLoading: false,
+    invites: [],
+    invitesLoading: false,
     bootstrap: null,
     feedback: [],
     feedbackLoading: false,
@@ -322,6 +340,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
         if (!scope.isCurrent()) return
         await Promise.all([
           get().loadUsers({ silent: true }),
+          get().loadInvites({ silent: true }),
           get().loadBootstrap({ silent: true }),
           get().loadProxyRoutes({ silent: true }),
           get().loadProxyRouteHealth({ silent: true }),
@@ -368,6 +387,7 @@ export const useAdminStore = create<AdminState>((set, get) => {
         if (!scope.isCurrent()) return
         await Promise.all([
           get().loadUsers({ silent: true }),
+          get().loadInvites({ silent: true }),
           get().loadBootstrap({ silent: true }),
           get().loadProxyRoutes({ silent: true }),
           get().loadProxyRouteHealth({ silent: true }),
@@ -426,6 +446,45 @@ export const useAdminStore = create<AdminState>((set, get) => {
       })
       if (!scope.isCurrent()) return
       await get().loadUsers({ silent: true })
+    },
+
+    loadInvites: async (opts) => {
+      const scope = captureSession()
+      scope.set({ invitesLoading: true })
+      try {
+        const payload = await scope.request<{ invites?: AdminInvite[] }>('/api/admin/invites')
+        if (!payload) return
+        scope.set({ invites: Array.isArray(payload.invites) ? payload.invites : [] })
+      } catch (err) {
+        if (!opts?.silent && !(err instanceof AuthExpiredError)) {
+          scope.toast.error(err instanceof Error ? err.message : String(err))
+        }
+      } finally {
+        scope.set({ invitesLoading: false })
+      }
+    },
+
+    createInvite: async (input) => {
+      const scope = captureSession()
+      const res = await scope.request<{ invite?: AdminInvite }>('/api/admin/invites', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      })
+      if (!res) return null
+      await get().loadInvites({ silent: true })
+      return scope.isCurrent() ? res.invite || null : null
+    },
+
+    revokeInvite: async (id) => {
+      const scope = captureSession()
+      await scope.request(`/api/admin/invites/${encodeURIComponent(id)}/revoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (!scope.isCurrent()) return
+      await get().loadInvites({ silent: true })
     },
 
     loadBootstrap: async (opts) => {

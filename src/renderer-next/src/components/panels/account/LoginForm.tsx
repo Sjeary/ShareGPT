@@ -17,6 +17,7 @@ import {
   ArrowLeft,
   Users,
   Settings2,
+  Link2,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -33,6 +34,7 @@ import { ImportActions } from './ImportActions'
 import { BrowserPrivacySection } from './BrowserPrivacySection'
 import { InterfaceSettings } from './InterfaceSettings'
 import { AboutSection, ChangelogSection, UpdateSection } from './AppInfoSections'
+import { InviteRegisterForm } from './InviteRegisterForm'
 import { cn } from '@/lib/utils'
 import { compareVersions, checkGithubUpdate, type BootstrapUpdate } from './bootstrap'
 
@@ -145,6 +147,7 @@ export function LoginForm() {
   const [submitting, setSubmitting] = useState(false)
   const [enteringPersonal, setEnteringPersonal] = useState(false)
   const [showOrganizationLogin, setShowOrganizationLogin] = useState(false)
+  const [orgAuthTab, setOrgAuthTab] = useState<'login' | 'invite'>('login')
   const [personalCategory, setPersonalCategory] = useState<PersonalSettingsCategory>('all')
   const [autoEnterPersonal, setAutoEnterPersonal] = useState(() =>
     Boolean(useAppStore.getState().settings?.ui?.auto_enter_personal),
@@ -373,7 +376,21 @@ export function LoginForm() {
               </button>
             </div>
 
-            <p className="mt-5 flex items-start justify-center gap-2 text-xs leading-5 text-muted-foreground">
+            <div className="mt-4 flex justify-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setOrgAuthTab('invite')
+                  setEntryView('organization')
+                }}
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+              >
+                <Link2 className="size-3.5" />
+                有管理员发的邀请链接？点此直接注册加入团队
+              </button>
+            </div>
+
+            <p className="mt-4 flex items-start justify-center gap-2 text-xs leading-5 text-muted-foreground">
               <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-primary" />
               个人与团队数据互相隔离；切换不会迁移、覆盖或清除另一侧内容。
             </p>
@@ -552,94 +569,136 @@ export function LoginForm() {
                       {showWorkspaceEntry ? '连接团队' : '登录组织工作区'}
                     </CardTitle>
                     <CardDescription>
-                      {showWorkspaceEntry
-                        ? '使用团队提供的服务地址和账号登录'
-                        : '登录后切换到该账号的独立配置和网页会话'}
+                      {orgAuthTab === 'invite'
+                        ? '粘贴管理员分享的邀请链接，自主创建账号并加入团队'
+                        : showWorkspaceEntry
+                          ? '使用团队提供的服务地址和账号登录'
+                          : '登录后切换到该账号的独立配置和网页会话'}
                     </CardDescription>
+                    <div className="mt-2 grid grid-cols-2 rounded-lg border border-border bg-muted/40 p-1">
+                      <button
+                        type="button"
+                        onClick={() => setOrgAuthTab('login')}
+                        className={cn(
+                          'rounded-md py-1.5 text-xs font-medium transition-colors',
+                          orgAuthTab === 'login'
+                            ? 'bg-background text-foreground shadow-xs'
+                            : 'text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        账号登录
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOrgAuthTab('invite')}
+                        className={cn(
+                          'rounded-md py-1.5 text-xs font-medium transition-colors',
+                          orgAuthTab === 'invite'
+                            ? 'bg-background text-foreground shadow-xs'
+                            : 'text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        邀请链接注册
+                      </button>
+                    </div>
                   </CardHeader>
                   <CardContent>
-                    <form className="grid gap-4" onSubmit={handleSubmit}>
-                      <div className="grid gap-2">
-                        <Label htmlFor="account-server">服务地址</Label>
-                        <Input
-                          ref={serverRef}
-                          id="account-server"
-                          placeholder="http://example.com:8088"
-                          autoComplete="off"
-                          spellCheck={false}
-                          value={serverUrl}
-                          onChange={(e) => setServerUrl(e.target.value)}
-                          disabled={submitting || enteringPersonal}
-                          aria-invalid={errorField === 'server' || undefined}
-                        />
-                      </div>
+                    {orgAuthTab === 'invite' ? (
+                      <InviteRegisterForm
+                        onRegisteredNeedManualLogin={({
+                          serverUrl: nextUrl,
+                          username: nextUser,
+                        }) => {
+                          setServerUrl(nextUrl)
+                          setUsername(nextUser)
+                          setPassword('')
+                          setOrgAuthTab('login')
+                        }}
+                      />
+                    ) : (
+                      <form className="grid gap-4" onSubmit={handleSubmit}>
+                        <div className="grid gap-2">
+                          <Label htmlFor="account-server">服务地址</Label>
+                          <Input
+                            ref={serverRef}
+                            id="account-server"
+                            placeholder="http://example.com:8088"
+                            autoComplete="off"
+                            spellCheck={false}
+                            value={serverUrl}
+                            onChange={(e) => setServerUrl(e.target.value)}
+                            disabled={submitting || enteringPersonal}
+                            aria-invalid={errorField === 'server' || undefined}
+                          />
+                        </div>
 
-                      <div className="grid gap-2">
-                        <Label htmlFor="account-username">账号</Label>
-                        <Input
-                          ref={usernameRef}
-                          id="account-username"
-                          placeholder="用户名"
-                          autoComplete="username"
-                          value={username}
-                          onChange={(e) => setUsername(e.target.value)}
-                          disabled={submitting || enteringPersonal}
-                          aria-invalid={errorField === 'username' || undefined}
-                        />
-                      </div>
+                        <div className="grid gap-2">
+                          <Label htmlFor="account-username">账号</Label>
+                          <Input
+                            ref={usernameRef}
+                            id="account-username"
+                            placeholder="用户名"
+                            autoComplete="username"
+                            value={username}
+                            onChange={(e) => setUsername(e.target.value)}
+                            disabled={submitting || enteringPersonal}
+                            aria-invalid={errorField === 'username' || undefined}
+                          />
+                        </div>
 
-                      <div className="grid gap-2">
-                        <Label htmlFor="account-password">密码</Label>
-                        <Input
-                          ref={passwordRef}
-                          id="account-password"
-                          type="password"
-                          placeholder="密码"
-                          autoComplete="current-password"
-                          value={password}
-                          onChange={(e) => setPassword(e.target.value)}
-                          disabled={submitting || enteringPersonal}
-                          aria-invalid={errorField === 'password' || undefined}
-                        />
-                      </div>
+                        <div className="grid gap-2">
+                          <Label htmlFor="account-password">密码</Label>
+                          <Input
+                            ref={passwordRef}
+                            id="account-password"
+                            type="password"
+                            placeholder="密码"
+                            autoComplete="current-password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            disabled={submitting || enteringPersonal}
+                            aria-invalid={errorField === 'password' || undefined}
+                          />
+                        </div>
 
-                      <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-                        <Label
-                          htmlFor="account-remember"
-                          className="cursor-pointer text-sm font-normal"
-                        >
-                          记住密码
-                        </Label>
-                        <Switch
-                          id="account-remember"
-                          checked={rememberPassword}
-                          onCheckedChange={setRememberPassword}
-                          disabled={submitting || enteringPersonal}
-                        />
-                      </div>
+                        <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+                          <Label
+                            htmlFor="account-remember"
+                            className="cursor-pointer text-sm font-normal"
+                          >
+                            记住密码
+                          </Label>
+                          <Switch
+                            id="account-remember"
+                            checked={rememberPassword}
+                            onCheckedChange={setRememberPassword}
+                            disabled={submitting || enteringPersonal}
+                          />
+                        </div>
 
-                      {Boolean(error) && (
-                        <ErrorNotice error={error} context="登录与工作区" className="mt-3" />
-                      )}
-
-                      <Button
-                        type="submit"
-                        className="w-full"
-                        disabled={submitting || enteringPersonal}
-                      >
-                        {submitting ? (
-                          <>
-                            <Loader2 className="animate-spin" />
-                            登录中…
-                          </>
-                        ) : (
-                          <>
-                            <LogIn />
-                            登录
-                          </>
+                        {Boolean(error) && (
+                          <ErrorNotice error={error} context="登录与工作区" className="mt-3" />
                         )}
-                      </Button>
-                    </form>
+
+                        <Button
+                          type="submit"
+                          className="w-full"
+                          disabled={submitting || enteringPersonal}
+                        >
+                          {submitting ? (
+                            <>
+                              <Loader2 className="animate-spin" />
+                              登录中…
+                            </>
+                          ) : (
+                            <>
+                              <LogIn />
+                              登录
+                            </>
+                          )}
+                        </Button>
+                      </form>
+                    )}
 
                     {showWorkspaceEntry && (
                       <>

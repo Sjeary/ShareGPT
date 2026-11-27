@@ -4,6 +4,7 @@ import { Titlebar } from './Titlebar'
 import { Sidebar } from './Sidebar'
 import { OverviewPanel } from '@/components/panels/OverviewPanel'
 import { UsersPanel } from '@/components/panels/UsersPanel'
+import { InvitesPanel } from '@/components/panels/InvitesPanel'
 import { BootstrapPanel } from '@/components/panels/BootstrapPanel'
 import { ReleasesPanel } from '@/components/panels/ReleasesPanel'
 import { ExtrasPanel } from '@/components/panels/ExtrasPanel'
@@ -38,6 +39,7 @@ export function Shell() {
           {active === 'overview' && <OverviewPanel />}
           {active === 'ai-usage' && <AiUsagePanel />}
           {active === 'users' && <UsersPanel />}
+          {active === 'invites' && <InvitesPanel />}
           {active === 'bootstrap' && <BootstrapPanel />}
           {active === 'airport' && <AirportPanel />}
           {active === 'translation' && <TranslationPanel />}
