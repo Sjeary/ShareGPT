@@ -101,4 +101,49 @@ describe('runGuardedInviteRegistration', () => {
       'completed:newmember',
     ])
   })
+
+  it('invalidates the shared attempt when unmounting mid auto-login without disturbing a newer login B', async () => {
+    const coordinator = createLatestAttemptCoordinator()
+    const controller = new AbortController()
+    const sideEffects: string[] = []
+    let resolveLoginFetch!: () => void
+
+    const task = runGuardedInviteRegistration({
+      coordinator,
+      signal: controller.signal,
+      register: async () => ({ username: 'alice' }),
+      afterRegistered: async () => {
+        sideEffects.push('introDone')
+      },
+      loginWithAttempt: async (username, attempt) => {
+        await new Promise<void>((resolve) => {
+          resolveLoginFetch = resolve
+        })
+        // Mirrors useAuth.ts checking coordinator.assertCurrent(attempt) before
+        // activating principal, writing settings, or publishing session.
+        coordinator.assertCurrent(attempt)
+        sideEffects.push(`activatePrincipal:${username}`)
+        return { username }
+      },
+      onCompleted: () => sideEffects.push('completed'),
+      onLoginFallback: () => sideEffects.push('fallback'),
+    })
+
+    while (!resolveLoginFetch) await new Promise((r) => setTimeout(r, 0))
+
+    // User switches tab / unmounts InviteRegisterForm while /api/login is still in-flight.
+    controller.abort()
+    assert.equal(coordinator.isCurrent(1), false)
+
+    // Starting a new password login B afterwards must remain unaffected.
+    const attemptB = coordinator.begin()
+    assert.equal(coordinator.isCurrent(attemptB), true)
+
+    resolveLoginFetch()
+    const result = await task
+
+    assert.equal(result.stale, true)
+    assert.equal(coordinator.isCurrent(attemptB), true)
+    assert.deepEqual(sideEffects, ['introDone'])
+  })
 })

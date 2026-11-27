@@ -40,12 +40,18 @@ export async function runGuardedInviteRegistration<TProfile>({
 }> {
   const attempt = coordinator.begin()
   const localController = new AbortController()
-  const onExternalAbort = () => localController.abort()
+  const cancelIfCurrent = () => {
+    localController.abort()
+    // 仅当本操作仍为最新代次时令其失效，避免误伤已经发起的新登录 B；
+    // 这样在注册成功、自动登录 /api/login 在途时卸载或切走，也能贯穿取消整个登录事务。
+    if (coordinator.isCurrent(attempt)) coordinator.invalidate()
+  }
   if (signal?.aborted) {
+    cancelIfCurrent()
     onStale?.()
     return { attempt, stale: true }
   }
-  signal?.addEventListener('abort', onExternalAbort, { once: true })
+  signal?.addEventListener('abort', cancelIfCurrent, { once: true })
 
   try {
     const { username } = await register(localController.signal)
@@ -86,6 +92,6 @@ export async function runGuardedInviteRegistration<TProfile>({
     }
     throw err
   } finally {
-    signal?.removeEventListener('abort', onExternalAbort)
+    signal?.removeEventListener('abort', cancelIfCurrent)
   }
 }
