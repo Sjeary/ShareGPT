@@ -147,6 +147,15 @@
   }
 }
 
+@keyframes motion-loading-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
 .workspace-entry-step {
   animation: workspace-entry-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -177,6 +186,11 @@
 
 .motion-pulse-soft {
   animation: motion-pulse-soft 2.2s ease-in-out infinite;
+}
+
+.motion-loading-bar {
+  width: 34%;
+  animation: motion-loading-slide 1.35s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
 .motion-card-interactive {
@@ -221,7 +235,8 @@
   }
 
   .motion-shake,
-  .motion-pulse-soft {
+  .motion-pulse-soft,
+  .motion-loading-bar {
     animation: none;
   }
 

@@ -6,6 +6,7 @@ import {
   ArrowRight,
   Cable,
   Loader2,
+  Mail,
   Play,
   PanelLeftClose,
   PanelLeftOpen,
@@ -63,6 +64,7 @@ import {
   normalizeClaudeUrl,
   normalizeHttpUrl,
   isExternalBrowsingKind,
+  isGptAuthUrl,
 } from './constants'
 import type { AiEventPayload } from './types'
 import { AiEnvironmentPanel } from './AiEnvironmentPanel'
@@ -685,6 +687,24 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     proxyPort,
   })
 
+  const [slowLoading, setSlowLoading] = useState(false)
+  const activeLoading = Boolean(networkReady && view.loading && !overlay)
+  useEffect(() => {
+    if (!activeLoading) {
+      setSlowLoading(false)
+      return
+    }
+    const timer = window.setTimeout(() => setSlowLoading(true), 12000)
+    return () => window.clearTimeout(timer)
+  }, [activeLoading, activeTabId])
+
+  const showGptEmailLoginTip =
+    kind === 'gpt' &&
+    networkReady &&
+    !overlay &&
+    isGptAuthUrl(view.lastUrl) &&
+    !settings?.ui?.gpt_login_tip_dismissed
+
   return (
     <PanelScaffold
       icon={Icon}
@@ -707,7 +727,15 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     >
       <div className="flex h-full min-h-0 flex-col">
         {/* 控制条 */}
-        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+        <div className="relative flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+          {networkReady && view.loading && (
+            <div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] overflow-hidden bg-primary/15"
+            >
+              <div className="motion-loading-bar h-full rounded-full bg-primary" />
+            </div>
+          )}
           <div className="flex items-center gap-1">
             <Button
               variant="ghost"
@@ -870,42 +898,49 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
                 <span className="hidden text-xs font-medium lg:inline">翻译</span>
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8"
-              title={sidebarHidden ? '显示侧栏' : '隐藏侧栏 (只看网页, 按 Esc 恢复)'}
-              onClick={toggleSidebarHidden}
-            >
-              {sidebarHidden ? (
-                <PanelLeftOpen className="size-4" />
-              ) : (
-                <PanelLeftClose className="size-4" />
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8"
-              title={aiHeaderHidden ? '显示顶部信息栏' : '隐藏顶部信息栏 (按 Esc 恢复)'}
-              aria-label={aiHeaderHidden ? '显示顶部信息栏' : '隐藏顶部信息栏'}
-              onClick={toggleAiHeaderHidden}
-            >
-              {aiHeaderHidden ? (
-                <PanelTopOpen className="size-4" />
-              ) : (
-                <PanelTopClose className="size-4" />
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8"
-              title={isFullscreen ? '退出全屏 (F11)' : '全屏 (F11)'}
-              onClick={toggleFullscreen}
-            >
-              {isFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-            </Button>
+            <div className="mx-0.5 h-4 w-px shrink-0 bg-border/80" />
+            <div className="flex items-center gap-0.5 rounded-lg border border-border/60 bg-muted/30 p-0.5">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                title={sidebarHidden ? '显示侧栏' : '隐藏侧栏 (只看网页, 按 Esc 恢复)'}
+                onClick={toggleSidebarHidden}
+              >
+                {sidebarHidden ? (
+                  <PanelLeftOpen className="size-3.5" />
+                ) : (
+                  <PanelLeftClose className="size-3.5" />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                title={aiHeaderHidden ? '显示顶部信息栏' : '隐藏顶部信息栏 (按 Esc 恢复)'}
+                aria-label={aiHeaderHidden ? '显示顶部信息栏' : '隐藏顶部信息栏'}
+                onClick={toggleAiHeaderHidden}
+              >
+                {aiHeaderHidden ? (
+                  <PanelTopOpen className="size-3.5" />
+                ) : (
+                  <PanelTopClose className="size-3.5" />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                title={isFullscreen ? '退出全屏 (F11)' : '全屏 (F11)'}
+                onClick={toggleFullscreen}
+              >
+                {isFullscreen ? (
+                  <Minimize2 className="size-3.5" />
+                ) : (
+                  <Maximize2 className="size-3.5" />
+                )}
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -961,6 +996,29 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           </form>
         )}
 
+        {/* ChatGPT 登录页专属提示：仅在认证页出现，登录后自动消失，防止小白误点 Google 快捷登录。 */}
+        {showGptEmailLoginTip && (
+          <div className="motion-tab-panel flex shrink-0 items-center gap-2 border-b border-primary/30 bg-primary/10 px-4 py-1.5 text-xs text-foreground">
+            <Mail className="size-3.5 shrink-0 text-primary" />
+            <span className="min-w-0 flex-1">
+              <strong>登录提示：</strong>
+              请直接输入<strong>邮箱和密码（或邮箱验证码）</strong>登录；内置窗口不支持「使用 Google
+              继续」，请勿点击第三方快捷登录。
+            </span>
+            <button
+              type="button"
+              title="不再提示"
+              aria-label="关闭 ChatGPT 登录提示"
+              onClick={() =>
+                void useAppStore.getState().patchSection('ui', { gpt_login_tip_dismissed: true })
+              }
+              className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:bg-primary/15 hover:text-foreground"
+            >
+              <X className="size-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* Claude 提示: 不用就别打开此页, 防止潜在网络问题。可关闭(持久化 ui.claude_notice_dismissed)。 */}
         {kind === 'claude' && !settings?.ui?.claude_notice_dismissed && (
           <div className="flex shrink-0 items-start gap-2 border-b border-amber-500/40 bg-amber-500/10 px-4 py-1.5 text-xs text-amber-700 dark:text-amber-300">
@@ -980,6 +1038,28 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           </div>
         )}
 
+        {slowLoading && (
+          <div className="motion-tab-panel flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground">
+            <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
+            <span className="min-w-44 flex-1">
+              页面加载较慢，可能正在建立代理连接或等待网页响应。
+            </span>
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={() => {
+                setSlowLoading(false)
+                void navigate('reload')
+              }}
+            >
+              重新加载
+            </Button>
+            <Button variant="ghost" size="xs" onClick={toggleProxyPanel}>
+              检查代理
+            </Button>
+          </div>
+        )}
+
         {feedback.text && feedback.tone === 'error' ? (
           <ErrorNotice
             error={feedback.text}
@@ -991,15 +1071,23 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         ) : feedback.text ? (
           <div
             role="status"
-            className="flex shrink-0 items-start gap-2 border-b border-border bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground"
+            className={cn(
+              'motion-tab-panel flex shrink-0 items-start gap-2 border-b px-4 py-1.5 text-xs',
+              feedback.tone === 'warning'
+                ? 'border-amber-500/45 bg-amber-500/12 text-amber-800 dark:text-amber-200'
+                : 'border-border bg-muted/40 text-muted-foreground',
+            )}
           >
+            {feedback.tone === 'warning' && (
+              <ShieldAlert className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-300" />
+            )}
             <span className="min-w-0 flex-1 break-words">{feedback.text}</span>
             <button
               type="button"
               title="关闭提示"
               aria-label={`关闭 ${meta.title} 提示`}
               onClick={() => setFeedback(kind, '')}
-              className="shrink-0 rounded p-0.5 text-muted-foreground/70 transition-colors hover:bg-muted hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="shrink-0 rounded p-0.5 opacity-70 transition-colors hover:bg-muted hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <X className="size-3.5" />
             </button>

@@ -61,7 +61,9 @@ function OnboardingSteps() {
 
   const finish = useCallback(() => {
     setTourOpen(false)
-    void patchSection('ui', { onboarding_done: true }).catch(() => undefined)
+    void patchSection('ui', { onboarding_done: true, setup_guide_dismissed: true }).catch(
+      () => undefined,
+    )
   }, [setTourOpen, patchSection])
 
   const next = useCallback(() => {

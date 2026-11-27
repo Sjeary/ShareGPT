@@ -89,6 +89,24 @@ export function isGptAllowedUrl(rawUrl: string): boolean {
   return isAllowedUrlForHosts(rawUrl, GPT_ALLOWED_HOSTS)
 }
 
+// 判断当前 GPT 标签是否处于登录/认证页，用于仅在登录页展示「请用邮箱登录、勿点 Google」引导条。
+export function isGptAuthUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(String(rawUrl || ''))
+    const host = url.hostname.toLowerCase()
+    const pathname = url.pathname.toLowerCase()
+    if (host === 'auth.openai.com' || host === 'auth0.com' || host.endsWith('.auth0.com')) {
+      return true
+    }
+    if (host === 'chatgpt.com' || host === 'chat.openai.com') {
+      return pathname.startsWith('/auth/') || pathname === '/auth'
+    }
+    return false
+  } catch {
+    return false
+  }
+}
+
 export function isGeminiAllowedUrl(rawUrl: string): boolean {
   return isAllowedUrlForHosts(rawUrl, GEMINI_ALLOWED_HOSTS)
 }

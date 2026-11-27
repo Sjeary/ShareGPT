@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { CheckCircle2, Link2, Loader2, TriangleAlert, UserPlus } from 'lucide-react'
+import { CheckCircle2, ClipboardPaste, Link2, Loader2, TriangleAlert, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { ErrorNotice } from '@/components/ErrorNotice'
 import { Button } from '@/components/ui/button'
@@ -238,10 +238,42 @@ export function InviteRegisterForm({
     }
   }
 
+  async function handlePasteClipboard() {
+    if (submitting) return
+    try {
+      const text = (await navigator.clipboard.readText()).trim()
+      if (!text) {
+        toast.info('剪贴板为空，请先复制管理员发送的邀请链接')
+        return
+      }
+      setRawLink(text)
+      if (parseInviteLink(text)) {
+        toast.success('已识别剪贴板中的邀请链接')
+      } else {
+        toast.warning('已粘贴内容，但未识别到有效邀请链接')
+      }
+    } catch {
+      toast.error('无法读取剪贴板，请手动按 Ctrl+V / Cmd+V 粘贴')
+    }
+  }
+
   return (
     <form className="grid gap-3.5" onSubmit={handleSubmit}>
       <div className="grid gap-1.5">
-        <Label htmlFor="invite-link-input">邀请链接</Label>
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor="invite-link-input">邀请链接</Label>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            disabled={submitting}
+            onClick={() => void handlePasteClipboard()}
+            className="h-6 px-2 text-xs text-primary hover:text-primary"
+          >
+            <ClipboardPaste className="size-3" />
+            粘贴剪贴板
+          </Button>
+        </div>
         <textarea
           id="invite-link-input"
           rows={2}

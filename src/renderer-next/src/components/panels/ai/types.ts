@@ -32,6 +32,9 @@ export interface AiEventPayload {
   expiresAt?: number
   // translate-selection
   text?: string
+  // oauth-blocked
+  provider?: string
+  message?: string
   // external-open-failed
   [k: string]: unknown
 }

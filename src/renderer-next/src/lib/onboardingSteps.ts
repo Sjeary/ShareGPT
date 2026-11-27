@@ -35,7 +35,7 @@ export function buildOnboardingSteps(
   steps.push({
     target: 'nav-gpt',
     title: '内嵌 AI 网页',
-    body: 'ChatGPT / Gemini / Claude 直接在客户端里打开，免去来回切换浏览器。空白处右键有浏览器式菜单；Ctrl + 鼠标滚轮（或 Ctrl 加 +/-/0）可缩放页面。',
+    body: 'ChatGPT / Gemini / Claude 直接在客户端里打开，免去来回切换浏览器。登录 ChatGPT 时请直接输入邮箱登录（不支持 Google 快捷登录）；空白处右键有浏览器菜单，Ctrl + 滚轮可缩放页面。',
   })
   if (!isPersonal) {
     steps.push({

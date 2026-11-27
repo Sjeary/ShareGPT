@@ -224,6 +224,13 @@ export function useAiEvents() {
           )
       }
 
+      if (payload?.type === 'oauth-blocked') {
+        const message =
+          safeText(payload.message) ||
+          '内置窗口不支持 Google / Apple / Microsoft 快捷登录，请直接输入邮箱和密码（或邮箱验证码）登录。'
+        useAiStore.getState().setFeedback(kind, message, 'warning')
+      }
+
       if (payload?.type === 'external-open-failed') {
         const errorText = safeText(payload.message) || '未知错误'
         useAiStore.getState().setFeedback(kind, `外部链接打开失败：${errorText}`, 'error')
