@@ -430,3 +430,71 @@ test("an editor already hidden before Enter does not create a usage attempt", ()
   page.runNextTimeout();
   assert.deepEqual(page.logs, []);
 });
+
+test("non-send conversation subpaths such as prepare and gen_title are excluded", () => {
+  for (const url of [
+    "https://chatgpt.com/backend-api/f/conversation/prepare",
+    "https://chatgpt.com/backend-api/conversation/init",
+    "https://chatgpt.com/backend-api/conversation/gen_title",
+  ]) {
+    assert.equal(
+      isAcceptedAiConversationResponse("gpt", { method: "POST", statusCode: 200, url }),
+      false,
+    );
+  }
+  assert.equal(
+    isAcceptedAiConversationResponse("gpt", {
+      method: "POST",
+      statusCode: 200,
+      url: "https://chatgpt.com/backend-api/f/conversation",
+    }),
+    true,
+  );
+  assert.equal(
+    isAcceptedAiConversationResponse("claude", {
+      method: "POST",
+      statusCode: 200,
+      url: "https://claude.ai/api/organizations/org/chat_conversations/chat/retry_completion",
+    }),
+    true,
+  );
+});
+
+test("delayed requests after PoW/proxy latency still bind and early SSE stop still counts once", () => {
+  let now = 1000;
+  const tracker = createUsageAttemptTracker({ now: () => now });
+  tracker.record({ id: "attempt-pow", attemptedAt: 1000 }, 21);
+  // 6 seconds after Enter (ChatGPT sentinel/chat-requirements + PoW over proxy)
+  now = 7000;
+  tracker.recordRequestStart("gpt", conversationRequest("req-pow", 21));
+  now = 7400;
+  // onResponseStarted 200 accepts immediately
+  assert.deepEqual(tracker.acceptResponse("gpt", conversationRequest("req-pow", 21)), {
+    id: "attempt-pow",
+    acceptedAt: 7400,
+  });
+  // Later abort (user clicked Stop generating) or onCompleted must not double-count or throw
+  assert.equal(tracker.failRequest(conversationRequest("req-pow", 21)), null);
+  assert.equal(tracker.acceptResponse("gpt", conversationRequest("req-pow", 21)), null);
+});
+
+test("unmatched 2xx conversation request falls back once when DOM probe misses, while 500 never counts", async () => {
+  const accepted = [];
+  const tracker = createUsageAttemptTracker({
+    networkFallbackGraceMs: 60,
+    onUnmatchedAccepted: (kind, webContentsId, event) =>
+      accepted.push({ kind, webContentsId, event }),
+  });
+  tracker.recordRequestStart("gpt", conversationRequest("req-drift", 33));
+  assert.equal(tracker.acceptResponse("gpt", conversationRequest("req-drift", 33)), null);
+  tracker.recordRequestStart("gpt", conversationRequest("req-500", 33));
+  assert.equal(
+    tracker.acceptResponse("gpt", conversationRequest("req-500", 33, { statusCode: 500 })),
+    null,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.equal(accepted.length, 1);
+  assert.equal(accepted[0].kind, "gpt");
+  assert.equal(accepted[0].webContentsId, 33);
+  assert.match(accepted[0].event.id, /^net-/);
+});

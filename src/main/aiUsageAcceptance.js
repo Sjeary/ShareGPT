@@ -69,19 +69,21 @@ function sendAttemptTrackerScript(token) {
       }, true);
       document.addEventListener('keydown', (event) => {
         if (
-          event.key !== 'Enter' || event.altKey || event.ctrlKey || event.metaKey ||
-          event.shiftKey || event.repeat || event.isComposing
+          event.key !== 'Enter' || event.altKey || event.shiftKey || event.repeat || event.isComposing
         ) return;
         const editor = findEditor(event.target);
         const text = editor ? read(editor) : '';
         if (text) recordAttempt(editor, event);
       }, true);
       document.addEventListener('click', (event) => {
-        const button = event.target?.closest?.('button[data-testid="send-button"], button[aria-label*="Send" i], button[aria-label*="发送"]');
-        if (!button) return;
+        const button = event.target?.closest?.('button[data-testid="send-button"], button[data-testid*="send" i], button#composer-submit-button, button[aria-label*="send" i], button[aria-label*="发送"]');
+        if (!button || button.disabled) return;
         const editor = findEditor(document.activeElement);
-        const text = editor ? read(editor) : '';
-        if (text) recordAttempt(editor, event);
+        if (editor) {
+          recordAttempt(editor, event);
+        } else {
+          recordAttempt(button, event);
+        }
       }, true);
       return true;
     })();
@@ -136,12 +138,17 @@ function isAiConversationRequest(kind, details) {
   const host = url.hostname.toLowerCase();
   const pathname = url.pathname;
   if (kind === "gpt") {
-    return host === "chatgpt.com" && /^\/backend-api\/(?:f\/)?conversation(?:\/|$)/.test(pathname);
+    return (
+      (host === "chatgpt.com" || host === "chat.openai.com") &&
+      /^\/backend-api\/(?:f\/)?conversation\/?$/.test(pathname)
+    );
   }
   if (kind === "claude") {
     return (
       host === "claude.ai" &&
-      /^\/api\/(?:organizations\/[^/]+\/)?chat_conversations\/[^/]+\/completion\/?$/.test(pathname)
+      /^\/api\/(?:organizations\/[^/]+\/)?chat_conversations\/[^/]+\/(?:retry_)?completion\/?$/.test(
+        pathname,
+      )
     );
   }
   if (kind === "gemini") {
@@ -152,18 +159,32 @@ function isAiConversationRequest(kind, details) {
 
 function createUsageAttemptTracker(options = {}) {
   const now = typeof options.now === "function" ? options.now : Date.now;
-  const ttlMs = Math.max(1000, Number(options.ttlMs) || 15000);
+  const ttlMs = Math.max(1000, Number(options.ttlMs) || 30000);
   const requestStartWindowMs = Math.max(
     100,
-    Math.min(ttlMs, Number(options.requestStartWindowMs) || 3000),
+    Math.min(ttlMs, Number(options.requestStartWindowMs) || 15000),
   );
   const requestCompletionTtlMs = Math.max(
     ttlMs,
     Number(options.requestCompletionTtlMs) || 30 * 60 * 1000,
   );
-  const startClockSkewMs = Math.max(0, Math.min(100, Number(options.startClockSkewMs) || 10));
+  const startClockSkewMs = Math.max(0, Math.min(250, Number(options.startClockSkewMs) || 50));
+  const onUnmatchedAccepted =
+    typeof options.onUnmatchedAccepted === "function" ? options.onUnmatchedAccepted : null;
+  const networkFallbackGraceMs = Math.max(
+    50,
+    Math.min(5000, Number(options.networkFallbackGraceMs) || 400),
+  );
   const attempts = new Map();
   const requests = new Map();
+  const fallbackTimers = new Map();
+  const clearFallbackTimer = (id) => {
+    const timer = fallbackTimers.get(id);
+    if (timer) {
+      clearTimeout(timer);
+      fallbackTimers.delete(id);
+    }
+  };
   // A gesture and a network request may reach the main process in either order. Bind once by
   // webContents + start time, then settle only through that Electron request id.
   const requestKey = (details) => {
@@ -176,7 +197,10 @@ function createUsageAttemptTracker(options = {}) {
       if (entry.expiresAt <= current) attempts.delete(id);
     }
     for (const [id, entry] of requests) {
-      if (entry.expiresAt <= current) requests.delete(id);
+      if (entry.expiresAt <= current) {
+        clearFallbackTimer(id);
+        requests.delete(id);
+      }
     }
   };
   const canBind = (attempt, request) =>
@@ -187,18 +211,41 @@ function createUsageAttemptTracker(options = {}) {
     request.startedAt <=
       (attempt.requestCount > 0 ? attempt.retryUntil : attempt.attemptedAt + requestStartWindowMs);
   const consume = (attempt, request) => {
+    clearFallbackTimer(request.id);
     attempts.delete(attempt.id);
     requests.delete(request.id);
     if (!request.completed || !request.accepted) return null;
     return { id: attempt.id, acceptedAt: request.completedAt };
   };
   const bind = (attempt, request) => {
+    clearFallbackTimer(request.id);
     attempt.requestId = request.id;
     attempt.requestCount += 1;
     attempt.expiresAt = now() + requestCompletionTtlMs;
     request.attemptId = attempt.id;
     request.expiresAt = attempt.expiresAt;
     return request.completed ? consume(attempt, request) : null;
+  };
+  const scheduleUnmatchedFallback = (kind, request) => {
+    if (!onUnmatchedAccepted || fallbackTimers.has(request.id)) return;
+    const timer = setTimeout(() => {
+      fallbackTimers.delete(request.id);
+      cleanup();
+      const current = requests.get(request.id);
+      if (!current || !current.completed || !current.accepted || current.attemptId) return;
+      // If another attempt on this webContents is currently active, let the normal retry/bind flow own it.
+      for (const attempt of attempts.values()) {
+        if (attempt.webContentsId === current.webContentsId) return;
+      }
+      requests.delete(current.id);
+      const fallbackId = `net-${crypto.randomUUID()}`;
+      onUnmatchedAccepted(kind, current.webContentsId, {
+        id: fallbackId,
+        acceptedAt: current.completedAt,
+      });
+    }, networkFallbackGraceMs);
+    if (typeof timer.unref === "function") timer.unref();
+    fallbackTimers.set(request.id, timer);
   };
   const findRequestForAttempt = (attempt) => {
     let candidate = null;
@@ -221,6 +268,7 @@ function createUsageAttemptTracker(options = {}) {
     const id = requestKey(details);
     const request = requests.get(id);
     if (!request || request.webContentsId !== Number(details?.webContentsId)) return null;
+    clearFallbackTimer(id);
     requests.delete(id);
     if (!request.attemptId) return null;
     const attempt = attempts.get(request.attemptId);
@@ -286,6 +334,7 @@ function createUsageAttemptTracker(options = {}) {
       const contentsId = Number(details?.webContentsId);
       const request = requests.get(id);
       if (!request || request.webContentsId !== contentsId) return null;
+      if (request.completed && request.accepted) return null;
       request.completed = true;
       request.accepted = isAcceptedAiConversationResponse(kind, details);
       request.completedAt = now();
@@ -293,8 +342,11 @@ function createUsageAttemptTracker(options = {}) {
       if (request.attemptId) {
         const attempt = request.attemptId ? attempts.get(request.attemptId) : null;
         if (attempt) return consume(attempt, request);
+        clearFallbackTimer(id);
         requests.delete(id);
+        return null;
       }
+      scheduleUnmatchedFallback(kind, request);
       return null;
     },
     failRequest(details) {
@@ -304,6 +356,8 @@ function createUsageAttemptTracker(options = {}) {
       cleanup();
     },
     clear() {
+      for (const timer of fallbackTimers.values()) clearTimeout(timer);
+      fallbackTimers.clear();
       attempts.clear();
       requests.clear();
     },

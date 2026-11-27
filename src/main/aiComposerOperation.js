@@ -150,17 +150,23 @@ function isLikelyComposerEditorInPage(editor, button = null) {
   )
     return false;
   const strongSendSelector =
-    'button[data-testid="send-button"], button[data-testid*="send" i], button[aria-label*="send message" i], button[aria-label*="send prompt" i], button[aria-label*="发送消息"]';
-  const root = editor.closest?.('form, [data-testid*="composer" i], [class*="composer" i]');
+    'button[data-testid="send-button"], button[data-testid*="send" i], button#composer-submit-button, button[aria-label*="send" i], button[aria-label*="发送"]';
+  const root = editor.closest?.(
+    'form, fieldset, [data-testid*="composer" i], [class*="composer" i], rich-textarea',
+  );
   const rootLooksLikeComposer = root?.matches?.(
-    '[data-testid*="composer" i], [class*="composer" i], form[id*="composer" i]',
+    'fieldset, [data-testid*="composer" i], [class*="composer" i], form[id*="composer" i], rich-textarea',
   );
   const sendButton =
     root?.querySelector?.(strongSendSelector) ||
     (rootLooksLikeComposer ? root?.querySelector?.('button[type="submit"]') : null);
   if (sendButton && (!button || root.contains(button))) return true;
-  if (editor.id === "prompt-textarea" || editor.matches?.('[data-lexical-editor="true"]')) {
-    const main = editor.closest?.("main") || globalThis.document?.querySelector?.("main");
+  if (
+    editor.id === "prompt-textarea" ||
+    editor.matches?.('[data-lexical-editor="true"], .ProseMirror, rich-textarea [contenteditable]')
+  ) {
+    const main =
+      editor.closest?.("main, fieldset, form") || globalThis.document?.querySelector?.("main");
     return Boolean(main?.querySelector?.(strongSendSelector) && (!button || main.contains(button)));
   }
   return false;

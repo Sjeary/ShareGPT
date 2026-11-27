@@ -516,7 +516,11 @@ function createElectronApp(baseMode = "all") {
   const configuredAiPartitions = new Set();
   const aiWorkspaceRegistry = createDurableWorkspaceRegistry();
   const composerConfirmations = createComposerConfirmationStore();
-  const usageAttempts = createUsageAttemptTracker();
+  const usageAttempts = createUsageAttemptTracker({
+    onUnmatchedAccepted: (kind, webContentsId, accepted) => {
+      emitAcceptedSend(kind, webContentsId, accepted);
+    },
+  });
   const acceptedSendDedupe = createAcceptedSendDedupe();
   let activeAiKind = "";
   let aiTabCounter = 0;
@@ -1194,6 +1198,17 @@ function createElectronApp(baseMode = "all") {
     // 供「代理检测」按实际流量逐域判断是否走发送代理。仅装一次, 放行所有请求。
     const contactedHosts = aiContactedHostsByPartition.get(policy.partition) || new Set();
     aiContactedHostsByPartition.set(policy.partition, contactedHosts);
+    try {
+      // 服务端返回 HTTP 2xx 响应头即确认本次提问已被接受 (避免 SSE 流式回答中途点「停止生成」漏计)。
+      targetSession.webRequest.onResponseStarted((details) => {
+        emitAcceptedSend(
+          policy.kind,
+          details.webContentsId,
+          usageAttempts.acceptResponse(policy.kind, details),
+        );
+      });
+    } catch {}
+
     try {
       // 纯观察, 非阻塞 (无 callback): 不会延迟/干扰请求, 对流式(SSE)聊天连接安全。
       targetSession.webRequest.onCompleted((details) => {
