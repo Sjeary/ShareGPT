@@ -15,7 +15,7 @@ export function AccountPanel() {
   useProfileSync()
 
   return (
-    <PanelScaffold icon={UserRound} title="账户" hint="登录与协作服务">
+    <PanelScaffold icon={UserRound} title="账户与设置" hint="账号、外观、隐私与更新">
       {authed ? <LoggedInView /> : <LoginForm />}
     </PanelScaffold>
   )

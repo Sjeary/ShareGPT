@@ -31,6 +31,7 @@ export function InterfaceSettings() {
   const setShowGemini = useAppStore((s) => s.setShowGemini)
   const showClaude = useAppStore((s) => s.showClaude)
   const setShowClaude = useAppStore((s) => s.setShowClaude)
+  const autoEnterPersonal = useAppStore((s) => Boolean(s.settings?.ui?.auto_enter_personal))
   const hiddenNav = useAppStore((s) => s.hiddenNav)
   const setNavHidden = useAppStore((s) => s.setNavHidden)
   const advancedAiRaw = useAppStore((s) => s.settings?.advancedAi)
@@ -83,6 +84,32 @@ export function InterfaceSettings() {
         </div>
 
         <Separator className="my-1" />
+
+        {workspaceMode === 'personal' && (
+          <>
+            <div className="flex items-center justify-between gap-3 py-1.5">
+              <div className="min-w-0">
+                <Label htmlFor="ui-auto-enter-personal" className="cursor-pointer">
+                  启动时直接进入个人工作区
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  开启后下次启动跳过入口页；仍可随时在本页登录团队工作区。
+                </p>
+              </div>
+              <Switch
+                id="ui-auto-enter-personal"
+                checked={autoEnterPersonal}
+                onCheckedChange={(enabled) =>
+                  void patchSection('ui', { auto_enter_personal: enabled }).catch(() =>
+                    toast.error('保存启动偏好失败'),
+                  )
+                }
+              />
+            </div>
+
+            <Separator className="my-1" />
+          </>
+        )}
 
         {/* 是否展示 Gemini: 关闭后导航栏不再显示 Gemini 入口 (settings.ui.showGemini)。 */}
         <div className="flex items-center justify-between gap-3 py-1.5">

@@ -25,6 +25,7 @@ import { FocusPanel } from '@/components/panels/FocusPanel'
 import { useFocusTimer, useFocusSync } from '@/hooks/useFocusTimer'
 import { SetupGuide } from '@/components/SetupGuide'
 import { Onboarding } from '@/components/Onboarding'
+import { GlobalCommandPalette } from '@/components/GlobalCommandPalette'
 import { useUserDataTransition } from '@/lib/userDataTransitionState'
 import { Toaster } from '@/components/ui/sonner'
 import { openChatNotificationRoute } from '@/lib/notify'
@@ -50,14 +51,32 @@ export function Shell() {
   const dark = useAppStore((s) => s.dark)
   const sidebarHidden = useAppStore((s) => s.sidebarHidden)
   const sidebarSide = useAppStore((s) => s.sidebarSide)
+  const tourOpen = useAppStore((s) => s.tourOpen)
+  const commandPaletteOpen = useAppStore((s) => s.commandPaletteOpen)
+  const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen)
   // 隐藏侧栏仅在 GPT/Gemini 面板生效 (clean view); 其它面板始终显示, 避免把导航藏没。
   const hideSidebar =
     sidebarHidden && (active === 'gpt' || active === 'gemini' || active === 'claude')
 
-  // 原生 AI 视图始终浮在 DOM 之上；导航变化时再次同步当前 kind，覆盖任何异步卸载竞态。
+  // 全局快捷命令面板 (Ctrl/Cmd + K)。
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setCommandPaletteOpen(!useAppStore.getState().commandPaletteOpen)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [setCommandPaletteOpen])
+
+  // 原生 AI 视图始终浮在 DOM 之上；导航变化或全局浮层打开时同步当前 kind，避免遮挡弹窗/引导。
   useEffect(() => {
     const aiKind =
-      !dataSuspended && (active === 'gpt' || active === 'gemini' || active === 'claude')
+      !dataSuspended &&
+      !commandPaletteOpen &&
+      !tourOpen &&
+      (active === 'gpt' || active === 'gemini' || active === 'claude')
         ? active
         : ''
     let cancelled = false
@@ -73,7 +92,7 @@ export function Shell() {
     return () => {
       cancelled = true
     }
-  }, [active, dataSuspended])
+  }, [active, commandPaletteOpen, dataSuspended, tourOpen])
 
   // [MEDIUM] 全局日志订阅: 应用级单次挂载 (登录后 Shell 常驻),
   // 启动即采集, 早期/后台日志不因 LogsPanel 未挂载而丢失。订阅实现见 logs 域 useLogStream。
@@ -158,6 +177,7 @@ export function Shell() {
       </div>
       <SetupGuide />
       <Onboarding />
+      <GlobalCommandPalette open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
       <Toaster position="bottom-right" theme={dark ? 'dark' : 'light'} richColors />
     </div>
   )

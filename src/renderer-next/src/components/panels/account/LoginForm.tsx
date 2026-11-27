@@ -32,6 +32,8 @@ import { isStaleAttemptError } from '@/lib/latestAttempt'
 import { ImportActions } from './ImportActions'
 import { BrowserPrivacySection } from './BrowserPrivacySection'
 import { InterfaceSettings } from './InterfaceSettings'
+import { AboutSection, ChangelogSection, UpdateSection } from './AppInfoSections'
+import { cn } from '@/lib/utils'
 import { compareVersions, checkGithubUpdate, type BootstrapUpdate } from './bootstrap'
 
 // 登录页「发现新版本」提醒。自动更新源 = GitHub Releases (参考 cc-switch), 不再查询任何自建服务器,
@@ -103,6 +105,16 @@ function LoginUpdateBanner() {
 
 type ErrorField = 'server' | 'username' | 'password'
 type WorkspaceEntryView = 'welcome' | 'choice' | 'organization' | 'personal'
+type PersonalSettingsCategory = 'all' | 'account' | 'interface' | 'privacy' | 'data' | 'updates'
+
+const PERSONAL_CATEGORIES: ReadonlyArray<{ id: PersonalSettingsCategory; label: string }> = [
+  { id: 'all', label: '全部' },
+  { id: 'account', label: '工作区' },
+  { id: 'interface', label: '界面' },
+  { id: 'privacy', label: '隐私与环境' },
+  { id: 'data', label: '本机资料' },
+  { id: 'updates', label: '更新与关于' },
+]
 
 // 未登录态: 居中登录表单。预填 store.settings.collab。
 export function LoginForm() {
@@ -133,8 +145,12 @@ export function LoginForm() {
   const [submitting, setSubmitting] = useState(false)
   const [enteringPersonal, setEnteringPersonal] = useState(false)
   const [showOrganizationLogin, setShowOrganizationLogin] = useState(false)
+  const [personalCategory, setPersonalCategory] = useState<PersonalSettingsCategory>('all')
+  const [autoEnterPersonal, setAutoEnterPersonal] = useState(() =>
+    Boolean(useAppStore.getState().settings?.ui?.auto_enter_personal),
+  )
   const [entryView, setEntryView] = useState<WorkspaceEntryView>(() =>
-    hasSeenWorkspaceIntro ? 'organization' : 'welcome',
+    hasSeenWorkspaceIntro ? 'choice' : 'welcome',
   )
   // 内联错误条 + 出错字段 (用于 aria-invalid 触发红边)。
   const [error, setError] = useState<unknown>(null)
@@ -152,26 +168,41 @@ export function LoginForm() {
   useEffect(() => {
     if (workspaceMode === 'personal') return
     const params = autoLoginParams(collab)
-    if (!params || autoLoginAttempted.current || loginUiBusyRef.current) return
+    if (params) {
+      if (autoLoginAttempted.current || loginUiBusyRef.current) return
+      autoLoginAttempted.current = true
+      loginUiBusyRef.current = true
+      setEntryView('organization')
+      setSubmitting(true)
+      setError('')
+      setErrorField(null)
+      void login(params)
+        .catch((err) => {
+          if (isStaleAttemptError(err)) return
+          setError(err)
+          const category = describeUserError(err).category
+          setErrorField(
+            category === 'connection' ? 'server' : category === 'credentials' ? 'password' : null,
+          )
+        })
+        .finally(() => {
+          loginUiBusyRef.current = false
+          setSubmitting(false)
+        })
+      return
+    }
+    const shouldAutoPersonal = Boolean(useAppStore.getState().settings?.ui?.auto_enter_personal)
+    if (!shouldAutoPersonal || autoLoginAttempted.current || loginUiBusyRef.current) return
     autoLoginAttempted.current = true
-    loginUiBusyRef.current = true
-    setSubmitting(true)
-    setError('')
-    setErrorField(null)
-    void login(params)
+    setEnteringPersonal(true)
+    void enterPersonal()
       .catch((err) => {
-        if (isStaleAttemptError(err)) return
         setError(err)
-        const category = describeUserError(err).category
-        setErrorField(
-          category === 'connection' ? 'server' : category === 'credentials' ? 'password' : null,
-        )
       })
       .finally(() => {
-        loginUiBusyRef.current = false
-        setSubmitting(false)
+        setEnteringPersonal(false)
       })
-  }, [collab, login, workspaceMode])
+  }, [collab, enterPersonal, login, workspaceMode])
 
   function focusField(field: ErrorField, select = false) {
     const ref = field === 'server' ? serverRef : field === 'username' ? usernameRef : passwordRef
@@ -237,9 +268,10 @@ export function LoginForm() {
     setError('')
     setErrorField(null)
     try {
-      if (!hasSeenWorkspaceIntro) {
-        await patchSection('ui', { workspace_entry_intro_done: true }).catch(() => undefined)
-      }
+      const uiPatch: Record<string, boolean> = {}
+      if (!hasSeenWorkspaceIntro) uiPatch.workspace_entry_intro_done = true
+      uiPatch.auto_enter_personal = autoEnterPersonal
+      await patchSection('ui', uiPatch).catch(() => undefined)
       await enterPersonal()
     } catch (err) {
       setError(err)
@@ -411,9 +443,26 @@ export function LoginForm() {
               </div>
             </div>
 
+            <div className="mt-4 flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3">
+              <div className="min-w-0 pr-3">
+                <Label htmlFor="auto-enter-personal" className="cursor-pointer text-sm font-medium">
+                  下次启动直接进入个人工作区
+                </Label>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  开启后重启直接进入，稍后可在「账户与设置」中关闭或切换团队。
+                </p>
+              </div>
+              <Switch
+                id="auto-enter-personal"
+                checked={autoEnterPersonal}
+                onCheckedChange={setAutoEnterPersonal}
+                disabled={enteringPersonal}
+              />
+            </div>
+
             <Button
               size="lg"
-              className="mt-6 w-full"
+              className="mt-4 w-full"
               onClick={() => void handleEnterPersonal()}
               disabled={enteringPersonal}
             >
@@ -442,17 +491,44 @@ export function LoginForm() {
           <LoginUpdateBanner />
 
           {!showWorkspaceEntry && (
-            <div className="flex w-full items-start gap-3 rounded-md border border-border bg-muted/35 px-4 py-3">
-              <Laptop className="mt-0.5 size-4 shrink-0 text-primary" />
-              <div className="min-w-0">
-                <p className="text-sm font-medium">当前：个人工作区</p>
-                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                  个人代理、翻译配置和 AI
-                  网页会话使用独立本机分区。登录组织后会切换到该账号自己的配置与网页会话。
-                </p>
-              </div>
+            <div
+              role="tablist"
+              aria-label="设置分类"
+              className="sticky top-0 z-10 flex w-full flex-wrap gap-1.5 rounded-lg border border-border bg-background/95 p-1.5 backdrop-blur-sm"
+            >
+              {PERSONAL_CATEGORIES.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={personalCategory === item.id}
+                  onClick={() => setPersonalCategory(item.id)}
+                  className={cn(
+                    'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                    personalCategory === item.id
+                      ? 'bg-primary text-primary-foreground shadow-xs'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                  )}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
           )}
+
+          {!showWorkspaceEntry &&
+            (personalCategory === 'all' || personalCategory === 'account') && (
+              <div className="flex w-full items-start gap-3 rounded-md border border-border bg-muted/35 px-4 py-3">
+                <Laptop className="mt-0.5 size-4 shrink-0 text-primary" />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">当前：个人工作区</p>
+                  <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                    个人代理、翻译配置和 AI
+                    网页会话使用独立本机分区。登录组织后会切换到该账号自己的配置与网页会话。
+                  </p>
+                </div>
+              </div>
+            )}
 
           {showWorkspaceEntry && (
             <Button
@@ -466,155 +542,170 @@ export function LoginForm() {
             </Button>
           )}
 
-          <div className="w-full">
-            {showOrganizationEntry || showOrganizationLogin ? (
-              <Card className="w-full">
-                <CardHeader className="text-center">
-                  <CardTitle className="flex items-center justify-center gap-2 text-xl">
-                    <Building2 className="size-5 text-primary" />
-                    {showWorkspaceEntry ? '连接团队' : '登录组织工作区'}
-                  </CardTitle>
-                  <CardDescription>
-                    {showWorkspaceEntry
-                      ? '使用团队提供的服务地址和账号登录'
-                      : '登录后切换到该账号的独立配置和网页会话'}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form className="grid gap-4" onSubmit={handleSubmit}>
-                    <div className="grid gap-2">
-                      <Label htmlFor="account-server">服务地址</Label>
-                      <Input
-                        ref={serverRef}
-                        id="account-server"
-                        placeholder="http://example.com:8088"
-                        autoComplete="off"
-                        spellCheck={false}
-                        value={serverUrl}
-                        onChange={(e) => setServerUrl(e.target.value)}
-                        disabled={submitting || enteringPersonal}
-                        aria-invalid={errorField === 'server' || undefined}
-                      />
-                    </div>
-
-                    <div className="grid gap-2">
-                      <Label htmlFor="account-username">账号</Label>
-                      <Input
-                        ref={usernameRef}
-                        id="account-username"
-                        placeholder="用户名"
-                        autoComplete="username"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        disabled={submitting || enteringPersonal}
-                        aria-invalid={errorField === 'username' || undefined}
-                      />
-                    </div>
-
-                    <div className="grid gap-2">
-                      <Label htmlFor="account-password">密码</Label>
-                      <Input
-                        ref={passwordRef}
-                        id="account-password"
-                        type="password"
-                        placeholder="密码"
-                        autoComplete="current-password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        disabled={submitting || enteringPersonal}
-                        aria-invalid={errorField === 'password' || undefined}
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-                      <Label
-                        htmlFor="account-remember"
-                        className="cursor-pointer text-sm font-normal"
-                      >
-                        记住密码
-                      </Label>
-                      <Switch
-                        id="account-remember"
-                        checked={rememberPassword}
-                        onCheckedChange={setRememberPassword}
-                        disabled={submitting || enteringPersonal}
-                      />
-                    </div>
-
-                    {Boolean(error) && (
-                      <ErrorNotice error={error} context="登录与工作区" className="mt-3" />
-                    )}
-
-                    <Button
-                      type="submit"
-                      className="w-full"
-                      disabled={submitting || enteringPersonal}
-                    >
-                      {submitting ? (
-                        <>
-                          <Loader2 className="animate-spin" />
-                          登录中…
-                        </>
-                      ) : (
-                        <>
-                          <LogIn />
-                          登录
-                        </>
-                      )}
-                    </Button>
-                  </form>
-
-                  {showWorkspaceEntry && (
-                    <>
-                      <Separator className="my-4" />
+          {(showWorkspaceEntry || personalCategory === 'all' || personalCategory === 'account') && (
+            <div className="w-full">
+              {showOrganizationEntry || showOrganizationLogin ? (
+                <Card className="w-full">
+                  <CardHeader className="text-center">
+                    <CardTitle className="flex items-center justify-center gap-2 text-xl">
+                      <Building2 className="size-5 text-primary" />
+                      {showWorkspaceEntry ? '连接团队' : '登录组织工作区'}
+                    </CardTitle>
+                    <CardDescription>
+                      {showWorkspaceEntry
+                        ? '使用团队提供的服务地址和账号登录'
+                        : '登录后切换到该账号的独立配置和网页会话'}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <form className="grid gap-4" onSubmit={handleSubmit}>
                       <div className="grid gap-2">
-                        <p className="text-xs text-muted-foreground">
-                          从备份文件恢复本机配置或资料包
-                        </p>
-                        <ImportActions />
+                        <Label htmlFor="account-server">服务地址</Label>
+                        <Input
+                          ref={serverRef}
+                          id="account-server"
+                          placeholder="http://example.com:8088"
+                          autoComplete="off"
+                          spellCheck={false}
+                          value={serverUrl}
+                          onChange={(e) => setServerUrl(e.target.value)}
+                          disabled={submitting || enteringPersonal}
+                          aria-invalid={errorField === 'server' || undefined}
+                        />
                       </div>
-                    </>
-                  )}
-                </CardContent>
-              </Card>
-            ) : (
-              <Card className="w-full">
-                <CardHeader className="pb-3">
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Building2 className="size-4 text-primary" />
-                    组织协作（可选）
-                  </CardTitle>
-                  <CardDescription>
-                    需要协作聊天、在线成员、管理员线路或组织用量时，再登录组织工作区。
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => setShowOrganizationLogin(true)}
-                  >
-                    <LogIn />
-                    登录组织工作区
-                    <ArrowRight className="ml-auto" />
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
-          </div>
+
+                      <div className="grid gap-2">
+                        <Label htmlFor="account-username">账号</Label>
+                        <Input
+                          ref={usernameRef}
+                          id="account-username"
+                          placeholder="用户名"
+                          autoComplete="username"
+                          value={username}
+                          onChange={(e) => setUsername(e.target.value)}
+                          disabled={submitting || enteringPersonal}
+                          aria-invalid={errorField === 'username' || undefined}
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label htmlFor="account-password">密码</Label>
+                        <Input
+                          ref={passwordRef}
+                          id="account-password"
+                          type="password"
+                          placeholder="密码"
+                          autoComplete="current-password"
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          disabled={submitting || enteringPersonal}
+                          aria-invalid={errorField === 'password' || undefined}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+                        <Label
+                          htmlFor="account-remember"
+                          className="cursor-pointer text-sm font-normal"
+                        >
+                          记住密码
+                        </Label>
+                        <Switch
+                          id="account-remember"
+                          checked={rememberPassword}
+                          onCheckedChange={setRememberPassword}
+                          disabled={submitting || enteringPersonal}
+                        />
+                      </div>
+
+                      {Boolean(error) && (
+                        <ErrorNotice error={error} context="登录与工作区" className="mt-3" />
+                      )}
+
+                      <Button
+                        type="submit"
+                        className="w-full"
+                        disabled={submitting || enteringPersonal}
+                      >
+                        {submitting ? (
+                          <>
+                            <Loader2 className="animate-spin" />
+                            登录中…
+                          </>
+                        ) : (
+                          <>
+                            <LogIn />
+                            登录
+                          </>
+                        )}
+                      </Button>
+                    </form>
+
+                    {showWorkspaceEntry && (
+                      <>
+                        <Separator className="my-4" />
+                        <div className="grid gap-2">
+                          <p className="text-xs text-muted-foreground">
+                            从备份文件恢复本机配置或资料包
+                          </p>
+                          <ImportActions />
+                        </div>
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              ) : (
+                <Card className="w-full">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Building2 className="size-4 text-primary" />
+                      组织协作（可选）
+                    </CardTitle>
+                    <CardDescription>
+                      需要协作聊天、在线成员、管理员线路或组织用量时，再登录组织工作区。
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => setShowOrganizationLogin(true)}
+                    >
+                      <LogIn />
+                      登录组织工作区
+                      <ArrowRight className="ml-auto" />
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+          )}
 
           {!showWorkspaceEntry && (
             <>
-              <InterfaceSettings />
-              <Card className="w-full">
-                <CardHeader>
-                  <CardTitle className="text-base">本机资料</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <ImportActions />
-                </CardContent>
-              </Card>
-              <BrowserPrivacySection />
+              {(personalCategory === 'all' || personalCategory === 'interface') && (
+                <InterfaceSettings />
+              )}
+              {(personalCategory === 'all' || personalCategory === 'updates') && (
+                <>
+                  <UpdateSection />
+                  <ChangelogSection />
+                  <AboutSection />
+                </>
+              )}
+              {(personalCategory === 'all' || personalCategory === 'data') && (
+                <Card className="w-full">
+                  <CardHeader>
+                    <CardTitle className="text-base">本机资料</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ImportActions />
+                  </CardContent>
+                </Card>
+              )}
+              {(personalCategory === 'all' || personalCategory === 'privacy') && (
+                <BrowserPrivacySection />
+              )}
             </>
           )}
         </div>

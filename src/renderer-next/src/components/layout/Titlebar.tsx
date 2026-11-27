@@ -11,6 +11,7 @@ import {
   HelpCircle,
   Timer,
   RefreshCw,
+  Search,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -86,6 +87,7 @@ export function Titlebar({
     (s) => s.workspaceMode === 'personal' || (s.workspaceMode === 'organization' && s.authed),
   )
   const setTourOpen = useAppStore((s) => s.setTourOpen)
+  const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen)
   const organizationAuthed = useAppStore((s) => s.workspaceMode === 'organization' && s.authed)
   const connection = useChatStore((s) => s.connection)
   const retryLogin = useChatStore((s) => s.retryLogin)
@@ -186,6 +188,23 @@ export function Titlebar({
           >
             <RefreshCw className={cn('size-3.5', connection === 'connecting' && 'animate-spin')} />
             {connection === 'connecting' ? '正在连接…' : '重新登录'}
+          </Button>
+        )}
+        {!auxiliary && inShell && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setCommandPaletteOpen(true)}
+            title={isMac ? '快速跳转与命令 (⌘K)' : '快速跳转与命令 (Ctrl+K)'}
+            aria-label="快速跳转与命令"
+            className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground"
+          >
+            <Search className="size-3.5" />
+            <span className="hidden sm:inline">快速跳转</span>
+            <kbd className="hidden rounded border border-border bg-muted px-1 py-0.5 font-mono text-[10px] sm:inline">
+              {isMac ? '⌘K' : 'Ctrl+K'}
+            </kbd>
           </Button>
         )}
         {!auxiliary && inShell && (
