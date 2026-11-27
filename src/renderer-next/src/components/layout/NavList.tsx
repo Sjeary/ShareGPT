@@ -1,7 +1,7 @@
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import type { NavItem, NavKey } from '@/lib/nav'
+import { NAV_GROUP_LABELS, type NavItem, type NavKey } from '@/lib/nav'
 
 // 行间距 = 外层 gap-1 (0.25rem = 4px); 用于把"为拖动让位"的位移量算成整行高度。
 const ROW_GAP = 4
@@ -24,7 +24,9 @@ interface Props {
   collapsed: boolean
   activeKey: NavKey
   tooltipSide: 'left' | 'right'
+  showGroups?: boolean
   badgeFor: (key: NavKey) => number
+  statusDotFor?: (key: NavKey) => 'running' | 'stopped' | null
   onActivate: (key: NavKey) => void
   onReorder: (keys: NavKey[]) => void
 }
@@ -45,7 +47,9 @@ export function NavList({
   collapsed,
   activeKey,
   tooltipSide,
+  showGroups = false,
   badgeFor,
+  statusDotFor,
   onActivate,
   onReorder,
 }: Props) {
@@ -165,9 +169,12 @@ export function NavList({
   return (
     <>
       {items.map((item, index) => {
-        const { key, label, icon: Icon, hint } = item
+        const { key, label, icon: Icon, hint, group } = item
+        const prevGroup = index > 0 ? items[index - 1]?.group : null
+        const showGroupHeader = showGroups && !drag && group !== prevGroup
         const on = key === activeKey
         const badge = badgeFor(key)
+        const statusDot = statusDotFor?.(key) ?? null
         const lifted = drag?.from === index
         const btn = (
           <button
@@ -195,6 +202,12 @@ export function NavList({
               {collapsed && badge > 0 && (
                 <span className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-primary ring-2 ring-sidebar" />
               )}
+              {collapsed && badge === 0 && statusDot === 'running' && (
+                <span
+                  aria-label="运行中"
+                  className="absolute -right-0.5 -top-0.5 size-2.5 rounded-full bg-success ring-2 ring-sidebar"
+                />
+              )}
             </span>
             <span
               className={cn(
@@ -204,7 +217,18 @@ export function NavList({
                   : 'min-w-0 flex-1 opacity-100',
               )}
             >
-              <span className="block truncate text-[15px] font-medium">{label}</span>
+              <span className="flex items-center gap-1.5">
+                <span className="truncate text-[15px] font-medium">{label}</span>
+                {statusDot && (
+                  <span
+                    title={statusDot === 'running' ? '代理运行中' : '代理未开启'}
+                    className={cn(
+                      'size-2 shrink-0 rounded-full',
+                      statusDot === 'running' ? 'bg-success' : 'bg-muted-foreground/45',
+                    )}
+                  />
+                )}
+              </span>
               <span className="block truncate text-xs text-muted-foreground">{hint}</span>
             </span>
             {!collapsed && badge > 0 && (
@@ -214,7 +238,7 @@ export function NavList({
                   on ? 'bg-primary/20 text-primary' : 'bg-primary/15 text-primary',
                 )}
               >
-                {badge}
+                {badge > 99 ? '99+' : badge}
               </span>
             )}
           </button>
@@ -234,6 +258,21 @@ export function NavList({
             onPointerCancel={finishDrag}
             className={cn(lifted && 'select-none', 'touch-pan-y')}
           >
+            {showGroupHeader &&
+              (collapsed ? (
+                index > 0 ? (
+                  <div aria-hidden className="mx-3 my-1.5 h-px bg-sidebar-border" />
+                ) : null
+              ) : (
+                <div
+                  className={cn(
+                    'px-2.5 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground/80 select-none',
+                    index > 0 ? 'pt-3' : 'pt-1',
+                  )}
+                >
+                  {NAV_GROUP_LABELS[group]}
+                </div>
+              ))}
             {collapsed && !drag ? (
               <Tooltip>
                 <TooltipTrigger asChild>{btn}</TooltipTrigger>

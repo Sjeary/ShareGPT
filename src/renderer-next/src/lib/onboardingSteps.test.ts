@@ -13,3 +13,11 @@ test('onboarding points optional modules to account settings without opening the
   assert.match(discovery?.body ?? '', /账户 → 界面设置/)
   assert.match(discovery?.body ?? '', /不会替你开启/)
 })
+
+test('personal workspace onboarding omits organization-only chat and stats steps', () => {
+  const steps = buildOnboardingSteps('ShareGPT', 'personal')
+  assert.deepEqual(
+    steps.map((step) => step.target),
+    [undefined, 'nav-service', 'nav-gpt', 'nav-account', undefined],
+  )
+})

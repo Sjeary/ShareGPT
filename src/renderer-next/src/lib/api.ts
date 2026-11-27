@@ -138,6 +138,7 @@ const fallback = {
   isWindowFullScreen: async () => false,
   startSender: async () => undefined,
   stopSender: async () => undefined,
+  detectLocalProxy: async () => [],
   startReceiver: async () => undefined,
   stopReceiver: async () => undefined,
   onLog: () => noop,

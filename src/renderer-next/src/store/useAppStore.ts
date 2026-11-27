@@ -82,6 +82,10 @@ interface AppState {
   tourOpen: boolean
   setTourOpen: (v: boolean) => void
 
+  // 全局快速跳转与命令面板 (Ctrl/Cmd + K, 仅内存)。
+  commandPaletteOpen: boolean
+  setCommandPaletteOpen: (v: boolean) => void
+
   // 动作
   init: () => Promise<void>
   reloadSettings: () => Promise<AppSettings>
@@ -218,7 +222,9 @@ function applySettingsUi(settings: AppSettings, current: AppState): Partial<AppS
     (!showGemini && current.active === 'gemini') ||
     (!showClaude && current.active === 'claude') ||
     hiddenNav.includes(current.active)
-  const active = unavailable ? workspaceFallbackNav(current.workspaceMode) : current.active
+  const active = unavailable
+    ? workspaceFallbackNav(current.workspaceMode, hiddenNav)
+    : current.active
   applyTheme(dark)
   void api.setThemeSource(dark ? 'dark' : 'light').catch(() => undefined)
   try {
@@ -237,7 +243,7 @@ const appStoreInitialization = createSingleFlight<void>()
 let statusSubscriptionInstalled = false
 
 export const useAppStore = create<AppState>((set, get) => ({
-  active: 'service',
+  active: 'gpt',
   setActive: (key) => {
     set({ active: key })
   },
@@ -458,14 +464,19 @@ export const useAppStore = create<AppState>((set, get) => ({
   setWorkspaceMode: (workspaceMode) => {
     set((state) => ({
       workspaceMode,
-      active: workspaceNavAvailable(workspaceMode, state.active)
-        ? state.active
-        : workspaceFallbackNav(workspaceMode),
+      active:
+        workspaceNavAvailable(workspaceMode, state.active) &&
+        !state.hiddenNav.includes(state.active)
+          ? state.active
+          : workspaceFallbackNav(workspaceMode, state.hiddenNav),
     }))
   },
 
   tourOpen: false,
   setTourOpen: (v) => set({ tourOpen: v }),
+
+  commandPaletteOpen: false,
+  setCommandPaletteOpen: (v) => set({ commandPaletteOpen: v }),
 
   init: () => {
     if (get().settings) return Promise.resolve()

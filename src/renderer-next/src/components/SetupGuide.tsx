@@ -25,12 +25,18 @@ export function SetupGuide() {
   const collab = (settings.collab ?? {}) as Partial<CollabSettings>
   const sender = (settings.sender ?? {}) as Partial<SenderSettings>
   const dismissed = Boolean(settings.ui?.setup_guide_dismissed)
-  const collabReady = Boolean(safe(collab.server_url))
-  const senderReady = Boolean(
-    safe(sender.proxy_server) && safe(sender.proxy_port) && safe(sender.proxy_uuid),
-  )
-
   const needsCollaboration = workspaceMode === 'organization'
+  const collabReady = Boolean(safe(collab.server_url))
+  const personalSenderReady = Boolean(
+    safe(sender.personal_proxy_host || sender.proxy_server) &&
+    safe(sender.personal_proxy_port || sender.proxy_port),
+  )
+  const teamSenderReady = Boolean(
+    (sender.proxy_mode === 'airport' && sender.airport_outbound) ||
+    (safe(sender.proxy_server) && safe(sender.proxy_port) && safe(sender.proxy_uuid)),
+  )
+  const senderReady = needsCollaboration ? teamSenderReady : personalSenderReady
+
   const shouldShow =
     !hidden &&
     !dismissed &&
@@ -42,8 +48,14 @@ export function SetupGuide() {
   if (!collabReady && needsCollaboration) {
     items.push('先填写账号服务地址，后续才能登录、同步联系人和加载统计。')
   }
-  if (!senderReady) items.push('补全代理的服务器地址、连接端口和连接身份码，才能正常启动。')
-  items.push('代理启动后，AI 页面都会复用当前 SOCKS5 代理。')
+  if (!senderReady) {
+    items.push(
+      needsCollaboration
+        ? '补全代理的服务器地址、连接端口和连接身份码，或选择管理员已下发的节点。'
+        : '在「网络与代理」填写你本机代理的端口（也可一键探测 Clash / v2rayN 等常见端口）。',
+    )
+  }
+  items.push('代理开启后，内嵌的 AI 网页都会自动复用当前代理。')
 
   const needsLogin = needsCollaboration && !collabReady
 
@@ -86,7 +98,7 @@ export function SetupGuide() {
               dismiss()
             }}
           >
-            {needsLogin ? '前往登录账户' : '前往网络 / 代理'}
+            {needsLogin ? '前往登录账户' : '前往网络与代理'}
           </Button>
           <Button variant="ghost" onClick={dismiss}>
             知道了

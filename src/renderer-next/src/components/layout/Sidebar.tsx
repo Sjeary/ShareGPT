@@ -6,7 +6,9 @@ import { cn } from '@/lib/utils'
 import { NAV, type NavKey } from '@/lib/nav'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
+import { useChatStore } from '@/store/useChatStore'
 import { useTasksStore } from '@/store/useTasksStore'
+import { isSenderRunning } from '@/components/panels/service/helpers'
 import { NavList } from './NavList'
 import { canUseAdvancedAi } from '@/lib/aiAccess'
 import { workspaceNavAvailable } from '@/lib/workspaceCapabilities'
@@ -25,10 +27,13 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const navOrder = useAppStore((s) => s.navOrder)
   const setNavOrder = useAppStore((s) => s.setNavOrder)
   const meta = useAppStore((s) => s.meta)
+  const status = useAppStore((s) => s.status)
   const workspaceMode = useAppStore((s) => s.workspaceMode)
   const token = useAuthStore((s) => s.token)
   const profile = useAuthStore((s) => s.profile)
+  const unreadByKey = useChatStore((s) => s.unreadByKey)
   const terminalAllowed = canUseAdvancedAi(workspaceMode, token, profile)
+  const senderRunning = isSenderRunning(status)
   // 管理员可禁止某人用协作聊天: 禁用则隐藏「协作聊天」入口 (服务端不投递消息, 这里只隐藏入口)。
   const chatDisabled = useAuthStore((s) => Boolean(s.profile?.chatDisabled))
 
@@ -67,7 +72,21 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const todayTaskCount = tasks.filter(
     (t) => !t.completed && t.dueDate && t.dueDate <= todayStr,
   ).length
-  const badgeFor = (key: NavKey): number => (key === 'todo' ? todayTaskCount : 0)
+  const totalChatUnread = useMemo(
+    () =>
+      Object.values(unreadByKey).reduce(
+        (sum, count) => sum + (Number.isFinite(count) && count > 0 ? count : 0),
+        0,
+      ),
+    [unreadByKey],
+  )
+  const badgeFor = (key: NavKey): number => {
+    if (key === 'todo') return todayTaskCount
+    if (key === 'chat') return totalChatUnread
+    return 0
+  }
+  const statusDotFor = (key: NavKey): 'running' | 'stopped' | null =>
+    key === 'service' ? (senderRunning ? 'running' : 'stopped') : null
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -94,7 +113,9 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
             collapsed={collapsed}
             activeKey={active}
             tooltipSide={tooltipSide}
+            showGroups={!navOrder.length}
             badgeFor={badgeFor}
+            statusDotFor={statusDotFor}
             onActivate={setActive}
             onReorder={setNavOrder}
           />
@@ -134,10 +155,17 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
             collapsed ? 'pointer-events-none h-0 p-0 opacity-0' : 'p-3 opacity-100',
           )}
         >
-          <div className="whitespace-nowrap font-medium text-foreground">
-            {((meta?.productName as string) || 'ShareGPT').replace(/\s+(Sender|Receiver)$/i, '')}
+          <div className="flex items-center justify-between gap-2">
+            <span className="truncate font-medium text-foreground">
+              {((meta?.productName as string) || 'ShareGPT').replace(/\s+(Sender|Receiver)$/i, '')}
+            </span>
+            <span className="shrink-0 text-[11px]">v{(meta?.version as string) || '1.0.11'}</span>
           </div>
-          <div className="whitespace-nowrap">v{(meta?.version as string) || '1.0.9'}</div>
+          <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+            {workspaceMode === 'personal'
+              ? '个人工作区 · 本机独立'
+              : `团队 · ${profile?.displayName || profile?.username || '已登录'}`}
+          </div>
         </div>
       </aside>
     </TooltipProvider>

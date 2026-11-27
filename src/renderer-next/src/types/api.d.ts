@@ -465,6 +465,9 @@ export interface ShareGptApi {
   // 服务启停
   startSender: (settings: unknown) => Promise<unknown>
   stopSender: () => Promise<unknown>
+  detectLocalProxy?: () => Promise<
+    Array<{ host: string; port: number; protocol: 'socks5' | 'http'; label: string }>
+  >
   startReceiver: (settings: unknown) => Promise<unknown>
   stopReceiver: () => Promise<unknown>
 

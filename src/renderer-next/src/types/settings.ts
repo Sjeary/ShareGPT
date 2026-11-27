@@ -91,8 +91,10 @@ export interface UiSettings {
   claude_notice_dismissed: boolean
   // 新手引导(分步高亮导览)是否已完成/跳过过一次; 已完成则不再自动弹, 仅可手动重看。
   onboarding_done: boolean
-  // 首次启动的工作区选择说明是否已看过。它只隐藏欢迎页，不记忆或自动进入某种工作区。
+  // 首次启动的工作区选择说明是否已看过。
   workspace_entry_intro_done?: boolean
+  // 是否记住并自动进入个人工作区 (仅当用户主动开启且未启用团队自动登录时生效)。
+  auto_enter_personal?: boolean
 }
 
 export interface AdvancedAiRoute {

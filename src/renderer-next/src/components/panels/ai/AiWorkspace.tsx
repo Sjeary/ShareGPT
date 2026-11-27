@@ -1,8 +1,12 @@
 import { ErrorNotice } from '@/components/ErrorNotice'
+import { showErrorToast } from '@/lib/errorToast'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
+  Cable,
+  Loader2,
+  Play,
   PanelLeftClose,
   PanelLeftOpen,
   PanelTopClose,
@@ -30,9 +34,15 @@ import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { useAiStore } from '@/store/useAiStore'
 import { useAuthStore } from '@/store/useAuthStore'
+import { useChatStore } from '@/store/useChatStore'
 import { useTranslationStore } from '@/store/useTranslationStore'
 import type { AiKind } from '@/store/useAiStore'
 import { isSenderRunning } from '@/components/panels/service/helpers'
+import {
+  startWorkspaceSender,
+  validateSenderConfig,
+} from '@/components/panels/service/startSenderAction'
+import { canStartWorkspaceProxy } from '@/lib/workspaceCapabilities'
 import { api } from '@/lib/api'
 import { canBrowseExternalWeb, canUseAdvancedAi, canUseTranslation } from '@/lib/aiAccess'
 import { userFacingAiWorkspaceError } from '@/lib/aiWorkspaceError'
@@ -118,12 +128,16 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const ensureInFlightRef = useRef(new Map<string, Promise<void>>())
   const status = useAppStore((s) => s.status)
   const settings = useAppStore((s) => s.settings)
+  const mode = useAppStore((s) => s.mode)
+  const setActive = useAppStore((s) => s.setActive)
   const sidebarHidden = useAppStore((s) => s.sidebarHidden)
   const toggleSidebarHidden = useAppStore((s) => s.toggleSidebarHidden)
   const aiHeaderHidden = useAppStore((s) => s.aiHeaderHidden)
   const workspaceMode = useAppStore((s) => s.workspaceMode)
   const setAiHeaderHidden = useAppStore((s) => s.setAiHeaderHidden)
   const toggleAiHeaderHidden = useAppStore((s) => s.toggleAiHeaderHidden)
+  const connection = useChatStore((s) => s.connection)
+  const [startingProxy, setStartingProxy] = useState(false)
   const advancedAiAllowed = useAuthStore((s) => canUseAdvancedAi(workspaceMode, s.token, s.profile))
   const translationAllowed = useAuthStore((s) =>
     canUseTranslation(workspaceMode, s.token, s.profile),
@@ -180,11 +194,24 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     [advancedAi, kind, saveAdvancedAi],
   )
 
-  // 隐藏侧栏/顶部信息栏时按 Esc 快速恢复；两种隐藏态都持久化。
+  // 仅当确实处于隐藏侧栏/顶部信息栏态且焦点不在输入框/弹窗内时，按 Esc 快速恢复。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      useAppStore.getState().setSidebarHidden(false)
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      const target = e.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable ||
+          target.closest('[role="dialog"]'))
+      ) {
+        return
+      }
+      const state = useAppStore.getState()
+      if (!state.sidebarHidden && !state.aiHeaderHidden) return
+      state.setSidebarHidden(false)
       setAiHeaderHidden(false)
     }
     window.addEventListener('keydown', onKey)
@@ -829,14 +856,18 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
             {translationAllowed && (
               <Button
                 variant="ghost"
-                size="icon"
-                className={cn('size-8', translationOpen && 'bg-accent text-accent-foreground')}
-                title={translationOpen ? '关闭翻译侧栏' : '打开翻译侧栏'}
+                size="sm"
+                className={cn(
+                  'h-8 gap-1.5 px-2',
+                  translationOpen && 'bg-accent text-accent-foreground',
+                )}
+                title={translationOpen ? '关闭翻译侧栏' : '打开翻译侧栏（阅读与写作翻译）'}
                 aria-label={translationOpen ? '关闭翻译侧栏' : '打开翻译侧栏'}
                 aria-pressed={translationOpen}
                 onClick={() => toggleTranslation(kind, activeTabId, environmentId)}
               >
                 <Languages className="size-4" />
+                <span className="hidden text-xs font-medium lg:inline">翻译</span>
               </Button>
             )}
             <Button
@@ -934,8 +965,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
         {kind === 'claude' && !settings?.ui?.claude_notice_dismissed && (
           <div className="flex shrink-0 items-start gap-2 border-b border-amber-500/40 bg-amber-500/10 px-4 py-1.5 text-xs text-amber-700 dark:text-amber-300">
             <span className="min-w-0 flex-1">
-              如果不使用
-              Claude，建议不要打开/停留在此页面，以免触发潜在的网络问题。需要时再打开即可。
+              提示：Claude 对代理出口和账号风控较敏感，建议仅在需要使用时打开此页。
             </span>
             <button
               type="button"
@@ -1039,6 +1069,45 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
                   <Icon className="mx-auto mb-3 size-10 text-muted-foreground" />
                   <h2 className="mb-1.5 text-base font-semibold">{overlay.title}</h2>
                   <p className="text-sm text-muted-foreground">{overlay.text}</p>
+                  {!networkReady && !senderRunning && (
+                    <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                      {canStartWorkspaceProxy(workspaceMode, connection === 'online') &&
+                        !validateSenderConfig(settings?.sender, mode, workspaceMode) && (
+                          <Button
+                            disabled={startingProxy}
+                            onClick={async () => {
+                              setStartingProxy(true)
+                              try {
+                                await startWorkspaceSender({
+                                  workspaceMode,
+                                  online: connection === 'online',
+                                })
+                                toast.success('代理已开启，正在打开页面')
+                              } catch (err) {
+                                showErrorToast(err, '开启代理')
+                              } finally {
+                                setStartingProxy(false)
+                              }
+                            }}
+                          >
+                            {startingProxy ? <Loader2 className="animate-spin" /> : <Play />}
+                            {startingProxy ? '正在开启代理…' : '一键开启代理'}
+                          </Button>
+                        )}
+                      <Button
+                        variant={
+                          canStartWorkspaceProxy(workspaceMode, connection === 'online') &&
+                          !validateSenderConfig(settings?.sender, mode, workspaceMode)
+                            ? 'outline'
+                            : 'default'
+                        }
+                        onClick={() => setActive('service')}
+                      >
+                        <Cable />
+                        前往网络与代理
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

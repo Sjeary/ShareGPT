@@ -74,8 +74,12 @@ export function workspaceNavAvailable(
   return workspaceModuleAvailable(mode, NAV_MODULE[key], options)
 }
 
-export function workspaceFallbackNav(mode: WorkspaceMode): NavKey {
-  return mode === 'chooser' ? 'account' : 'service'
+export function workspaceFallbackNav(
+  mode: WorkspaceMode,
+  hiddenNav: readonly NavKey[] = [],
+): NavKey {
+  if (mode === 'chooser') return 'account'
+  return hiddenNav.includes('gpt') ? 'service' : 'gpt'
 }
 
 export function canStartWorkspaceProxy(mode: WorkspaceMode, collaborationOnline: boolean): boolean {

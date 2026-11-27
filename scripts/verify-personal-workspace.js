@@ -197,15 +197,11 @@ async function main() {
     await page.screenshot({ path: screenshot });
 
     await page.reload();
-    await page.locator("#account-server").waitFor({ state: "visible" });
+    await page.getByRole("button", { name: /仅在本机使用/ }).waitFor({ state: "visible" });
     assert.equal(await page.getByText("欢迎来到 ShareGPT", { exact: true }).count(), 0);
-    assert.equal(
-      await page.getByRole("button", { name: "返回选择使用方式", exact: true }).count(),
-      1,
-    );
+    assert.equal(await page.getByRole("button", { name: /连接团队/ }).count(), 1);
     await page.screenshot({ path: organizationEntryScreenshot });
     assert.equal(await page.locator('[data-tour="nav-service"]').count(), 0);
-    await page.getByRole("button", { name: "返回选择使用方式", exact: true }).click();
     await page.getByRole("button", { name: /仅在本机使用/ }).click();
     await page.getByRole("button", { name: "进入个人工作区", exact: true }).click();
     await dismissGuides(page);
@@ -317,6 +313,7 @@ async function main() {
     assert.notEqual(afterClear.clearedAt, beforeClear.clearedAt);
     await page.screenshot({ path: accountScreenshot });
 
+    await page.getByText("应用更新", { exact: true }).waitFor({ state: "visible" });
     await page.getByRole("button", { name: "登录组织工作区", exact: true }).click();
     await page.locator("#account-server").waitFor({ state: "visible" });
 
@@ -332,10 +329,11 @@ async function main() {
       },
     });
     const relaunchedPage = await electronApp.firstWindow();
-    await relaunchedPage.locator("#account-server").waitFor({ state: "visible" });
+    await relaunchedPage
+      .getByRole("button", { name: /仅在本机使用/ })
+      .waitFor({ state: "visible" });
     assert.equal(await relaunchedPage.getByText("欢迎来到 ShareGPT", { exact: true }).count(), 0);
     assert.equal(await relaunchedPage.locator('[data-tour="nav-service"]').count(), 0);
-    await relaunchedPage.getByRole("button", { name: "返回选择使用方式", exact: true }).click();
     await relaunchedPage.getByRole("button", { name: /仅在本机使用/ }).click();
     await relaunchedPage.getByRole("button", { name: "进入个人工作区", exact: true }).click();
     await dismissGuides(relaunchedPage);

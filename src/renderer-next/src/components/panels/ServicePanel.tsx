@@ -14,8 +14,8 @@ export function ServicePanel() {
   return (
     <PanelScaffold
       icon={Cable}
-      title="代理转发"
-      hint="管理 AI 网页使用的代理连接"
+      title="网络与代理"
+      hint="管理 AI 网页使用的代理出口"
       toolbar={
         <Badge variant={running ? 'default' : 'outline'} className="gap-1.5">
           <span

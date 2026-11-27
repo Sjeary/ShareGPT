@@ -69,7 +69,7 @@ for (const action of ["reloadSettings", "saveSettings", "patchSection"]) {
     assert.equal(state.sidebarSide, "right");
     assert.equal(state.showClaude, false);
     assert.equal(state.showGemini, false);
-    assert.equal(state.active, "service");
+    assert.equal(state.active, "gpt");
     assert.equal(JSON.stringify(state.hiddenNav), JSON.stringify(imported.ui.hiddenNav));
     assert.equal(JSON.stringify(state.navOrder), JSON.stringify(imported.ui.navOrder));
     assert.deepEqual(app.dom.at(-1), ["dark", false]);

@@ -134,6 +134,7 @@ contextBridge.exposeInMainWorld("api", {
 
   startSender: (settings) => ipcRenderer.invoke("sender:start", settings),
   stopSender: () => ipcRenderer.invoke("sender:stop"),
+  detectLocalProxy: () => ipcRenderer.invoke("sender:detect-local-proxy"),
 
   startReceiver: (settings) => ipcRenderer.invoke("receiver:start", settings),
   stopReceiver: () => ipcRenderer.invoke("receiver:stop"),

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   canStartWorkspaceProxy,
+  workspaceFallbackNav,
   workspaceModuleAvailable,
   workspaceNavAvailable,
 } from './workspaceCapabilities.ts'
@@ -27,4 +28,11 @@ test('personal proxy does not depend on collaboration presence', () => {
   assert.equal(canStartWorkspaceProxy('organization', false), false)
   assert.equal(canStartWorkspaceProxy('organization', true), true)
   assert.equal(canStartWorkspaceProxy('chooser', true), false)
+})
+
+test('workspace fallback lands on ChatGPT by default and falls back to network when hidden', () => {
+  assert.equal(workspaceFallbackNav('personal'), 'gpt')
+  assert.equal(workspaceFallbackNav('organization'), 'gpt')
+  assert.equal(workspaceFallbackNav('personal', ['gpt']), 'service')
+  assert.equal(workspaceFallbackNav('chooser'), 'account')
 })

@@ -120,6 +120,10 @@ async function run() {
       "s_fallback_mode",
       "s_fallback_local_port",
     ];
+    const detailsToggle = page.getByRole("button", { name: /查看管理员下发的技术参数/ });
+    await detailsToggle.waitFor();
+    await expect(page.locator("#s_proxy_server")).toHaveCount(0);
+    await detailsToggle.click();
     await page.locator("#s_proxy_server").waitFor();
     for (const id of fields) await expect(page.locator("#" + id)).toBeDisabled();
     const unified = page.getByRole("button", { name: /统一梯子（默认）/ });

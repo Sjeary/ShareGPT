@@ -18,13 +18,14 @@ function OnboardingSteps() {
   const setTourOpen = useAppStore((s) => s.setTourOpen)
   const patchSection = useAppStore((s) => s.patchSection)
   const sidebarSide = useAppStore((s) => s.sidebarSide)
+  const workspaceMode = useAppStore((s) => s.workspaceMode)
   const meta = useAppStore((s) => s.meta)
 
   const brand = String((meta?.productName as string) || 'ShareGPT').replace(
     /\s+(Sender|Receiver)$/i,
     '',
   )
-  const steps = buildOnboardingSteps(brand)
+  const steps = buildOnboardingSteps(brand, workspaceMode)
 
   const [index, setIndex] = useState(0)
   const [rect, setRect] = useState<DOMRect | null>(null)
