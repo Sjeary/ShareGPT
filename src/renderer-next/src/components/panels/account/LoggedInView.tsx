@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
 import {
-  ArrowUpRight,
   Copy,
   HardDrive,
   Keyboard,
@@ -10,7 +9,6 @@ import {
   LogOut,
   Palette,
   Shield,
-  ShieldCheck,
   Sparkles,
   UserCog,
   UserRound,
@@ -205,7 +203,6 @@ export function ShortcutsCard() {
 export function LoggedInView() {
   const collab = useAppStore((s) => s.settings?.collab)
   const patchSection = useAppStore((s) => s.patchSection)
-  const setActive = useAppStore((s) => s.setActive)
   const setWorkspaceMode = useAppStore((s) => s.setWorkspaceMode)
   const profile = useAuthStore((s) => s.profile)
   const { logout } = useAuth()
@@ -331,22 +328,6 @@ export function LoggedInView() {
             </button>
           )
         })}
-
-        {isAdmin && (
-          <div className="mt-2 hidden rounded-xl border border-primary/30 bg-primary/10 p-3 lg:block">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
-              <ShieldCheck className="size-4" />
-              管理员专属入口
-            </div>
-            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
-              成员管理、邀请链接、线路与翻译服务已集成在软件内。
-            </p>
-            <Button size="xs" className="mt-2.5 w-full" onClick={() => setActive('admin')}>
-              打开管理后台
-              <ArrowUpRight className="size-3.5" />
-            </Button>
-          </div>
-        )}
       </nav>
 
       {/* 右侧主内容区：不按 category 设 key，切换分类零卸载/重拉 */}
@@ -398,12 +379,6 @@ export function LoggedInView() {
               </div>
             </CardHeader>
             <CardContent className="flex flex-wrap gap-2 pt-0">
-              {isAdmin && (
-                <Button size="sm" onClick={() => setActive('admin')}>
-                  <ShieldCheck />
-                  打开管理后台
-                </Button>
-              )}
               <Button variant="outline" size="sm" onClick={handleEditProfile}>
                 <UserCog />
                 编辑个人资料
