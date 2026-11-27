@@ -670,6 +670,18 @@ function stableMessageId(record) {
   return crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex").slice(0, 24);
 }
 
+function normalizeMessageReactions(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const result = {};
+  for (const [key, list] of Object.entries(raw)) {
+    const emoji = safeText(key).slice(0, 16);
+    if (!emoji || !Array.isArray(list)) continue;
+    const users = [...new Set(list.map((entry) => safeText(entry)).filter(Boolean))];
+    if (users.length) result[emoji] = users;
+  }
+  return result;
+}
+
 function normalizeHistoryMessage(record, fallbackSequence = 0) {
   const recalled = Boolean(record?.recalled);
   const scope = safeText(record?.scope) === "private" ? "private" : "subnet";
@@ -684,6 +696,7 @@ function normalizeHistoryMessage(record, fallbackSequence = 0) {
       : [];
   const replyTo = normalizeReplyTarget(record?.replyTo);
   const forwardedFrom = normalizeForwardedFrom(record?.forwardedFrom);
+  const reactions = recalled ? {} : normalizeMessageReactions(record?.reactions);
 
   if (!recalled && !safeText(text) && !attachments.length) {
     return null;
@@ -711,6 +724,7 @@ function normalizeHistoryMessage(record, fallbackSequence = 0) {
     attachments,
     replyTo,
     forwardedFrom,
+    ...(Object.keys(reactions).length ? { reactions } : {}),
     subnetKey: safeText(record?.subnetKey),
     subnetLabel: safeText(record?.subnetLabel || record?.roomScope),
     timestamp: safeText(record?.timestamp) || nowIso(),
@@ -814,23 +828,18 @@ function buildServiceUsageStats(service, fromRaw, toRaw) {
   return buildGptUsageStats(events, fromRaw, toRaw);
 }
 
-// 用户反馈建议存储。
+// 用户反馈建议存储 (使用带备份与损坏保护的安全 JSON 存储)。
 const FEEDBACK_FILE =
   process.env.FEEDBACK_FILE || path.join(path.dirname(GPT_USAGE_FILE), "feedback.json");
 const FEEDBACK_MAX = 5000;
 function loadFeedbackStore() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(FEEDBACK_FILE, "utf-8"));
-    return { items: Array.isArray(raw.items) ? raw.items : [] };
-  } catch {
-    return { items: [] };
-  }
+  const raw = readJsonStore(FEEDBACK_FILE, "items");
+  return { items: Array.isArray(raw.items) ? raw.items : [] };
 }
 function saveFeedbackStore(store) {
-  const items = Array.isArray(store && store.items) ? store.items : [];
+  const items = Array.isArray(store && store.items) ? store.items.slice() : [];
   if (items.length > FEEDBACK_MAX) items.splice(0, items.length - FEEDBACK_MAX);
-  fs.mkdirSync(path.dirname(FEEDBACK_FILE), { recursive: true });
-  fs.writeFileSync(FEEDBACK_FILE, JSON.stringify({ items }, null, 2), "utf-8");
+  saveJsonStore(FEEDBACK_FILE, { items }, "items");
 }
 let feedbackSeq = 0;
 function addFeedback(entry) {
@@ -850,22 +859,31 @@ function addFeedback(entry) {
   return item;
 }
 
-// "会用到但没走代理"的域名上报聚合 (客户端代理检测自动上报; 管理端查看以维护内置清单)。
+// "会用到但没走代理"的域名上报聚合 (使用带备份与损坏保护的安全 JSON 存储)。
 const PROXY_MISSING_FILE =
   process.env.PROXY_MISSING_FILE || path.join(path.dirname(GPT_USAGE_FILE), "proxy_missing.json");
 const PROXY_MISSING_MAX = 2000;
+const proxyMissingShape = {
+  empty: () => ({ domains: {} }),
+  valid: (value) =>
+    Boolean(
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      value.domains &&
+      typeof value.domains === "object" &&
+      !Array.isArray(value.domains),
+    ),
+};
 function loadProxyMissingStore() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(PROXY_MISSING_FILE, "utf-8"));
-    return {
-      domains: raw && typeof raw.domains === "object" && raw.domains ? raw.domains : {},
-    };
-  } catch {
-    return { domains: {} };
-  }
+  const raw = readJsonStore(PROXY_MISSING_FILE, proxyMissingShape);
+  return { domains: raw.domains };
 }
 function saveProxyMissingStore(store) {
-  const domains = store && typeof store.domains === "object" ? store.domains : {};
+  const domains =
+    store && typeof store.domains === "object" && !Array.isArray(store.domains)
+      ? { ...store.domains }
+      : {};
   const keys = Object.keys(domains);
   if (keys.length > PROXY_MISSING_MAX) {
     keys.sort((a, b) =>
@@ -873,8 +891,7 @@ function saveProxyMissingStore(store) {
     );
     for (const k of keys.slice(0, keys.length - PROXY_MISSING_MAX)) delete domains[k];
   }
-  fs.mkdirSync(path.dirname(PROXY_MISSING_FILE), { recursive: true });
-  fs.writeFileSync(PROXY_MISSING_FILE, JSON.stringify({ domains }, null, 2), "utf-8");
+  saveJsonStore(PROXY_MISSING_FILE, { domains }, proxyMissingShape);
 }
 function recordMissingDomains(username, domains, version) {
   const list = Array.isArray(domains) ? domains : [];
@@ -1322,6 +1339,30 @@ function normalizeIp(rawIp) {
   return raw;
 }
 
+function isLoopbackIp(ip) {
+  const normalized = normalizeIp(ip);
+  return normalized === "127.0.0.1" || normalized.startsWith("127.") || normalized === "::1";
+}
+
+// 仅当直连来源是本机反代 (127.0.0.1 / ::1) 时才采信反代透传的真实客户端 IP，
+// 防止公网直连客户端伪造 X-Forwarded-For 绕过登录限流。
+function resolveClientIp(req) {
+  const peerIp = normalizeIp(req?.socket?.remoteAddress);
+  if (!isLoopbackIp(peerIp)) return peerIp;
+  const realIp = safeText(req?.headers?.["x-real-ip"]);
+  if (realIp) return normalizeIp(realIp);
+  const forwarded = safeText(req?.headers?.["x-forwarded-for"]);
+  if (forwarded) {
+    const first = safeText(forwarded.split(",")[0]);
+    if (first) return normalizeIp(first);
+  }
+  return peerIp;
+}
+
+function loginAttemptKey(clientIp, username, scope = "user") {
+  return `${scope}:${normalizeIp(clientIp)}:${safeText(username)}`;
+}
+
 function loginLockState(ip) {
   const rec = loginAttempts.get(ip);
   if (rec && rec.lockUntil && rec.lockUntil > Date.now()) {
@@ -1341,7 +1382,14 @@ function recordLoginFail(ip) {
 }
 
 function clearLoginFails(ip) {
-  loginAttempts.delete(ip);
+  const key = String(ip || "");
+  loginAttempts.delete(key);
+  if (key) {
+    const prefix = `${key}:`;
+    for (const candidate of loginAttempts.keys()) {
+      if (candidate.startsWith(prefix)) loginAttempts.delete(candidate);
+    }
+  }
 }
 
 function subnetKeyFromIp(ip) {
@@ -2143,6 +2191,8 @@ const handleAdminAccountRequest = createAdminAccountHandler({
   safeParseJson,
   safeText,
   normalizeIp,
+  resolveClientIp,
+  loginAttemptKey,
   loginLockState,
   recordLoginFail,
   clearLoginFails,
@@ -2244,8 +2294,9 @@ async function handleRequest(req, res) {
         return;
       }
 
-      const remoteIp = normalizeIp(req.socket?.remoteAddress);
-      const lock = loginLockState(remoteIp);
+      const remoteIp = resolveClientIp(req);
+      const attemptKey = loginAttemptKey(remoteIp, username, "user");
+      const lock = loginLockState(attemptKey);
       if (lock.locked) {
         sendText(res, 429, `登录失败次数过多，请 ${Math.ceil(lock.retryAfterMs / 1000)} 秒后再试`);
         return;
@@ -2253,11 +2304,11 @@ async function handleRequest(req, res) {
 
       const { store, user } = findUser(username);
       if (!user || !verifyPassword(user, password)) {
-        recordLoginFail(remoteIp);
+        recordLoginFail(attemptKey);
         sendText(res, 401, "账号或密码错误");
         return;
       }
-      clearLoginFails(remoteIp);
+      clearLoginFails(attemptKey);
 
       // Additive: old clients keep the existing login response and need no challenge.
       const identity = payload?.identityNonce
@@ -3015,8 +3066,12 @@ async function handleRequest(req, res) {
   if (req.method === "GET" && pathname === "/api/admin/feedback") {
     const adminSession = requireAdminSession(req, res);
     if (!adminSession) return;
-    const items = loadFeedbackStore().items.slice().reverse();
-    sendJson(res, 200, { feedback: items });
+    try {
+      const items = loadFeedbackStore().items.slice().reverse();
+      sendJson(res, 200, { feedback: items });
+    } catch (err) {
+      sendText(res, 500, err.message || "读取反馈失败");
+    }
     return;
   }
 
@@ -3044,14 +3099,18 @@ async function handleRequest(req, res) {
   if (req.method === "GET" && pathname === "/api/admin/proxy-missing") {
     const adminSession = requireAdminSession(req, res);
     if (!adminSession) return;
-    const store = loadProxyMissingStore();
-    const domains = Object.keys(store.domains)
-      .map((host) => ({ host, ...store.domains[host] }))
-      .sort(
-        (a, b) =>
-          b.count - a.count || String(b.lastSeen || "").localeCompare(String(a.lastSeen || "")),
-      );
-    sendJson(res, 200, { domains });
+    try {
+      const store = loadProxyMissingStore();
+      const domains = Object.keys(store.domains)
+        .map((host) => ({ host, ...store.domains[host] }))
+        .sort(
+          (a, b) =>
+            b.count - a.count || String(b.lastSeen || "").localeCompare(String(a.lastSeen || "")),
+        );
+      sendJson(res, 200, { domains });
+    } catch (err) {
+      sendText(res, 500, err.message || "读取缺失域名失败");
+    }
     return;
   }
 
@@ -3744,11 +3803,14 @@ module.exports = {
   verifyPassword,
   writeJsonAtomic,
   normalizeIp,
+  resolveClientIp,
+  loginAttemptKey,
   loginLockState,
   recordLoginFail,
   clearLoginFails,
   safeParseJson,
   normalizeUserRecord,
+  normalizeHistoryMessage,
   createUserRecord,
   normalizeProxyRoute,
   normalizeProxyRouteIds,

@@ -78,19 +78,28 @@ test("calendar preserves existing event format, case-sensitive membership and se
   assert.equal(JSON.parse(fs.readFileSync(f.file, "utf8")).events[0].id, created.body.event.id);
 });
 
-test("calendar retains RSVP/edit behavior and organizer-only deletion", async (t) => {
+test("calendar enforces organizer-only editing and deletion while keeping member RSVP", async (t) => {
   const f = fixture(t);
   const id = (await f.request("POST", "", newEvent)).body.event.id;
   const rsvp = await f.request("POST", `/${id}/rsvp`, { status: "tentative" }, "B");
   assert.equal(rsvp.body.event.attendees.find((a) => a.username === "Bob").rsvp, "tentative");
-  const edited = await f.request(
+  const deniedEdit = await f.request(
     "PATCH",
     `/${id}`,
-    { title: "Edited", organizer: "Bob", subnetKey: "team-b" },
+    { title: "Unauthorized edit", organizer: "Bob", subnetKey: "team-b" },
     "B",
   );
-  assert.equal(edited.body.event.title, "Edited");
-  assert.equal(edited.body.event.organizer, "Alice");
+  assert.equal(deniedEdit.status, 403);
+  assert.equal((await f.request("GET")).body.events[0].title, "Kept event");
+  const organizerEdit = await f.request(
+    "PATCH",
+    `/${id}`,
+    { title: "Edited by organizer", organizer: "Bob", subnetKey: "team-b" },
+    "A",
+  );
+  assert.equal(organizerEdit.status, 200);
+  assert.equal(organizerEdit.body.event.title, "Edited by organizer");
+  assert.equal(organizerEdit.body.event.organizer, "Alice");
   assert.equal((await f.request("DELETE", `/${id}`, {}, "B")).status, 403);
   assert.equal((await f.request("PATCH", `/${id}`, { title: "Other team" }, "C")).status, 404);
   assert.equal((await f.request("DELETE", `/${id}`)).status, 200);

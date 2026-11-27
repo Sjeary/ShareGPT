@@ -244,6 +244,10 @@ export function UsersPanel() {
   )
 }
 
+function sameStringList(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((item, index) => item === right[index])
+}
+
 function EditUserCard({
   user,
   onSave,
@@ -263,24 +267,53 @@ function EditUserCard({
   const proxyRoutes = useAdminStore((state) => state.proxyRoutes)
   const [disabled, setDisabled] = useState(Boolean(user?.disabled))
   const [chatDisabled, setChatDisabled] = useState(Boolean(user?.chatDisabled))
+  const [dirty, setDirty] = useState<Record<string, boolean>>({})
   const [busy, setBusy] = useState(false)
+
+  // Keep untouched form fields synchronized when quick-toggles or background refreshes update the user.
+  useEffect(() => {
+    if (!user) return
+    if (!dirty.displayName) setDisplayName(user.displayName || '')
+    if (!dirty.avatar) setAvatar(user.avatar || '')
+    if (!dirty.bio) setBio(user.bio || '')
+    if (!dirty.isAdmin) setIsAdmin(Boolean(user.isAdmin))
+    if (!dirty.advancedAiAllowed) setAdvancedAiAllowed(Boolean(user.advancedAiAllowed))
+    if (!dirty.allowedProxyRouteIds) setAllowedProxyRouteIds(user.allowedProxyRouteIds || [])
+    if (!dirty.disabled) setDisabled(Boolean(user.disabled))
+    if (!dirty.chatDisabled) setChatDisabled(Boolean(user.chatDisabled))
+  }, [user, dirty])
 
   async function submit() {
     if (!user) return
+    const patch: Record<string, unknown> = {}
+    if (dirty.displayName && displayName !== (user.displayName || ''))
+      patch.displayName = displayName
+    if (password) patch.password = password
+    if (dirty.avatar && avatar !== (user.avatar || '')) patch.avatar = avatar
+    if (dirty.bio && bio !== (user.bio || '')) patch.bio = bio
+    if (dirty.isAdmin && isAdmin !== Boolean(user.isAdmin)) patch.isAdmin = isAdmin
+    if (dirty.advancedAiAllowed && advancedAiAllowed !== Boolean(user.advancedAiAllowed)) {
+      patch.advancedAiAllowed = advancedAiAllowed
+    }
+    if (
+      dirty.allowedProxyRouteIds &&
+      !sameStringList(allowedProxyRouteIds, user.allowedProxyRouteIds || [])
+    ) {
+      patch.allowedProxyRouteIds = allowedProxyRouteIds
+    }
+    if (dirty.disabled && disabled !== Boolean(user.disabled)) patch.disabled = disabled
+    if (dirty.chatDisabled && chatDisabled !== Boolean(user.chatDisabled)) {
+      patch.chatDisabled = chatDisabled
+    }
+    if (Object.keys(patch).length === 0) {
+      toast.info('当前没有需要保存的改动')
+      return
+    }
     setBusy(true)
     try {
-      await onSave(user.username, {
-        displayName,
-        password,
-        avatar,
-        bio,
-        isAdmin,
-        advancedAiAllowed,
-        allowedProxyRouteIds,
-        disabled,
-        chatDisabled,
-      })
+      await onSave(user.username, patch)
       setPassword('')
+      setDirty({})
       toast.success(`已保存用户 ${user.username}`)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -309,7 +342,13 @@ function EditUserCard({
       </CardHeader>
       <CardContent className="grid gap-3">
         <Field label="显示名">
-          <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+          <Input
+            value={displayName}
+            onChange={(e) => {
+              setDisplayName(e.target.value)
+              setDirty((d) => ({ ...d, displayName: true }))
+            }}
+          />
         </Field>
         <Field label="重设密码">
           <Input
@@ -320,19 +359,34 @@ function EditUserCard({
           />
         </Field>
         <Field label="头像">
-          <Input value={avatar} onChange={(e) => setAvatar(e.target.value)} />
+          <Input
+            value={avatar}
+            onChange={(e) => {
+              setAvatar(e.target.value)
+              setDirty((d) => ({ ...d, avatar: true }))
+            }}
+          />
         </Field>
         <Field label="简介">
           <textarea
             value={bio}
-            onChange={(e) => setBio(e.target.value)}
+            onChange={(e) => {
+              setBio(e.target.value)
+              setDirty((d) => ({ ...d, bio: true }))
+            }}
             rows={3}
             className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
         </Field>
         <div className="flex items-center justify-between">
           <Label className="cursor-default">管理员</Label>
-          <Switch checked={isAdmin} onCheckedChange={setIsAdmin} />
+          <Switch
+            checked={isAdmin}
+            onCheckedChange={(v) => {
+              setIsAdmin(v)
+              setDirty((d) => ({ ...d, isAdmin: true }))
+            }}
+          />
         </div>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -344,7 +398,10 @@ function EditUserCard({
           <Switch
             checked={isAdmin || advancedAiAllowed}
             disabled={isAdmin}
-            onCheckedChange={setAdvancedAiAllowed}
+            onCheckedChange={(v) => {
+              setAdvancedAiAllowed(v)
+              setDirty((d) => ({ ...d, advancedAiAllowed: true }))
+            }}
           />
         </div>
         <RouteAuthorization
@@ -355,11 +412,20 @@ function EditUserCard({
             ...proxyRoutes.map((route) => ({ id: route.id, name: route.name })),
           ]}
           selected={allowedProxyRouteIds}
-          onChange={setAllowedProxyRouteIds}
+          onChange={(ids) => {
+            setAllowedProxyRouteIds(ids)
+            setDirty((d) => ({ ...d, allowedProxyRouteIds: true }))
+          }}
         />
         <div className="flex items-center justify-between">
           <Label className="cursor-default">禁用账号</Label>
-          <Switch checked={disabled} onCheckedChange={setDisabled} />
+          <Switch
+            checked={disabled}
+            onCheckedChange={(v) => {
+              setDisabled(v)
+              setDirty((d) => ({ ...d, disabled: true }))
+            }}
+          />
         </div>
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0">
@@ -368,7 +434,13 @@ function EditUserCard({
               无聊天入口、不收消息、别人发他也不弹窗
             </p>
           </div>
-          <Switch checked={chatDisabled} onCheckedChange={setChatDisabled} />
+          <Switch
+            checked={chatDisabled}
+            onCheckedChange={(v) => {
+              setChatDisabled(v)
+              setDirty((d) => ({ ...d, chatDisabled: true }))
+            }}
+          />
         </div>
         <Button disabled={busy} onClick={() => void submit()}>
           {busy ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}

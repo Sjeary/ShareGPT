@@ -30,7 +30,7 @@ for (const name of [
 process.env.RELEASE_STORE = path.join(directory, "release-store");
 process.env.RELEASES_DIR = path.join(directory, "releases");
 process.env.LOGIN_MAX_FAILS = "3";
-const { server, createUserRecord, clearLoginFails } = require("../server");
+const { server, createUserRecord, clearLoginFails, normalizeHistoryMessage } = require("../server");
 test.after(() => fs.rmSync(directory, { recursive: true, force: true }));
 
 function post(url, body, hold = false, options = {}) {
@@ -430,5 +430,84 @@ test("personal data request cannot write after its original token is revoked", a
       ? fs.readFileSync(process.env.USER_STORES_FILE, "utf8")
       : null;
     assert.equal(after, before);
+  }
+});
+
+test("reverse proxy login failures isolate different users and forwarded client IPs", async () => {
+  const accounts = JSON.parse(fs.readFileSync(process.env.USERS_FILE));
+  if (!accounts.users.some((u) => u.username === "proxy-user-a")) {
+    accounts.users.push(createUserRecord("proxy-user-a", "pass-a"));
+    accounts.users.push(createUserRecord("proxy-user-b", "pass-b"));
+    fs.writeFileSync(process.env.USERS_FILE, JSON.stringify(accounts));
+  }
+  for (let i = 0; i < 3; i += 1) {
+    const failed = await post(
+      "/api/login",
+      { username: "proxy-user-a", password: "wrong" },
+      false,
+      { headers: { "x-forwarded-for": "198.51.100.10" } },
+    ).result;
+    assert.equal(failed.status, 401);
+  }
+  const lockedA = await post(
+    "/api/login",
+    { username: "proxy-user-a", password: "pass-a" },
+    false,
+    { headers: { "x-forwarded-for": "198.51.100.10" } },
+  ).result;
+  assert.equal(lockedA.status, 429);
+  const okB = await post("/api/login", { username: "proxy-user-b", password: "pass-b" }, false, {
+    headers: { "x-forwarded-for": "198.51.100.20" },
+  }).result;
+  assert.equal(okB.status, 200);
+  const okBSameIp = await post(
+    "/api/login",
+    { username: "proxy-user-b", password: "pass-b" },
+    false,
+    { headers: { "x-forwarded-for": "198.51.100.10" } },
+  ).result;
+  assert.equal(okBSameIp.status, 200);
+});
+
+test("chat reactions survive history normalization and recalled messages drop reactions", () => {
+  const kept = normalizeHistoryMessage({
+    id: "m-react-1",
+    scope: "subnet",
+    from: "first-admin",
+    username: "first-admin",
+    text: "hello",
+    reactions: { "👍": ["first-admin", "first-admin", ""], "🔥": ["next-admin"] },
+  });
+  assert.deepEqual(kept.reactions, { "👍": ["first-admin"], "🔥": ["next-admin"] });
+  const recalled = normalizeHistoryMessage({
+    id: "m-react-2",
+    scope: "subnet",
+    from: "first-admin",
+    username: "first-admin",
+    text: "gone",
+    recalled: true,
+    reactions: { "👍": ["first-admin"] },
+  });
+  assert.equal(recalled.reactions, undefined);
+});
+
+test("corrupt feedback and proxy-missing files are rejected and never overwritten without backup", async () => {
+  const login = JSON.parse(
+    (await post("/api/login", { username: "first-admin", password: "test-password" }).result).body,
+  );
+  const headers = { authorization: `Bearer ${login.token}` };
+  for (const [envKey, endpoint, body] of [
+    ["FEEDBACK_FILE", "/api/feedback", { text: "keep damaged original" }],
+    ["PROXY_MISSING_FILE", "/api/proxy/missing", { domains: ["example.com"] }],
+  ]) {
+    const file = process.env[envKey];
+    const backup = `${file}.backup`;
+    if (fs.existsSync(backup)) fs.unlinkSync(backup);
+    const damaged = "{damaged-json";
+    fs.writeFileSync(file, damaged);
+    const resp = await post(endpoint, body, false, { headers }).result;
+    assert.equal(resp.status, 500);
+    assert.equal(fs.readFileSync(file, "utf8"), damaged);
+    fs.unlinkSync(file);
   }
 });

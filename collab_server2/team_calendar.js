@@ -203,6 +203,10 @@ function createTeamCalendarHandler({
               return true;
             }
             const prev = store.events[idx];
+            if (prev.organizer !== session.username) {
+              sendText(res, 403, "只有组织者可以编辑事件");
+              return true;
+            }
             const merged = normalizeTeamEvent({
               ...prev,
               ...payload,
