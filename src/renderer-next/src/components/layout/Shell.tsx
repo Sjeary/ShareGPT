@@ -32,6 +32,7 @@ import { Toaster } from '@/components/ui/sonner'
 import { openChatNotificationRoute } from '@/lib/notify'
 
 const TerminalPanel = lazy(() => import('@/components/panels/TerminalPanel'))
+const AdminPanel = lazy(() => import('@/components/panels/AdminPanel'))
 
 function safeText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -46,9 +47,12 @@ export function Shell() {
   const hiddenNav = useAppStore((s) => s.hiddenNav)
   const terminalAllowed =
     canUseAdvancedAi(workspaceMode, token, profile) && !hiddenNav.includes('terminal')
+  const adminAllowed =
+    workspaceMode === 'organization' && Boolean(token) && profile?.isAdmin === true
   useEffect(() => {
     if (active === 'terminal' && !terminalAllowed) useAppStore.getState().setActive('account')
-  }, [active, terminalAllowed])
+    if (active === 'admin' && !adminAllowed) useAppStore.getState().setActive('account')
+  }, [active, adminAllowed, terminalAllowed])
   const dark = useAppStore((s) => s.dark)
   const sidebarHidden = useAppStore((s) => s.sidebarHidden)
   const sidebarSide = useAppStore((s) => s.sidebarSide)
@@ -166,6 +170,17 @@ export function Shell() {
         {active === 'claude' && <ClaudePanel />}
         {active === 'stats' && <StatsPanel />}
         {active === 'logs' && <LogsPanel />}
+        {adminAllowed && active === 'admin' && (
+          <Suspense
+            fallback={
+              <div className="grid flex-1 place-items-center text-sm text-muted-foreground">
+                正在加载管理后台…
+              </div>
+            }
+          >
+            <AdminPanel />
+          </Suspense>
+        )}
         {terminalAllowed && !dataSuspended && (
           <div className={active === 'terminal' ? 'flex min-w-0 flex-1' : 'hidden'}>
             <Suspense fallback={null}>

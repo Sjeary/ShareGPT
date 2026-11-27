@@ -10,6 +10,7 @@ import {
   BookText,
   Timer,
   TerminalSquare,
+  ShieldCheck,
   type LucideIcon,
 } from 'lucide-react'
 import { ChatGPTIcon, ClaudeIcon, GeminiIcon } from '@/components/icons/AiBrandIcons'
@@ -29,6 +30,7 @@ export type NavKey =
   | 'account'
   | 'logs'
   | 'terminal'
+  | 'admin'
 
 export type NavGroup = 'ai' | 'collab' | 'system'
 
@@ -84,6 +86,13 @@ export const NAV: NavItem[] = [
   { key: 'stats', label: '使用统计', icon: BarChart3, hint: '查询量与排行', group: 'system' },
   { key: 'terminal', label: '终端', icon: TerminalSquare, hint: '本机终端', group: 'system' },
   { key: 'logs', label: '运行日志', icon: ScrollText, hint: '服务输出日志', group: 'system' },
+  {
+    key: 'admin',
+    label: '管理后台',
+    icon: ShieldCheck,
+    hint: '成员、邀请、线路与系统管理',
+    group: 'system',
+  },
   {
     key: 'account',
     label: '账户与设置',

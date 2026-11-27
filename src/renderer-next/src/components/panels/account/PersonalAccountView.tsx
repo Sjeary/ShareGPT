@@ -1,5 +1,17 @@
 import { useState } from 'react'
-import { ArrowRight, Building2, Laptop, LogIn, X } from 'lucide-react'
+import {
+  ArrowRight,
+  Building2,
+  HardDrive,
+  Laptop,
+  LayoutGrid,
+  LogIn,
+  Palette,
+  Shield,
+  Sparkles,
+  X,
+  type LucideIcon,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
@@ -7,20 +19,25 @@ import { AboutSection, ChangelogSection, UpdateSection } from './AppInfoSections
 import { BrowserPrivacySection } from './BrowserPrivacySection'
 import { ImportActions } from './ImportActions'
 import { InterfaceSettings } from './InterfaceSettings'
+import { ShortcutsCard } from './LoggedInView'
 import { TeamAuthCard, useTeamLoginFormState, type OrgAuthTab } from './TeamAuthCard'
 
 type PersonalSettingsCategory = 'all' | 'account' | 'interface' | 'privacy' | 'data' | 'updates'
 
-const PERSONAL_CATEGORIES: ReadonlyArray<{ id: PersonalSettingsCategory; label: string }> = [
-  { id: 'all', label: '全部' },
-  { id: 'account', label: '工作区' },
-  { id: 'interface', label: '界面' },
-  { id: 'privacy', label: '隐私与环境' },
-  { id: 'data', label: '本机资料' },
-  { id: 'updates', label: '更新与关于' },
+const PERSONAL_CATEGORIES: ReadonlyArray<{
+  id: PersonalSettingsCategory
+  label: string
+  desc: string
+  icon: LucideIcon
+}> = [
+  { id: 'all', label: '全部设置', desc: '一览所有配置项', icon: LayoutGrid },
+  { id: 'account', label: '工作区', desc: '个人模式与团队登录', icon: Laptop },
+  { id: 'interface', label: '界面与快捷键', desc: '主题、模块与操作', icon: Palette },
+  { id: 'privacy', label: '隐私与环境', desc: '浏览器分区与清理', icon: Shield },
+  { id: 'data', label: '本机资料', desc: '备份导出与导入', icon: HardDrive },
+  { id: 'updates', label: '更新与关于', desc: '版本日志与说明', icon: Sparkles },
 ]
 
-// 个人工作区内的「账户与设置」视图，与已登录设置中心（LoggedInView）保持完全一致的排版与动效节奏。
 export function PersonalAccountView() {
   const [category, setCategory] = useState<PersonalSettingsCategory>('all')
   const [showOrganizationLogin, setShowOrganizationLogin] = useState(false)
@@ -31,37 +48,57 @@ export function PersonalAccountView() {
     category === 'all' || category === target
 
   return (
-    <div className="mx-auto flex max-w-xl flex-col gap-4 p-6">
-      <div
+    <div className="mx-auto grid max-w-5xl gap-6 p-6 lg:grid-cols-[216px_minmax(0,1fr)] lg:items-start">
+      <nav
         role="tablist"
         aria-label="设置分类"
-        className="sticky top-0 z-10 -mx-1 flex flex-wrap gap-1.5 rounded-xl border border-border/90 bg-background/92 p-1.5 shadow-2xs backdrop-blur-md"
+        className="flex flex-wrap gap-1.5 lg:sticky lg:top-6 lg:flex-col lg:gap-1"
       >
-        {PERSONAL_CATEGORIES.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            role="tab"
-            aria-selected={category === item.id}
-            onClick={() => setCategory(item.id)}
-            className={cn(
-              'rounded-lg px-3 py-1.5 text-xs font-medium transition-[background-color,color,box-shadow] duration-150',
-              category === item.id
-                ? 'bg-primary text-primary-foreground shadow-xs'
-                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-            )}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
+        {PERSONAL_CATEGORIES.map((item) => {
+          const Icon = item.icon
+          const selected = category === item.id
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => setCategory(item.id)}
+              className={cn(
+                'flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors',
+                selected
+                  ? 'bg-primary text-primary-foreground shadow-xs'
+                  : 'bg-card/60 text-foreground hover:bg-muted lg:bg-transparent',
+              )}
+            >
+              <Icon
+                className={cn(
+                  'size-4 shrink-0',
+                  selected ? 'text-primary-foreground' : 'text-muted-foreground',
+                )}
+              />
+              <span className="min-w-0">
+                <span className="block truncate text-xs font-medium lg:text-sm">{item.label}</span>
+                <span
+                  className={cn(
+                    'hidden truncate text-[11px] lg:block',
+                    selected ? 'text-primary-foreground/80' : 'text-muted-foreground',
+                  )}
+                >
+                  {item.desc}
+                </span>
+              </span>
+            </button>
+          )
+        })}
+      </nav>
 
-      <div key={category} className="motion-tab-panel flex flex-col gap-4">
+      <div className="flex min-w-0 flex-col gap-4">
         {show('account') && (
           <>
-            <div className="flex w-full items-start gap-3.5 rounded-xl border border-border/80 bg-card/70 px-4 py-3.5 shadow-2xs">
-              <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-primary/12 text-primary">
-                <Laptop className="size-4" />
+            <div className="flex w-full items-start gap-3.5 rounded-xl border border-border/85 bg-card px-4 py-3.5 shadow-2xs">
+              <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/12 text-primary">
+                <Laptop className="size-5" />
               </div>
               <div className="min-w-0">
                 <p className="text-sm font-semibold">当前：个人工作区</p>
@@ -73,7 +110,7 @@ export function PersonalAccountView() {
             </div>
 
             {showOrganizationLogin ? (
-              <div className="motion-tab-panel space-y-2">
+              <div className="space-y-2">
                 <div className="flex justify-end">
                   <Button
                     type="button"
@@ -141,15 +178,14 @@ export function PersonalAccountView() {
           </>
         )}
 
-        {show('interface') && <InterfaceSettings />}
-
-        {show('updates') && (
+        {show('interface') && (
           <>
-            <UpdateSection />
-            <ChangelogSection />
-            <AboutSection />
+            <InterfaceSettings />
+            <ShortcutsCard />
           </>
         )}
+
+        {show('privacy') && <BrowserPrivacySection />}
 
         {show('data') && (
           <Card className="w-full">
@@ -162,7 +198,13 @@ export function PersonalAccountView() {
           </Card>
         )}
 
-        {show('privacy') && <BrowserPrivacySection />}
+        {show('updates') && (
+          <>
+            <UpdateSection />
+            <ChangelogSection />
+            <AboutSection />
+          </>
+        )}
       </div>
     </div>
   )

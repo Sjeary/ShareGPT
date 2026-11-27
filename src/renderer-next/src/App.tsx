@@ -2,6 +2,8 @@ import { useEffect } from 'react'
 import { Cable, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/store/useAppStore'
+import { useAuthStore } from '@/store/useAuthStore'
+import { connectIntegratedAdminSession } from '@/store/useIntegratedAdminStore'
 import { DEFAULT_TARGET_DOMAINS } from '@/components/panels/service/helpers'
 import { Titlebar } from '@/components/layout/Titlebar'
 import { Shell } from '@/components/layout/Shell'
@@ -20,6 +22,33 @@ export default function App() {
   useEffect(() => {
     void init()
   }, [init])
+
+  // 常驻绑定集成管理台会话：与桌面账号/管理员权限同生共死，退出/切换/撤权立刻清空缓存并取消在途请求。
+  useEffect(() => {
+    return connectIntegratedAdminSession({
+      getSession: () => {
+        const app = useAppStore.getState()
+        const auth = useAuthStore.getState()
+        if (app.workspaceMode !== 'organization' || !auth.token || auth.profile?.isAdmin !== true) {
+          return null
+        }
+        return {
+          serverUrl: app.settings?.collab?.server_url || '',
+          token: auth.token,
+          username: auth.profile.username,
+          isAdmin: auth.profile.isAdmin === true,
+        }
+      },
+      subscribe: (listener) => {
+        const offAuth = useAuthStore.subscribe(listener)
+        const offApp = useAppStore.subscribe(listener)
+        return () => {
+          offAuth()
+          offApp()
+        }
+      },
+    })
+  }, [])
 
   // 版本更新后: 把已并入最新内置清单 DEFAULT_TARGET_DOMAINS 的"自动域名"剔除,
   // 保证代理域名以最新内置清单为准, 而非一直保留旧的自动累积项。(按版本只跑一次)

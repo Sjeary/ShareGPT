@@ -27,13 +27,13 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const navOrder = useAppStore((s) => s.navOrder)
   const setNavOrder = useAppStore((s) => s.setNavOrder)
   const meta = useAppStore((s) => s.meta)
-  const status = useAppStore((s) => s.status)
+  const senderRunning = useAppStore((s) => isSenderRunning(s.status))
   const workspaceMode = useAppStore((s) => s.workspaceMode)
   const token = useAuthStore((s) => s.token)
   const profile = useAuthStore((s) => s.profile)
   const unreadByKey = useChatStore((s) => s.unreadByKey)
+  const isAdmin = Boolean(workspaceMode === 'organization' && token && profile?.isAdmin)
   const terminalAllowed = canUseAdvancedAi(workspaceMode, token, profile)
-  const senderRunning = isSenderRunning(status)
   // 管理员可禁止某人用协作聊天: 禁用则隐藏「协作聊天」入口 (服务端不投递消息, 这里只隐藏入口)。
   const chatDisabled = useAuthStore((s) => Boolean(s.profile?.chatDisabled))
 
@@ -45,7 +45,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
         (item.key !== 'terminal' || terminalAllowed) &&
         (item.key !== 'gemini' || showGemini) &&
         (item.key !== 'claude' || showClaude) &&
-        workspaceNavAvailable(workspaceMode, item.key, { chatDisabled }) &&
+        workspaceNavAvailable(workspaceMode, item.key, { chatDisabled, isAdmin }) &&
         !hiddenNav.includes(item.key),
     )
     if (!navOrder.length) return filtered
@@ -54,7 +54,16 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
       return i >= 0 ? i : navOrder.length + NAV.findIndex((n) => n.key === k)
     }
     return [...filtered].sort((a, b) => rank(a.key) - rank(b.key))
-  }, [showGemini, showClaude, chatDisabled, hiddenNav, navOrder, workspaceMode, terminalAllowed])
+  }, [
+    showGemini,
+    showClaude,
+    chatDisabled,
+    isAdmin,
+    hiddenNav,
+    navOrder,
+    workspaceMode,
+    terminalAllowed,
+  ])
 
   // 侧栏在右时: 边框换到左侧, 收起态 Tooltip 弹向左侧 (避免被自身遮挡/出屏)。
   const onRight = sidebarSide === 'right'
@@ -68,10 +77,10 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
     void tasksInit()
   }, [tasksInit])
 
-  const todayStr = format(new Date(), 'yyyy-MM-dd')
-  const todayTaskCount = tasks.filter(
-    (t) => !t.completed && t.dueDate && t.dueDate <= todayStr,
-  ).length
+  const todayTaskCount = useMemo(() => {
+    const todayStr = format(new Date(), 'yyyy-MM-dd')
+    return tasks.filter((t) => !t.completed && t.dueDate && t.dueDate <= todayStr).length
+  }, [tasks])
   const totalChatUnread = useMemo(
     () =>
       Object.values(unreadByKey).reduce(

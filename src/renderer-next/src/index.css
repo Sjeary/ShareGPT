@@ -229,11 +229,7 @@
   .motion-panel-enter,
   .motion-stage-forward,
   .motion-stage-back,
-  .motion-tab-panel {
-    animation-name: workspace-entry-fade-in;
-    animation-duration: 140ms;
-  }
-
+  .motion-tab-panel,
   .motion-shake,
   .motion-pulse-soft,
   .motion-loading-bar {

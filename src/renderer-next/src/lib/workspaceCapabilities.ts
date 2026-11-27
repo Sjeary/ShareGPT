@@ -14,6 +14,7 @@ export type WorkspaceModuleId =
   | 'account'
   | 'logs'
   | 'terminal'
+  | 'admin'
 
 export interface WorkspaceModuleDefinition {
   id: WorkspaceModuleId
@@ -33,6 +34,7 @@ export const WORKSPACE_MODULES: readonly WorkspaceModuleDefinition[] = [
   { id: 'account', personal: true, organization: true },
   { id: 'terminal', personal: false, organization: true },
   { id: 'logs', personal: true, organization: true },
+  { id: 'admin', personal: false, organization: true },
 ] as const
 
 const MODULE_BY_ID = new Map(WORKSPACE_MODULES.map((module) => [module.id, module]))
@@ -52,24 +54,26 @@ const NAV_MODULE: Record<NavKey, WorkspaceModuleId> = {
   account: 'account',
   logs: 'logs',
   terminal: 'terminal',
+  admin: 'admin',
 }
 
 export function workspaceModuleAvailable(
   mode: WorkspaceMode,
   moduleId: WorkspaceModuleId,
-  options: { chatDisabled?: boolean } = {},
+  options: { chatDisabled?: boolean; isAdmin?: boolean } = {},
 ): boolean {
   const module = MODULE_BY_ID.get(moduleId)
   if (!module || mode === 'chooser') return false
   if (mode === 'personal') return module.personal
   if (moduleId === 'collaboration' && options.chatDisabled) return false
+  if (moduleId === 'admin' && options.isAdmin !== true) return false
   return module.organization
 }
 
 export function workspaceNavAvailable(
   mode: WorkspaceMode,
   key: NavKey,
-  options: { chatDisabled?: boolean } = {},
+  options: { chatDisabled?: boolean; isAdmin?: boolean } = {},
 ): boolean {
   return workspaceModuleAvailable(mode, NAV_MODULE[key], options)
 }

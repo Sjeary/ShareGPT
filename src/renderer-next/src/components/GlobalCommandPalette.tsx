@@ -44,6 +44,17 @@ export function GlobalCommandPalette({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
+  if (!open) return null
+  return <GlobalCommandPaletteInner open={open} onOpenChange={onOpenChange} />
+}
+
+function GlobalCommandPaletteInner({
+  open,
+  onOpenChange,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}) {
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -66,6 +77,7 @@ export function GlobalCommandPalette({
   const connection = useChatStore((s) => s.connection)
 
   const senderRunning = isSenderRunning(status)
+  const isAdmin = Boolean(workspaceMode === 'organization' && token && profile?.isAdmin)
   const terminalAllowed = canUseAdvancedAi(workspaceMode, token, profile)
   const chatDisabled = Boolean(profile?.chatDisabled)
   const translationAllowed = canUseTranslation(workspaceMode, token, profile)
@@ -84,7 +96,7 @@ export function GlobalCommandPalette({
         (item.key !== 'terminal' || terminalAllowed) &&
         (item.key !== 'gemini' || showGemini) &&
         (item.key !== 'claude' || showClaude) &&
-        workspaceNavAvailable(workspaceMode, item.key, { chatDisabled }) &&
+        workspaceNavAvailable(workspaceMode, item.key, { chatDisabled, isAdmin }) &&
         !hiddenNav.includes(item.key),
     ).map((item) => ({
       id: `nav:${item.key}`,
@@ -194,6 +206,7 @@ export function GlobalCommandPalette({
     showGemini,
     sidebarCollapsed,
     terminalAllowed,
+    isAdmin,
     toggleSidebar,
     toggleTheme,
     translationAllowed,
@@ -216,7 +229,7 @@ export function GlobalCommandPalette({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-lg">
+      <DialogContent showCloseButton={false} className="gap-0 overflow-hidden p-0 sm:max-w-lg">
         <DialogTitle className="sr-only">快速跳转与命令</DialogTitle>
         <DialogDescription className="sr-only">
           输入功能名称或命令，按回车执行跳转或快捷操作

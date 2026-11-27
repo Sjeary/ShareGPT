@@ -1,27 +1,41 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
+import {
+  ArrowUpRight,
+  Copy,
+  HardDrive,
+  Keyboard,
+  Laptop,
+  LayoutGrid,
+  LogOut,
+  Palette,
+  Shield,
+  ShieldCheck,
+  Sparkles,
+  UserCog,
+  UserRound,
+  type LucideIcon,
+} from 'lucide-react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
-import { cn } from '@/lib/utils'
+import { Switch } from '@/components/ui/switch'
+import { useAuth } from '@/hooks/useAuth'
 import { api } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
-
-import { LogOut, UserCog, Laptop } from 'lucide-react'
-import { useAuth } from '@/hooks/useAuth'
 import type { CollabSettings } from '@/types/settings'
+import { AboutSection, ChangelogSection, UpdateSection } from './AppInfoSections'
 import { BrowserPrivacySection } from './BrowserPrivacySection'
+import { ImportActions } from './ImportActions'
 import { InterfaceSettings } from './InterfaceSettings'
 import { SessionRecoveryForm } from './SessionRecoveryForm'
-import { ImportActions } from './ImportActions'
-import { AboutSection, ChangelogSection, UpdateSection } from './AppInfoSections'
 
-// 协作通知开关项 (对应 collab.notify_* 字段，全部默认关闭，按需开启)。
 const NOTIFY_FIELDS: ReadonlyArray<{
   key: keyof Pick<
     CollabSettings,
@@ -62,13 +76,18 @@ const NOTIFY_FIELDS: ReadonlyArray<{
 
 type SettingsCategory = 'all' | 'account' | 'interface' | 'privacy' | 'data' | 'updates'
 
-const SETTINGS_CATEGORIES: ReadonlyArray<{ id: SettingsCategory; label: string }> = [
-  { id: 'all', label: '全部' },
-  { id: 'account', label: '账户' },
-  { id: 'interface', label: '界面与通知' },
-  { id: 'privacy', label: '隐私与环境' },
-  { id: 'data', label: '本机资料' },
-  { id: 'updates', label: '更新与关于' },
+const SETTINGS_CATEGORIES: ReadonlyArray<{
+  id: SettingsCategory
+  label: string
+  desc: string
+  icon: LucideIcon
+}> = [
+  { id: 'all', label: '全部设置', desc: '一览所有配置项', icon: LayoutGrid },
+  { id: 'account', label: '账户与权限', desc: '身份、资料与工作区', icon: UserRound },
+  { id: 'interface', label: '界面与通知', desc: '主题、模块与快捷键', icon: Palette },
+  { id: 'privacy', label: '隐私与环境', desc: '浏览器分区与清理', icon: Shield },
+  { id: 'data', label: '本机资料', desc: '备份导出与导入', icon: HardDrive },
+  { id: 'updates', label: '更新与反馈', desc: '版本日志与建议', icon: Sparkles },
 ]
 
 function initialsOf(name: string): string {
@@ -83,8 +102,6 @@ function safeText(value: unknown): string {
   return ''
 }
 
-// 反馈建议: 登录用户提交一条文本反馈, 直连协作服务器 POST /api/feedback (Bearer)。
-// 管理端在 Admin 控制台「反馈」面板查看。
 function FeedbackSection() {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
@@ -129,14 +146,15 @@ function FeedbackSection() {
     <Card>
       <CardHeader>
         <CardTitle className="text-base">反馈建议</CardTitle>
+        <CardDescription>直接发送给团队管理员，帮助持续改进产品体验。</CardDescription>
       </CardHeader>
-      <CardContent className="grid gap-2">
+      <CardContent className="grid gap-2.5">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           rows={3}
           maxLength={2000}
-          placeholder="使用中的问题或建议，写在这里提交给管理员～"
+          placeholder="使用中的问题或建议，写在这里提交给管理员…"
           className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
         <div className="flex items-center justify-between">
@@ -150,12 +168,47 @@ function FeedbackSection() {
   )
 }
 
+export function ShortcutsCard() {
+  const isMac = api.platform === 'darwin'
+  const mod = isMac ? '⌘' : 'Ctrl'
+  const items = [
+    { keys: `${mod} + K`, label: '打开全局快速跳转与命令面板' },
+    { keys: 'F11', label: '切换全屏浏览 AI 网页' },
+    { keys: 'Esc', label: '恢复已隐藏的侧栏与顶部信息栏' },
+    { keys: `${mod} + 滚轮`, label: '缩放内嵌 AI 网页字体大小' },
+  ]
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Keyboard className="size-4 text-primary" />
+          常用快捷键
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-2 sm:grid-cols-2">
+        {items.map((item) => (
+          <div
+            key={item.keys}
+            className="flex items-center justify-between gap-2 rounded-lg border border-border/70 bg-muted/25 px-3 py-2 text-xs"
+          >
+            <span className="text-muted-foreground">{item.label}</span>
+            <kbd className="shrink-0 rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[11px] font-medium text-foreground">
+              {item.keys}
+            </kbd>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
 export function LoggedInView() {
   const collab = useAppStore((s) => s.settings?.collab)
   const patchSection = useAppStore((s) => s.patchSection)
+  const setActive = useAppStore((s) => s.setActive)
+  const setWorkspaceMode = useAppStore((s) => s.setWorkspaceMode)
   const profile = useAuthStore((s) => s.profile)
   const { logout } = useAuth()
-  const setWorkspaceMode = useAppStore((s) => s.setWorkspaceMode)
 
   const [category, setCategory] = useState<SettingsCategory>('all')
   const [loggingOut, setLoggingOut] = useState(false)
@@ -164,6 +217,8 @@ export function LoggedInView() {
   const displayName = profile?.displayName || collab?.last_username || '未知账号'
   const username = profile?.username || collab?.last_username || ''
   const avatar = profile?.avatar || collab?.last_avatar || ''
+  const serverUrl = safeText(collab?.server_url)
+  const isAdmin = profile?.isAdmin === true
 
   async function handleLogout() {
     if (loggingOut) return
@@ -193,7 +248,6 @@ export function LoggedInView() {
   }
 
   async function handleEditProfile() {
-    const serverUrl = collab?.server_url ?? ''
     const token = useAuthStore.getState().token
     const user = username || useChatStore.getState().identity.username
     if (!token) {
@@ -204,6 +258,16 @@ export function LoggedInView() {
       await api.openProfileEditor({ serverUrl, token, username: user })
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '打开个人资料失败')
+    }
+  }
+
+  async function copyServerUrl() {
+    if (!serverUrl) return
+    try {
+      await navigator.clipboard.writeText(serverUrl)
+      toast.success('已复制团队服务器地址')
+    } catch {
+      toast.error('复制失败')
     }
   }
 
@@ -223,72 +287,140 @@ export function LoggedInView() {
     category === 'all' || category === target
 
   return (
-    <div className="mx-auto flex max-w-xl flex-col gap-4 p-6">
-      <div
+    <div className="mx-auto grid max-w-5xl gap-6 p-6 lg:grid-cols-[216px_minmax(0,1fr)] lg:items-start">
+      {/* 左侧固定设置分类导轨：点击即时切换，无 backdrop-blur 拖慢与强制重挂载 */}
+      <nav
         role="tablist"
         aria-label="设置分类"
-        className="sticky top-0 z-10 -mx-1 flex flex-wrap gap-1.5 rounded-xl border border-border/90 bg-background/92 p-1.5 shadow-2xs backdrop-blur-md"
+        className="flex flex-wrap gap-1.5 lg:sticky lg:top-6 lg:flex-col lg:gap-1"
       >
-        {SETTINGS_CATEGORIES.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            role="tab"
-            aria-selected={category === item.id}
-            onClick={() => setCategory(item.id)}
-            className={cn(
-              'rounded-lg px-3 py-1.5 text-xs font-medium transition-[background-color,color,box-shadow] duration-150',
-              category === item.id
-                ? 'bg-primary text-primary-foreground shadow-xs'
-                : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-            )}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
+        {SETTINGS_CATEGORIES.map((item) => {
+          const Icon = item.icon
+          const selected = category === item.id
+          return (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => setCategory(item.id)}
+              className={cn(
+                'flex items-center gap-2.5 rounded-lg px-3 py-2 text-left transition-colors',
+                selected
+                  ? 'bg-primary text-primary-foreground shadow-xs'
+                  : 'bg-card/60 text-foreground hover:bg-muted lg:bg-transparent',
+              )}
+            >
+              <Icon
+                className={cn(
+                  'size-4 shrink-0',
+                  selected ? 'text-primary-foreground' : 'text-muted-foreground',
+                )}
+              />
+              <span className="min-w-0">
+                <span className="block truncate text-xs font-medium lg:text-sm">{item.label}</span>
+                <span
+                  className={cn(
+                    'hidden truncate text-[11px] lg:block',
+                    selected ? 'text-primary-foreground/80' : 'text-muted-foreground',
+                  )}
+                >
+                  {item.desc}
+                </span>
+              </span>
+            </button>
+          )
+        })}
 
-      <SessionRecoveryForm />
+        {isAdmin && (
+          <div className="mt-2 hidden rounded-xl border border-primary/30 bg-primary/10 p-3 lg:block">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+              <ShieldCheck className="size-4" />
+              管理员专属入口
+            </div>
+            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+              成员管理、邀请链接、线路与翻译服务已集成在软件内。
+            </p>
+            <Button size="xs" className="mt-2.5 w-full" onClick={() => setActive('admin')}>
+              打开管理后台
+              <ArrowUpRight className="size-3.5" />
+            </Button>
+          </div>
+        )}
+      </nav>
 
-      <div key={category} className="motion-tab-panel flex flex-col gap-4">
+      {/* 右侧主内容区：不按 category 设 key，切换分类零卸载/重拉 */}
+      <div className="flex min-w-0 flex-col gap-4">
+        <SessionRecoveryForm />
+
         {show('account') && (
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base">账户</CardTitle>
-            </CardHeader>
-            <CardContent className="grid gap-3">
-              <div className="flex items-center gap-4">
-                <Avatar size="lg">
-                  {avatar && <AvatarImage src={avatar} alt={displayName} />}
-                  <AvatarFallback>{initialsOf(displayName)}</AvatarFallback>
-                </Avatar>
-                <div className="min-w-0 flex-1">
-                  <p className="selectable truncate text-base font-semibold">{displayName}</p>
-                  {username && username !== displayName && (
-                    <p className="selectable truncate text-xs text-muted-foreground">{username}</p>
-                  )}
-                  <p className="truncate text-xs text-success">已连接协作服务</p>
+            <CardHeader className="pb-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-4">
+                  <Avatar size="lg" className="ring-2 ring-primary/20">
+                    {avatar && <AvatarImage src={avatar} alt={displayName} />}
+                    <AvatarFallback>{initialsOf(displayName)}</AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="selectable truncate text-lg font-semibold leading-tight">
+                        {displayName}
+                      </p>
+                      <Badge variant={isAdmin ? 'default' : 'secondary'} className="text-[11px]">
+                        {isAdmin ? '管理员' : '团队成员'}
+                      </Badge>
+                    </div>
+                    {username && (
+                      <p className="selectable mt-0.5 truncate text-xs text-muted-foreground">
+                        @{username}
+                      </p>
+                    )}
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                      <span className="inline-flex items-center gap-1 text-success">
+                        <span className="size-1.5 rounded-full bg-success" />
+                        已连接协作服务
+                      </span>
+                      {serverUrl && (
+                        <button
+                          type="button"
+                          onClick={() => void copyServerUrl()}
+                          title="点击复制团队服务器地址"
+                          className="inline-flex max-w-xs items-center gap-1 truncate rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          <span className="truncate">{serverUrl}</span>
+                          <Copy className="size-3 shrink-0" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" onClick={handleEditProfile}>
-                  <UserCog />
-                  编辑个人资料
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2 pt-0">
+              {isAdmin && (
+                <Button size="sm" onClick={() => setActive('admin')}>
+                  <ShieldCheck />
+                  打开管理后台
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleEnterPersonal}
-                  disabled={loggingOut}
-                >
-                  <Laptop />
-                  个人工作区
-                </Button>
-                <Button variant="outline" size="sm" onClick={handleLogout} disabled={loggingOut}>
-                  <LogOut />
-                  {loggingOut ? '退出中…' : '退出登录'}
-                </Button>
-              </div>
+              )}
+              <Button variant="outline" size="sm" onClick={handleEditProfile}>
+                <UserCog />
+                编辑个人资料
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleEnterPersonal}
+                disabled={loggingOut}
+              >
+                <Laptop />
+                个人工作区
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleLogout} disabled={loggingOut}>
+                <LogOut />
+                {loggingOut ? '退出中…' : '退出登录'}
+              </Button>
             </CardContent>
           </Card>
         )}
@@ -299,6 +431,7 @@ export function LoggedInView() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">协作通知</CardTitle>
+                <CardDescription>控制团队聊天与成员上线提醒方式。</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-1">
                 {NOTIFY_FIELDS.map((item, idx) => {
@@ -326,7 +459,22 @@ export function LoggedInView() {
                 })}
               </CardContent>
             </Card>
+            <ShortcutsCard />
           </>
+        )}
+
+        {show('privacy') && <BrowserPrivacySection />}
+
+        {show('data') && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">本机资料</CardTitle>
+              <CardDescription>导出或从备份恢复当前账号的本地配置与资料包。</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ImportActions />
+            </CardContent>
+          </Card>
         )}
 
         {show('updates') && (
@@ -337,19 +485,6 @@ export function LoggedInView() {
             <AboutSection />
           </>
         )}
-
-        {show('data') && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">本机资料</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ImportActions />
-            </CardContent>
-          </Card>
-        )}
-
-        {show('privacy') && <BrowserPrivacySection />}
       </div>
     </div>
   )
