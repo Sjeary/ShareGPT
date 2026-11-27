@@ -64,6 +64,32 @@ const routes = [
   },
 ];
 
+const invites = [
+  {
+    id: "inv-fixture-1",
+    code: "FIXTUREINVITE001",
+    status: "active",
+    note: "新同事首批入职",
+    createdBy: "admin",
+    createdAt: "2026-09-07T00:00:00.000Z",
+    expiresAt: null,
+    maxUses: 5,
+    usedCount: 1,
+    remainingUses: 4,
+    chatDisabled: false,
+    allowedProxyRouteIds: ["route-us"],
+    revokedAt: null,
+    revokedBy: null,
+    registrations: [
+      {
+        username: "member",
+        displayName: "Member",
+        registeredAt: "2026-09-07T01:00:00.000Z",
+      },
+    ],
+  },
+];
+
 function json(res, status, payload) {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
@@ -101,6 +127,49 @@ function createFixtureServer() {
       return;
     }
     if (pathname === "/api/admin/users") return json(res, 200, { users });
+    if (pathname === "/api/admin/invites" && req.method === "GET") {
+      return json(res, 200, { invites });
+    }
+    if (pathname === "/api/admin/invites" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk;
+      });
+      req.on("end", () => {
+        const parsed = body ? JSON.parse(body) : {};
+        const created = {
+          id: `inv-fixture-${invites.length + 1}`,
+          code: `CREATEDCODE00${invites.length + 1}`,
+          status: "active",
+          note: parsed.note || "",
+          createdBy: "admin",
+          createdAt: "2026-09-07T02:00:00.000Z",
+          expiresAt: parsed.expiresInHours ? "2026-09-14T02:00:00.000Z" : null,
+          maxUses: parsed.maxUses ?? 1,
+          usedCount: 0,
+          remainingUses: parsed.maxUses ?? 1,
+          chatDisabled: Boolean(parsed.chatDisabled),
+          allowedProxyRouteIds: Array.isArray(parsed.allowedProxyRouteIds)
+            ? parsed.allowedProxyRouteIds
+            : [],
+          revokedAt: null,
+          revokedBy: null,
+          registrations: [],
+        };
+        invites.unshift(created);
+        json(res, 200, { ok: true, invite: created });
+      });
+      return;
+    }
+    const revokeMatch = pathname.match(/^\/api\/admin\/invites\/([^/]+)\/revoke$/);
+    if (revokeMatch && req.method === "POST") {
+      const target = invites.find((item) => item.id === revokeMatch[1]);
+      if (!target) return json(res, 404, { error: "not_found" });
+      target.status = "revoked";
+      target.revokedAt = "2026-09-07T03:00:00.000Z";
+      target.revokedBy = "admin";
+      return json(res, 200, { ok: true, invite: target });
+    }
     if (pathname === "/api/admin/bootstrap") return json(res, 200, bootstrap);
     if (pathname === "/api/admin/proxy-routes") {
       return json(res, 200, { version: 1, routes, updatedAt: "2026-09-07T00:00:00.000Z" });
@@ -188,13 +257,21 @@ async function main() {
     const navLabels = (await page.locator("aside > button").allTextContents()).map((label) =>
       label.replace(/\s+/g, " ").trim(),
     );
-    ["概览", "AI 使用统计", "AI 线路策略", "翻译服务", "成员与权限", "团队统一代理"].forEach(
-      (label, index) =>
-        assert.ok(navLabels[index]?.startsWith(label), `第 ${index + 1} 项应为 ${label}`),
+    [
+      "概览",
+      "AI 使用统计",
+      "AI 线路策略",
+      "翻译服务",
+      "成员与权限",
+      "邀请链接",
+      "团队统一代理",
+    ].forEach((label, index) =>
+      assert.ok(navLabels[index]?.startsWith(label), `第 ${index + 1} 项应为 ${label}`),
     );
 
     await page.getByRole("button", { name: /AI 使用统计/ }).click();
     await page.getByRole("heading", { name: "AI 使用统计" }).waitFor();
+    await page.getByText("Administrator · @admin").waitFor();
     await page.getByTestId("ai-usage-成功发送").waitFor();
     assert.match(await page.getByTestId("ai-usage-成功发送").innerText(), /^12/);
     assert.equal(await page.getByText("Administrator · @admin").count(), 1);
@@ -207,12 +284,22 @@ async function main() {
       ["route-us", "internal-unified", ""],
     );
 
+    await page.locator("aside button").filter({ hasText: "邀请链接" }).click();
+    await page.getByRole("heading", { name: "邀请链接" }).waitFor();
+    await page.getByText("新同事首批入职", { exact: true }).waitFor();
+    await page.getByPlaceholder("例如：研发部新成员 / 临时试用").fill("前端联调测试链接");
+    await page.getByRole("button", { name: "生成邀请链接" }).click();
+    await page.getByText("新邀请链接已就绪", { exact: true }).waitFor();
+    await page.getByText("前端联调测试链接", { exact: true }).waitFor();
+
     await page.locator("aside button").filter({ hasText: "团队统一代理" }).click();
     await page.getByText("连接参数", { exact: true }).waitFor();
     assert.equal(await page.getByText("各 AI 默认出口", { exact: true }).count(), 0);
     assert.equal(await page.getByText("固定走代理的域名", { exact: true }).count(), 1);
 
-    console.log("管理员端功能对齐验收通过：导航、AI 统计、默认出口与团队代理边界均正确。");
+    console.log(
+      "管理员端功能对齐验收通过：导航、AI 统计、默认出口、邀请链接与团队代理边界均正确。",
+    );
   } finally {
     await electronApp.close();
     await new Promise((resolve) => server.close(resolve));
