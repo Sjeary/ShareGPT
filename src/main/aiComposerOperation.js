@@ -156,9 +156,11 @@ function isLikelyComposerEditorInPage(editor, button = null) {
     return false;
   const strongSendSelector =
     'button[data-testid="send-button"], button[data-testid*="send" i], button#composer-submit-button, button[aria-label*="send" i], button[aria-label*="发送"]';
-  const root = editor.closest?.(
-    'form, fieldset, [data-testid*="composer" i], [class*="composer" i], rich-textarea',
-  );
+  const conversationContainerSelector =
+    '[data-testid*="composer" i], [class*="composer" i], [id*="composer" i], [data-testid*="chat-input" i], [class*="chat-input" i], [id*="chat-input" i], rich-textarea';
+  const voiceButtonSelector =
+    'button[data-testid="composer-speech-button"], button[data-testid*="voice" i], button[aria-label*="voice" i], button[aria-label*="语音"]';
+  const root = editor.closest?.(`form, fieldset, ${conversationContainerSelector}`);
   const editorLooksLikeComposer =
     editor.id === "prompt-textarea" ||
     editor.matches?.('[data-lexical-editor="true"], .ProseMirror, rich-textarea [contenteditable]');
@@ -180,8 +182,13 @@ function isLikelyComposerEditorInPage(editor, button = null) {
       return Boolean(
         editor.id === "prompt-textarea" ||
         editor.matches?.("rich-textarea [contenteditable]") ||
-        root?.matches?.('[data-testid*="composer" i], [class*="composer" i], rich-textarea') ||
-        main?.matches?.("main"),
+        root?.matches?.(conversationContainerSelector) ||
+        ["aria-label", "data-testid", "placeholder", "data-placeholder"].some((attribute) =>
+          /composer|chat-input|message (?:claude|chatgpt|gemini)|reply to claude|ask (?:anything|gemini)|给.*发送消息|与.*对话/i.test(
+            editor.getAttribute?.(attribute) || "",
+          ),
+        ) ||
+        main?.querySelector?.(`${strongSendSelector}, ${voiceButtonSelector}`),
       );
     }
     return Boolean(main?.querySelector?.(strongSendSelector) && (!button || main.contains(button)));

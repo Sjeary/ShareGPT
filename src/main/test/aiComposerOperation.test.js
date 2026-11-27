@@ -745,22 +745,46 @@ test("fieldset composer classes alone are insufficient, but a known prompt edito
   assert.equal(isLikelyComposerEditorInPage(editor, submit), true);
 });
 
-for (const variant of [
-  "prompt-textarea",
-  ".ProseMirror",
-  '[data-lexical-editor="true"]',
-  "rich-textarea [contenteditable]",
+for (const [variant, feature] of [
+  ["prompt-textarea", ""],
+  [".ProseMirror", "aria-label"],
+  ['[data-lexical-editor="true"]', "data-placeholder"],
+  ["rich-textarea [contenteditable]", ""],
+  [".ProseMirror", "composer-container"],
+  ['[data-lexical-editor="true"]', "chat-input-container"],
+  [".ProseMirror", "composer-speech-button"],
+  ['[data-lexical-editor="true"]', "voice"],
+  [".ProseMirror", "语音"],
 ]) {
-  test(`empty unfocused ${variant} can be written without a send button`, () => {
+  test(`empty unfocused ${variant} with ${feature || "known identity"} can be written without a send button`, () => {
     const harness = runComposerScript(createComposerOperation(snapshot(), { text: "translated" }), {
       richText: true,
       unfocused: true,
       prepare(editor, document) {
-        const main = { matches: (selector) => selector === "main", querySelector: () => null };
+        const main = {
+          matches: (selector) => selector === "main",
+          querySelector: (selector) =>
+            ["composer-speech-button", "voice", "语音"].includes(feature) &&
+            selector.includes(feature)
+              ? {}
+              : null,
+        };
+        const container = feature.endsWith("-container")
+          ? {
+              matches: (selector) => selector.includes(feature.replace("-container", "")),
+              querySelector: () => null,
+            }
+          : null;
         editor.id = variant === "prompt-textarea" ? variant : "";
+        editor.getAttribute = (attribute) => (attribute === feature ? "Message Claude" : null);
         editor.matches = (selector) =>
           selector.startsWith("textarea,") || selector.split(", ").includes(variant);
-        editor.closest = (selector) => (selector === "main, fieldset, form" ? main : null);
+        editor.closest = (selector) =>
+          selector.startsWith("dialog,")
+            ? null
+            : selector === "main, fieldset, form"
+              ? main
+              : container;
         document.querySelectorAll = (selector) => {
           assert.ok(selector.includes(variant), "unfocused candidate must be discoverable");
           return [editor];
@@ -769,6 +793,28 @@ for (const variant of [
     });
     assert.equal(harness.result.ok, true);
     assert.equal(harness.editor.innerText, "translated");
+  });
+}
+
+for (const variant of [".ProseMirror", '[data-lexical-editor="true"]']) {
+  test(`ordinary ${variant} inside main is rejected and left unchanged`, () => {
+    const harness = runComposerScript(createComposerOperation(snapshot(), { text: "translated" }), {
+      richText: true,
+      unfocused: true,
+      initialText: "private draft",
+      prepare(editor) {
+        const main = { matches: (selector) => selector === "main", querySelector: () => null };
+        editor.id = "";
+        editor.matches = (selector) =>
+          selector.startsWith("textarea,") || selector.split(", ").includes(variant);
+        editor.closest = (selector) => (selector === "main, fieldset, form" ? main : null);
+        editor.getAttribute = (attribute) =>
+          attribute === "aria-label" ? "Document editor" : null;
+        assert.equal(isLikelyComposerEditorInPage(editor), false);
+      },
+    });
+    assert.equal(harness.result.reason, "no-editor");
+    assert.equal(harness.editor.innerText, "private draft");
   });
 }
 
