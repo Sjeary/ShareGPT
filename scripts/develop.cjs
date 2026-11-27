@@ -87,7 +87,9 @@ try {
     // Editor hosts can export this for their own Electron process. The client
     // must start as an application even when launched from that editor's terminal.
     delete env.ELECTRON_RUN_AS_NODE;
-    run(require("electron"), [root, ...process.argv.slice(3)], { env });
+    // Windows 下 spawnSync 默认 windowsHide: true 会向 GUI 进程传入 SW_HIDE，
+    // 导致 Electron 首个窗口被系统隐藏无法显示；启动桌面应用时必须显式关闭。
+    run(require("electron"), [root, ...process.argv.slice(3)], { env, windowsHide: false });
   } else {
     throw new Error("用法：npm run setup:dev | npm run doctor | npm run dev");
   }
