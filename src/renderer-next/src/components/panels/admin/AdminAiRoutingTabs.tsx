@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import {
   Activity,
@@ -21,7 +21,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { useIntegratedAdminStore } from '@/store/useIntegratedAdminStore'
-import type { AdminTranslationProfile, AiServiceKind, Bootstrap } from '@/types/admin'
+import type { AdminTranslationProfile, AiServiceKind } from '@/types/admin'
 
 function errMsg(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback
@@ -156,12 +156,19 @@ export function AdminAiUsageTab() {
 
 export function AdminRoutingTab() {
   const bootstrap = useIntegratedAdminStore((s) => s.bootstrap)
+  const bootstrapLoaded = useIntegratedAdminStore((s) => Boolean(s.loaded.bootstrap))
   const routes = useIntegratedAdminStore((s) => s.proxyRoutes)
   const health = useIntegratedAdminStore((s) => s.proxyRouteHealth)
   const loadBootstrap = useIntegratedAdminStore((s) => s.loadBootstrap)
   const saveBootstrap = useIntegratedAdminStore((s) => s.saveBootstrap)
   const saveProxyRoutes = useIntegratedAdminStore((s) => s.saveProxyRoutes)
   const checkHealth = useIntegratedAdminStore((s) => s.checkProxyRouteHealth)
+
+  useEffect(() => {
+    if (!bootstrapLoaded) {
+      void loadBootstrap().catch(() => undefined)
+    }
+  }, [bootstrapLoaded, loadBootstrap])
 
   const [savingDefault, setSavingDefault] = useState(false)
   const [savingRoutes, setSavingRoutes] = useState(false)
@@ -175,17 +182,11 @@ export function AdminRoutingTab() {
   }
 
   async function handleSaveDefaults() {
+    if (!bootstrap) return
     setSavingDefault(true)
     try {
-      const current: Bootstrap = bootstrap ??
-        (await loadBootstrap()) ?? {
-          sender: {},
-          update: {},
-          aiRouting: { version: 1, defaultRouteByKind: defaults, updatedAt: '' },
-          extra: {},
-        }
       const saved = await saveBootstrap({
-        ...current,
+        ...bootstrap,
         aiRouting: {
           version: 1,
           defaultRouteByKind: defaults,
@@ -244,9 +245,10 @@ export function AdminRoutingTab() {
             <div key={item.key} className="grid gap-1.5">
               <Label>{item.label}</Label>
               <select
+                disabled={!bootstrap || savingDefault}
                 value={defaults[item.key]}
                 onChange={(e) => setDraftDefaults({ ...defaults, [item.key]: e.target.value })}
-                className="h-9 rounded-md border border-input bg-background px-2 text-xs"
+                className="h-9 rounded-md border border-input bg-background px-2 text-xs disabled:opacity-50"
               >
                 <option value="">跟随团队统一代理</option>
                 <option value="internal-unified">内置统一出口</option>
@@ -259,7 +261,11 @@ export function AdminRoutingTab() {
             </div>
           ))}
           <div className="sm:col-span-3">
-            <Button size="sm" disabled={savingDefault} onClick={() => void handleSaveDefaults()}>
+            <Button
+              size="sm"
+              disabled={!bootstrap || savingDefault}
+              onClick={() => void handleSaveDefaults()}
+            >
               {savingDefault ? <Loader2 className="animate-spin" /> : <Save />}
               保存默认出口
             </Button>

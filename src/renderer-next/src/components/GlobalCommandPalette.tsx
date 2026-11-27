@@ -77,7 +77,7 @@ function GlobalCommandPaletteInner({
   const connection = useChatStore((s) => s.connection)
 
   const senderRunning = isSenderRunning(status)
-  const isAdmin = Boolean(workspaceMode === 'organization' && token && profile?.isAdmin)
+  const isAdmin = workspaceMode === 'organization' && Boolean(token) && profile?.isAdmin === true
   const terminalAllowed = canUseAdvancedAi(workspaceMode, token, profile)
   const chatDisabled = Boolean(profile?.chatDisabled)
   const translationAllowed = canUseTranslation(workspaceMode, token, profile)

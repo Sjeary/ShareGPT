@@ -32,7 +32,7 @@ export function Sidebar({ hidden = false }: { hidden?: boolean }) {
   const token = useAuthStore((s) => s.token)
   const profile = useAuthStore((s) => s.profile)
   const unreadByKey = useChatStore((s) => s.unreadByKey)
-  const isAdmin = Boolean(workspaceMode === 'organization' && token && profile?.isAdmin)
+  const isAdmin = workspaceMode === 'organization' && Boolean(token) && profile?.isAdmin === true
   const terminalAllowed = canUseAdvancedAi(workspaceMode, token, profile)
   // 管理员可禁止某人用协作聊天: 禁用则隐藏「协作聊天」入口 (服务端不投递消息, 这里只隐藏入口)。
   const chatDisabled = useAuthStore((s) => Boolean(s.profile?.chatDisabled))

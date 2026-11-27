@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import {
   Ban,
@@ -30,10 +30,16 @@ function errMsg(err: unknown, fallback: string): string {
 export function AdminUsersTab() {
   const users = useIntegratedAdminStore((s) => s.users)
   const routes = useIntegratedAdminStore((s) => s.proxyRoutes)
+  const routesLoaded = useIntegratedAdminStore((s) => Boolean(s.loaded.proxyRoutes))
+  const loadProxyRoutes = useIntegratedAdminStore((s) => s.loadProxyRoutes)
   const loading = useIntegratedAdminStore((s) => Boolean(s.loading.users))
   const createUser = useIntegratedAdminStore((s) => s.createUser)
   const updateUser = useIntegratedAdminStore((s) => s.updateUser)
   const resetPassword = useIntegratedAdminStore((s) => s.resetPassword)
+
+  useEffect(() => {
+    if (!routesLoaded) void loadProxyRoutes().catch(() => undefined)
+  }, [loadProxyRoutes, routesLoaded])
 
   const [query, setQuery] = useState('')
   const [creating, setCreating] = useState(false)
@@ -399,9 +405,15 @@ export function AdminInvitesTab() {
   const session = useIntegratedAdminStore((s) => s.session)
   const invites = useIntegratedAdminStore((s) => s.invites)
   const routes = useIntegratedAdminStore((s) => s.proxyRoutes)
+  const routesLoaded = useIntegratedAdminStore((s) => Boolean(s.loaded.proxyRoutes))
+  const loadProxyRoutes = useIntegratedAdminStore((s) => s.loadProxyRoutes)
   const loading = useIntegratedAdminStore((s) => Boolean(s.loading.invites))
   const createInvite = useIntegratedAdminStore((s) => s.createInvite)
   const revokeInvite = useIntegratedAdminStore((s) => s.revokeInvite)
+
+  useEffect(() => {
+    if (!routesLoaded) void loadProxyRoutes().catch(() => undefined)
+  }, [loadProxyRoutes, routesLoaded])
 
   const serverUrl = session?.serverUrl || ''
   const [filter, setFilter] = useState<'all' | 'active' | 'inactive'>('all')
