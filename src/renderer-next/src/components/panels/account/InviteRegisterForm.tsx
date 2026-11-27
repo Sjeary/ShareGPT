@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { CheckCircle2, Link2, Loader2, TriangleAlert, UserPlus } from 'lucide-react'
 import { toast } from 'sonner'
 import { ErrorNotice } from '@/components/ErrorNotice'
@@ -7,8 +7,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { useAuth } from '@/hooks/useAuth'
+import { authAttempts, runGuardedInviteRegistration } from '@/lib/authAttemptGuard'
 import { parseInviteLink } from '@/lib/inviteLink'
-import { isStaleAttemptError } from '@/lib/latestAttempt'
 import { useAppStore } from '@/store/useAppStore'
 
 interface InvitePreview {
@@ -78,6 +78,20 @@ export function InviteRegisterForm({
 
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<unknown>(null)
+  const [errorShakeKey, setErrorShakeKey] = useState(0)
+
+  const mountedRef = useRef(true)
+  const submitBusyRef = useRef(false)
+  const submitControllerRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      submitControllerRef.current?.abort()
+      submitControllerRef.current = null
+    }
+  }, [])
 
   const parsed = useMemo(() => parseInviteLink(rawLink), [rawLink])
 
@@ -133,68 +147,94 @@ export function InviteRegisterForm({
     }
   }, [parsed])
 
+  function failValidation(message: string) {
+    setSubmitError(message)
+    setErrorShakeKey((k) => k + 1)
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
-    if (submitting) return
+    if (submitBusyRef.current || submitting) return
     setSubmitError(null)
 
     if (!parsed) {
-      setSubmitError('请先粘贴有效的邀请链接（如 sharegpt://invite?...）')
+      failValidation('请先粘贴有效的邀请链接（如 sharegpt://invite?...）')
       return
     }
     const trimmedUser = username.trim()
     if (trimmedUser.length < 2 || trimmedUser.length > 40 || /[\s:]/.test(trimmedUser)) {
-      setSubmitError('用户名需为 2–40 个字符，且不能包含空格或冒号')
+      failValidation('用户名需为 2–40 个字符，且不能包含空格或冒号')
       return
     }
     if (password.length < 6 || !password.trim()) {
-      setSubmitError('密码至少需要 6 位，且不能全为空格')
+      failValidation('密码至少需要 6 位，且不能全为空格')
       return
     }
     if (password !== confirmPassword) {
-      setSubmitError('两次输入的密码不一致')
+      failValidation('两次输入的密码不一致')
       return
     }
 
+    submitControllerRef.current?.abort()
+    const controller = new AbortController()
+    submitControllerRef.current = controller
+    submitBusyRef.current = true
     setSubmitting(true)
-    try {
-      const reg = await fetchJsonWithTimeout(`${parsed.serverUrl}/api/invite/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: parsed.code,
-          username: trimmedUser,
-          password,
-          displayName: displayName.trim() || undefined,
-        }),
-      })
-      if (!reg.ok) {
-        const message = String(reg.data?.message || reg.text || `注册失败（${reg.status}）`)
-        throw new Error(message)
-      }
-      const registeredUsername = String(reg.data?.username || trimmedUser)
-      await patchSection('ui', { workspace_entry_intro_done: true }).catch(() => undefined)
 
-      try {
-        const profile = await login({
-          serverUrl: parsed.serverUrl,
-          username: registeredUsername,
-          password,
-          rememberPassword,
-        })
-        toast.success(`注册并登录成功，欢迎 ${profile.displayName}`)
-      } catch (loginErr) {
-        if (isStaleAttemptError(loginErr)) return
-        toast.success('账号已注册成功，请直接使用新账号登录')
-        onRegisteredNeedManualLogin?.({
-          serverUrl: parsed.serverUrl,
-          username: registeredUsername,
-        })
-      }
+    try {
+      await runGuardedInviteRegistration({
+        coordinator: authAttempts,
+        signal: controller.signal,
+        register: async (signal) => {
+          const reg = await fetchJsonWithTimeout(`${parsed.serverUrl}/api/invite/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            signal,
+            body: JSON.stringify({
+              code: parsed.code,
+              username: trimmedUser,
+              password,
+              displayName: displayName.trim() || undefined,
+            }),
+          })
+          if (!reg.ok) {
+            const message = String(reg.data?.message || reg.text || `注册失败（${reg.status}）`)
+            throw new Error(message)
+          }
+          return { username: String(reg.data?.username || trimmedUser) }
+        },
+        afterRegistered: async () => {
+          await patchSection('ui', { workspace_entry_intro_done: true }).catch(() => undefined)
+        },
+        loginWithAttempt: (registeredUsername, attempt) =>
+          login({
+            serverUrl: parsed.serverUrl,
+            username: registeredUsername,
+            password,
+            rememberPassword,
+            attempt,
+          }),
+        onCompleted: (profile) => {
+          toast.success(`注册并登录成功，欢迎 ${profile.displayName}`)
+        },
+        onLoginFallback: (registeredUsername) => {
+          if (!mountedRef.current) return
+          toast.success('账号已注册成功，请直接使用新账号登录')
+          onRegisteredNeedManualLogin?.({
+            serverUrl: parsed.serverUrl,
+            username: registeredUsername,
+          })
+        },
+      })
     } catch (err) {
-      setSubmitError(err)
+      if (mountedRef.current && !controller.signal.aborted) {
+        setSubmitError(err)
+        setErrorShakeKey((k) => k + 1)
+      }
     } finally {
-      setSubmitting(false)
+      if (submitControllerRef.current === controller) submitControllerRef.current = null
+      submitBusyRef.current = false
+      if (mountedRef.current) setSubmitting(false)
     }
   }
 
@@ -210,10 +250,10 @@ export function InviteRegisterForm({
           onChange={(e) => setRawLink(e.target.value)}
           disabled={submitting}
           placeholder="粘贴管理员发给你的邀请链接（sharegpt://invite?...）"
-          className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50 dark:bg-input/30"
+          className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs shadow-xs outline-none transition-[color,border-color,box-shadow,background-color] duration-150 ease-out hover:border-muted-foreground/45 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50 dark:bg-input/30"
         />
         {rawLink.trim() && !parsed && (
-          <p className="flex items-center gap-1.5 text-xs text-destructive">
+          <p className="motion-tab-panel flex items-center gap-1.5 text-xs text-destructive">
             <TriangleAlert className="size-3.5 shrink-0" />
             未识别到有效的邀请链接，请确认完整复制了 sharegpt://invite?... 链接。
           </p>
@@ -225,7 +265,7 @@ export function InviteRegisterForm({
           </p>
         )}
         {parsed && !previewLoading && preview?.valid && (
-          <div className="flex items-start gap-2 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-xs">
+          <div className="motion-tab-panel flex items-start gap-2.5 rounded-lg border border-success/40 bg-success/10 px-3 py-2.5 text-xs">
             <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" />
             <div className="min-w-0 space-y-0.5">
               <p className="font-medium text-foreground">
@@ -244,63 +284,67 @@ export function InviteRegisterForm({
           </div>
         )}
         {parsed && !previewLoading && previewError && (
-          <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div className="motion-tab-panel flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-xs text-destructive">
             <TriangleAlert className="mt-0.5 size-4 shrink-0" />
             <span className="min-w-0 break-words">{previewError}</span>
           </div>
         )}
       </div>
 
-      <div className="grid gap-1.5">
-        <Label htmlFor="invite-username">用户名</Label>
-        <Input
-          id="invite-username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          autoComplete="username"
-          placeholder="2–40 位，用于登录（不含空格或冒号）"
-          disabled={submitting}
-        />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-1.5">
+          <Label htmlFor="invite-username">用户名</Label>
+          <Input
+            id="invite-username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoComplete="username"
+            placeholder="2–40 位，不含空格"
+            disabled={submitting}
+          />
+        </div>
+
+        <div className="grid gap-1.5">
+          <Label htmlFor="invite-display-name">显示名（可选）</Label>
+          <Input
+            id="invite-display-name"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="留空则同用户名"
+            disabled={submitting}
+          />
+        </div>
       </div>
 
-      <div className="grid gap-1.5">
-        <Label htmlFor="invite-display-name">显示名（可选）</Label>
-        <Input
-          id="invite-display-name"
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          placeholder="团队聊天里展示的昵称，留空则同用户名"
-          disabled={submitting}
-        />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-1.5">
+          <Label htmlFor="invite-password">设置密码</Label>
+          <Input
+            id="invite-password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="new-password"
+            placeholder="至少 6 位"
+            disabled={submitting}
+          />
+        </div>
+
+        <div className="grid gap-1.5">
+          <Label htmlFor="invite-confirm-password">确认密码</Label>
+          <Input
+            id="invite-confirm-password"
+            type="password"
+            value={confirmPassword}
+            onChange={(e) => setConfirmPassword(e.target.value)}
+            autoComplete="new-password"
+            placeholder="再次输入密码"
+            disabled={submitting}
+          />
+        </div>
       </div>
 
-      <div className="grid gap-1.5">
-        <Label htmlFor="invite-password">设置密码</Label>
-        <Input
-          id="invite-password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete="new-password"
-          placeholder="至少 6 位"
-          disabled={submitting}
-        />
-      </div>
-
-      <div className="grid gap-1.5">
-        <Label htmlFor="invite-confirm-password">确认密码</Label>
-        <Input
-          id="invite-confirm-password"
-          type="password"
-          value={confirmPassword}
-          onChange={(e) => setConfirmPassword(e.target.value)}
-          autoComplete="new-password"
-          placeholder="再次输入密码"
-          disabled={submitting}
-        />
-      </div>
-
-      <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+      <div className="flex items-center justify-between rounded-lg border border-border/80 bg-muted/25 px-3 py-2">
         <Label htmlFor="invite-remember" className="cursor-pointer text-sm font-normal">
           记住密码并自动登录
         </Label>
@@ -312,10 +356,15 @@ export function InviteRegisterForm({
         />
       </div>
 
-      {Boolean(submitError) && <ErrorNotice error={submitError} context="邀请链接注册" />}
+      {Boolean(submitError) && (
+        <div key={errorShakeKey} className="motion-shake">
+          <ErrorNotice error={submitError} context="邀请链接注册" />
+        </div>
+      )}
 
       <Button
         type="submit"
+        size="lg"
         className="w-full"
         disabled={submitting || !parsed || (preview !== null && !preview.valid)}
       >

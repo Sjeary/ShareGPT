@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect } from 'react'
+import { Loader2 } from 'lucide-react'
 import { useAuthStore } from '@/store/useAuthStore'
 import { canUseAdvancedAi } from '@/lib/aiAccess'
 import { Titlebar } from './Titlebar'
@@ -137,10 +138,13 @@ export function Shell() {
     <div className="relative flex h-full flex-col bg-background text-foreground">
       {dataSuspended && (
         <div
-          className="absolute inset-0 z-[100] grid place-items-center bg-background/90"
+          className="absolute inset-0 z-[100] grid place-items-center bg-background/85 backdrop-blur-sm"
           role="status"
         >
-          正在保存并切换资料…
+          <div className="workspace-entry-step flex items-center gap-2.5 rounded-xl border border-border/90 bg-card px-5 py-3 text-sm font-medium shadow-md">
+            <Loader2 className="size-4 animate-spin text-primary" />
+            正在保存并切换资料…
+          </div>
         </div>
       )}
       <Titlebar />

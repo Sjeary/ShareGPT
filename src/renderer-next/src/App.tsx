@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Cable, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAppStore } from '@/store/useAppStore'
 import { DEFAULT_TARGET_DOMAINS } from '@/components/panels/service/helpers'
@@ -42,25 +42,36 @@ export default function App() {
     return (
       <div className="flex h-full flex-col bg-background text-foreground">
         <Titlebar />
-        <div className="grid min-h-0 flex-1 place-items-center">
+        <div className="motion-ambient-stage grid min-h-0 flex-1 place-items-center p-6">
           {initializationError ? (
-            <div className="flex max-w-md flex-col items-center gap-3 p-6 text-center">
-              <h1 className="text-lg font-semibold">暂时无法打开 ShareGPT</h1>
+            <div className="workspace-entry-step flex max-w-md flex-col items-center gap-3 rounded-xl border border-border/90 bg-card p-6 text-center shadow-md">
+              <div className="grid size-12 place-items-center rounded-xl bg-destructive/12 text-destructive">
+                <Cable className="size-6" />
+              </div>
+              <h1 className="text-lg font-semibold tracking-tight">暂时无法打开 ShareGPT</h1>
               <p role="alert" className="break-words text-sm text-destructive">
                 {initializationError}
               </p>
               <p className="text-sm text-muted-foreground">
                 本机资料已保留。请检查文件访问权限或恢复有效备份后，再重新尝试。
               </p>
-              <Button onClick={() => void init()} disabled={initializing}>
+              <Button onClick={() => void init()} disabled={initializing} className="mt-1">
                 重新尝试
               </Button>
             </div>
           ) : (
-            <Loader2
-              aria-label="正在加载 ShareGPT"
-              className="size-6 animate-spin text-muted-foreground"
-            />
+            <div className="flex flex-col items-center gap-3.5">
+              <div className="motion-pulse-soft grid size-14 place-items-center rounded-2xl bg-primary text-primary-foreground shadow-md ring-4 ring-primary/15">
+                <Cable className="size-7" />
+              </div>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2
+                  aria-label="正在加载 ShareGPT"
+                  className="size-4 animate-spin text-primary"
+                />
+                <span>正在准备 ShareGPT 工作区…</span>
+              </div>
+            </div>
           )}
         </div>
       </div>

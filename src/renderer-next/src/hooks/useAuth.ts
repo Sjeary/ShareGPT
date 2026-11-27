@@ -13,7 +13,7 @@ import { useTranslationStore } from '@/store/useTranslationStore'
 import { useAiStore } from '@/store/useAiStore'
 import { normalizeChatMessage, normalizeDirectory } from '@/components/panels/chat/normalize'
 import { discardCollabToken, refreshAuthoritativeClientBootstrap } from '@/hooks/clientBootstrap'
-import { createLatestAttemptCoordinator } from '@/lib/latestAttempt'
+import { authAttempts } from '@/lib/authAttemptGuard'
 import {
   completeCollabLoginTransaction,
   requireConfirmedLoginResponse,
@@ -33,7 +33,7 @@ import { createLoginIdentityNonce } from '@/lib/loginIdentity'
 
 const LOGIN_TIMEOUT_MS = 10000
 const LOGOUT_TIMEOUT_MS = 5000
-const loginAttempts = createLatestAttemptCoordinator()
+const loginAttempts = authAttempts
 
 function assertCurrentLoginAttempt(attempt: number): void {
   loginAttempts.assertCurrent(attempt)
@@ -87,6 +87,8 @@ export interface LoginParams {
   username: string
   password: string
   rememberPassword: boolean
+  // 可选：由共享代次流程（如邀请注册后自动登录）续用既有 attempt，避免二次抢占或失配。
+  attempt?: number
 }
 
 interface LoginResponse {
@@ -164,8 +166,15 @@ export function useAuth() {
   const clearSession = useAuthStore((s) => s.clearSession)
 
   const login = useCallback(
-    async ({ serverUrl, username, password, rememberPassword }: LoginParams) => {
-      const attempt = loginAttempts.begin()
+    async ({
+      serverUrl,
+      username,
+      password,
+      rememberPassword,
+      attempt: existingAttempt,
+    }: LoginParams) => {
+      const attempt = existingAttempt ?? loginAttempts.begin()
+      assertCurrentLoginAttempt(attempt)
       const cleanedServer = trimTrailingSlash(serverUrl.trim())
       const cleanedUser = username.trim()
       const identityNonce = createLoginIdentityNonce()

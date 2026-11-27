@@ -227,7 +227,7 @@ export function LoggedInView() {
       <div
         role="tablist"
         aria-label="设置分类"
-        className="sticky top-0 z-10 -mx-1 flex flex-wrap gap-1.5 rounded-lg border border-border bg-background/95 p-1.5 backdrop-blur-sm"
+        className="sticky top-0 z-10 -mx-1 flex flex-wrap gap-1.5 rounded-xl border border-border/90 bg-background/92 p-1.5 shadow-2xs backdrop-blur-md"
       >
         {SETTINGS_CATEGORIES.map((item) => (
           <button
@@ -237,7 +237,7 @@ export function LoggedInView() {
             aria-selected={category === item.id}
             onClick={() => setCategory(item.id)}
             className={cn(
-              'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+              'rounded-lg px-3 py-1.5 text-xs font-medium transition-[background-color,color,box-shadow] duration-150',
               category === item.id
                 ? 'bg-primary text-primary-foreground shadow-xs'
                 : 'text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -250,105 +250,107 @@ export function LoggedInView() {
 
       <SessionRecoveryForm />
 
-      {show('account') && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">账户</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-3">
-            <div className="flex items-center gap-4">
-              <Avatar size="lg">
-                {avatar && <AvatarImage src={avatar} alt={displayName} />}
-                <AvatarFallback>{initialsOf(displayName)}</AvatarFallback>
-              </Avatar>
-              <div className="min-w-0 flex-1">
-                <p className="selectable truncate text-base font-semibold">{displayName}</p>
-                {username && username !== displayName && (
-                  <p className="selectable truncate text-xs text-muted-foreground">{username}</p>
-                )}
-                <p className="truncate text-xs text-success">已连接协作服务</p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" onClick={handleEditProfile}>
-                <UserCog />
-                编辑个人资料
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleEnterPersonal}
-                disabled={loggingOut}
-              >
-                <Laptop />
-                个人工作区
-              </Button>
-              <Button variant="outline" size="sm" onClick={handleLogout} disabled={loggingOut}>
-                <LogOut />
-                {loggingOut ? '退出中…' : '退出登录'}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {show('interface') && (
-        <>
-          <InterfaceSettings />
+      <div key={category} className="motion-tab-panel flex flex-col gap-4">
+        {show('account') && (
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">协作通知</CardTitle>
+              <CardTitle className="text-base">账户</CardTitle>
             </CardHeader>
-            <CardContent className="grid gap-1">
-              {NOTIFY_FIELDS.map((item, idx) => {
-                const raw = collab?.[item.key]
-                const checked = item.defaultOn ? raw !== false : raw === true
-                return (
-                  <div key={item.key}>
-                    {idx > 0 && <Separator className="my-1" />}
-                    <div className="flex items-center justify-between gap-3 py-1.5">
-                      <div className="min-w-0">
-                        <Label htmlFor={`notify-${item.key}`} className="cursor-pointer">
-                          {item.label}
-                        </Label>
-                        <p className="truncate text-xs text-muted-foreground">{item.desc}</p>
-                      </div>
-                      <Switch
-                        id={`notify-${item.key}`}
-                        checked={checked}
-                        disabled={savingKey === item.key}
-                        onCheckedChange={(next) => toggleNotify(item.key, item.defaultOn, next)}
-                      />
-                    </div>
-                  </div>
-                )
-              })}
+            <CardContent className="grid gap-3">
+              <div className="flex items-center gap-4">
+                <Avatar size="lg">
+                  {avatar && <AvatarImage src={avatar} alt={displayName} />}
+                  <AvatarFallback>{initialsOf(displayName)}</AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="selectable truncate text-base font-semibold">{displayName}</p>
+                  {username && username !== displayName && (
+                    <p className="selectable truncate text-xs text-muted-foreground">{username}</p>
+                  )}
+                  <p className="truncate text-xs text-success">已连接协作服务</p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={handleEditProfile}>
+                  <UserCog />
+                  编辑个人资料
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleEnterPersonal}
+                  disabled={loggingOut}
+                >
+                  <Laptop />
+                  个人工作区
+                </Button>
+                <Button variant="outline" size="sm" onClick={handleLogout} disabled={loggingOut}>
+                  <LogOut />
+                  {loggingOut ? '退出中…' : '退出登录'}
+                </Button>
+              </div>
             </CardContent>
           </Card>
-        </>
-      )}
+        )}
 
-      {show('updates') && (
-        <>
-          <UpdateSection />
-          <ChangelogSection />
-          <FeedbackSection />
-          <AboutSection />
-        </>
-      )}
+        {show('interface') && (
+          <>
+            <InterfaceSettings />
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">协作通知</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-1">
+                {NOTIFY_FIELDS.map((item, idx) => {
+                  const raw = collab?.[item.key]
+                  const checked = item.defaultOn ? raw !== false : raw === true
+                  return (
+                    <div key={item.key}>
+                      {idx > 0 && <Separator className="my-1" />}
+                      <div className="flex items-center justify-between gap-3 py-1.5">
+                        <div className="min-w-0">
+                          <Label htmlFor={`notify-${item.key}`} className="cursor-pointer">
+                            {item.label}
+                          </Label>
+                          <p className="truncate text-xs text-muted-foreground">{item.desc}</p>
+                        </div>
+                        <Switch
+                          id={`notify-${item.key}`}
+                          checked={checked}
+                          disabled={savingKey === item.key}
+                          onCheckedChange={(next) => toggleNotify(item.key, item.defaultOn, next)}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </CardContent>
+            </Card>
+          </>
+        )}
 
-      {show('data') && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">本机资料</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ImportActions />
-          </CardContent>
-        </Card>
-      )}
+        {show('updates') && (
+          <>
+            <UpdateSection />
+            <ChangelogSection />
+            <FeedbackSection />
+            <AboutSection />
+          </>
+        )}
 
-      {show('privacy') && <BrowserPrivacySection />}
+        {show('data') && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">本机资料</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ImportActions />
+            </CardContent>
+          </Card>
+        )}
+
+        {show('privacy') && <BrowserPrivacySection />}
+      </div>
     </div>
   )
 }

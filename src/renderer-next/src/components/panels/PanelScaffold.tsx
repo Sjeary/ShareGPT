@@ -27,22 +27,28 @@ export function PanelScaffold({
       <div
         aria-hidden={hideHeader}
         className={cn(
-          'flex shrink-0 items-center gap-3 overflow-hidden px-6',
+          'flex shrink-0 items-center gap-3 overflow-hidden bg-card/45 px-6',
           'transition-[height,opacity,border-color] duration-200 ease-out motion-reduce:transition-none',
           hideHeader
             ? 'pointer-events-none h-0 border-b border-transparent opacity-0'
-            : 'h-14 border-b border-border opacity-100',
+            : 'h-14 border-b border-border/80 opacity-100',
         )}
       >
-        <Icon className="size-5 text-primary" />
+        <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/12 text-primary ring-1 ring-primary/15">
+          <Icon className="size-4" />
+        </span>
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-base font-semibold leading-tight">{title}</h1>
+          <h1 className="truncate text-base font-semibold leading-tight tracking-tight">{title}</h1>
           {hint && <p className="truncate text-xs text-muted-foreground">{hint}</p>}
         </div>
         {toolbar}
       </div>
       <div
-        className={scrollable ? 'min-h-0 flex-1 overflow-auto' : 'min-h-0 flex-1 overflow-hidden'}
+        className={
+          scrollable
+            ? 'motion-panel-enter min-h-0 flex-1 overflow-auto'
+            : 'min-h-0 flex-1 overflow-hidden'
+        }
       >
         {children}
       </div>

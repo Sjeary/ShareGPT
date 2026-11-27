@@ -181,21 +181,29 @@ export function NavList({
             data-tour={`nav-${key}`}
             onClick={() => onClickRow(key)}
             className={cn(
-              'group flex w-full items-center rounded-lg py-2.5 text-left transition-colors',
+              'group relative flex w-full items-center rounded-lg py-2.5 text-left transition-[background-color,color,box-shadow,transform] duration-150 ease-out active:scale-[0.99] motion-reduce:transition-none motion-reduce:active:scale-100',
               'outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               collapsed ? 'justify-center gap-0 px-0' : 'gap-3 px-2.5',
               on
-                ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                ? 'bg-sidebar-accent text-sidebar-accent-foreground shadow-2xs'
                 : 'text-sidebar-foreground hover:bg-sidebar-accent/60',
               lifted && 'bg-sidebar-accent shadow-lg ring-1 ring-border',
             )}
           >
             <span
+              aria-hidden
               className={cn(
-                'relative grid size-9 shrink-0 place-items-center rounded-full transition-colors',
+                'pointer-events-none absolute top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-primary transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none',
+                tooltipSide === 'left' ? 'right-0.5' : 'left-0.5',
+                on ? 'scale-y-100 opacity-100' : 'scale-y-50 opacity-0',
+              )}
+            />
+            <span
+              className={cn(
+                'relative grid size-9 shrink-0 place-items-center rounded-full transition-[background-color,color,transform,box-shadow] duration-150 ease-out motion-reduce:transition-none',
                 on
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-sidebar-accent text-muted-foreground group-hover:text-foreground',
+                  ? 'bg-primary text-primary-foreground shadow-xs'
+                  : 'bg-sidebar-accent text-muted-foreground group-hover:scale-[1.03] group-hover:text-foreground',
               )}
             >
               <Icon className="size-[18px]" />

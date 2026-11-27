@@ -58,7 +58,7 @@
 @keyframes workspace-entry-mark-in {
   from {
     opacity: 0;
-    transform: scale(0.94);
+    transform: scale(0.92);
   }
   to {
     opacity: 1;
@@ -75,19 +75,159 @@
   }
 }
 
+@keyframes motion-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes motion-stage-forward-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes motion-stage-back-in {
+  from {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes motion-tab-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes motion-micro-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  22% {
+    transform: translateX(-4px);
+  }
+  48% {
+    transform: translateX(3.5px);
+  }
+  74% {
+    transform: translateX(-2px);
+  }
+}
+
+@keyframes motion-pulse-soft {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+
 .workspace-entry-step {
-  animation: workspace-entry-in 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: workspace-entry-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .workspace-entry-mark {
-  animation: workspace-entry-mark-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: workspace-entry-mark-in 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.motion-panel-enter {
+  animation: motion-panel-in 190ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.motion-stage-forward {
+  animation: motion-stage-forward-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.motion-stage-back {
+  animation: motion-stage-back-in 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.motion-tab-panel {
+  animation: motion-tab-in 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.motion-shake {
+  animation: motion-micro-shake 280ms cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+.motion-pulse-soft {
+  animation: motion-pulse-soft 2.2s ease-in-out infinite;
+}
+
+.motion-card-interactive {
+  transition:
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 180ms ease-out,
+    background-color 180ms ease-out,
+    box-shadow 180ms ease-out;
+}
+
+.motion-card-interactive:hover {
+  transform: translateY(-1px);
+}
+
+.motion-card-interactive:active {
+  transform: translateY(0) scale(0.995);
+}
+
+.motion-ambient-stage {
+  background-image:
+    radial-gradient(
+      640px 320px at 50% -6%,
+      color-mix(in srgb, var(--primary) 11%, transparent),
+      transparent 72%
+    ),
+    radial-gradient(
+      460px 260px at 88% 100%,
+      color-mix(in srgb, var(--primary) 6%, transparent),
+      transparent 70%
+    );
 }
 
 @media (prefers-reduced-motion: reduce) {
   .workspace-entry-step,
-  .workspace-entry-mark {
+  .workspace-entry-mark,
+  .motion-panel-enter,
+  .motion-stage-forward,
+  .motion-stage-back,
+  .motion-tab-panel {
     animation-name: workspace-entry-fade-in;
-    animation-duration: 160ms;
+    animation-duration: 140ms;
+  }
+
+  .motion-shake,
+  .motion-pulse-soft {
+    animation: none;
+  }
+
+  .motion-card-interactive:hover,
+  .motion-card-interactive:active {
+    transform: none;
   }
 }
 
