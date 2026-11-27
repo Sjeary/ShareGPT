@@ -154,17 +154,20 @@ function isLikelyComposerEditorInPage(editor, button = null) {
   const root = editor.closest?.(
     'form, fieldset, [data-testid*="composer" i], [class*="composer" i], rich-textarea',
   );
-  const rootLooksLikeComposer = root?.matches?.(
-    'fieldset, [data-testid*="composer" i], [class*="composer" i], form[id*="composer" i], rich-textarea',
-  );
+  const editorLooksLikeComposer =
+    editor.id === "prompt-textarea" ||
+    editor.matches?.('[data-lexical-editor="true"], .ProseMirror, rich-textarea [contenteditable]');
+  const rootLooksLikeComposer =
+    editorLooksLikeComposer ||
+    (!root?.matches?.("fieldset") &&
+      root?.matches?.(
+        '[data-testid*="composer" i], [class*="composer" i], form[id*="composer" i], rich-textarea',
+      ));
   const sendButton =
     root?.querySelector?.(strongSendSelector) ||
     (rootLooksLikeComposer ? root?.querySelector?.('button[type="submit"]') : null);
   if (sendButton && (!button || root.contains(button))) return true;
-  if (
-    editor.id === "prompt-textarea" ||
-    editor.matches?.('[data-lexical-editor="true"], .ProseMirror, rich-textarea [contenteditable]')
-  ) {
+  if (editorLooksLikeComposer) {
     const main =
       editor.closest?.("main, fieldset, form") || globalThis.document?.querySelector?.("main");
     return Boolean(main?.querySelector?.(strongSendSelector) && (!button || main.contains(button)));

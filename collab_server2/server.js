@@ -1,4 +1,6 @@
 const http = require("node:http");
+const net = require("node:net");
+const { createInviteHandler } = require("./invites");
 const { maxTextLength: MAX_CHAT_TEXT_LENGTH } = require("./chat_limits.json");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -89,6 +91,11 @@ const RECALL_EDITABLE_WINDOW_MS = Number.parseInt(
 );
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
 const LOGIN_MAX_FAILS = Number.parseInt(process.env.LOGIN_MAX_FAILS || "10", 10);
+const LOGIN_IP_MAX_FAILS = Math.max(
+  1,
+  Number(process.env.LOGIN_IP_MAX_FAILS) || Math.max(LOGIN_MAX_FAILS * 3, 25),
+);
+const LOGIN_ATTEMPTS_MAX = Math.max(2, Number(process.env.LOGIN_ATTEMPTS_MAX) || 10000);
 const LOGIN_LOCK_MS = Number.parseInt(process.env.LOGIN_LOCK_MS || `${15 * 60 * 1000}`, 10);
 const SERVER_SENDER_BOOTSTRAP = {
   proxy_server:
@@ -1344,52 +1351,80 @@ function isLoopbackIp(ip) {
   return normalized === "127.0.0.1" || normalized.startsWith("127.") || normalized === "::1";
 }
 
-// 仅当直连来源是本机反代 (127.0.0.1 / ::1) 时才采信反代透传的真实客户端 IP，
-// 防止公网直连客户端伪造 X-Forwarded-For 绕过登录限流。
+// Forwarding headers are meaningful only across an explicitly trusted hop.
+const trustedProxyIps = new Set(
+  (process.env.TRUSTED_PROXY_IPS ?? "127.0.0.1,::1")
+    .split(",")
+    .map((ip) => ip.trim())
+    .filter((ip) => net.isIP(ip))
+    .map(normalizeIp),
+);
 function resolveClientIp(req) {
   const peerIp = normalizeIp(req?.socket?.remoteAddress);
-  if (!isLoopbackIp(peerIp)) return peerIp;
-  const realIp = safeText(req?.headers?.["x-real-ip"]);
-  if (realIp) return normalizeIp(realIp);
-  const forwarded = safeText(req?.headers?.["x-forwarded-for"]);
-  if (forwarded) {
-    const first = safeText(forwarded.split(",")[0]);
-    if (first) return normalizeIp(first);
+  if (!trustedProxyIps.has(peerIp)) return peerIp;
+  const hops = safeText(req?.headers?.["x-forwarded-for"]).split(",");
+  let validHop = "";
+  for (let index = hops.length - 1; index >= 0; index -= 1) {
+    const raw = hops[index].trim();
+    if (!net.isIP(raw)) continue;
+    const ip = normalizeIp(raw);
+    validHop = ip;
+    if (!trustedProxyIps.has(ip)) return ip;
   }
-  return peerIp;
+  if (validHop) return validHop;
+  const realIp = safeText(req?.headers?.["x-real-ip"]);
+  return net.isIP(realIp) ? normalizeIp(realIp) : peerIp;
 }
 
 function loginAttemptKey(clientIp, username, scope = "user") {
   return `${scope}:${normalizeIp(clientIp)}:${safeText(username)}`;
 }
-
-function loginLockState(ip) {
-  const rec = loginAttempts.get(ip);
-  if (rec && rec.lockUntil && rec.lockUntil > Date.now()) {
-    return { locked: true, retryAfterMs: rec.lockUntil - Date.now() };
+function loginIpKey(clientIp, scope = "user") {
+  return JSON.stringify(["login-ip", scope, normalizeIp(clientIp)]);
+}
+function cleanupLoginAttempts(now = Date.now()) {
+  for (const [key, record] of loginAttempts) {
+    if (record.expiresAt <= now) loginAttempts.delete(key);
+  }
+}
+function loginLockState(key, ipKey) {
+  const now = Date.now();
+  cleanupLoginAttempts(now);
+  for (const candidate of [key, ipKey].filter(Boolean)) {
+    const rec = loginAttempts.get(candidate);
+    if (rec?.lockUntil > now) return { locked: true, retryAfterMs: rec.lockUntil - now };
+  }
+  // Never evict a live lock to accommodate an attacker-controlled new username.
+  const missing = new Set([key, ipKey].filter((item) => item && !loginAttempts.has(item))).size;
+  if (loginAttempts.size + missing > LOGIN_ATTEMPTS_MAX) {
+    return { locked: true, retryAfterMs: LOGIN_LOCK_MS };
   }
   return { locked: false, retryAfterMs: 0 };
 }
-
-function recordLoginFail(ip) {
-  const rec = loginAttempts.get(ip) || { fails: 0, lockUntil: 0 };
-  rec.fails += 1;
-  if (rec.fails >= LOGIN_MAX_FAILS) {
-    rec.lockUntil = Date.now() + LOGIN_LOCK_MS;
-    rec.fails = 0;
-  }
-  loginAttempts.set(ip, rec);
-}
-
-function clearLoginFails(ip) {
-  const key = String(ip || "");
-  loginAttempts.delete(key);
-  if (key) {
-    const prefix = `${key}:`;
-    for (const candidate of loginAttempts.keys()) {
-      if (candidate.startsWith(prefix)) loginAttempts.delete(candidate);
+function recordLoginFail(key, ipKey) {
+  const now = Date.now();
+  cleanupLoginAttempts(now);
+  for (const [candidate, limit] of [
+    [ipKey, LOGIN_IP_MAX_FAILS],
+    [key, LOGIN_MAX_FAILS],
+  ]) {
+    if (!candidate) continue;
+    if (!loginAttempts.has(candidate) && loginAttempts.size >= LOGIN_ATTEMPTS_MAX) continue;
+    const rec = loginAttempts.get(candidate) || {
+      fails: 0,
+      lockUntil: 0,
+      expiresAt: now + LOGIN_LOCK_MS,
+    };
+    rec.fails += 1;
+    if (rec.fails >= limit) {
+      rec.lockUntil = Math.max(rec.lockUntil, now + LOGIN_LOCK_MS);
+      rec.expiresAt = rec.lockUntil;
     }
+    loginAttempts.set(candidate, rec);
   }
+}
+function clearLoginFails(key) {
+  loginAttempts.delete(String(key || ""));
 }
 
 function subnetKeyFromIp(ip) {
@@ -1407,7 +1442,7 @@ function sendJson(res, code, payload) {
     "Content-Type": "application/json; charset=utf-8",
     "Access-Control-Allow-Origin": CORS_ORIGIN,
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
   });
   res.end(body);
 }
@@ -1417,7 +1452,7 @@ function sendText(res, code, text) {
     "Content-Type": "text/plain; charset=utf-8",
     "Access-Control-Allow-Origin": CORS_ORIGIN,
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
   });
   res.end(text);
 }
@@ -1657,6 +1692,7 @@ function createUserRecord(username, password, extra = {}) {
     displayName: safeText(extra.displayName) || normalized,
     isAdmin: Boolean(extra.isAdmin),
     advancedAiAllowed: Boolean(extra.advancedAiAllowed),
+    legacyProxyEntitled: Boolean(extra.legacyProxyEntitled),
     allowedProxyRouteIds: normalizeProxyRouteIds(extra.allowedProxyRouteIds),
     disabled: Boolean(extra.disabled),
     chatDisabled: Boolean(extra.chatDisabled),
@@ -2193,6 +2229,7 @@ const handleAdminAccountRequest = createAdminAccountHandler({
   normalizeIp,
   resolveClientIp,
   loginAttemptKey,
+  loginIpKey,
   loginLockState,
   recordLoginFail,
   clearLoginFails,
@@ -2246,12 +2283,25 @@ const handleUserDataRequest = createUserDataHandler({
   broadcastToUser,
 });
 
+const handleInviteRequest = createInviteHandler({
+  file: process.env.INVITES_FILE || path.join(path.dirname(USERS_FILE), "invites.json"),
+  readBody,
+  safeParseJson,
+  sendJson,
+  requireAdminSession,
+  resolveClientIp,
+  loadUserStore,
+  saveUserStore,
+  createUserRecord,
+  normalizeProxyRouteIds,
+});
+
 async function handleRequest(req, res) {
   if (req.method === "OPTIONS") {
     res.writeHead(204, {
       "Access-Control-Allow-Origin": CORS_ORIGIN,
       "Access-Control-Allow-Headers": "Content-Type, Authorization",
-      "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
     });
     res.end();
     return;
@@ -2296,7 +2346,8 @@ async function handleRequest(req, res) {
 
       const remoteIp = resolveClientIp(req);
       const attemptKey = loginAttemptKey(remoteIp, username, "user");
-      const lock = loginLockState(attemptKey);
+      const ipKey = loginIpKey(remoteIp, "user");
+      const lock = loginLockState(attemptKey, ipKey);
       if (lock.locked) {
         sendText(res, 429, `登录失败次数过多，请 ${Math.ceil(lock.retryAfterMs / 1000)} 秒后再试`);
         return;
@@ -2304,7 +2355,7 @@ async function handleRequest(req, res) {
 
       const { store, user } = findUser(username);
       if (!user || !verifyPassword(user, password)) {
-        recordLoginFail(attemptKey);
+        recordLoginFail(attemptKey, ipKey);
         sendText(res, 401, "账号或密码错误");
         return;
       }
@@ -2556,6 +2607,7 @@ async function handleRequest(req, res) {
     return;
   }
 
+  if (await handleInviteRequest(req, res, reqUrl)) return;
   if (await handleAdminAccountRequest(req, res, pathname)) return;
 
   if (req.method === "GET" && pathname === "/api/admin/bootstrap") {
@@ -3805,6 +3857,7 @@ module.exports = {
   normalizeIp,
   resolveClientIp,
   loginAttemptKey,
+  loginIpKey,
   loginLockState,
   recordLoginFail,
   clearLoginFails,

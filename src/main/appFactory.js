@@ -1,3 +1,4 @@
+const { detectLocalProxies } = require("./localProxyDetect");
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
@@ -1220,7 +1221,7 @@ function createElectronApp(baseMode = "all") {
         emitAcceptedSend(
           policy.kind,
           details.webContentsId,
-          usageAttempts.acceptResponse(policy.kind, details),
+          usageAttempts.completeRequest(policy.kind, details),
         );
       });
     } catch {}
@@ -3496,36 +3497,7 @@ function createElectronApp(baseMode = "all") {
     });
     trustedIpc.handle("sender:detect-local-proxy", async () => {
       assertMode("sender");
-      const net = require("node:net");
-      const candidates = [
-        { port: 7897, protocol: "socks5", label: "Clash Verge / Mihomo (7897)" },
-        { port: 7890, protocol: "socks5", label: "Clash (7890)" },
-        { port: 10808, protocol: "socks5", label: "v2rayN SOCKS5 (10808)" },
-        { port: 10809, protocol: "http", label: "v2rayN HTTP (10809)" },
-        { port: 1080, protocol: "socks5", label: "本地 SOCKS5 (1080)" },
-        { port: 20171, protocol: "socks5", label: "v2rayA SOCKS5 (20171)" },
-        { port: 20170, protocol: "http", label: "v2rayA HTTP (20170)" },
-        { port: 7891, protocol: "socks5", label: "Clash SOCKS5 (7891)" },
-        { port: 8080, protocol: "http", label: "本地 HTTP 代理 (8080)" },
-      ];
-      const probe = (candidate) =>
-        new Promise((resolve) => {
-          const socket = net.createConnection({ host: "127.0.0.1", port: candidate.port });
-          let settled = false;
-          const finish = (ok) => {
-            if (settled) return;
-            settled = true;
-            try {
-              socket.destroy();
-            } catch {}
-            resolve(ok ? { host: "127.0.0.1", ...candidate } : null);
-          };
-          socket.setTimeout(250, () => finish(false));
-          socket.once("connect", () => finish(true));
-          socket.once("error", () => finish(false));
-        });
-      const results = await Promise.all(candidates.map(probe));
-      return results.filter(Boolean);
+      return detectLocalProxies();
     });
 
     trustedIpc.handle("receiver:start", (_event, receiverSettings) => {

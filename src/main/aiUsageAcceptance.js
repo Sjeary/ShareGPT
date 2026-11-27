@@ -178,6 +178,31 @@ function createUsageAttemptTracker(options = {}) {
   const attempts = new Map();
   const requests = new Map();
   const fallbackTimers = new Map();
+  // Keep settled network identities after emitting usage: a 2xx stream can
+  // subsequently fail and be retried without another user gesture.
+  const settledRequests = new Map();
+  const retryWindowMs = Math.max(100, Number(options.retryWindowMs) || 5000);
+  const rememberSettlement = (request, event) => {
+    settledRequests.set(request.id, {
+      ...request,
+      event,
+      expiresAt:
+        now() + (request.failedAt || request.transportCompleted ? ttlMs : requestCompletionTtlMs),
+    });
+  };
+  const retrySettlement = (request) => {
+    for (const settled of settledRequests.values()) {
+      if (
+        settled.failedAt &&
+        settled.webContentsId === request.webContentsId &&
+        settled.url === request.url &&
+        request.startedAt >= settled.startedAt &&
+        request.startedAt <= settled.failedAt + retryWindowMs
+      )
+        return settled;
+    }
+    return null;
+  };
   const clearFallbackTimer = (id) => {
     const timer = fallbackTimers.get(id);
     if (timer) {
@@ -193,6 +218,9 @@ function createUsageAttemptTracker(options = {}) {
   };
   const cleanup = () => {
     const current = now();
+    for (const [id, entry] of settledRequests) {
+      if (entry.expiresAt <= current) settledRequests.delete(id);
+    }
     for (const [id, entry] of attempts) {
       if (entry.expiresAt <= current) attempts.delete(id);
     }
@@ -215,7 +243,9 @@ function createUsageAttemptTracker(options = {}) {
     attempts.delete(attempt.id);
     requests.delete(request.id);
     if (!request.completed || !request.accepted) return null;
-    return { id: attempt.id, acceptedAt: request.completedAt };
+    const event = { id: attempt.id, acceptedAt: request.completedAt };
+    rememberSettlement(request, event);
+    return event;
   };
   const bind = (attempt, request) => {
     clearFallbackTimer(request.id);
@@ -233,16 +263,32 @@ function createUsageAttemptTracker(options = {}) {
       cleanup();
       const current = requests.get(request.id);
       if (!current || !current.completed || !current.accepted || current.attemptId) return;
-      // If another attempt on this webContents is currently active, let the normal retry/bind flow own it.
+      // A bound attempt can still own an overlapping retry, but only during
+      // its finite binding window. Recheck instead of silently dropping work.
       for (const attempt of attempts.values()) {
-        if (attempt.webContentsId === current.webContentsId) return;
+        const bindUntil =
+          attempt.requestCount > 0
+            ? attempt.retryUntil
+            : attempt.attemptedAt + requestStartWindowMs;
+        if (
+          attempt.webContentsId === current.webContentsId &&
+          current.startedAt + startClockSkewMs >= attempt.attemptedAt &&
+          current.startedAt <= bindUntil &&
+          now() <= bindUntil
+        ) {
+          scheduleUnmatchedFallback(kind, current);
+          return;
+        }
       }
       requests.delete(current.id);
-      const fallbackId = `net-${crypto.randomUUID()}`;
-      onUnmatchedAccepted(kind, current.webContentsId, {
-        id: fallbackId,
-        acceptedAt: current.completedAt,
-      });
+      const previousEvent = current.retryEvent || retrySettlement(current)?.event;
+      if (previousEvent) {
+        rememberSettlement(current, previousEvent);
+        return;
+      }
+      const event = { id: `net-${crypto.randomUUID()}`, acceptedAt: current.completedAt };
+      rememberSettlement(current, event);
+      onUnmatchedAccepted(kind, current.webContentsId, event);
     }, networkFallbackGraceMs);
     if (typeof timer.unref === "function") timer.unref();
     fallbackTimers.set(request.id, timer);
@@ -268,6 +314,7 @@ function createUsageAttemptTracker(options = {}) {
     const id = requestKey(details);
     const request = requests.get(id);
     if (!request || request.webContentsId !== Number(details?.webContentsId)) return null;
+    if (request.completed && request.accepted) return null;
     clearFallbackTimer(id);
     requests.delete(id);
     if (!request.attemptId) return null;
@@ -312,18 +359,24 @@ function createUsageAttemptTracker(options = {}) {
       if (!isAiConversationRequest(kind, details)) return null;
       const id = requestKey(details);
       const contentsId = Number(details?.webContentsId);
-      if (!id || !Number.isInteger(contentsId) || requests.has(id)) return null;
+      if (!id || !Number.isInteger(contentsId) || requests.has(id) || settledRequests.has(id))
+        return null;
       const startedAt = now();
       const entry = {
         id,
         webContentsId: contentsId,
         startedAt,
+        url: String(details.url),
+        failedAt: 0,
         expiresAt: startedAt + ttlMs,
         attemptId: "",
         completed: false,
         accepted: false,
         completedAt: 0,
+        transportCompleted: false,
+        retryEvent: null,
       };
+      entry.retryEvent = retrySettlement(entry)?.event || null;
       requests.set(id, entry);
       const attempt = findAttemptForRequest(entry);
       return attempt ? bind(attempt, entry) : null;
@@ -339,17 +392,34 @@ function createUsageAttemptTracker(options = {}) {
       request.accepted = isAcceptedAiConversationResponse(kind, details);
       request.completedAt = now();
       if (!request.accepted) return discardRequest(details);
+      if (onUnmatchedAccepted) request.expiresAt = now() + requestCompletionTtlMs;
       if (request.attemptId) {
-        const attempt = request.attemptId ? attempts.get(request.attemptId) : null;
+        const attempt = attempts.get(request.attemptId);
         if (attempt) return consume(attempt, request);
-        clearFallbackTimer(id);
-        requests.delete(id);
-        return null;
+        request.attemptId = "";
       }
       scheduleUnmatchedFallback(kind, request);
       return null;
     },
+    completeRequest(kind, details) {
+      const event = this.acceptResponse(kind, details);
+      const id = requestKey(details);
+      const request = requests.get(id) || settledRequests.get(id);
+      if (request && request.webContentsId === Number(details?.webContentsId)) {
+        request.transportCompleted = true;
+        if (settledRequests.has(id)) request.expiresAt = now() + ttlMs;
+      }
+      return event;
+    },
     failRequest(details) {
+      cleanup();
+      const id = requestKey(details);
+      const request = requests.get(id) || settledRequests.get(id);
+      if (request && request.webContentsId === Number(details?.webContentsId)) {
+        request.failedAt = now();
+        if (settledRequests.has(id)) request.expiresAt = now() + ttlMs;
+        if (request.completed && request.accepted) return null;
+      }
       return discardRequest(details);
     },
     expire() {
@@ -360,6 +430,7 @@ function createUsageAttemptTracker(options = {}) {
       fallbackTimers.clear();
       attempts.clear();
       requests.clear();
+      settledRequests.clear();
     },
     size() {
       cleanup();

@@ -30,7 +30,18 @@ for (const name of [
 process.env.RELEASE_STORE = path.join(directory, "release-store");
 process.env.RELEASES_DIR = path.join(directory, "releases");
 process.env.LOGIN_MAX_FAILS = "3";
-const { server, createUserRecord, clearLoginFails, normalizeHistoryMessage } = require("../server");
+process.env.LOGIN_ATTEMPTS_MAX = "100";
+const {
+  server,
+  createUserRecord,
+  clearLoginFails,
+  normalizeHistoryMessage,
+  resolveClientIp,
+  loginAttemptKey,
+  loginIpKey,
+  loginLockState,
+  recordLoginFail,
+} = require("../server");
 test.after(() => fs.rmSync(directory, { recursive: true, force: true }));
 
 function post(url, body, hold = false, options = {}) {
@@ -290,7 +301,7 @@ test("concurrent administrator edits retain unrelated account updates", async ()
     accounts.users.push(createUserRecord(username, "test-password"));
   }
   fs.writeFileSync(process.env.USERS_FILE, JSON.stringify(accounts));
-  clearLoginFails("admin:127.0.0.1");
+  clearLoginFails("admin:127.0.0.1:first-admin");
   const login = JSON.parse(
     (await post("/api/admin/login", { username: "first-admin", password: "test-password" }).result)
       .body,
@@ -509,5 +520,128 @@ test("corrupt feedback and proxy-missing files are rejected and never overwritte
     assert.equal(resp.status, 500);
     assert.equal(fs.readFileSync(file, "utf8"), damaged);
     fs.unlinkSync(file);
+  }
+});
+
+test("forwarded identity strips trusted hops from the right and ignores spoofed left headers", () => {
+  const resolve = (peer, xff, real) =>
+    resolveClientIp({
+      socket: { remoteAddress: peer },
+      headers: { "x-forwarded-for": xff, "x-real-ip": real },
+    });
+  assert.equal(resolve("198.51.100.1", "203.0.113.1", "203.0.113.2"), "198.51.100.1");
+  assert.equal(resolve("127.0.0.1", "203.0.113.1, 198.51.100.1", "203.0.113.2"), "198.51.100.1");
+  assert.equal(
+    resolve("::1", "203.0.113.1, 198.51.100.1, 127.0.0.1, ::1", "203.0.113.2"),
+    "198.51.100.1",
+  );
+  assert.equal(resolve("::ffff:127.0.0.1", "garbage, 2001:db8::1, ::1", "bad"), "2001:db8::1");
+  assert.equal(resolve("127.0.0.1", "bad, invalid", "203.0.113.2"), "203.0.113.2");
+  assert.equal(resolve("127.0.0.1", "bad", "arbitrary-text"), "127.0.0.1");
+  assert.equal(resolve("127.0.0.2", "203.0.113.1", "203.0.113.2"), "127.0.0.2");
+});
+
+test("spoofing forwarded prefixes and X-Real-IP cannot bypass the account lock", async () => {
+  const statuses = [];
+  for (let i = 0; i < 5; i++) {
+    statuses.push(
+      (
+        await post("/api/login", { username: "spoofed-user", password: "wrong" }, false, {
+          headers: {
+            "x-forwarded-for": `203.0.113.${i + 1}, 198.51.100.88`,
+            "x-real-ip": `203.0.113.${i + 10}`,
+          },
+        }).result
+      ).status,
+    );
+  }
+  assert.deepEqual(statuses, [401, 401, 401, 429, 429]);
+});
+
+test("successful alice login does not release alice:admin's exact lock", async () => {
+  const accounts = JSON.parse(fs.readFileSync(process.env.USERS_FILE));
+  accounts.users.push(
+    createUserRecord("alice", "test-password"),
+    createUserRecord("alice:admin", "test-password"),
+  );
+  fs.writeFileSync(process.env.USERS_FILE, JSON.stringify(accounts));
+  const options = { headers: { "x-forwarded-for": "198.51.100.89" } };
+  for (let i = 0; i < 3; i++)
+    await post("/api/login", { username: "alice:admin", password: "wrong" }, false, options).result;
+  assert.equal(
+    (
+      await post("/api/login", { username: "alice", password: "test-password" }, false, options)
+        .result
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await post(
+        "/api/login",
+        { username: "alice:admin", password: "test-password" },
+        false,
+        options,
+      ).result
+    ).status,
+    429,
+  );
+});
+
+test("rotating usernames reaches the independent IP limit for both login scopes", async () => {
+  for (const [scope, ip] of [
+    ["user", "198.51.100.90"],
+    ["admin", "198.51.100.91"],
+  ]) {
+    const endpoint = scope === "admin" ? "/api/admin/login" : "/api/login";
+    const options = { headers: { "x-forwarded-for": ip } };
+    for (let i = 0; i < 25; i++) {
+      assert.equal(
+        (
+          await post(
+            endpoint,
+            { username: `missing-${scope}-${i}`, password: "wrong" },
+            false,
+            options,
+          ).result
+        ).status,
+        401,
+      );
+    }
+    assert.equal(
+      (await post(endpoint, { username: "new-name", password: "wrong" }, false, options).result)
+        .status,
+      429,
+    );
+    const other = scope === "admin" ? "user" : "admin";
+    assert.equal(
+      loginLockState(loginAttemptKey(ip, "new-name", other), loginIpKey(ip, other)).locked,
+      false,
+    );
+  }
+});
+
+test("login failures expire and the bounded map refuses new keys without evicting live locks", () => {
+  const realNow = Date.now;
+  let now = realNow() + 3600000;
+  Date.now = () => now;
+  try {
+    const protectedKey = loginAttemptKey("203.0.113.1", "protected");
+    for (let i = 0; i < 3; i++) recordLoginFail(protectedKey);
+    for (let i = 0; i < 150; i++) recordLoginFail(`capacity-${i}`);
+    assert.equal(loginLockState("new-key").locked, true);
+    assert.equal(loginLockState(protectedKey).locked, true);
+    now += 16 * 60 * 1000;
+    assert.equal(loginLockState("new-key").locked, false);
+    assert.equal(loginLockState(protectedKey).locked, false);
+    recordLoginFail("aged-failure");
+    now += 16 * 60 * 1000;
+    recordLoginFail("aged-failure");
+    recordLoginFail("aged-failure");
+    assert.equal(loginLockState("aged-failure").locked, false);
+  } finally {
+    now += 16 * 60 * 1000;
+    loginLockState("cleanup");
+    Date.now = realNow;
   }
 });

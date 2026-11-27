@@ -4,6 +4,7 @@ const vm = require("node:vm");
 
 const {
   assertComposerOperationCurrent,
+  isLikelyComposerEditorInPage,
   composerConfirmationFinalizeScript,
   composerOperationIsCurrent,
   composerConfirmationGuardScript,
@@ -677,3 +678,38 @@ for (const mutation of ["replace", "focus", "text", "url", "timer", "deadline"])
     assert.equal(harness.context.__shareGptOneShotComposerOperation.status, "blocked");
   });
 }
+
+test("generic fieldset submit buttons do not turn settings and rename editors into composers", () => {
+  const submit = {};
+  let strong = false;
+  const fieldset = {
+    matches: (selector) => selector.split(", ").includes("fieldset"),
+    querySelector: (selector) => (selector === 'button[type="submit"]' || strong ? submit : null),
+    contains: (node) => node === submit,
+  };
+  const editor = {
+    matches: (selector) => selector.startsWith("textarea,"),
+    closest: () => fieldset,
+  };
+  assert.equal(isLikelyComposerEditorInPage(editor), false);
+  assert.equal(isLikelyComposerEditorInPage(editor, submit), false);
+  strong = true;
+  assert.equal(isLikelyComposerEditorInPage(editor, submit), true);
+});
+
+test("fieldset composer classes alone are insufficient, but a known prompt editor permits submit", () => {
+  const submit = {};
+  const fieldset = {
+    matches: () => true,
+    querySelector: (selector) => (selector === 'button[type="submit"]' ? submit : null),
+    contains: (node) => node === submit,
+  };
+  const editor = {
+    id: "rename-field",
+    matches: (selector) => selector.startsWith("textarea,"),
+    closest: () => fieldset,
+  };
+  assert.equal(isLikelyComposerEditorInPage(editor, submit), false);
+  editor.id = "prompt-textarea";
+  assert.equal(isLikelyComposerEditorInPage(editor, submit), true);
+});

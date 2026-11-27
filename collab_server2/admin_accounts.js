@@ -10,6 +10,7 @@ function createAdminAccountHandler({
   normalizeIp,
   resolveClientIp,
   loginAttemptKey,
+  loginIpKey,
   loginLockState,
   recordLoginFail,
   clearLoginFails,
@@ -51,7 +52,8 @@ function createAdminAccountHandler({
           typeof loginAttemptKey === "function"
             ? loginAttemptKey(clientIp, username, "admin")
             : `admin:${clientIp}:${username}`;
-        const lock = loginLockState(attemptKey);
+        const ipKey = loginIpKey(clientIp, "admin");
+        const lock = loginLockState(attemptKey, ipKey);
         if (lock.locked) {
           res.setHeader("Retry-After", String(Math.ceil(lock.retryAfterMs / 1000)));
           sendText(
@@ -64,7 +66,7 @@ function createAdminAccountHandler({
         const { user } = findUser(username);
 
         if (!user || !user.isAdmin || user.disabled || !verifyPassword(user, password)) {
-          recordLoginFail(attemptKey);
+          recordLoginFail(attemptKey, ipKey);
           sendText(res, 401, "管理员账号或密码错误");
           return true;
         }

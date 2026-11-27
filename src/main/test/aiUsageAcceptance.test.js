@@ -498,3 +498,124 @@ test("unmatched 2xx conversation request falls back once when DOM probe misses, 
   assert.equal(accepted[0].webContentsId, 33);
   assert.match(accepted[0].event.id, /^net-/);
 });
+
+const fallbackWait = () => new Promise((resolve) => setTimeout(resolve, 110));
+function fallbackHarness(options = {}) {
+  const events = [];
+  const tracker = createUsageAttemptTracker({
+    networkFallbackGraceMs: 50,
+    onUnmatchedAccepted: (_kind, _contents, event) => events.push(event),
+    ...options,
+  });
+  const accept = (id, wc = 17) => {
+    const request = conversationRequest(id, wc);
+    tracker.recordRequestStart("gpt", request);
+    return tracker.acceptResponse("gpt", request);
+  };
+  return { tracker, events, accept };
+}
+
+test("2xx then a broken stream and automatic retry count only the original gesture", async (t) => {
+  let now = 1000;
+  const { tracker, events, accept } = fallbackHarness({ now: () => now });
+  t.after(() => tracker.clear());
+  tracker.record({ id: "original-send", attemptedAt: now }, 17);
+  assert.equal(accept("original").id, "original-send");
+  now = 1010;
+  tracker.failRequest(conversationRequest("original", 17));
+  now = 1020;
+  accept("retry");
+  await fallbackWait();
+  assert.equal(events.length, 0);
+  // A new explicit gesture owns its request, even inside the retry window.
+  now = 1100;
+  tracker.record({ id: "new-send", attemptedAt: now }, 17);
+  assert.equal(accept("new").id, "new-send");
+  accept("other-workspace", 18);
+  await fallbackWait();
+  assert.equal(events.length, 1);
+});
+
+test("a missing marker still counts a 2xx response aborted within fallback grace exactly once", async (t) => {
+  const { tracker, events, accept } = fallbackHarness();
+  t.after(() => tracker.clear());
+  accept("early-stop");
+  tracker.failRequest(conversationRequest("early-stop", 17, { error: "net::ERR_ABORTED" }));
+  await fallbackWait();
+  assert.equal(events.length, 1);
+  tracker.acceptResponse("gpt", conversationRequest("early-stop", 17));
+  accept("automatic-retry");
+  await fallbackWait();
+  assert.equal(events.length, 1);
+});
+
+test("an old bound attempt outside its binding window cannot swallow a newer accepted request", async (t) => {
+  let now = 1000;
+  const { tracker, events, accept } = fallbackHarness({
+    now: () => now,
+    ttlMs: 1000,
+    requestStartWindowMs: 100,
+  });
+  t.after(() => tracker.clear());
+  tracker.record({ id: "old-attempt", attemptedAt: now }, 17);
+  tracker.recordRequestStart("gpt", conversationRequest("old-hung", 17));
+  now = 2500;
+  accept("later-send");
+  await fallbackWait();
+  assert.equal(events.length, 1);
+});
+
+test("blocked fallback is rechecked after a bound attempt's window expires", async (t) => {
+  let now = 1000;
+  const { tracker, events, accept } = fallbackHarness({ now: () => now, ttlMs: 1000 });
+  t.after(() => tracker.clear());
+  tracker.record({ id: "hung-attempt", attemptedAt: now }, 17);
+  tracker.recordRequestStart("gpt", conversationRequest("hung", 17));
+  now = 1100;
+  accept("overlap");
+  await fallbackWait();
+  assert.equal(events.length, 0);
+  now = 2100;
+  await fallbackWait();
+  assert.equal(events.length, 1);
+});
+
+test("blocked fallback is transferred on failure, and clear cancels pending account work", async () => {
+  let now = 1000;
+  const { tracker, events, accept } = fallbackHarness({ now: () => now });
+  tracker.record({ id: "retry-owner", attemptedAt: now }, 17);
+  tracker.recordRequestStart("gpt", conversationRequest("first", 17));
+  now = 1100;
+  accept("second");
+  await fallbackWait();
+  assert.equal(events.length, 0);
+  assert.equal(tracker.failRequest(conversationRequest("first", 17)).id, "retry-owner");
+  await fallbackWait();
+  assert.equal(events.length, 0);
+  accept("pending-other", 18);
+  tracker.clear();
+  await fallbackWait();
+  assert.equal(events.length, 0);
+});
+
+test("a long accepted stream and slow automatic retry retain their already settled gesture", async (t) => {
+  let now = 1000;
+  const { tracker, events, accept } = fallbackHarness({ now: () => now, ttlMs: 1000 });
+  t.after(() => tracker.clear());
+  tracker.record({ id: "long-stream-send", attemptedAt: now }, 17);
+  assert.equal(accept("long-stream").id, "long-stream-send");
+  now = 61000;
+  tracker.failRequest(conversationRequest("long-stream", 17));
+  now = 61100;
+  tracker.recordRequestStart("gpt", conversationRequest("slow-retry", 17));
+  now = 61900;
+  tracker.acceptResponse("gpt", conversationRequest("slow-retry", 17));
+  now = 63000;
+  await fallbackWait();
+  assert.equal(
+    events.length,
+    0,
+    "the retry owns a retained settlement even when the prior tombstone expires",
+  );
+  assert.equal(tracker.completeRequest("gpt", conversationRequest("slow-retry", 17)), null);
+});
