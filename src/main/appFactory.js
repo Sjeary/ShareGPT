@@ -191,6 +191,27 @@ const AI_ALLOWED_PERMISSIONS = new Set([
 ]);
 const GPT_TAB_TITLE_LIMIT = 48;
 
+function classifyBlockedThirdPartyOAuth(kind, rawUrl) {
+  if (kind !== "gpt") return null;
+  let url;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  for (const [domain, provider] of [
+    ["accounts.google.com", "google"],
+    ["appleid.apple.com", "apple"],
+    ["login.microsoftonline.com", "microsoft"],
+    ["login.live.com", "microsoft"],
+  ]) {
+    if (host === domain || host.endsWith(`.${domain}`)) return provider;
+  }
+  return null;
+}
+
 function getEventWindow(event, fallbackWindow) {
   const senderWindow = BrowserWindow.fromWebContents(event.sender);
   if (senderWindow && !senderWindow.isDestroyed()) {
@@ -1118,6 +1139,18 @@ function createElectronApp(baseMode = "all") {
     const currentTarget = () => captureWorkspaceComposerTarget(workspace);
     assertComposerOperationCurrent(operation, currentTarget());
     const webContents = workspace.view.webContents;
+    // Transfer focus only within an already foreground, attached workspace.
+    // Hidden acceptance windows and background applications must never be activated.
+    if (
+      !isBackgroundAcceptanceWindow() &&
+      mainWindow &&
+      !mainWindow.isDestroyed() &&
+      mainWindow.isVisible() &&
+      mainWindow.isFocused() &&
+      workspace.attached
+    ) {
+      webContents.focus();
+    }
     const writeResult = await executeComposerWrite(webContents, operation);
     assertComposerOperationCurrent(operation, currentTarget());
     if (writeResult?.conflict) return writeResult;
@@ -1687,6 +1720,16 @@ function createElectronApp(baseMode = "all") {
   function handleBlockedAiNavigation(workspace, rawUrl) {
     const url = safeText(rawUrl);
     if (!url) return;
+    const provider = classifyBlockedThirdPartyOAuth(workspace.kind, url);
+    if (provider) {
+      emitWorkspaceEvent(workspace, "oauth-blocked", {
+        provider,
+        url,
+        message:
+          "内置窗口不支持 Google / Apple / Microsoft 快捷登录，请返回直接输入邮箱和密码（或邮箱验证码）登录。",
+      });
+      return;
+    }
     void openExternalUrl(url).catch((err) => {
       emitWorkspaceEvent(workspace, "external-open-failed", {
         url,
@@ -3568,5 +3611,6 @@ function createElectronApp(baseMode = "all") {
 }
 
 module.exports = {
+  classifyBlockedThirdPartyOAuth,
   createElectronApp,
 };

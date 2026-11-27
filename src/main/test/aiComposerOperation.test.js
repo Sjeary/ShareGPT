@@ -169,7 +169,7 @@ function createConfirmationHarness(token, enabled = true) {
     value: "",
     isConnected: true,
     matches: () => true,
-    closest: () => editor,
+    closest: (selector) => (selector.startsWith("dialog,") ? null : editor),
     querySelector: () => editor,
     contains: (node) => node === editor || node === button,
     focus: () => undefined,
@@ -496,18 +496,19 @@ function runComposerScript(operation, options = {}) {
     value: options.initialText || "",
     isConnected: true,
     matches: () => true,
-    closest: () => editor,
+    closest: (selector) => (selector.startsWith("dialog,") ? null : editor),
     querySelector: () => editor,
     contains: (node) => node === editor,
     getBoundingClientRect: () => ({ width: 300, height: 80 }),
     dispatchEvent: (event) => options.onEvent?.(event, editor, document) !== false,
     focus: () => {
+      document.activeElement = editor;
       options.onFocus?.(editor, document);
     },
     setSelectionRange: () => {},
   };
   const document = {
-    activeElement: editor,
+    activeElement: options.unfocused ? null : editor,
     querySelector: () => editor,
     querySelectorAll: () => [editor],
   };
@@ -523,8 +524,9 @@ function runComposerScript(operation, options = {}) {
     },
     getComputedStyle: () => ({ visibility: "visible", display: "block" }),
     InputEvent: class InputEvent {
-      constructor(type) {
+      constructor(type, init) {
         this.type = type;
+        Object.assign(this, init);
       }
     },
     Event: class Event {
@@ -544,6 +546,35 @@ function runComposerScript(operation, options = {}) {
     },
     clearTimeout: (id) => timers.delete(id),
   };
+  if (options.richText) {
+    delete editor.value;
+    Object.assign(editor, {
+      innerText: options.initialText || "",
+      isContentEditable: true,
+      replaceChildren: (node) => {
+        editor.innerText = node.textContent;
+      },
+    });
+    const selection = {
+      anchorNode: editor,
+      focusNode: editor,
+      removeAllRanges() {},
+      addRange() {},
+      toString: () => options.selectionText?.(editor.innerText) ?? editor.innerText,
+    };
+    Object.assign(document, {
+      createRange: () => ({ selectNodeContents() {}, collapse() {} }),
+      createTextNode: (textContent) => ({ textContent }),
+      execCommand: (_command, _ui, text) => {
+        if (options.rejectNative) return false;
+        editor.innerText = options.nativeText?.(text) ?? text;
+        editor.dispatchEvent({ type: "input", data: text });
+        return true;
+      },
+    });
+    Object.assign(context, { getSelection: () => selection });
+  }
+  options.prepare?.(editor, document);
   const result = vm.runInNewContext(composerWriteScript(operation), context);
   return {
     editor,
@@ -689,7 +720,7 @@ test("generic fieldset submit buttons do not turn settings and rename editors in
   };
   const editor = {
     matches: (selector) => selector.startsWith("textarea,"),
-    closest: () => fieldset,
+    closest: (selector) => (selector.startsWith("dialog,") ? null : fieldset),
   };
   assert.equal(isLikelyComposerEditorInPage(editor), false);
   assert.equal(isLikelyComposerEditorInPage(editor, submit), false);
@@ -707,9 +738,191 @@ test("fieldset composer classes alone are insufficient, but a known prompt edito
   const editor = {
     id: "rename-field",
     matches: (selector) => selector.startsWith("textarea,"),
-    closest: () => fieldset,
+    closest: (selector) => (selector.startsWith("dialog,") ? null : fieldset),
   };
   assert.equal(isLikelyComposerEditorInPage(editor, submit), false);
   editor.id = "prompt-textarea";
   assert.equal(isLikelyComposerEditorInPage(editor, submit), true);
 });
+
+for (const variant of [
+  "prompt-textarea",
+  ".ProseMirror",
+  '[data-lexical-editor="true"]',
+  "rich-textarea [contenteditable]",
+]) {
+  test(`empty unfocused ${variant} can be written without a send button`, () => {
+    const harness = runComposerScript(createComposerOperation(snapshot(), { text: "translated" }), {
+      richText: true,
+      unfocused: true,
+      prepare(editor, document) {
+        const main = { matches: (selector) => selector === "main", querySelector: () => null };
+        editor.id = variant === "prompt-textarea" ? variant : "";
+        editor.matches = (selector) =>
+          selector.startsWith("textarea,") || selector.split(", ").includes(variant);
+        editor.closest = (selector) => (selector === "main, fieldset, form" ? main : null);
+        document.querySelectorAll = (selector) => {
+          assert.ok(selector.includes(variant), "unfocused candidate must be discoverable");
+          return [editor];
+        };
+      },
+    });
+    assert.equal(harness.result.ok, true);
+    assert.equal(harness.editor.innerText, "translated");
+  });
+}
+
+test("paragraph selection and innerText tolerate CRLF and extra blank lines", () => {
+  const harness = runComposerScript(
+    createComposerOperation(snapshot(), { text: "first\r\nsecond\n\nthird", send: true }),
+    {
+      richText: true,
+      nativeText: () => "first\n\nsecond\n\n\nthird",
+      selectionText: (text) => text.replace(/\n+/g, "\n"),
+    },
+  );
+  assert.equal(harness.result.armed, true);
+  // The tolerance is only for the write acknowledgement. Any later draft change blocks Enter.
+  harness.editor.innerText = "first\nsecond\nthird";
+  let blocked = false;
+  harness.listeners.get("keydown")({
+    key: "Enter",
+    isTrusted: true,
+    preventDefault() {
+      blocked = true;
+    },
+    stopImmediatePropagation() {},
+  });
+  assert.equal(blocked, true);
+});
+
+test("a managed editor can consume beforeinput and complete the write once", () => {
+  let inputs = 0;
+  const harness = runComposerScript(
+    createComposerOperation(snapshot(), { text: "first\nsecond" }),
+    {
+      richText: true,
+      onEvent(event, editor) {
+        if (event.type === "input") inputs++;
+        if (event.type === "beforeinput") {
+          assert.equal(event.inputType, "insertText");
+          editor.innerText = event.data.replace(/\n/g, "\n\n");
+          return false;
+        }
+      },
+    },
+  );
+  assert.equal(harness.result.ok, true);
+  assert.equal(inputs, 0, "do not replay input after the editor handled the transaction");
+});
+
+for (const wrongText of ["", "different words", "first second", "first  \nsecond"]) {
+  test(`cancelled rich edit rejects mismatching text ${JSON.stringify(wrongText)}`, () => {
+    const harness = runComposerScript(
+      createComposerOperation(snapshot(), { text: "first\nsecond", send: true }),
+      {
+        richText: true,
+        onEvent(event, editor) {
+          if (event.type === "beforeinput") {
+            editor.innerText = wrongText;
+            return false;
+          }
+        },
+      },
+    );
+    assert.equal(harness.result.ok, false);
+    assert.equal(harness.listeners.size, 0);
+    assert.equal(harness.editor.innerText, wrongText);
+  });
+}
+
+for (const phase of ["focus", "beforeinput", "input", "change"]) {
+  for (const mutation of ["text", "focus", "replace"]) {
+    test(`rich editor rejects ${mutation} during ${phase}`, () => {
+      const mutate = (editor, document) => {
+        if (mutation === "text") editor.innerText = "new user draft";
+        if (mutation === "focus") document.activeElement = null;
+        if (mutation === "replace") editor.isConnected = false;
+      };
+      const harness = runComposerScript(
+        createComposerOperation(snapshot(), { text: "translated", send: true }),
+        {
+          richText: true,
+          initialText: "original draft",
+          onFocus: phase === "focus" ? mutate : undefined,
+          onEvent: (event, editor, document) => {
+            if (event.type === phase) mutate(editor, document);
+          },
+        },
+      );
+      assert.equal(harness.result.ok, false);
+      assert.equal(harness.listeners.size, 0);
+    });
+  }
+}
+
+test("rich editor strategies preserve drafts, append paragraphs and enforce the size limit", () => {
+  for (const strategy of ["replace", "append", "fail-if-not-empty"]) {
+    const harness = runComposerScript(
+      createComposerOperation(snapshot(), { text: "translated", strategy }),
+      { richText: true, initialText: "draft" },
+    );
+    assert.equal(
+      harness.editor.innerText,
+      strategy === "replace"
+        ? "translated"
+        : strategy === "append"
+          ? "draft\n\ntranslated"
+          : "draft",
+    );
+    assert.equal(harness.result.ok, strategy !== "fail-if-not-empty");
+  }
+  const oversized = runComposerScript(
+    createComposerOperation(snapshot(), { text: "x", strategy: "append" }),
+    { richText: true, initialText: "x".repeat(30000) },
+  );
+  assert.equal(oversized.result.reason, "content-too-long");
+  assert.equal(oversized.editor.innerText.length, 30000);
+});
+
+test("a failed native managed edit never replaces the editor DOM", () => {
+  const harness = runComposerScript(createComposerOperation(snapshot(), { text: "translated" }), {
+    richText: true,
+    initialText: "draft",
+    rejectNative: true,
+  });
+  assert.equal(harness.result.ok, false);
+  assert.equal(harness.editor.innerText, "draft");
+});
+
+test("a generic rich settings form cannot borrow the main conversation's identity", () => {
+  const submit = {};
+  const form = {
+    matches: (selector) => selector === "form",
+    querySelector: (selector) => (selector === 'button[type="submit"]' ? submit : null),
+  };
+  const editor = {
+    matches: (selector) => selector.startsWith("textarea,") || selector.includes(".ProseMirror"),
+    closest: (selector) => (selector.startsWith("dialog,") ? null : form),
+  };
+  assert.equal(isLikelyComposerEditorInPage(editor), false);
+});
+
+for (const role of ["dialog", "alertdialog", "search"]) {
+  test(`${role} inputs and textareas cannot become a composer even with a send button`, () => {
+    for (const richText of [false, true]) {
+      const harness = runComposerScript(
+        createComposerOperation(snapshot(), { text: "translated" }),
+        {
+          richText,
+          initialText: "private draft",
+          prepare(editor) {
+            editor.closest = () => ({ role });
+          },
+        },
+      );
+      assert.equal(harness.result.reason, "no-editor");
+      assert.equal(harness.editor.value ?? harness.editor.innerText, "private draft");
+    }
+  });
+}

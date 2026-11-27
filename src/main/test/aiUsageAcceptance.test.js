@@ -82,7 +82,7 @@ function createTrackerHarness(token) {
     value: "question",
     isConnected: true,
     matches: () => true,
-    closest: () => editor,
+    closest: (selector) => (selector.startsWith("dialog,") ? null : editor),
     querySelector: () => editor,
     contains: (node) => node === editor || node === sendButton,
     getBoundingClientRect: () => ({ width: 300, height: 80 }),

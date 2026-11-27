@@ -8,6 +8,8 @@ const TOKEN_PATTERN = /^[a-zA-Z0-9_-]{32,128}$/;
 const CONFIRMATION_ID_PATTERN = /^[a-z0-9-]{8,80}$/i;
 const COMPOSER_CONFIRMATION_MARKER_PREFIX = "__SHAREGPT_COMPOSER_CONFIRM_V1__:";
 const COMPOSER_GUARD_BLOCKED_EVENT = "__sharegpt_internal_composer_blocked_v1";
+const COMPOSER_EDITOR_CANDIDATES =
+  '#prompt-textarea, .ProseMirror, [data-lexical-editor="true"], rich-textarea [contenteditable], form textarea, form [contenteditable]:not([contenteditable="false"]), [data-testid*="composer" i] textarea, [data-testid*="composer" i] [contenteditable]:not([contenteditable="false"])';
 
 function safeText(value) {
   return String(value ?? "").trim();
@@ -149,6 +151,9 @@ function isLikelyComposerEditorInPage(editor, button = null) {
     )
   )
     return false;
+  // Dialog editors and search fields must never inherit the conversation's controls.
+  if (editor.closest?.('dialog, [role="dialog"], [role="alertdialog"], [role="search"]'))
+    return false;
   const strongSendSelector =
     'button[data-testid="send-button"], button[data-testid*="send" i], button#composer-submit-button, button[aria-label*="send" i], button[aria-label*="发送"]';
   const root = editor.closest?.(
@@ -158,7 +163,7 @@ function isLikelyComposerEditorInPage(editor, button = null) {
     editor.id === "prompt-textarea" ||
     editor.matches?.('[data-lexical-editor="true"], .ProseMirror, rich-textarea [contenteditable]');
   const rootLooksLikeComposer =
-    editorLooksLikeComposer ||
+    editor.id === "prompt-textarea" ||
     (!root?.matches?.("fieldset") &&
       root?.matches?.(
         '[data-testid*="composer" i], [class*="composer" i], form[id*="composer" i], rich-textarea',
@@ -168,8 +173,17 @@ function isLikelyComposerEditorInPage(editor, button = null) {
     (rootLooksLikeComposer ? root?.querySelector?.('button[type="submit"]') : null);
   if (sendButton && (!button || root.contains(button))) return true;
   if (editorLooksLikeComposer) {
-    const main =
-      editor.closest?.("main, fieldset, form") || globalThis.document?.querySelector?.("main");
+    const main = editor.closest?.("main, fieldset, form");
+    // An empty conversation exposes a microphone instead of a send button.
+    // Generic rich editors still need a conversation container, not just a class.
+    if (!button) {
+      return Boolean(
+        editor.id === "prompt-textarea" ||
+        editor.matches?.("rich-textarea [contenteditable]") ||
+        root?.matches?.('[data-testid*="composer" i], [class*="composer" i], rich-textarea') ||
+        main?.matches?.("main"),
+      );
+    }
     return Boolean(main?.querySelector?.(strongSendSelector) && (!button || main.contains(button)));
   }
   return false;
@@ -216,7 +230,7 @@ function composerConfirmationGuardScript(token, options = {}) {
       const findEditor = (target, button = null) => {
         const direct = target?.matches?.(selector) ? target : target?.closest?.(selector);
         const active = document.activeElement;
-        const candidates = [direct, active, ...document.querySelectorAll('#prompt-textarea, form textarea, form [contenteditable]:not([contenteditable="false"]), [data-testid*="composer" i] textarea, [data-testid*="composer" i] [contenteditable]:not([contenteditable="false"])')];
+        const candidates = [direct, active, ...document.querySelectorAll(${JSON.stringify(COMPOSER_EDITOR_CANDIDATES)})];
         return candidates.find((node) => visible(node) && isLikelyComposerEditor(node, button)) || null;
       };
       const remove = (id) => {
@@ -492,13 +506,19 @@ function composerWriteScript(operation, options = {}) {
       const active = deepActive();
       const candidates = [
         active?.matches?.(selector) ? active : active?.closest?.(selector),
-        ...document.querySelectorAll('#prompt-textarea, form textarea, form [contenteditable]:not([contenteditable="false"]), [data-testid*="composer" i] textarea, [data-testid*="composer" i] [contenteditable]:not([contenteditable="false"])'),
+        ...document.querySelectorAll(${JSON.stringify(COMPOSER_EDITOR_CANDIDATES)}),
       ];
       const editor = candidates.find((node) => visible(node) && isLikelyComposerEditor(node));
       if (!editor) return { ok: false, reason: 'no-editor' };
 
       const readRaw = () => String('value' in editor ? editor.value : editor.innerText || editor.textContent || '');
       const read = () => readRaw().trim();
+      // Paragraph-based editors may expose blank lines differently through selection/innerText.
+      // Preserve words and horizontal spacing; only canonicalize line endings and blank lines.
+      const normalizeWritten = (value) => String(value).replace(/\\r\\n?/g, '\\n').replace(/\\u00a0/g, ' ').replace(/\\n(?:[ \\t]*\\n)+/g, '\\n').trim();
+      const writtenMatches = (actual, expected) => 'value' in editor
+        ? actual.trim() === expected.trim()
+        : normalizeWritten(actual) === normalizeWritten(expected);
       const editorCurrent = () => {
         const focused = deepActive();
         return currentUrl() === payload.url && visible(editor) &&
@@ -532,9 +552,10 @@ function composerWriteScript(operation, options = {}) {
         cancelable: true,
         composed: true,
         data: finalText,
-        inputType: 'insertReplacementText',
+        inputType: 'value' in editor ? 'insertReplacementText' : 'insertText',
       });
       let expectedWrittenText = finalText.trim();
+      let needsInputEvent = true;
       if ('value' in editor) {
         editor.setSelectionRange?.(0, String(editor.value || '').length);
         if (!editor.dispatchEvent(beforeInput())) return { ok: false, reason: 'write-cancelled' };
@@ -556,38 +577,48 @@ function composerWriteScript(operation, options = {}) {
         const selectedDraft = selection.toString();
         if (payload.strategy === 'append' && selectedDraft.trim()) finalText = selectedDraft.trimEnd() + '\\n\\n' + payload.text;
         if (finalText.length > ${MAX_COMPOSER_CHARS}) return { ok: false, reason: 'content-too-long' };
-        if (!editor.dispatchEvent(beforeInput())) return { ok: false, reason: 'write-cancelled' };
-        if (!editorCurrent() || readRaw() !== existingText) return { ok: false, reason: 'page-changed' };
-        let inserted = false;
-        if (!editor.contains(selection.anchorNode) || !editor.contains(selection.focusNode) || selection.toString() !== selectedDraft) return { ok: false, reason: 'page-changed' };
-        try {
-          inserted = Boolean(document.execCommand?.('insertText', false, finalText));
-        } catch {}
-        if (!inserted) {
-          if (!editorCurrent() || readRaw() !== existingText) return { ok: false, reason: 'write-rejected' };
-          editor.replaceChildren(document.createTextNode(finalText));
+        const proceed = editor.dispatchEvent(beforeInput());
+        if (!editorCurrent()) return { ok: false, reason: 'page-changed' };
+        if (!proceed) {
+          // ProseMirror/Lexical can consume beforeinput and perform the edit themselves.
+          if (!writtenMatches(read(), finalText)) return { ok: false, reason: 'write-cancelled' };
+          needsInputEvent = false;
+        } else {
+          if (readRaw() !== existingText) return { ok: false, reason: 'page-changed' };
+          if (!editor.contains(selection.anchorNode) || !editor.contains(selection.focusNode) || selection.toString() !== selectedDraft) return { ok: false, reason: 'page-changed' };
+          let inserted = false;
+          try {
+            inserted = Boolean(document.execCommand?.('insertText', false, finalText));
+          } catch {}
+          if (inserted || writtenMatches(read(), finalText)) needsInputEvent = false;
+          else {
+            if (!editorCurrent() || readRaw() !== existingText) return { ok: false, reason: 'write-rejected' };
+            // Replacing managed DOM would bypass the editor's model and lose the draft on rerender.
+            if (editor.matches('.ProseMirror, [data-lexical-editor="true"], rich-textarea [contenteditable]')) return { ok: false, reason: 'write-rejected' };
+            editor.replaceChildren(document.createTextNode(finalText));
+          }
         }
         if (!editorCurrent()) return { ok: false, reason: 'write-rejected' };
         const finalRange = document.createRange?.();
         finalRange?.selectNodeContents(editor);
         selection?.removeAllRanges();
         if (finalRange) selection?.addRange(finalRange);
-        if (!editorCurrent() || selection.toString().trim() !== finalText.trim()) return { ok: false, reason: 'write-rejected' };
+        if (!editorCurrent() || !writtenMatches(selection.toString(), finalText)) return { ok: false, reason: 'write-rejected' };
         expectedWrittenText = read();
         finalRange?.collapse(false);
         selection.removeAllRanges();
         if (finalRange) selection.addRange(finalRange);
       }
-      if (!editorCurrent() || read() !== expectedWrittenText) return { ok: false, reason: 'write-rejected' };
-      editor.dispatchEvent(inputEvent('input', {
+      if (!editorCurrent() || !writtenMatches(read(), expectedWrittenText)) return { ok: false, reason: 'write-rejected' };
+      if (needsInputEvent) editor.dispatchEvent(inputEvent('input', {
         bubbles: true,
         composed: true,
         inputType: 'insertReplacementText',
         data: finalText,
       }));
-      if (!editorCurrent() || read() !== expectedWrittenText) return { ok: false, reason: 'write-rejected' };
+      if (!editorCurrent() || !writtenMatches(read(), expectedWrittenText)) return { ok: false, reason: 'write-rejected' };
       editor.dispatchEvent(new Event('change', { bubbles: true }));
-      if (!editorCurrent() || read() !== expectedWrittenText) {
+      if (!editorCurrent() || !writtenMatches(read(), expectedWrittenText)) {
         return { ok: false, reason: 'write-rejected' };
       }
       if (!payload.send) return { ok: true, sent: false };
@@ -598,7 +629,7 @@ function composerWriteScript(operation, options = {}) {
         token: payload.token,
         url: payload.url,
         editor,
-        expectedText: expectedWrittenText,
+        expectedText: read(),
         expiresAt: Date.now() + payload.ttlMs,
         status: 'armed',
         reason: '',
