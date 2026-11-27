@@ -130,6 +130,139 @@ test("administrator password attempts are limited independently of ordinary logi
   );
 });
 
+test("desktop administrator tokens share current admin authorization without a second login", async (t) => {
+  const baseline = fs.readFileSync(process.env.USERS_FILE, "utf8");
+  t.after(() => fs.writeFileSync(process.env.USERS_FILE, baseline));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const accounts = JSON.parse(baseline);
+  accounts.users.push(createUserRecord("integrated-admin", "test-password", { isAdmin: true }));
+  accounts.users.push(createUserRecord("integrated-member", "test-password"));
+  fs.writeFileSync(process.env.USERS_FILE, JSON.stringify(accounts));
+  const login = async (username, endpoint = "/api/login") => {
+    const response = await fetch(`${base}${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password: "test-password" }),
+    });
+    const body = await response.text();
+    assert.equal(response.status, 200, body);
+    return JSON.parse(body).token;
+  };
+  const request = async (token, url, method = "GET", body = {}) => {
+    const response = await fetch(`${base}${url}`, {
+      method,
+      headers: { authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      ...(method === "GET" ? {} : { body: JSON.stringify(body) }),
+    });
+    return { status: response.status, body: await response.text() };
+  };
+  let token = await login("integrated-admin");
+  const memberToken = await login("integrated-member");
+  const reads = [
+    "users",
+    "invites",
+    "bootstrap",
+    "proxy-routes",
+    "proxy-route-health",
+    "translation-profiles",
+    "translation-usage",
+    "ai-usage",
+    "feedback",
+    "proxy-missing",
+    "airport",
+  ];
+  for (const resource of reads) {
+    assert.equal((await request(token, `/api/admin/${resource}`)).status, 200, resource);
+    assert.equal((await request(memberToken, `/api/admin/${resource}`)).status, 401, resource);
+  }
+  for (const [resource, method] of [
+    ["users", "POST"],
+    ["users/integrated-admin", "PATCH"],
+    ["invites", "POST"],
+    ["invites/not-real/revoke", "POST"],
+    ["bootstrap", "PUT"],
+    ["proxy-routes", "PUT"],
+    ["translation-profiles", "PUT"],
+    ["airport", "PUT"],
+    ["releases/upload", "POST"],
+  ])
+    assert.equal(
+      (await request(memberToken, `/api/admin/${resource}`, method)).status,
+      401,
+      resource,
+    );
+
+  const standaloneToken = await login("integrated-admin", "/api/admin/login");
+  assert.equal((await request(standaloneToken, "/api/admin/users")).status, 200);
+  await request(token, "/api/logout", "POST");
+  assert.equal((await request(token, "/api/admin/users")).status, 401);
+  assert.equal((await request(standaloneToken, "/api/admin/users")).status, 200);
+  await request(standaloneToken, "/api/admin/logout", "POST");
+  assert.equal((await request(standaloneToken, "/api/admin/users")).status, 401);
+
+  token = await login("integrated-admin");
+  await request(token, "/api/admin/logout", "POST");
+  assert.equal((await request(token, "/api/admin/users")).status, 401);
+  token = await login("integrated-admin");
+  const currentStandalone = await login("integrated-admin", "/api/admin/login");
+  // Also cover changes made outside HTTP: the current repository is authoritative.
+  for (const patch of [{ isAdmin: false }, { disabled: true }]) {
+    const original = fs.readFileSync(process.env.USERS_FILE, "utf8");
+    const store = JSON.parse(original);
+    Object.assign(
+      store.users.find((u) => u.username === "integrated-admin"),
+      patch,
+    );
+    fs.writeFileSync(process.env.USERS_FILE, JSON.stringify(store));
+    try {
+      assert.equal((await request(token, "/api/admin/users")).status, 401);
+      assert.equal((await request(currentStandalone, "/api/admin/users")).status, 401);
+    } finally {
+      fs.writeFileSync(process.env.USERS_FILE, original);
+    }
+  }
+  const original = fs.readFileSync(process.env.USERS_FILE, "utf8");
+  const backupPath = `${process.env.USERS_FILE}.backup`;
+  const backup = fs.readFileSync(backupPath);
+  fs.writeFileSync(process.env.USERS_FILE, "{broken");
+  fs.writeFileSync(backupPath, "{broken-backup");
+  try {
+    assert.equal((await request(token, "/api/admin/users")).status, 503);
+  } finally {
+    fs.writeFileSync(process.env.USERS_FILE, original);
+    fs.writeFileSync(backupPath, backup);
+  }
+
+  // Reauthorization after a body-read await must reject a now-revoked desktop token.
+  const pending = post("/api/admin/bootstrap", null, true, {
+    method: "PUT",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  await request(token, "/api/logout", "POST");
+  pending.req.end(JSON.stringify({ extra: { mustNotWrite: true } }));
+  assert.equal((await pending.result).status, 401);
+  const bootstrap = JSON.parse((await request(currentStandalone, "/api/admin/bootstrap")).body);
+  assert.equal(bootstrap.extra.mustNotWrite, undefined);
+
+  // Revocation through the real account API invalidates both session maps.
+  for (const patch of [{ isAdmin: false }, { disabled: true }]) {
+    const username = patch.disabled ? "disable-target" : "demote-target";
+    const store = JSON.parse(fs.readFileSync(process.env.USERS_FILE));
+    store.users.push(createUserRecord(username, "test-password", { isAdmin: true }));
+    fs.writeFileSync(process.env.USERS_FILE, JSON.stringify(store));
+    const desktop = await login(username);
+    const standalone = await login(username, "/api/admin/login");
+    assert.equal(
+      (await request(currentStandalone, `/api/admin/users/${username}`, "PATCH", patch)).status,
+      200,
+    );
+    assert.equal((await request(desktop, "/api/admin/users")).status, 401);
+    assert.equal((await request(standalone, "/api/admin/users")).status, 401);
+  }
+});
+
 async function openClient(url, token) {
   const ws = new WebSocket(`${url}/ws?token=${encodeURIComponent(token)}`);
   const messages = [];

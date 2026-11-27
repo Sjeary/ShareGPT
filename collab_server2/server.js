@@ -1655,18 +1655,31 @@ async function addHistory(message) {
 function resolveAdminSessionByToken(token) {
   const normalized = safeText(token);
   if (!normalized) return null;
-  const session = adminSessions.get(normalized);
+  // Desktop and standalone admin logins retain their own session lifecycles.
+  // Never copy a desktop token into adminSessions: logout must revoke it at once.
+  const owner = adminSessions.has(normalized) ? adminSessions : sessions;
+  const session = owner.get(normalized);
   if (!session) return null;
   if (session.expiresAt <= Date.now()) {
-    adminSessions.delete(normalized);
+    owner.delete(normalized);
     return null;
   }
+  // Authorization belongs to the current account, not the login-time role.
+  const { user } = findUser(session.username);
+  if (!user || user.isAdmin !== true || user.disabled) return null;
   return session;
 }
 
 function requireAdminSession(req, res) {
   const token = extractBearer(req);
-  const session = resolveAdminSessionByToken(token);
+  let session;
+  try {
+    session = resolveAdminSessionByToken(token);
+  } catch {
+    // Fail closed, but do not misreport a repository outage as a revoked account.
+    sendText(res, 503, "账号数据暂不可用，请稍后重试");
+    return null;
+  }
   if (!session) {
     sendText(res, 401, "管理员未授权");
     return null;
@@ -2428,7 +2441,11 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (req.method === "POST" && pathname === "/api/logout") {
+  if (
+    req.method === "POST" &&
+    (pathname === "/api/logout" ||
+      (pathname === "/api/admin/logout" && sessions.has(extractBearer(req))))
+  ) {
     const token = extractBearer(req);
     if (!token) {
       sendText(res, 401, "未授权");
