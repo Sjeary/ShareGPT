@@ -162,7 +162,7 @@ test("preview exposes only the public contract for every invitation state", asyn
       {
         expiresAt: "",
         usedCount: 1,
-        registrations: [{ username: "private-member", registeredAt: "" }],
+        registrations: [{ username: "private-member", registeredAt: new Date().toISOString() }],
       },
     ],
     ["revoked", { revokedAt: new Date().toISOString() }],
@@ -328,43 +328,119 @@ test("valid invitation backup recovery preserves the damaged original", async ()
   );
 });
 
-test("a failed invite save compensates the persisted user creation", async () => {
-  const file = path.join(directory, "rollback-invites.json");
-  const accounts = createUserStore(path.join(directory, "rollback-users.json"));
-  accounts.save({ users: [createUserRecord("seed-admin", "test-password", { isAdmin: true })] });
-  const invite = { ...(await create()), code: "rollback-code", usedCount: 0, registrations: [] };
-  saveJsonStore(file, { invites: [invite] }, "invites");
-  const handler = createInviteHandler({
-    file,
-    readBody: async () =>
-      JSON.stringify({ code: invite.code, username: "rolled-back", password: "test-password" }),
-    safeParseJson: JSON.parse,
-    sendJson: (res, status, data) => Object.assign(res, { status, data }),
-    requireAdminSession: () => null,
-    resolveClientIp: () => "127.0.0.1",
-    loadUserStore: accounts.load,
-    saveUserStore: accounts.save,
-    createUserRecord,
-    normalizeProxyRouteIds,
-    saveInvites: () => {
-      throw new Error("injected storage failure");
-    },
-  });
-  const res = {};
-  await handler({ method: "POST" }, res, new URL("http://localhost/api/invite/register"));
-  assert.equal(res.status, 500);
-  assert.deepEqual(
-    accounts.load().users.map((item) => item.username),
-    ["seed-admin"],
-  );
-  assert.deepEqual(
-    JSON.parse(fs.readFileSync(path.join(directory, "rollback-users.json.backup"))).users.map(
-      (item) => item.username,
-    ),
-    ["seed-admin"],
-  );
-  assert.equal(readJsonStore(file, "invites").invites[0].usedCount, 0);
+test("malformed invitation records never create users, bypass limits or rewrite either store", async () => {
+  const invite = await create({ maxUses: 1 });
+  const file = process.env.INVITES_FILE;
+  const original = fs.readFileSync(file);
+  const inviteBackup = fs.readFileSync(`${file}.backup`);
+  const usersBefore = fs.readFileSync(process.env.USERS_FILE);
+  const usersBackup = fs.readFileSync(`${process.env.USERS_FILE}.backup`);
+  const cases = [
+    { registrations: undefined },
+    { registrations: {} },
+    { registrations: [null], usedCount: 1 },
+    { registrations: [{ username: "member", registeredAt: "invalid" }], usedCount: 1 },
+    { usedCount: undefined },
+    { usedCount: "0" },
+    { usedCount: -1 },
+    { usedCount: 0.5 },
+    { usedCount: Number.MAX_SAFE_INTEGER + 1 },
+    { usedCount: 1 },
+    { maxUses: undefined },
+    { maxUses: 0 },
+    { maxUses: -1 },
+    { maxUses: 1.5 },
+    { maxUses: "1" },
+    { allowedProxyRouteIds: undefined },
+    { allowedProxyRouteIds: "route" },
+    { allowedProxyRouteIds: [1] },
+    { code: "" },
+    { code: 123 },
+    { code: undefined },
+    { expiresAt: "invalid" },
+    { revokedAt: false },
+    { chatDisabled: "false" },
+    { createdAt: "invalid" },
+  ];
+  try {
+    for (const [index, change] of cases.entries()) {
+      const store = JSON.parse(original);
+      Object.assign(
+        store.invites.find((item) => item.id === invite.id),
+        change,
+      );
+      const damaged = JSON.stringify(store);
+      fs.writeFileSync(file, damaged);
+      const code = Object.hasOwn(change, "code") ? change.code : invite.code;
+      // Repeated consumption must fail without changing the malformed counter.
+      for (let retry = 0; retry < 2; retry++) {
+        const result = await register({ code }, `corrupt-${index}-${retry}`);
+        assert.equal(result.status, 500, JSON.stringify(change));
+        assert.deepEqual(result.data, { ok: false, message: "邀请服务暂不可用，请联系管理员" });
+      }
+      assert.equal(fs.readFileSync(file, "utf8"), damaged);
+      assert.deepEqual(fs.readFileSync(`${file}.backup`), inviteBackup);
+      assert.deepEqual(fs.readFileSync(process.env.USERS_FILE), usersBefore);
+      assert.deepEqual(fs.readFileSync(`${process.env.USERS_FILE}.backup`), usersBackup);
+    }
+  } finally {
+    fs.writeFileSync(file, original);
+  }
 });
+
+for (const failure of ["user-save", "registration-time", "invite-save"]) {
+  test(`a failure at ${failure} compensates user creation and backup rotation`, async () => {
+    const file = path.join(directory, `rollback-${failure}-invites.json`);
+    const usersFile = path.join(directory, `rollback-${failure}-users.json`);
+    const accounts = createUserStore(usersFile);
+    accounts.save({ users: [createUserRecord("seed-admin", "test-password", { isAdmin: true })] });
+    const invite = { ...(await create()), code: "rollback-code", usedCount: 0, registrations: [] };
+    saveJsonStore(file, { invites: [invite] }, "invites");
+    let userSaved = false;
+    let failOnce = true;
+    const handler = createInviteHandler({
+      file,
+      readBody: async () =>
+        JSON.stringify({ code: invite.code, username: "rolled-back", password: "test-password" }),
+      safeParseJson: JSON.parse,
+      sendJson: (res, status, data) => Object.assign(res, { status, data }),
+      requireAdminSession: () => null,
+      resolveClientIp: () => "127.0.0.1",
+      loadUserStore: accounts.load,
+      saveUserStore: (store) => {
+        accounts.save(store);
+        userSaved = true;
+        if (failure === "user-save" && failOnce) {
+          failOnce = false;
+          throw new Error("injected failure after user write");
+        }
+      },
+      now: () => {
+        if (failure === "registration-time" && userSaved) {
+          throw new Error("injected registration failure");
+        }
+        return Date.now();
+      },
+      createUserRecord,
+      normalizeProxyRouteIds,
+      saveInvites: () => {
+        throw new Error("injected storage failure");
+      },
+    });
+    const res = {};
+    await handler({ method: "POST" }, res, new URL("http://localhost/api/invite/register"));
+    assert.equal(res.status, 500);
+    assert.deepEqual(
+      accounts.load().users.map((item) => item.username),
+      ["seed-admin"],
+    );
+    assert.deepEqual(
+      JSON.parse(fs.readFileSync(`${usersFile}.backup`)).users.map((item) => item.username),
+      ["seed-admin"],
+    );
+    assert.equal(readJsonStore(file, "invites").invites[0].usedCount, 0);
+  });
+}
 
 test("a corrupt user store blocks registration before changing invitation usage", async () => {
   const invite = await create();

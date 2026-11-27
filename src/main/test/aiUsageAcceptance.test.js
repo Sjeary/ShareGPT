@@ -343,7 +343,12 @@ test("a failed request releases its attempt for one bounded successful retry", (
   const tracker = createUsageAttemptTracker({ now: () => now, ttlMs: 5000 });
   tracker.record({ id: "attempt-error", attemptedAt: 1000 }, 17);
   tracker.recordRequestStart("gpt", conversationRequest("request-error", 17));
-  assert.equal(tracker.failRequest(conversationRequest("request-error", 17)), null);
+  assert.equal(
+    tracker.failRequest(
+      conversationRequest("request-error", 17, { error: "net::ERR_CONNECTION_RESET" }),
+    ),
+    null,
+  );
   assert.deepEqual(tracker.size(), { attempts: 1, requests: 0 });
   now = 1100;
   tracker.recordRequestStart("gpt", conversationRequest("request-retry", 17));
@@ -365,10 +370,15 @@ test("a retry that completes before the first request fails is accepted by exact
   now = 1200;
   assert.equal(tracker.acceptResponse("gpt", conversationRequest("request-retry", 17)), null);
   now = 1300;
-  assert.deepEqual(tracker.failRequest(conversationRequest("request-first", 17)), {
-    id: "attempt-race",
-    acceptedAt: 1200,
-  });
+  assert.deepEqual(
+    tracker.failRequest(
+      conversationRequest("request-first", 17, { error: "net::ERR_CONNECTION_RESET" }),
+    ),
+    {
+      id: "attempt-race",
+      acceptedAt: 1200,
+    },
+  );
   assert.deepEqual(tracker.size(), { attempts: 0, requests: 0 });
 });
 
@@ -474,7 +484,10 @@ test("delayed requests after PoW/proxy latency still bind and early SSE stop sti
     acceptedAt: 7400,
   });
   // Later abort (user clicked Stop generating) or onCompleted must not double-count or throw
-  assert.equal(tracker.failRequest(conversationRequest("req-pow", 21)), null);
+  assert.equal(
+    tracker.failRequest(conversationRequest("req-pow", 21, { error: "net::ERR_ABORTED" })),
+    null,
+  );
   assert.equal(tracker.acceptResponse("gpt", conversationRequest("req-pow", 21)), null);
 });
 
@@ -522,7 +535,7 @@ test("2xx then a broken stream and automatic retry count only the original gestu
   tracker.record({ id: "original-send", attemptedAt: now }, 17);
   assert.equal(accept("original").id, "original-send");
   now = 1010;
-  tracker.failRequest(conversationRequest("original", 17));
+  tracker.failRequest(conversationRequest("original", 17, { error: "net::ERR_CONNECTION_RESET" }));
   now = 1020;
   accept("retry");
   await fallbackWait();
@@ -544,7 +557,7 @@ test("a missing marker still counts a 2xx response aborted within fallback grace
   await fallbackWait();
   assert.equal(events.length, 1);
   tracker.acceptResponse("gpt", conversationRequest("early-stop", 17));
-  accept("automatic-retry");
+  tracker.completeRequest("gpt", conversationRequest("early-stop", 17));
   await fallbackWait();
   assert.equal(events.length, 1);
 });
@@ -563,6 +576,65 @@ test("an old bound attempt outside its binding window cannot swallow a newer acc
   accept("later-send");
   await fallbackWait();
   assert.equal(events.length, 1);
+});
+
+for (const error of ["net::ERR_ABORTED", "net::ERR_CONNECTION_RESET", undefined]) {
+  for (const early of [true, false]) {
+    test(`missing DOM markers count both questions after ${error}, early stop: ${early}`, async (t) => {
+      let now = 1000;
+      const { tracker, events, accept } = fallbackHarness({ now: () => now });
+      t.after(() => tracker.clear());
+      accept("question-one");
+      if (!early) await fallbackWait();
+      tracker.failRequest(conversationRequest("question-one", 17, { error }));
+      await fallbackWait();
+      assert.equal(events.length, 1);
+      now += 1000;
+      accept("question-two");
+      tracker.completeRequest("gpt", conversationRequest("question-two", 17));
+      await fallbackWait();
+      assert.equal(events.length, 2);
+      assert.notEqual(events[0].id, events[1].id);
+      tracker.acceptResponse("gpt", conversationRequest("question-one", 17));
+      tracker.completeRequest("gpt", conversationRequest("question-one", 17));
+      tracker.completeRequest("gpt", conversationRequest("question-two", 17));
+      await fallbackWait();
+      assert.equal(events.length, 2);
+    });
+  }
+}
+
+for (const completed of [false, true]) {
+  test(`a DOM-bound ${completed ? "completed" : "aborted"} stream cannot own the next unmarked question`, async (t) => {
+    let now = 1000;
+    const { tracker, events, accept } = fallbackHarness({ now: () => now });
+    t.after(() => tracker.clear());
+    tracker.record({ id: "first-send", attemptedAt: now }, 17);
+    assert.equal(accept("first-question").id, "first-send");
+    if (completed) tracker.completeRequest("gpt", conversationRequest("first-question", 17));
+    tracker.failRequest(
+      conversationRequest("first-question", 17, {
+        error: completed ? "net::ERR_CONNECTION_RESET" : "net::ERR_ABORTED",
+      }),
+    );
+    now += 1000;
+    accept("second-question");
+    await fallbackWait();
+    assert.equal(events.length, 1);
+  });
+}
+
+test("an aborted request before acceptance releases its DOM attempt without retry ownership", () => {
+  let now = 1000;
+  const tracker = createUsageAttemptTracker({ now: () => now });
+  tracker.record({ id: "cancelled-send", attemptedAt: now }, 17);
+  tracker.recordRequestStart("gpt", conversationRequest("cancelled", 17));
+  tracker.failRequest(conversationRequest("cancelled", 17, { error: "net::ERR_ABORTED" }));
+  assert.deepEqual(tracker.size(), { attempts: 0, requests: 0 });
+  now += 1000;
+  tracker.recordRequestStart("gpt", conversationRequest("new-send", 17));
+  assert.equal(tracker.acceptResponse("gpt", conversationRequest("new-send", 17)), null);
+  tracker.clear();
 });
 
 test("blocked fallback is rechecked after a bound attempt's window expires", async (t) => {
@@ -589,7 +661,11 @@ test("blocked fallback is transferred on failure, and clear cancels pending acco
   accept("second");
   await fallbackWait();
   assert.equal(events.length, 0);
-  assert.equal(tracker.failRequest(conversationRequest("first", 17)).id, "retry-owner");
+  assert.equal(
+    tracker.failRequest(conversationRequest("first", 17, { error: "net::ERR_CONNECTION_RESET" }))
+      .id,
+    "retry-owner",
+  );
   await fallbackWait();
   assert.equal(events.length, 0);
   accept("pending-other", 18);
@@ -605,7 +681,9 @@ test("a long accepted stream and slow automatic retry retain their already settl
   tracker.record({ id: "long-stream-send", attemptedAt: now }, 17);
   assert.equal(accept("long-stream").id, "long-stream-send");
   now = 61000;
-  tracker.failRequest(conversationRequest("long-stream", 17));
+  tracker.failRequest(
+    conversationRequest("long-stream", 17, { error: "net::ERR_CONNECTION_RESET" }),
+  );
   now = 61100;
   tracker.recordRequestStart("gpt", conversationRequest("slow-retry", 17));
   now = 61900;

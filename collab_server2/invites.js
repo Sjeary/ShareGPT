@@ -1,6 +1,34 @@
 const crypto = require("node:crypto");
 const { readJsonStore, saveJsonStore } = require("./json_store");
 
+function validateInvite(invite) {
+  const text = (value) => typeof value === "string" && Boolean(value.trim());
+  const date = (value) => text(value) && Number.isFinite(Date.parse(value));
+  if (
+    !text(invite.id) ||
+    !text(invite.code) ||
+    !/^[\w-]+$/.test(invite.code) ||
+    typeof invite.note !== "string" ||
+    !text(invite.createdBy) ||
+    !date(invite.createdAt) ||
+    (invite.expiresAt !== "" && !date(invite.expiresAt)) ||
+    (invite.revokedAt !== "" && !date(invite.revokedAt)) ||
+    !Number.isSafeInteger(invite.usedCount) ||
+    invite.usedCount < 0 ||
+    (invite.maxUses !== null && (!Number.isSafeInteger(invite.maxUses) || invite.maxUses < 1)) ||
+    typeof invite.chatDisabled !== "boolean" ||
+    !Array.isArray(invite.allowedProxyRouteIds) ||
+    invite.allowedProxyRouteIds.some((id) => !text(id)) ||
+    !Array.isArray(invite.registrations) ||
+    invite.registrations.length !== invite.usedCount ||
+    invite.registrations.some(
+      (entry) => !entry || !text(entry.username) || !date(entry.registeredAt),
+    )
+  ) {
+    throw new Error("Invalid invitation record");
+  }
+}
+
 function inviteSummary(invite, now = Date.now()) {
   const status = invite.revokedAt
     ? "revoked"
@@ -53,6 +81,7 @@ function createInviteHandler({
       fail(res, 404, "邀请链接无效或不存在", "invalid");
       return false;
     }
+    validateInvite(invite);
     const { status } = inviteSummary(invite, now());
     if (status === "active") return true;
     const messages = {
@@ -224,9 +253,9 @@ function createInviteHandler({
         username;
       await mutate(() => {
         const store = load();
-        const users = loadUserStore();
         const invite = store.invites.find((item) => item.code === payload.code);
         if (!usable(res, invite)) return;
+        const users = loadUserStore();
         if (users.users.some((user) => user.username.toLowerCase() === username.toLowerCase())) {
           fail(res, 409, "该用户名已被占用");
           return;
@@ -241,11 +270,11 @@ function createInviteHandler({
           allowedProxyRouteIds: invite.allowedProxyRouteIds,
           legacyProxyEntitled: !invite.allowedProxyRouteIds.length,
         });
-        users.users.push(user);
-        saveUserStore(users);
-        invite.usedCount += 1;
-        invite.registrations.push({ username, registeredAt: new Date(now()).toISOString() });
         try {
+          users.users.push(user);
+          saveUserStore(users);
+          invite.usedCount += 1;
+          invite.registrations.push({ username, registeredAt: new Date(now()).toISOString() });
           saveInvites(store);
         } catch (error) {
           saveUserStore(previousUsers);

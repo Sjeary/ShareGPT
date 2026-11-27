@@ -621,6 +621,39 @@ test("rotating usernames reaches the independent IP limit for both login scopes"
   }
 });
 
+test("rotating usernames cannot burst across an IP sliding-window boundary", async () => {
+  const realNow = Date.now;
+  let now = realNow() + 3600000;
+  Date.now = () => now;
+  const windowMs = 15 * 60 * 1000;
+  try {
+    for (const [endpoint, ip] of [
+      ["/api/login", "198.51.100.92"],
+      ["/api/admin/login", "198.51.100.93"],
+    ]) {
+      const start = now;
+      const options = { headers: { "x-forwarded-for": ip } };
+      const attempt = (name) =>
+        post(endpoint, { username: name, password: "wrong" }, false, options).result;
+      assert.equal((await attempt("anchor")).status, 401);
+      now = start + windowMs - 1;
+      for (let i = 0; i < 23; i++) assert.equal((await attempt(`before-${i}`)).status, 401);
+      now = start + windowMs + 1;
+      // Only the anchor aged out: 23 failures from 2ms ago remain in this window.
+      assert.equal((await attempt("after-0")).status, 401);
+      assert.equal((await attempt("after-1")).status, 401);
+      for (let i = 2; i < 30; i++) assert.equal((await attempt(`after-${i}`)).status, 429);
+      now = start + 2 * windowMs - 1;
+      assert.equal((await attempt("after-expiry")).status, 401);
+      now += windowMs + 1;
+    }
+  } finally {
+    now += windowMs + 1;
+    loginLockState("cleanup");
+    Date.now = realNow;
+  }
+});
+
 test("login failures expire and the bounded map refuses new keys without evicting live locks", () => {
   const realNow = Date.now;
   let now = realNow() + 3600000;

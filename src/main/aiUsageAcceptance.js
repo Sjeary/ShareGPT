@@ -178,9 +178,19 @@ function createUsageAttemptTracker(options = {}) {
   const attempts = new Map();
   const requests = new Map();
   const fallbackTimers = new Map();
-  // Keep settled network identities after emitting usage: a 2xx stream can
-  // subsequently fail and be retried without another user gesture.
+  // Keep request identities for repeated events. Cross-request retries require
+  // an original DOM attempt and an explicit retryable transport failure.
   const settledRequests = new Map();
+  const retryableErrors = new Set([
+    "net::ERR_CONNECTION_RESET",
+    "net::ERR_CONNECTION_CLOSED",
+    "net::ERR_CONNECTION_ABORTED",
+    "net::ERR_NETWORK_CHANGED",
+    "net::ERR_TIMED_OUT",
+    "net::ERR_CONNECTION_TIMED_OUT",
+    "net::ERR_HTTP2_PROTOCOL_ERROR",
+    "net::ERR_INCOMPLETE_CHUNKED_ENCODING",
+  ]);
   const retryWindowMs = Math.max(100, Number(options.retryWindowMs) || 5000);
   const rememberSettlement = (request, event) => {
     settledRequests.set(request.id, {
@@ -193,7 +203,8 @@ function createUsageAttemptTracker(options = {}) {
   const retrySettlement = (request) => {
     for (const settled of settledRequests.values()) {
       if (
-        settled.failedAt &&
+        settled.retryableFailure &&
+        (settled.attemptId || settled.retryAttemptId) &&
         settled.webContentsId === request.webContentsId &&
         settled.url === request.url &&
         request.startedAt >= settled.startedAt &&
@@ -309,7 +320,7 @@ function createUsageAttemptTracker(options = {}) {
     }
     return candidate;
   };
-  const discardRequest = (details) => {
+  const discardRequest = (details, canRetry = true) => {
     cleanup();
     const id = requestKey(details);
     const request = requests.get(id);
@@ -321,7 +332,7 @@ function createUsageAttemptTracker(options = {}) {
     const attempt = attempts.get(request.attemptId);
     if (!attempt) return null;
     attempt.requestId = "";
-    if (now() > attempt.retryUntil) {
+    if (!canRetry || now() > attempt.retryUntil) {
       attempts.delete(attempt.id);
       return null;
     }
@@ -368,6 +379,7 @@ function createUsageAttemptTracker(options = {}) {
         startedAt,
         url: String(details.url),
         failedAt: 0,
+        retryableFailure: false,
         expiresAt: startedAt + ttlMs,
         attemptId: "",
         completed: false,
@@ -375,8 +387,11 @@ function createUsageAttemptTracker(options = {}) {
         completedAt: 0,
         transportCompleted: false,
         retryEvent: null,
+        retryAttemptId: "",
       };
-      entry.retryEvent = retrySettlement(entry)?.event || null;
+      const previous = retrySettlement(entry);
+      entry.retryEvent = previous?.event || null;
+      entry.retryAttemptId = previous?.attemptId || previous?.retryAttemptId || "";
       requests.set(id, entry);
       const attempt = findAttemptForRequest(entry);
       return attempt ? bind(attempt, entry) : null;
@@ -415,12 +430,14 @@ function createUsageAttemptTracker(options = {}) {
       cleanup();
       const id = requestKey(details);
       const request = requests.get(id) || settledRequests.get(id);
+      const canRetry = !request?.transportCompleted && retryableErrors.has(details?.error);
       if (request && request.webContentsId === Number(details?.webContentsId)) {
         request.failedAt = now();
+        request.retryableFailure = canRetry;
         if (settledRequests.has(id)) request.expiresAt = now() + ttlMs;
         if (request.completed && request.accepted) return null;
       }
-      return discardRequest(details);
+      return discardRequest(details, canRetry);
     },
     expire() {
       cleanup();

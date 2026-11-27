@@ -1385,6 +1385,9 @@ function loginIpKey(clientIp, scope = "user") {
 function cleanupLoginAttempts(now = Date.now()) {
   for (const [key, record] of loginAttempts) {
     if (record.expiresAt <= now) loginAttempts.delete(key);
+    else if (record.failureTimes) {
+      record.failureTimes = record.failureTimes.filter((time) => time > now - LOGIN_LOCK_MS);
+    }
   }
 }
 function loginLockState(key, ipKey) {
@@ -1392,6 +1395,9 @@ function loginLockState(key, ipKey) {
   cleanupLoginAttempts(now);
   for (const candidate of [key, ipKey].filter(Boolean)) {
     const rec = loginAttempts.get(candidate);
+    if (rec?.failureTimes?.length >= LOGIN_IP_MAX_FAILS) {
+      return { locked: true, retryAfterMs: rec.failureTimes[0] + LOGIN_LOCK_MS - now };
+    }
     if (rec?.lockUntil > now) return { locked: true, retryAfterMs: rec.lockUntil - now };
   }
   // Never evict a live lock to accommodate an attacker-controlled new username.
@@ -1404,19 +1410,26 @@ function loginLockState(key, ipKey) {
 function recordLoginFail(key, ipKey) {
   const now = Date.now();
   cleanupLoginAttempts(now);
-  for (const [candidate, limit] of [
-    [ipKey, LOGIN_IP_MAX_FAILS],
-    [key, LOGIN_MAX_FAILS],
-  ]) {
+  for (const candidate of [ipKey, key]) {
     if (!candidate) continue;
     if (!loginAttempts.has(candidate) && loginAttempts.size >= LOGIN_ATTEMPTS_MAX) continue;
+    if (candidate === ipKey) {
+      const rec = loginAttempts.get(candidate) || { failureTimes: [], expiresAt: 0 };
+      // Blocked requests do not extend the window or grow the per-IP history.
+      if (rec.failureTimes.length < LOGIN_IP_MAX_FAILS) {
+        rec.failureTimes.push(now);
+        rec.expiresAt = now + LOGIN_LOCK_MS;
+      }
+      loginAttempts.set(candidate, rec);
+      continue;
+    }
     const rec = loginAttempts.get(candidate) || {
       fails: 0,
       lockUntil: 0,
       expiresAt: now + LOGIN_LOCK_MS,
     };
     rec.fails += 1;
-    if (rec.fails >= limit) {
+    if (rec.fails >= LOGIN_MAX_FAILS) {
       rec.lockUntil = Math.max(rec.lockUntil, now + LOGIN_LOCK_MS);
       rec.expiresAt = rec.lockUntil;
     }
