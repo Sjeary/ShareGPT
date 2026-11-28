@@ -235,3 +235,121 @@ test('a refresh during a save waits for the committed catalog instead of hiding 
   assert.deepEqual(calls, ['PUT', 'GET'])
   assert.equal(store.getState().proxyRoutes[0].id, 'saved')
 })
+
+test('unrelated application events preserve an exchanged legacy session and loaded data', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ users: [{ username: 'loaded' }] }))
+  let source: IntegratedAdminSession | null = A
+  let notify = () => {}
+  const store = createIntegratedAdminStore()
+  const dispose = connectIntegratedAdminSession(
+    {
+      getSession: () => source && { ...source },
+      subscribe: (listener) => {
+        notify = listener
+        return () => {}
+      },
+    },
+    store,
+  )
+  store.getState().bindSession({ ...A, token: 'legacy-admin-token' })
+  await store.getState().loadUsers()
+  let updates = 0
+  const off = store.subscribe(() => updates++)
+  for (let i = 0; i < 50; i++) notify()
+  assert.equal(updates, 0, 'navigation/status events must not invalidate admin data')
+  assert.equal(store.getState().session?.token, 'legacy-admin-token')
+  assert.equal(store.getState().users[0].username, 'loaded')
+  source = { ...A, serverUrl: A.serverUrl + '/' }
+  notify()
+  assert.equal(updates, 0, 'equivalent endpoint spelling is the same source')
+  source = { ...A, token: 'new-desktop-session' }
+  notify()
+  assert.equal(store.getState().session?.token, 'new-desktop-session')
+  assert.deepEqual(store.getState().users, [])
+  source = null
+  notify()
+  assert.equal(store.getState().session, null)
+  updates = 0
+  for (let i = 0; i < 50; i++) notify()
+  assert.equal(updates, 0, 'ordinary member/personal events must not emit empty resets')
+  off()
+  dispose()
+})
+
+test('expired admin data stays cleared until the desktop authentication source changes', () => {
+  let source = A
+  let notify = () => {}
+  const store = createIntegratedAdminStore()
+  const dispose = connectIntegratedAdminSession(
+    {
+      getSession: () => source,
+      subscribe: (listener) => {
+        notify = listener
+        return () => {}
+      },
+    },
+    store,
+  )
+  store.getState().clear()
+  notify()
+  assert.equal(store.getState().session, null)
+  source = { ...A, token: 'renewed' }
+  notify()
+  assert.equal(store.getState().session?.token, 'renewed')
+  dispose()
+})
+
+test('overlapping identical reads share one request and both callers receive its result', async (t) => {
+  const response = deferred<Response>()
+  const fetch = t.mock.method(globalThis, 'fetch', () => response.promise.then((r) => r.clone()))
+  const store = createIntegratedAdminStore()
+  store.getState().bindSession(A)
+  const first = store.getState().loadUsers()
+  const second = store.getState().loadOverview()
+  assert.equal(fetch.mock.callCount(), 1)
+  response.resolve(Response.json({ users: [{ username: 'loaded' }] }))
+  assert.deepEqual(await first, await second)
+  await store.getState().loadUsers()
+  assert.equal(fetch.mock.callCount(), 2, 'a later explicit refresh still reaches the server')
+})
+
+test('a pre-save read cannot be shared by a post-save refresh', async (t) => {
+  const oldRead = deferred<Response>()
+  let reads = 0
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, init?: RequestInit) => {
+    if (init?.method === 'PUT') return Response.json({ version: 1, routes: [{ id: 'saved' }] })
+    if (++reads === 1) return oldRead.promise
+    return Response.json({ version: 1, routes: [{ id: 'saved' }] })
+  })
+  const store = createIntegratedAdminStore()
+  store.getState().bindSession(A)
+  const stale = store.getState().loadProxyRoutes()
+  const save = store.getState().saveProxyRoutes([])
+  const refresh = store.getState().loadProxyRoutes()
+  await Promise.all([save, refresh])
+  assert.equal(reads, 2)
+  oldRead.resolve(Response.json({ version: 1, routes: [{ id: 'obsolete' }] }))
+  assert.equal(await stale, undefined)
+  assert.equal(store.getState().proxyRoutes[0].id, 'saved')
+})
+
+test('equal filters coalesce but A/B/A filter changes still make the final selection authoritative', async (t) => {
+  const responses = [deferred<Response>(), deferred<Response>(), deferred<Response>()]
+  let requests = 0
+  t.mock.method(globalThis, 'fetch', () => responses[requests++].promise)
+  const store = createIntegratedAdminStore()
+  store.getState().bindSession(A)
+  const oldA = store.getState().loadAiUsage({ service: 'gpt' })
+  const sameA = store.getState().loadAiUsage({ service: 'gpt' })
+  assert.equal(requests, 1)
+  const b = store.getState().loadAiUsage({ service: 'claude' })
+  const newA = store.getState().loadAiUsage({ service: 'gpt' })
+  assert.equal(requests, 3)
+  responses[2].resolve(Response.json({ service: 'gpt', marker: 'latest' }))
+  await newA
+  responses[0].resolve(Response.json({ service: 'gpt', marker: 'obsolete' }))
+  responses[1].resolve(Response.json({ service: 'claude' }))
+  assert.deepEqual(await Promise.all([oldA, sameA, b]), [undefined, undefined, undefined])
+  assert.equal(store.getState().aiUsage?.service, 'gpt')
+  assert.equal(store.getState().loading.aiUsage, false)
+})

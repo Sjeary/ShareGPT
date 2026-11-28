@@ -138,6 +138,7 @@ export function createIntegratedAdminStore(apiFactory = createAdminApi) {
     let sequence = 0
     const latest = new Map<AdminResource, number>()
     const controllers = new Set<AbortController>()
+    const reads = new Map<AdminResource, { query: string; promise: Promise<unknown> }>()
     let mutationTail: Promise<unknown> = Promise.resolve()
     let queuedWrites = 0
 
@@ -146,12 +147,32 @@ export function createIntegratedAdminStore(apiFactory = createAdminApi) {
       for (const controller of controllers) controller.abort()
       controllers.clear()
       latest.clear()
+      reads.clear()
       mutationTail = Promise.resolve()
       queuedWrites = 0
       set(emptyData())
     }
 
-    async function run<T>(
+    function run<T>(
+      key: AdminResource,
+      action: (api: IntegratedAdminApi) => Promise<T>,
+      commit: (value: T) => Partial<AdminData> = () => ({}),
+      query = '',
+    ): Promise<T | undefined> {
+      const existing = reads.get(key)
+      if (existing?.query === query) return existing.promise as Promise<T | undefined>
+      const pending = runRequest(key, action, commit)
+      const entry = { query, promise: pending }
+      reads.set(key, entry)
+      void pending
+        .finally(() => {
+          if (reads.get(key) === entry) reads.delete(key)
+        })
+        .catch(() => undefined)
+      return pending
+    }
+
+    async function runRequest<T>(
       key: AdminResource,
       action: (api: IntegratedAdminApi) => Promise<T>,
       commit: (value: T) => Partial<AdminData> = () => ({}),
@@ -210,9 +231,12 @@ export function createIntegratedAdminStore(apiFactory = createAdminApi) {
     ): Promise<T | undefined> {
       const started = generation
       if (!get().session) return Promise.reject(new AuthExpiredError('需要管理员会话'))
+      // A read requested after a write must wait for that write, not join an
+      // earlier request whose response may contain the pre-write snapshot.
+      reads.clear()
       queuedWrites++
       const pending = mutationTail
-        .then(() => (started === generation ? run(key, action, commit, true) : undefined))
+        .then(() => (started === generation ? runRequest(key, action, commit, true) : undefined))
         .finally(() => {
           if (started === generation) queuedWrites--
         })
@@ -362,6 +386,7 @@ export function createIntegratedAdminStore(apiFactory = createAdminApi) {
           'aiUsage',
           (api) => api.loadAiUsage(filters),
           (aiUsage) => ({ aiUsage }),
+          JSON.stringify([filters?.service || 'gpt', filters?.from || '', filters?.to || '']),
         ),
       loadTranslationProfiles: () =>
         run(
@@ -406,6 +431,12 @@ export function createIntegratedAdminStore(apiFactory = createAdminApi) {
           'translationUsage',
           (api) => api.loadTranslationUsage(filters),
           (translationUsage) => ({ translationUsage }),
+          JSON.stringify([
+            filters?.from || '',
+            filters?.to || '',
+            filters?.username || '',
+            filters?.profileId || '',
+          ]),
         ),
       loadFeedback: () =>
         run(
@@ -462,7 +493,36 @@ export function connectIntegratedAdminSession(
   },
   store = useIntegratedAdminStore,
 ): () => void {
-  const sync = () => store.getState().bindSession(source.getSession())
+  let initialized = false
+  let previous: IntegratedAdminSession | null = null
+  const sync = () => {
+    const input = source.getSession()
+    let next: IntegratedAdminSession | null = null
+    if (input?.isAdmin === true && input.token && input.username && input.serverUrl) {
+      try {
+        next = { ...input, serverUrl: normalizeServerUrl(input.serverUrl) }
+      } catch (error) {
+        store.getState().clear()
+        previous = null
+        initialized = false
+        throw error
+      }
+    }
+    if (
+      initialized &&
+      previous?.serverUrl === next?.serverUrl &&
+      previous?.token === next?.token &&
+      previous?.username === next?.username &&
+      previous?.isAdmin === next?.isAdmin
+    )
+      return
+    // Track the desktop source, not the derived management credential. Legacy
+    // servers may exchange it; navigation/status/profile display updates must
+    // neither replace that credential nor resurrect a rejected session.
+    store.getState().bindSession(next)
+    previous = next
+    initialized = true
+  }
   const unsubscribe = source.subscribe(sync)
   sync()
   return () => {
