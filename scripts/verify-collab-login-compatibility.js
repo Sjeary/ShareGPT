@@ -479,6 +479,9 @@ async function loginThroughForm(window, baseUrl, username, password = PASSWORD) 
   if ((await window.locator("#account-server").count()) === 0) {
     await Promise.race([
       startSetup.waitFor({ state: "visible", timeout: 8000 }),
+      window
+        .getByRole("button", { name: /连接团队|登录组织工作区/ })
+        .waitFor({ state: "visible", timeout: 8000 }),
       window.locator("#account-server").waitFor({ state: "visible", timeout: 8000 }),
     ]).catch(() => undefined);
   }
@@ -671,7 +674,9 @@ async function verifyPrincipalInvalidationRace(fixture) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       await window.locator('[data-tour="nav-account"]').click();
       await window.locator('button:has-text("退出登录")').click();
-      await window.locator("#account-server").waitFor({ state: "visible", timeout: 8000 });
+      await window
+        .getByRole("button", { name: /连接团队/ })
+        .waitFor({ state: "visible", timeout: 8000 });
 
       await loginThroughForm(window, fixture.baseUrl, username);
       await waitFor(
@@ -1393,7 +1398,7 @@ async function verifyDataPrincipalLifecycle(fixture) {
         ipcMain.handle("vault:write", globalThis.__restoreVaultWriter);
       });
       await window.getByRole("button", { name: "退出登录", exact: true }).click();
-      await window.locator("#account-server").waitFor({ state: "visible" });
+      await window.getByRole("button", { name: /连接团队/ }).waitFor({ state: "visible" });
       assert.equal(
         fs.readFileSync(path.join(a.root, "scope-a.md"), "utf8"),
         "# Unsaved private note A",
@@ -1411,7 +1416,7 @@ async function verifyDataPrincipalLifecycle(fixture) {
       assert.equal(JSON.stringify(b.history).includes("owned-chat-A"), false);
       assert.equal(JSON.stringify(b.history).includes("retired-chat-A"), false);
       await window.getByRole("button", { name: "退出登录", exact: true }).click();
-      await window.locator("#account-server").waitFor({ state: "visible" });
+      await window.getByRole("button", { name: /连接团队/ }).waitFor({ state: "visible" });
       await loginThroughForm(window, fixture.baseUrl, "data-A");
       const restored = await window.evaluate(async () => ({
         history: await window.api.loadChatHistory(),
