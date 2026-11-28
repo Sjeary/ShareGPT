@@ -257,9 +257,10 @@ function AdminPanelContent({ serverUrl, username }: { serverUrl: string; usernam
           size="sm"
           disabled={!session || anyLoading}
           onClick={() =>
-            void loadTab(activeTab).catch((err) =>
-              toast.error(err instanceof Error ? err.message : '刷新失败'),
-            )
+            void loadTab(activeTab).catch((err) => {
+              if (!mountedRef.current) return
+              toast.error(err instanceof Error ? err.message : '刷新失败')
+            })
           }
         >
           <RotateCw className={cn('size-3.5', anyLoading && 'animate-spin')} />

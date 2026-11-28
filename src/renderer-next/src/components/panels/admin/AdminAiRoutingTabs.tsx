@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
   Activity,
@@ -35,20 +35,32 @@ const SERVICES: Array<{ key: AiServiceKind; label: string }> = [
 
 export function AdminAiUsageTab() {
   const report = useIntegratedAdminStore((s) => s.aiUsage)
+  const filters = useIntegratedAdminStore((s) => s.aiUsageFilters)
   const loading = useIntegratedAdminStore((s) => Boolean(s.loading.aiUsage))
+  const error = useIntegratedAdminStore((s) => s.errors.aiUsage)
+  const setAiUsageFilters = useIntegratedAdminStore((s) => s.setAiUsageFilters)
   const loadAiUsage = useIntegratedAdminStore((s) => s.loadAiUsage)
 
-  const [service, setService] = useState<AiServiceKind>('gpt')
-  const [from, setFrom] = useState('')
-  const [to, setTo] = useState('')
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
-  function fetchUsage(nextService = service) {
-    void loadAiUsage({ service: nextService, from: from || undefined, to: to || undefined }).catch(
-      (err) => toast.error(errMsg(err, '加载 AI 使用统计失败')),
-    )
+  const service: AiServiceKind = filters.service || 'gpt'
+  const from = filters.from || ''
+  const to = filters.to || ''
+
+  function fetchUsage(nextFilters?: { service: AiServiceKind; from?: string; to?: string }) {
+    void loadAiUsage(nextFilters).catch((err) => {
+      if (!mountedRef.current) return
+      toast.error(errMsg(err, '加载 AI 使用统计失败'))
+    })
   }
 
-  const current = report?.service === service ? report : null
+  const current = report && report.service === service ? report : null
 
   return (
     <div className="grid gap-5">
@@ -58,9 +70,15 @@ export function AdminAiUsageTab() {
             <button
               key={item.key}
               type="button"
+              aria-pressed={service === item.key}
               onClick={() => {
-                setService(item.key)
-                fetchUsage(item.key)
+                const next = {
+                  service: item.key,
+                  from: from || undefined,
+                  to: to || undefined,
+                }
+                setAiUsageFilters(next)
+                fetchUsage(next)
               }}
               className={cn(
                 'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
@@ -77,15 +95,29 @@ export function AdminAiUsageTab() {
         <div className="flex flex-wrap items-center gap-2">
           <Input
             type="date"
+            aria-label="开始日期"
             value={from}
-            onChange={(e) => setFrom(e.target.value)}
+            onChange={(e) =>
+              setAiUsageFilters({
+                service,
+                from: e.target.value || undefined,
+                to: to || undefined,
+              })
+            }
             className="h-8 w-36 text-xs"
           />
           <span className="text-xs text-muted-foreground">至</span>
           <Input
             type="date"
+            aria-label="结束日期"
             value={to}
-            onChange={(e) => setTo(e.target.value)}
+            onChange={(e) =>
+              setAiUsageFilters({
+                service,
+                from: from || undefined,
+                to: e.target.value || undefined,
+              })
+            }
             className="h-8 w-36 text-xs"
           />
           <Button size="sm" variant="outline" disabled={loading} onClick={() => fetchUsage()}>
@@ -126,7 +158,15 @@ export function AdminAiUsageTab() {
           </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-2.5">
-          {!current || current.users.length === 0 ? (
+          {loading && !current ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">正在加载统计数据…</p>
+          ) : !current && error ? (
+            <p className="py-6 text-center text-sm text-destructive">加载失败：{error}</p>
+          ) : !current ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">
+              筛选条件已更新，点击「查询」或「刷新当前页」查看统计
+            </p>
+          ) : current.users.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">暂无该区间的使用记录</p>
           ) : (
             current.users.map((u, idx) => (
