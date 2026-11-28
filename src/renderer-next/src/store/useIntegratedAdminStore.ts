@@ -52,6 +52,7 @@ interface AdminData {
   proxyRoutes: ProxyRoute[]
   proxyRouteHealth: ProxyRouteHealth[]
   aiUsage: AiUsageReport | null
+  aiUsageFilters: AiUsageFilters
   translationCatalog: TranslationProfileCatalog | null
   translationUsage: TranslationUsageReport | null
   feedback: FeedbackItem[]
@@ -61,6 +62,7 @@ interface AdminData {
   loading: Partial<Record<AdminResource, boolean>>
   loaded: Partial<Record<AdminResource, boolean>>
   errors: Partial<Record<AdminResource, string>>
+  refreshErrors: Partial<Record<AdminResource, string>>
 }
 
 export interface IntegratedAdminState extends AdminData {
@@ -85,6 +87,7 @@ export interface IntegratedAdminState extends AdminData {
   saveProxyRoutes: (routes: ProxyRoute[]) => Promise<ProxyRoute[] | undefined>
   checkProxyRouteHealth: () => Promise<ProxyRouteHealth[] | undefined>
   loadAiUsage: (filters?: AiUsageFilters) => Promise<AiUsageReport | undefined>
+  setAiUsageFilters: (filters: AiUsageFilters) => void
   loadTranslationProfiles: () => Promise<TranslationProfileCatalog | undefined>
   saveTranslationProfiles: (
     defaultProfileId: string,
@@ -119,6 +122,7 @@ const emptyData = (): AdminData => ({
   proxyRoutes: [],
   proxyRouteHealth: [],
   aiUsage: null,
+  aiUsageFilters: { service: 'gpt' },
   translationCatalog: null,
   translationUsage: null,
   feedback: [],
@@ -128,6 +132,7 @@ const emptyData = (): AdminData => ({
   loading: {},
   loaded: {},
   errors: {},
+  refreshErrors: {},
 })
 
 // No DOM, toasts, persistence, timers or login-time data fetching. The owner must
@@ -139,6 +144,7 @@ export function createIntegratedAdminStore(apiFactory = createAdminApi) {
     const latest = new Map<AdminResource, number>()
     const controllers = new Set<AbortController>()
     const reads = new Map<AdminResource, { query: string; promise: Promise<unknown> }>()
+    const inviteCreates = new Map<string, Promise<AdminInvite | undefined>>()
     let mutationTail: Promise<unknown> = Promise.resolve()
     let queuedWrites = 0
 
@@ -148,6 +154,7 @@ export function createIntegratedAdminStore(apiFactory = createAdminApi) {
       controllers.clear()
       latest.clear()
       reads.clear()
+      inviteCreates.clear()
       mutationTail = Promise.resolve()
       queuedWrites = 0
       set(emptyData())
@@ -196,6 +203,7 @@ export function createIntegratedAdminStore(apiFactory = createAdminApi) {
       set((state) => ({
         loading: { ...state.loading, [key]: true },
         errors: { ...state.errors, [key]: undefined },
+        refreshErrors: { ...state.refreshErrors, [key]: undefined },
       }))
       try {
         const result = await action(apiFactory(session.serverUrl, session.token, controller.signal))
@@ -258,15 +266,35 @@ export function createIntegratedAdminStore(apiFactory = createAdminApi) {
       bootstrap,
       releases: bootstrap.update,
     })
+    async function writeAndRefresh<T>(
+      key: AdminResource,
+      action: (api: IntegratedAdminApi) => Promise<T>,
+      commit: (result: T) => Partial<AdminData>,
+      refresh: () => Promise<unknown>,
+    ): Promise<T | undefined> {
+      const started = generation
+      const result = await mutate(key, action, commit)
+      if (started !== generation || result === undefined) return undefined
+      try {
+        await refresh()
+      } catch (error) {
+        if (started !== generation) return undefined
+        set((state) => ({
+          refreshErrors: {
+            ...state.refreshErrors,
+            [key]: error instanceof Error ? error.message : String(error),
+          },
+        }))
+      }
+      return started === generation ? result : undefined
+    }
     const refreshUsers = (action: (api: IntegratedAdminApi) => Promise<AdminUser>) =>
-      mutate(
+      writeAndRefresh(
         'users',
-        async (api) => {
-          const user = await action(api)
-          return { user, users: await api.loadUsers() }
-        },
-        (r) => usersPatch(r.users),
-      ).then((r) => r?.user)
+        action,
+        (user) => usersPatch([...get().users.filter((u) => u.username !== user.username), user]),
+        () => get().loadUsers(),
+      )
 
     return {
       ...emptyData(),
@@ -336,23 +364,32 @@ export function createIntegratedAdminStore(apiFactory = createAdminApi) {
           (api) => api.loadInvites(),
           (invites) => ({ invites }),
         ),
-      createInvite: (input) =>
-        mutate(
+      createInvite: (input) => {
+        const key = JSON.stringify(input)
+        const existing = inviteCreates.get(key)
+        if (existing) return existing
+        const pending = writeAndRefresh(
           'invites',
-          async (api) => {
-            const invite = await api.createInvite(input)
-            return { invite, invites: await api.loadInvites() }
-          },
-          (r) => ({ invites: r.invites }),
-        ).then((r) => r?.invite),
+          (api) => api.createInvite(input),
+          (invite) => ({ invites: [invite, ...get().invites.filter((i) => i.id !== invite.id)] }),
+          () => get().loadInvites(),
+        )
+        inviteCreates.set(key, pending)
+        void pending
+          .finally(() => {
+            if (inviteCreates.get(key) === pending) inviteCreates.delete(key)
+          })
+          .catch(() => undefined)
+        return pending
+      },
       revokeInvite: (id) =>
-        mutate(
+        writeAndRefresh(
           'invites',
-          async (api) => {
-            await api.revokeInvite(id)
-            return api.loadInvites()
-          },
-          (invites) => ({ invites }),
+          (api) => api.revokeInvite(id),
+          () => ({
+            invites: get().invites.map((i) => (i.id === id ? { ...i, status: 'revoked' } : i)),
+          }),
+          () => get().loadInvites(),
         ),
       loadBootstrap: () => run('bootstrap', (api) => api.loadBootstrap(), bootstrapPatch),
       saveBootstrap: (input) =>
@@ -381,13 +418,32 @@ export function createIntegratedAdminStore(apiFactory = createAdminApi) {
           (api) => api.checkProxyRouteHealth(),
           (proxyRouteHealth) => ({ proxyRouteHealth }),
         ),
-      loadAiUsage: (filters) =>
-        run(
+      setAiUsageFilters: (filters) => {
+        const next = {
+          service: filters.service || 'gpt',
+          from: filters.from || undefined,
+          to: filters.to || undefined,
+        } satisfies AiUsageFilters
+        if (JSON.stringify(next) === JSON.stringify(get().aiUsageFilters)) return
+        reads.delete('aiUsage')
+        latest.set('aiUsage', ++sequence)
+        set((state) => ({
+          aiUsageFilters: next,
+          aiUsage: null,
+          loading: { ...state.loading, aiUsage: false },
+          errors: { ...state.errors, aiUsage: undefined },
+        }))
+      },
+      loadAiUsage: (input) => {
+        if (input) get().setAiUsageFilters(input)
+        const filters = { ...get().aiUsageFilters }
+        return run(
           'aiUsage',
           (api) => api.loadAiUsage(filters),
           (aiUsage) => ({ aiUsage }),
           JSON.stringify([filters?.service || 'gpt', filters?.from || '', filters?.to || '']),
-        ),
+        )
+      },
       loadTranslationProfiles: () =>
         run(
           'translationCatalog',

@@ -353,3 +353,98 @@ test('equal filters coalesce but A/B/A filter changes still make the final selec
   assert.equal(store.getState().aiUsage?.service, 'gpt')
   assert.equal(store.getState().loading.aiUsage, false)
 })
+
+test('confirmed invite creation survives refresh failure and concurrent duplicates share one write', async (t) => {
+  let writes = 0
+  let failReads = true
+  const invite = { id: 'created', code: 'synthetic', status: 'active' }
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, init?: RequestInit) => {
+    if (init?.method === 'POST') {
+      writes++
+      return Response.json({ invite })
+    }
+    return failReads
+      ? new Response('read unavailable', { status: 503 })
+      : Response.json({ invites: [invite] })
+  })
+  const store = createIntegratedAdminStore()
+  store.getState().bindSession(A)
+  const [a, b] = await Promise.all([
+    store.getState().createInvite({ note: 'one' }),
+    store.getState().createInvite({ note: 'one' }),
+  ])
+  assert.equal(writes, 1)
+  assert.equal(a?.id, 'created')
+  assert.equal(b?.id, 'created')
+  assert.equal(store.getState().invites[0].id, 'created')
+  assert.match(store.getState().refreshErrors.invites || '', /read unavailable/)
+  failReads = false
+  await store.getState().loadInvites()
+  assert.equal(writes, 1)
+  assert.equal(store.getState().refreshErrors.invites, undefined)
+})
+
+test('user writes and invitation revocation commit independently of failed list reads', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (url: unknown, init?: RequestInit) => {
+    if (!init?.method || init.method === 'GET')
+      return new Response('read unavailable', { status: 503 })
+    if (String(url).includes('invites')) return Response.json({ ok: true })
+    return Response.json({ user: { username: 'updated', displayName: 'Saved' } })
+  })
+  const store = createIntegratedAdminStore()
+  store.getState().bindSession(A)
+  for (const save of [
+    () => store.getState().createUser({ username: 'updated', password: 'synthetic' }),
+    () => store.getState().updateUser('updated', { displayName: 'Saved' }),
+    () => store.getState().resetPassword('updated', 'synthetic'),
+  ]) {
+    assert.equal((await save())?.displayName, 'Saved')
+    assert.equal(store.getState().users[0].displayName, 'Saved')
+    assert.match(store.getState().refreshErrors.users || '', /read unavailable/)
+  }
+  store.setState({ invites: [{ id: 'one', status: 'active' } as never] })
+  await store.getState().revokeInvite('one')
+  assert.equal(store.getState().invites[0].status, 'revoked')
+  assert.match(store.getState().refreshErrors.invites || '', /read unavailable/)
+})
+
+test('switching account during post-write refresh cannot expose the saved object to the next account', async (t) => {
+  const read = deferred<Response>()
+  const started = deferred<void>()
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, init?: RequestInit) => {
+    if (init?.method === 'POST') return Response.json({ invite: { id: 'private-A' } })
+    started.resolve()
+    return read.promise
+  })
+  const store = createIntegratedAdminStore()
+  store.getState().bindSession(A)
+  const pending = store.getState().createInvite({})
+  await started.promise
+  assert.equal(store.getState().invites[0].id, 'private-A')
+  store.getState().bindSession(B)
+  read.resolve(new Response('old failure', { status: 503 }))
+  assert.equal(await pending, undefined)
+  assert.deepEqual(store.getState().invites, [])
+  assert.deepEqual(store.getState().refreshErrors, {})
+})
+
+test('top-level usage refresh preserves service and dates; unsubmitted filter changes invalidate old reports', async (t) => {
+  const urls: string[] = []
+  t.mock.method(globalThis, 'fetch', async (url: unknown) => {
+    urls.push(String(url))
+    return Response.json({ service: new URL(String(url)).searchParams.get('service') })
+  })
+  const store = createIntegratedAdminStore()
+  store.getState().bindSession(A)
+  await store.getState().loadAiUsage({ service: 'claude', from: '2026-11-01', to: '2026-11-28' })
+  await store.getState().loadTab('ai-usage')
+  assert.equal(urls[0], urls[1])
+  assert.equal(store.getState().aiUsage?.service, 'claude')
+  store.getState().setAiUsageFilters({ service: 'gemini', from: '2026-11-02' })
+  assert.equal(store.getState().aiUsage, null)
+  await store.getState().loadTab('ai-usage')
+  assert.equal(new URL(urls[2]).searchParams.get('service'), 'gemini')
+  assert.equal(new URL(urls[2]).searchParams.get('from'), '2026-11-02')
+  store.getState().bindSession(B)
+  assert.deepEqual(store.getState().aiUsageFilters, { service: 'gpt' })
+})
