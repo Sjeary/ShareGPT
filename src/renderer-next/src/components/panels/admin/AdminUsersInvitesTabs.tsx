@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import {
+  AlertTriangle,
   Ban,
   Check,
   Copy,
@@ -8,6 +9,7 @@ import {
   Link2,
   Loader2,
   Plus,
+  RotateCw,
   Search,
   ShieldCheck,
   UserPlus,
@@ -21,10 +23,101 @@ import { Switch } from '@/components/ui/switch'
 import { buildInviteLink } from '@/lib/inviteLink'
 import { cn } from '@/lib/utils'
 import { useIntegratedAdminStore } from '@/store/useIntegratedAdminStore'
-import type { AdminInvite, AdminInviteStatus, AdminUser } from '@/types/admin'
+import type {
+  AdminInvite,
+  AdminInviteStatus,
+  AdminUser,
+  IntegratedAdminSession,
+} from '@/types/admin'
 
 function errMsg(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback
+}
+
+function sessionIdentity(session: IntegratedAdminSession | null): string {
+  return session ? `${session.serverUrl}\0${session.username}\0${session.token}` : ''
+}
+
+function AdminListSyncNotice({
+  resourceLabel,
+  refreshError,
+  readError,
+  loading,
+  onRefresh,
+  testIdPrefix,
+}: {
+  resourceLabel: string
+  refreshError?: string
+  readError?: string
+  loading: boolean
+  onRefresh: () => void
+  testIdPrefix: string
+}) {
+  if (refreshError) {
+    return (
+      <div
+        role="status"
+        data-testid={`${testIdPrefix}-refresh-error`}
+        className="flex flex-wrap items-start justify-between gap-2.5 rounded-lg border border-amber-500/45 bg-amber-500/10 px-3 py-2.5 text-xs text-foreground"
+      >
+        <div className="flex min-w-0 flex-1 items-start gap-2">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-300" />
+          <div className="min-w-0 space-y-0.5">
+            <p className="font-medium">
+              操作已生效，但{resourceLabel}刷新失败：{refreshError}
+            </p>
+            <p className="text-muted-foreground">
+              当前已保留本次确认的结果；点击右侧按钮仅重新读取列表，不会重复提交操作。
+            </p>
+          </div>
+        </div>
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          disabled={loading}
+          data-testid={`${testIdPrefix}-retry-read`}
+          onClick={onRefresh}
+        >
+          {loading ? <Loader2 className="size-3 animate-spin" /> : <RotateCw className="size-3" />}
+          仅刷新列表
+        </Button>
+      </div>
+    )
+  }
+
+  if (readError) {
+    return (
+      <div
+        role="alert"
+        data-testid={`${testIdPrefix}-read-error`}
+        className="flex flex-wrap items-start justify-between gap-2.5 rounded-lg border border-destructive/35 bg-destructive/10 px-3 py-2.5 text-xs text-foreground"
+      >
+        <div className="flex min-w-0 flex-1 items-start gap-2">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+          <div className="min-w-0 space-y-0.5">
+            <p className="font-medium">
+              {resourceLabel}读取失败：{readError}
+            </p>
+            <p className="text-muted-foreground">当前保留已有数据；点击右侧按钮仅重新读取列表。</p>
+          </div>
+        </div>
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          disabled={loading}
+          data-testid={`${testIdPrefix}-retry-read`}
+          onClick={onRefresh}
+        >
+          {loading ? <Loader2 className="size-3 animate-spin" /> : <RotateCw className="size-3" />}
+          重试刷新列表
+        </Button>
+      </div>
+    )
+  }
+
+  return null
 }
 
 export function AdminUsersTab() {
@@ -32,10 +125,24 @@ export function AdminUsersTab() {
   const routes = useIntegratedAdminStore((s) => s.proxyRoutes)
   const routesLoaded = useIntegratedAdminStore((s) => Boolean(s.loaded.proxyRoutes))
   const loadProxyRoutes = useIntegratedAdminStore((s) => s.loadProxyRoutes)
+  const loadUsers = useIntegratedAdminStore((s) => s.loadUsers)
   const loading = useIntegratedAdminStore((s) => Boolean(s.loading.users))
+  const refreshError = useIntegratedAdminStore((s) => s.refreshErrors.users)
+  const readError = useIntegratedAdminStore((s) => s.errors.users)
   const createUser = useIntegratedAdminStore((s) => s.createUser)
   const updateUser = useIntegratedAdminStore((s) => s.updateUser)
   const resetPassword = useIntegratedAdminStore((s) => s.resetPassword)
+
+  const mountedRef = useRef(true)
+  const creatingRef = useRef(false)
+  const busyUserRef = useRef('')
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   useEffect(() => {
     if (!routesLoaded) void loadProxyRoutes().catch(() => undefined)
@@ -63,12 +170,38 @@ export function AdminUsersTab() {
     )
   }, [query, users])
 
+  async function handleRefreshUsers() {
+    const startedSession = sessionIdentity(useIntegratedAdminStore.getState().session)
+    try {
+      const refreshed = await loadUsers()
+      if (
+        !mountedRef.current ||
+        refreshed === undefined ||
+        sessionIdentity(useIntegratedAdminStore.getState().session) !== startedSession
+      ) {
+        return
+      }
+      toast.success('成员列表已刷新')
+    } catch (err) {
+      if (
+        !mountedRef.current ||
+        sessionIdentity(useIntegratedAdminStore.getState().session) !== startedSession
+      ) {
+        return
+      }
+      toast.error(errMsg(err, '刷新成员列表失败'))
+    }
+  }
+
   async function handleCreate() {
+    if (creatingRef.current || creating) return
     const username = newUsername.trim()
     if (!username || !newPassword) {
       toast.error('请填写用户名和初始密码')
       return
     }
+    const startedSession = sessionIdentity(useIntegratedAdminStore.getState().session)
+    creatingRef.current = true
     setCreating(true)
     try {
       const created = await createUser({
@@ -79,19 +212,36 @@ export function AdminUsersTab() {
         advancedAiAllowed: newIsAdmin || newAdvancedAi,
         chatDisabled: newChatDisabled,
       })
-      if (created) {
-        toast.success(`已创建成员 @${created.username}`)
-        setNewUsername('')
-        setNewDisplayName('')
-        setNewPassword('')
-        setNewIsAdmin(false)
-        setNewAdvancedAi(false)
-        setNewChatDisabled(false)
+      if (
+        !mountedRef.current ||
+        !created ||
+        sessionIdentity(useIntegratedAdminStore.getState().session) !== startedSession
+      ) {
+        return
       }
+      const listStale = Boolean(useIntegratedAdminStore.getState().refreshErrors.users)
+      toast.success(
+        listStale
+          ? `已创建成员 @${created.username}（列表刷新失败，可单独重试刷新）`
+          : `已创建成员 @${created.username}`,
+      )
+      setNewUsername('')
+      setNewDisplayName('')
+      setNewPassword('')
+      setNewIsAdmin(false)
+      setNewAdvancedAi(false)
+      setNewChatDisabled(false)
     } catch (err) {
+      if (
+        !mountedRef.current ||
+        sessionIdentity(useIntegratedAdminStore.getState().session) !== startedSession
+      ) {
+        return
+      }
       toast.error(errMsg(err, '创建成员失败'))
     } finally {
-      setCreating(false)
+      creatingRef.current = false
+      if (mountedRef.current) setCreating(false)
     }
   }
 
@@ -100,34 +250,72 @@ export function AdminUsersTab() {
     patch: Parameters<typeof updateUser>[1],
     okText: string,
   ) {
+    if (busyUserRef.current) return
+    const startedSession = sessionIdentity(useIntegratedAdminStore.getState().session)
+    busyUserRef.current = user.username
     setBusyUser(user.username)
     try {
       const updated = await updateUser(user.username, patch)
-      if (updated) toast.success(okText)
+      if (
+        !mountedRef.current ||
+        !updated ||
+        sessionIdentity(useIntegratedAdminStore.getState().session) !== startedSession
+      ) {
+        return
+      }
+      const listStale = Boolean(useIntegratedAdminStore.getState().refreshErrors.users)
+      toast.success(listStale ? `${okText}（列表刷新失败，可单独重试刷新）` : okText)
     } catch (err) {
+      if (
+        !mountedRef.current ||
+        sessionIdentity(useIntegratedAdminStore.getState().session) !== startedSession
+      ) {
+        return
+      }
       toast.error(errMsg(err, '更新成员失败'))
     } finally {
-      setBusyUser('')
+      busyUserRef.current = ''
+      if (mountedRef.current) setBusyUser('')
     }
   }
 
   async function submitResetPassword(username: string) {
+    if (busyUserRef.current) return
     if (!resetPwdValue || resetPwdValue.length < 6) {
       toast.error('新密码至少需要 6 位')
       return
     }
+    const startedSession = sessionIdentity(useIntegratedAdminStore.getState().session)
+    busyUserRef.current = username
     setBusyUser(username)
     try {
       const updated = await resetPassword(username, resetPwdValue)
-      if (updated) {
-        toast.success(`已重置 @${username} 的密码`)
-        setResetTarget('')
-        setResetPwdValue('')
+      if (
+        !mountedRef.current ||
+        !updated ||
+        sessionIdentity(useIntegratedAdminStore.getState().session) !== startedSession
+      ) {
+        return
       }
+      const listStale = Boolean(useIntegratedAdminStore.getState().refreshErrors.users)
+      toast.success(
+        listStale
+          ? `已重置 @${username} 的密码（列表刷新失败，可单独重试刷新）`
+          : `已重置 @${username} 的密码`,
+      )
+      setResetTarget('')
+      setResetPwdValue('')
     } catch (err) {
+      if (
+        !mountedRef.current ||
+        sessionIdentity(useIntegratedAdminStore.getState().session) !== startedSession
+      ) {
+        return
+      }
       toast.error(errMsg(err, '重置密码失败'))
     } finally {
-      setBusyUser('')
+      busyUserRef.current = ''
+      if (mountedRef.current) setBusyUser('')
     }
   }
 
@@ -152,6 +340,14 @@ export function AdminUsersTab() {
           </div>
         </CardHeader>
         <CardContent className="grid gap-2.5">
+          <AdminListSyncNotice
+            resourceLabel="成员列表"
+            refreshError={refreshError}
+            readError={readError}
+            loading={loading}
+            onRefresh={() => void handleRefreshUsers()}
+            testIdPrefix="admin-users"
+          />
           {loading && users.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">正在加载成员列表…</p>
           ) : filtered.length === 0 ? (
@@ -407,9 +603,23 @@ export function AdminInvitesTab() {
   const routes = useIntegratedAdminStore((s) => s.proxyRoutes)
   const routesLoaded = useIntegratedAdminStore((s) => Boolean(s.loaded.proxyRoutes))
   const loadProxyRoutes = useIntegratedAdminStore((s) => s.loadProxyRoutes)
+  const loadInvites = useIntegratedAdminStore((s) => s.loadInvites)
   const loading = useIntegratedAdminStore((s) => Boolean(s.loading.invites))
+  const refreshError = useIntegratedAdminStore((s) => s.refreshErrors.invites)
+  const readError = useIntegratedAdminStore((s) => s.errors.invites)
   const createInvite = useIntegratedAdminStore((s) => s.createInvite)
   const revokeInvite = useIntegratedAdminStore((s) => s.revokeInvite)
+
+  const mountedRef = useRef(true)
+  const creatingRef = useRef(false)
+  const revokingRef = useRef('')
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   useEffect(() => {
     if (!routesLoaded) void loadProxyRoutes().catch(() => undefined)
@@ -433,20 +643,49 @@ export function AdminInvitesTab() {
     return invites
   }, [filter, invites])
 
+  async function handleRefreshInvites() {
+    const startedSession = sessionIdentity(useIntegratedAdminStore.getState().session)
+    try {
+      const refreshed = await loadInvites()
+      if (
+        !mountedRef.current ||
+        refreshed === undefined ||
+        sessionIdentity(useIntegratedAdminStore.getState().session) !== startedSession
+      ) {
+        return
+      }
+      toast.success('邀请列表已刷新')
+    } catch (err) {
+      if (
+        !mountedRef.current ||
+        sessionIdentity(useIntegratedAdminStore.getState().session) !== startedSession
+      ) {
+        return
+      }
+      toast.error(errMsg(err, '刷新邀请列表失败'))
+    }
+  }
+
   async function handleCopy(invite: AdminInvite) {
     const link = buildInviteLink(serverUrl, invite.code)
     if (!link) return
     try {
       await navigator.clipboard.writeText(link)
+      if (!mountedRef.current) return
       setCopiedId(invite.id)
-      window.setTimeout(() => setCopiedId((id) => (id === invite.id ? '' : id)), 1800)
+      window.setTimeout(() => {
+        if (mountedRef.current) setCopiedId((id) => (id === invite.id ? '' : id))
+      }, 1800)
       toast.success('已复制邀请链接')
     } catch {
-      toast.error('复制失败')
+      if (mountedRef.current) toast.error('复制失败')
     }
   }
 
   async function handleCreate() {
+    if (creatingRef.current || creating) return
+    const startedSession = sessionIdentity(useIntegratedAdminStore.getState().session)
+    creatingRef.current = true
     setCreating(true)
     try {
       const parsedUses = maxUses === 'unlimited' ? null : Math.max(1, Number(maxUses) || 1)
@@ -459,33 +698,75 @@ export function AdminInvitesTab() {
         chatDisabled,
         allowedProxyRouteIds: selectedRoutes,
       })
-      if (created) {
-        setLastCreated(created)
-        setNote('')
-        const link = buildInviteLink(serverUrl, created.code)
-        try {
-          await navigator.clipboard.writeText(link)
-          toast.success('邀请链接已生成并自动复制')
-        } catch {
-          toast.success('邀请链接已生成')
-        }
+      if (
+        !mountedRef.current ||
+        !created ||
+        sessionIdentity(useIntegratedAdminStore.getState().session) !== startedSession
+      ) {
+        return
+      }
+      setLastCreated(created)
+      setNote('')
+      const listStale = Boolean(useIntegratedAdminStore.getState().refreshErrors.invites)
+      const link = buildInviteLink(serverUrl, created.code)
+      try {
+        await navigator.clipboard.writeText(link)
+        if (!mountedRef.current) return
+        toast.success(
+          listStale
+            ? '邀请链接已生成并自动复制（列表刷新失败，可单独重试刷新）'
+            : '邀请链接已生成并自动复制',
+        )
+      } catch {
+        if (!mountedRef.current) return
+        toast.success(
+          listStale ? '邀请链接已生成（列表刷新失败，可单独重试刷新）' : '邀请链接已生成',
+        )
       }
     } catch (err) {
+      if (
+        !mountedRef.current ||
+        sessionIdentity(useIntegratedAdminStore.getState().session) !== startedSession
+      ) {
+        return
+      }
       toast.error(errMsg(err, '生成邀请链接失败'))
     } finally {
-      setCreating(false)
+      creatingRef.current = false
+      if (mountedRef.current) setCreating(false)
     }
   }
 
   async function handleRevoke(invite: AdminInvite) {
+    if (revokingRef.current) return
+    const startedSession = sessionIdentity(useIntegratedAdminStore.getState().session)
+    revokingRef.current = invite.id
     setRevokingId(invite.id)
     try {
-      await revokeInvite(invite.id)
-      toast.success('已撤销该邀请链接')
+      const revoked = await revokeInvite(invite.id)
+      if (
+        !mountedRef.current ||
+        revoked === undefined ||
+        sessionIdentity(useIntegratedAdminStore.getState().session) !== startedSession
+      ) {
+        return
+      }
+      setLastCreated((prev) => (prev?.id === invite.id ? null : prev))
+      const listStale = Boolean(useIntegratedAdminStore.getState().refreshErrors.invites)
+      toast.success(
+        listStale ? '已撤销该邀请链接（列表刷新失败，可单独重试刷新）' : '已撤销该邀请链接',
+      )
     } catch (err) {
+      if (
+        !mountedRef.current ||
+        sessionIdentity(useIntegratedAdminStore.getState().session) !== startedSession
+      ) {
+        return
+      }
       toast.error(errMsg(err, '撤销失败'))
     } finally {
-      setRevokingId('')
+      revokingRef.current = ''
+      if (mountedRef.current) setRevokingId('')
     }
   }
 
@@ -524,6 +805,14 @@ export function AdminInvitesTab() {
           </div>
         </CardHeader>
         <CardContent className="grid gap-2.5">
+          <AdminListSyncNotice
+            resourceLabel="邀请列表"
+            refreshError={refreshError}
+            readError={readError}
+            loading={loading}
+            onRefresh={() => void handleRefreshInvites()}
+            testIdPrefix="admin-invites"
+          />
           {loading && invites.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">正在加载邀请链接…</p>
           ) : filtered.length === 0 ? (
