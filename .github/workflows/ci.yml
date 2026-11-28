@@ -12,6 +12,40 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  desktop-journey:
+    name: Desktop journey (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm --prefix src/renderer-next ci --no-audit --no-fund
+      - run: npm --prefix collab_server2 ci --no-audit --no-fund
+      - run: npm run build:next
+      - name: Walk through the real desktop application
+        run: node scripts/verify-desktop-journey.cjs --cloud-visible
+      - name: Record desktop performance separately from action tracing
+        if: success() || failure()
+        run: node scripts/verify-desktop-journey.cjs --cloud-visible --performance
+      - name: Preserve synthetic journey evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-journey-${{ matrix.os }}
+          path: .cache/desktop-journey/run-*/evidence/
+          if-no-files-found: error
+          retention-days: 7
+
   check:
     runs-on: ubuntu-latest
     env:
