@@ -7,6 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { _electron: electron } = require("playwright");
+const { WebSocketServer } = require("../collab_server2/node_modules/ws");
 
 const ROOT = path.resolve(__dirname, "..");
 const HOST_BOUNDS = Object.freeze({ x: 96, y: 96, width: 920, height: 560 });
@@ -211,6 +212,7 @@ function createCertificate(directory) {
 }
 
 async function startFixtureServers(directory) {
+  const collaboration = { loginCount: 0, historySyncCount: 0 };
   const translations = {
     requests: [],
     release(text) {
@@ -222,6 +224,7 @@ async function startFixtureServers(directory) {
   const handler = async (request, response) => {
     const fixtureUrl = new URL(request.url || "/", "http://127.0.0.1");
     if (request.method === "POST" && fixtureUrl.pathname === "/api/login") {
+      collaboration.loginCount++;
       const body = JSON.parse((await readBody(request)) || "{}");
       json(response, 200, {
         token: "lifecycle-fixture-token",
@@ -315,7 +318,24 @@ async function startFixtureServers(directory) {
     await new Promise((resolve) => httpServer.close(resolve));
     throw error;
   }
-  return { httpServer, httpsServer, translations };
+  // Keep the signed-in session connected. An HTTP-only fixture triggers silent
+  // relogins, which correctly invalidate proxy authorization during AI checks.
+  const collaborationSockets = new WebSocketServer({ server: httpServer, path: "/ws" });
+  collaborationSockets.on("connection", (socket, request) => {
+    const url = new URL(request.url, "http://127.0.0.1");
+    if (url.searchParams.get("token") !== "lifecycle-fixture-token") {
+      socket.close(4003, "invalid fixture token");
+      return;
+    }
+    socket.on("message", (raw) => {
+      const message = JSON.parse(String(raw));
+      if (message.type === "history_sync") {
+        collaboration.historySyncCount++;
+        socket.send(JSON.stringify({ type: "history_sync", messages: [] }));
+      }
+    });
+  });
+  return { httpServer, httpsServer, translations, collaborationSockets, collaboration };
 }
 
 function parseSocksRequest(buffer) {
@@ -1656,7 +1676,8 @@ async function verifyContextTranslation({ electronApp, page, socksPort, basicTab
 async function main() {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "sharegpt-app-lifecycle-"));
   const userData = path.join(temporaryRoot, "user-data");
-  const { httpServer, httpsServer, translations } = await startFixtureServers(temporaryRoot);
+  const { httpServer, httpsServer, translations, collaborationSockets, collaboration } =
+    await startFixtureServers(temporaryRoot);
   const socksServer = await startFixtureSocks({
     httpPort: httpServer.address().port,
     httpsPort: httpsServer.address().port,
@@ -1691,6 +1712,7 @@ async function main() {
     await page.waitForFunction(() => Boolean(window.api?.createAiView));
     const fixtureBaseUrl = `http://127.0.0.1:${httpServer.address().port}`;
     await loginThroughForm(page, fixtureBaseUrl);
+    await waitUntil(() => collaboration.historySyncCount > 0, "collaboration session connected");
     const principal = await api(page, "getSettingsPrincipal");
     assert.ok(principal.principalId);
 
@@ -2029,6 +2051,8 @@ async function main() {
       gptBId,
     });
     await verifyContextTranslation({ electronApp, page, socksPort, basicTabId: gptBId });
+    assert.equal(collaboration.loginCount, 1, "AI checks must not race silent fixture relogins");
+    assert.equal(collaborationSockets.clients.size, 1, "collaboration session stays connected");
 
     process.stdout.write("[verify] delayed A events and usage are discarded after activating B\n");
     await clearAiEvents(page);
@@ -2117,6 +2141,8 @@ async function main() {
     );
   } finally {
     await electronApp?.close().catch(() => undefined);
+    for (const socket of collaborationSockets.clients) socket.terminate();
+    await closeServer(collaborationSockets);
     await Promise.all([
       closeServer(socksServer),
       closeServer(httpServer),
