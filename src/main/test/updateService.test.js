@@ -117,3 +117,74 @@ test("update target names stay inside the configured downloads directory", (t) =
   assert.ok(target.filePath.startsWith(f.directory + path.sep));
   assert.equal(path.basename(target.filePath).includes("private"), true);
 });
+
+test(
+  "Windows system proxy discovery yields the event loop while the real registry command runs",
+  {
+    skip: process.platform !== "win32",
+  },
+  async () => {
+    const service = new UpdateService({ directory: os.tmpdir() });
+    let otherWorkRan = false;
+    const otherWork = new Promise((resolve) =>
+      setImmediate(() => {
+        otherWorkRan = true;
+        resolve();
+      }),
+    );
+    await service.windowsSystemProxy();
+    assert.equal(
+      otherWorkRan,
+      true,
+      "main-process IPC must not wait for a synchronous registry command",
+    );
+    await otherWork;
+  },
+);
+
+test("concurrent update checks share discovery and await asynchronous proxy resolution, then refresh again", async (t) => {
+  const f = fixture(t, {
+    "https://github.com/Sjeary/ShareGPT/releases/latest": {
+      status: 302,
+      location: "/Sjeary/ShareGPT/releases/tag/v1.2.3",
+    },
+    "https://github.com/Sjeary/ShareGPT/releases/tag/v1.2.3": {},
+    "https://github.com/Sjeary/ShareGPT/releases/latest/download/latest.yml": {
+      body: "version: 1.2.3\n",
+    },
+  });
+  /** @type {(agent: null) => void} */
+  let releaseProxy = () => {
+    throw new Error("proxy discovery has not started");
+  };
+  let discoveries = 0;
+  f.service.updateProxyAgent = () => {
+    discoveries++;
+    return new Promise((resolve) => {
+      releaseProxy = resolve;
+    });
+  };
+  const first = f.service.checkLatestRelease();
+  const second = f.service.checkLatestRelease();
+  assert.equal(discoveries, 1);
+  assert.equal(f.calls.length, 0, "HTTP must wait for a resolved agent, never receive a Promise");
+  releaseProxy(null);
+  assert.deepEqual(await first, await second);
+  assert.equal(f.calls.length, 3);
+  const next = f.service.checkLatestRelease();
+  assert.equal(discoveries, 2, "completed checks are not cached across explicit refreshes");
+  releaseProxy(null);
+  await next;
+  assert.equal(f.calls.length, 6);
+});
+
+test("failed update discovery releases its flight for retry", async () => {
+  const service = new UpdateService({ directory: os.tmpdir() });
+  service.updateProxyAgent = async () => {
+    throw new Error("proxy temporarily unavailable");
+  };
+  await assert.rejects(service.checkLatestRelease(), /temporarily unavailable/);
+  service.updateProxyAgent = async () => null;
+  service.resolveRedirectUrl = async () => null;
+  assert.equal(await service.checkLatestRelease(), null);
+});

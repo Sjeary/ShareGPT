@@ -2,9 +2,11 @@ const fs = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
 const path = require("node:path");
-const { spawnSync } = require("node:child_process");
+const { execFile } = require("node:child_process");
+const { promisify } = require("node:util");
 const { URL } = require("node:url");
 const { buildUpdateReleaseInfo } = require("./updateRelease");
+const execFileAsync = promisify(execFile);
 
 function deriveUpdateRepo() {
   try {
@@ -28,6 +30,7 @@ class UpdateService {
     this.updatesDir = directory;
     this.repo = repo;
     this.getProxyState = getProxyState;
+    this.latestReleaseCheck = null;
   }
   sanitizeUpdateFileName(rawName, fallbackExt = "") {
     const source = String(rawName || "").trim();
@@ -74,18 +77,20 @@ class UpdateService {
   // GET 文本 (读 release 的 latest.yml), 跟随重定向 (releases/latest/download -> CDN)。失败返回 null。
   // 读 Windows 系统代理(注册表)。clash/v2ray 的"系统代理"模式设在这里, 但不一定有 HTTP_PROXY env。
   // 非 Windows 或未开启则返回空串。
-  windowsSystemProxy() {
+  async windowsSystemProxy() {
     if (process.platform !== "win32") return "";
     try {
       const base = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
-      const enabled = spawnSync("reg", ["query", base, "/v", "ProxyEnable"], {
+      const enabled = await execFileAsync("reg", ["query", base, "/v", "ProxyEnable"], {
         encoding: "utf-8",
         windowsHide: true,
+        timeout: 2000,
       });
       if (!/ProxyEnable\s+REG_DWORD\s+0x1/i.test(enabled.stdout || "")) return "";
-      const server = spawnSync("reg", ["query", base, "/v", "ProxyServer"], {
+      const server = await execFileAsync("reg", ["query", base, "/v", "ProxyServer"], {
         encoding: "utf-8",
         windowsHide: true,
+        timeout: 2000,
       });
       const m = (server.stdout || "").match(/ProxyServer\s+REG_SZ\s+(.+)/i);
       if (!m) return "";
@@ -104,7 +109,7 @@ class UpdateService {
 
   // 给"更新检查/下载"挑一个代理 agent: 优先本机 sing-box SOCKS(代理运行中, 已把 github 加入路由),
   // 否则用系统代理 env(HTTPS_PROXY 等); 都没有则 null(直连)。国内直连 GitHub CDN 常失败, 故走代理。
-  updateProxyAgent() {
+  async updateProxyAgent() {
     try {
       const { SocksProxyAgent } = require("socks-proxy-agent");
       if (this.getProxyState().running && this.getProxyState().port) {
@@ -118,7 +123,7 @@ class UpdateService {
         process.env.http_proxy ||
         process.env.ALL_PROXY ||
         process.env.all_proxy ||
-        this.windowsSystemProxy();
+        (await this.windowsSystemProxy());
       if (proxyUrl) {
         if (/^socks/i.test(proxyUrl)) {
           return new SocksProxyAgent(proxyUrl);
@@ -132,9 +137,9 @@ class UpdateService {
     return null;
   }
 
-  fetchText(url, redirectsLeft = 5, agent) {
+  async fetchText(url, redirectsLeft = 5, agent) {
     if (agent === undefined) {
-      agent = (this.updateProxyAgent && this.updateProxyAgent()) || null;
+      agent = (this.updateProxyAgent && (await this.updateProxyAgent())) || null;
     }
     return new Promise((resolve) => {
       try {
@@ -186,9 +191,9 @@ class UpdateService {
   }
 
   // GitHub /releases/latest 的最终重定向目标才是发布版本真源。
-  resolveRedirectUrl(url, redirectsLeft = 5, agent) {
+  async resolveRedirectUrl(url, redirectsLeft = 5, agent) {
     if (agent === undefined) {
-      agent = (this.updateProxyAgent && this.updateProxyAgent()) || null;
+      agent = (this.updateProxyAgent && (await this.updateProxyAgent())) || null;
     }
     return new Promise((resolve) => {
       try {
@@ -231,9 +236,18 @@ class UpdateService {
   }
 
   // latest.yml 仅在内容与 tag 一致时辅助解析 Windows 文件名；它不能改写 UI 版本。
-  async checkLatestRelease() {
+  checkLatestRelease() {
+    if (this.latestReleaseCheck) return this.latestReleaseCheck;
+    const pending = this.readLatestRelease().finally(() => {
+      if (this.latestReleaseCheck === pending) this.latestReleaseCheck = null;
+    });
+    this.latestReleaseCheck = pending;
+    return pending;
+  }
+
+  async readLatestRelease() {
     if (!this.repo) return null;
-    const agent = (this.updateProxyAgent && this.updateProxyAgent()) || null;
+    const agent = (this.updateProxyAgent && (await this.updateProxyAgent())) || null;
     const latestUrl = await this.resolveRedirectUrl(
       `https://github.com/${this.repo}/releases/latest`,
       5,
