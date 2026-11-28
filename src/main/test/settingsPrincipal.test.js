@@ -102,6 +102,63 @@ function principalId(backend) {
   return backend.getPrincipalContext().principalId;
 }
 
+test("notification preferences survive restart and A/B/A without leaking into a new account", (t) => {
+  const backend = createBackend(t);
+  backend.init();
+  backend.activatePrincipal("https://team.example", "Alice");
+  const alice = backend.loadSettings();
+  alice.collab.notify_message_popup = true;
+  alice.collab.notify_sound_play = true;
+  backend.saveSettings(alice);
+  backend.clearPrincipal();
+  const bob = backend.activatePrincipal("https://team.example", "Bob").settings;
+  assert.equal(bob.collab.notify_message_popup, false);
+  assert.equal(bob.collab.notify_sound_play, false);
+  backend.saveSettings(bob);
+  const restarted = new Backend(backend.app, () => null, "all", {
+    legacySecretStorage: backend.legacySecretStorage,
+  });
+  const restored = restarted.activatePrincipal("https://team.example", "Alice").settings;
+  assert.equal(restored.collab.notify_message_popup, true);
+  assert.equal(restored.collab.notify_sound_play, true);
+});
+
+test("legacy notification ownership is frozen before login fields change", (t) => {
+  const backend = createBackend(t);
+  fs.writeFileSync(
+    backend.settingsFile,
+    JSON.stringify({
+      collab: {
+        server_url: "https://team.example/a",
+        last_username: "Alice",
+        notify_message_popup: true,
+      },
+    }),
+  );
+  const login = backend.loadSettings();
+  login.collab.last_username = "Bob";
+  backend.saveSettings(login);
+  assert.equal(
+    backend.activatePrincipal("https://team.example/a", "Bob").settings.collab.notify_message_popup,
+    false,
+  );
+  assert.equal(
+    backend.activatePrincipal("https://team.example/b", "Alice").settings.collab
+      .notify_message_popup,
+    false,
+  );
+  assert.equal(
+    backend.activatePrincipal("https://team.example/a", "alice").settings.collab
+      .notify_message_popup,
+    false,
+  );
+  assert.equal(
+    backend.activatePrincipal("https://team.example/a", "Alice").settings.collab
+      .notify_message_popup,
+    true,
+  );
+});
+
 test("a lone damaged chat backup does not abort startup or permit replacement", (t) => {
   const backend = createBackend(t);
   const backup = `${backend.chatHistoryFile}.bak`;

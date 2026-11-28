@@ -199,6 +199,17 @@ const FRESH_INSTALL_DEFAULT_SETTINGS = {
   },
 };
 
+const NOTIFICATION_FIELDS = [
+  "notify_message_popup",
+  "notify_system_notification",
+  "notify_sound_play",
+  "notify_user_online",
+];
+
+function notificationPreferences(collab) {
+  return Object.fromEntries(NOTIFICATION_FIELDS.map((field) => [field, collab?.[field] === true]));
+}
+
 const LOCAL_CHAT_HISTORY_MAX_PER_CONVERSATION = 800;
 const LOCAL_CHAT_HISTORY_MAX_TOTAL = 6000;
 const UPDATE_BACKUP_KEEP = 5;
@@ -1182,6 +1193,22 @@ class Backend {
   }
 
   principalSettingsState(stored, owner = null) {
+    const result = this.basePrincipalSettingsState(stored, owner);
+    // Freeze the old global preferences with their recorded owner before any
+    // login form updates last_username. Never infer ownership from a later login.
+    if (!result.state.legacyNotifications) {
+      result.state.legacyNotifications = {
+        ownerServer: normalizeServerBaseUrl(stored?.collab?.server_url),
+        ownerUsername: normalizePrincipalUsername(stored?.collab?.last_username),
+        values: notificationPreferences(stored?.collab),
+      };
+      // Persist alongside the next ordinary save, not by rewriting credentials
+      // during an otherwise read-only activation of an existing profile.
+    }
+    return result;
+  }
+
+  basePrincipalSettingsState(stored, owner = null) {
     const existing = stored?.principalSettings;
     const requestedServer = normalizeServerBaseUrl(owner?.serverUrl);
     const requestedUsername = normalizePrincipalUsername(owner?.username);
@@ -1416,8 +1443,17 @@ class Backend {
       scoped?.browserPrivacy ||
         (ownsLegacyRoot ? stored?.browserPrivacy : PUBLIC_DEFAULT_SETTINGS.browserPrivacy),
     );
+    const legacyNotifications = state.legacyNotifications;
+    const ownsLegacyNotifications =
+      legacyNotifications.ownerServer === this.activePrincipalServerUrl &&
+      legacyNotifications.ownerUsername === this.activePrincipalUsername;
+    const notifications = notificationPreferences(
+      scoped?.notifications ||
+        (ownsLegacyNotifications ? legacyNotifications.values : this.loadPrivateDefaults().collab),
+    );
     const result = {
       ...stored,
+      collab: { ...stored.collab, ...notifications },
       sender,
       browserPrivacy,
       gpt: { ...stored.gpt, partition: partitions.gpt, last_url: lastUrls.gpt },
@@ -1588,6 +1624,7 @@ class Backend {
       browserPrivacy: normalizeBrowserPrivacySettings(merged.browserPrivacy),
       advancedAi: structuredClone(merged.advancedAi),
       translation: structuredClone(merged.translation),
+      notifications: notificationPreferences(merged.collab),
     };
     const persisted = {
       ...merged,
