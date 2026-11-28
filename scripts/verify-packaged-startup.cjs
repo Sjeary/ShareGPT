@@ -42,10 +42,10 @@ async function run() {
     await app.close();
     app = await electron.launch({ executablePath, timeout: 60000 });
     const reopened = await app.firstWindow();
-    await reopened.locator("#account-server").waitFor({ timeout: 60000 });
+    reopened.on("pageerror", (error) => errors.push(String(error)));
+    await reopened.getByRole("button", { name: /连接团队/ }).waitFor({ timeout: 60000 });
     assert.equal(await reopened.getByText("欢迎来到 ShareGPT", { exact: true }).count(), 0);
     assert.equal(await reopened.locator('[data-tour="nav-service"]').count(), 0);
-    await reopened.getByRole("button", { name: "返回选择使用方式", exact: true }).click();
     await reopened.getByRole("button", { name: /仅在本机使用/ }).click();
     await reopened.getByRole("button", { name: "进入个人工作区", exact: true }).click();
     await reopened.locator('[data-tour="nav-service"]').waitFor({ timeout: 60000 });
