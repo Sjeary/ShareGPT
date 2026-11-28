@@ -19,6 +19,9 @@ export interface AuthProfile {
 }
 
 interface AuthState {
+  // Startup preferences are consumed once per renderer lifetime, not per entry-page mount.
+  startupEntryAvailable: boolean
+  claimStartupEntry: () => boolean
   token: string
   profile: AuthProfile | null
   // 运行期密码 (用于断线静默重登, 不写盘除非用户勾选记住密码)
@@ -36,17 +39,31 @@ interface AuthState {
 
 const EMPTY_PROFILE: AuthProfile | null = null
 
-export const useAuthStore = create<AuthState>((set) => ({
+export const useAuthStore = create<AuthState>((set, get) => ({
+  startupEntryAvailable: true,
+  claimStartupEntry: () => {
+    const available = get().startupEntryAvailable
+    set({ startupEntryAvailable: false })
+    return available
+  },
   token: '',
   profile: EMPTY_PROFILE,
   runtimePassword: '',
   updateInfo: null,
 
-  setSession: ({ token, profile, password }) => set({ token, profile, runtimePassword: password }),
+  setSession: ({ token, profile, password }) =>
+    set({ token, profile, runtimePassword: password, startupEntryAvailable: false }),
 
   setUpdateInfo: (update) => set({ updateInfo: update }),
 
   setProfile: (profile) => set({ profile }),
 
-  clearSession: () => set({ token: '', profile: null, runtimePassword: '', updateInfo: null }),
+  clearSession: () =>
+    set({
+      token: '',
+      profile: null,
+      runtimePassword: '',
+      updateInfo: null,
+      startupEntryAvailable: false,
+    }),
 }))
