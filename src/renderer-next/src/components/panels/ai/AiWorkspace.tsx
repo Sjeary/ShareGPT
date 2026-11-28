@@ -8,6 +8,7 @@ import {
   Loader2,
   Mail,
   Play,
+  Plus,
   PanelLeftClose,
   PanelLeftOpen,
   PanelTopClose,
@@ -36,6 +37,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { useAiStore } from '@/store/useAiStore'
 import { useAuthStore } from '@/store/useAuthStore'
 import { useChatStore } from '@/store/useChatStore'
+import { useIntegratedAdminStore } from '@/store/useIntegratedAdminStore'
 import { useTranslationStore } from '@/store/useTranslationStore'
 import type { AiKind } from '@/store/useAiStore'
 import { isSenderRunning } from '@/components/panels/service/helpers'
@@ -68,6 +70,7 @@ import {
 } from './constants'
 import type { AiEventPayload } from './types'
 import { AiEnvironmentPanel } from './AiEnvironmentPanel'
+import { resolveAiOverlay } from './overlayState'
 import { TranslationPanel } from './TranslationPanel'
 import { ProxyReportPanel } from './ProxyReportPanel'
 import {
@@ -140,6 +143,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
   const toggleAiHeaderHidden = useAppStore((s) => s.toggleAiHeaderHidden)
   const connection = useChatStore((s) => s.connection)
   const [startingProxy, setStartingProxy] = useState(false)
+  const isAdmin = useAuthStore((s) => s.profile?.isAdmin === true)
   const advancedAiAllowed = useAuthStore((s) => canUseAdvancedAi(workspaceMode, s.token, s.profile))
   const translationAllowed = useAuthStore((s) =>
     canUseTranslation(workspaceMode, s.token, s.profile),
@@ -180,6 +184,27 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           (managedDefaultRoute && activeRouteIds.has(managedDefaultRoute.id))),
       )
   const [environmentPanelOpen, setEnvironmentPanelOpen] = useState(false)
+  const [environmentPanelAdding, setEnvironmentPanelAdding] = useState(false)
+
+  function openCreateEnvironment() {
+    setEnvironmentPanelAdding(true)
+    setEnvironmentPanelOpen(true)
+  }
+
+  function toggleEnvironmentPanel() {
+    setEnvironmentPanelAdding(false)
+    setEnvironmentPanelOpen((open) => !open)
+  }
+
+  function closeEnvironmentPanel() {
+    setEnvironmentPanelAdding(false)
+    setEnvironmentPanelOpen(false)
+  }
+
+  function openAdminRoutes() {
+    useIntegratedAdminStore.getState().setActiveTab('airport')
+    setActive('admin')
+  }
 
   const saveAdvancedAi = useCallback(async (next: AdvancedAiSettings) => {
     const normalized = normalizeAdvancedAiSettings(next)
@@ -675,17 +700,22 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
               ? '已打开'
               : '准备打开'
 
-  const overlay = resolveOverlay(kind, {
+  const overlay = resolveAiOverlay(kind, {
     networkReady,
+    senderRunning,
     advancedMode,
     hasEnvironment: !advancedMode || Boolean(activeEnvironment),
     hasRoute: !advancedMode || Boolean(activeRoute),
+    availableRoutesCount: availableRoutes.length,
     routeLabel: proxyModeLabel,
     hasTab: Boolean(activeTabId),
     initialized: view.initialized,
     proxyHost,
     proxyPort,
   })
+  const canStartProxy =
+    canStartWorkspaceProxy(workspaceMode, connection === 'online') &&
+    !validateSenderConfig(settings?.sender, mode, workspaceMode)
 
   const [slowLoadingReset, setSlowLoadingReset] = useState(0)
   const activeLoading = Boolean(networkReady && view.loading && !overlay)
@@ -811,7 +841,7 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
                     environmentPanelOpen && 'bg-accent text-accent-foreground',
                   )}
                   title={environments.length ? '管理环境与线路' : '新建 AI 环境'}
-                  onClick={() => setEnvironmentPanelOpen((open) => !open)}
+                  onClick={toggleEnvironmentPanel}
                 >
                   <SlidersHorizontal className="size-4" />
                 </Button>
@@ -942,8 +972,12 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
             settings={advancedAi}
             routes={availableRoutes}
             preferredRouteId={managedDefaultRoute?.id}
+            adding={environmentPanelAdding}
+            onAddingChange={setEnvironmentPanelAdding}
+            onOpenService={() => setActive('service')}
+            onOpenAdminRoutes={isAdmin ? openAdminRoutes : undefined}
             onChange={saveAdvancedAi}
-            onClose={() => setEnvironmentPanelOpen(false)}
+            onClose={closeEnvironmentPanel}
           />
         )}
 
@@ -1138,38 +1172,73 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
                   <Icon className="mx-auto mb-3 size-10 text-muted-foreground" />
                   <h2 className="mb-1.5 text-base font-semibold">{overlay.title}</h2>
                   <p className="text-sm text-muted-foreground">{overlay.text}</p>
-                  {!networkReady && !senderRunning && (
+                  {overlay.reason === 'no-environment' && (
                     <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
-                      {canStartWorkspaceProxy(workspaceMode, connection === 'online') &&
-                        !validateSenderConfig(settings?.sender, mode, workspaceMode) && (
-                          <Button
-                            disabled={startingProxy}
-                            onClick={async () => {
-                              setStartingProxy(true)
-                              try {
-                                await startWorkspaceSender({
-                                  workspaceMode,
-                                  online: connection === 'online',
-                                })
-                                toast.success('代理已开启，正在打开页面')
-                              } catch (err) {
-                                showErrorToast(err, '开启代理')
-                              } finally {
-                                setStartingProxy(false)
-                              }
-                            }}
-                          >
-                            {startingProxy ? <Loader2 className="animate-spin" /> : <Play />}
-                            {startingProxy ? '正在开启代理…' : '一键开启代理'}
-                          </Button>
-                        )}
+                      <Button data-testid="ai-overlay-create-env" onClick={openCreateEnvironment}>
+                        <Plus />
+                        新建 {meta.title} 环境
+                      </Button>
+                    </div>
+                  )}
+                  {overlay.reason === 'no-route' && (
+                    <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
                       <Button
-                        variant={
-                          canStartWorkspaceProxy(workspaceMode, connection === 'online') &&
-                          !validateSenderConfig(settings?.sender, mode, workspaceMode)
-                            ? 'outline'
-                            : 'default'
-                        }
+                        data-testid="ai-overlay-manage-env"
+                        onClick={() => setEnvironmentPanelOpen(true)}
+                      >
+                        <SlidersHorizontal />
+                        {availableRoutes.length > 0 ? '切换环境线路' : '查看环境与线路说明'}
+                      </Button>
+                      {availableRoutes.length === 0 && isAdmin && (
+                        <Button variant="outline" onClick={openAdminRoutes}>
+                          <ShieldCheck />
+                          前往管理后台
+                        </Button>
+                      )}
+                      {availableRoutes.length === 0 && (
+                        <Button variant="outline" onClick={() => setActive('service')}>
+                          <Cable />
+                          前往网络与代理
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                  {(overlay.reason === 'proxy-stopped' || overlay.reason === 'route-inactive') && (
+                    <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                      {canStartProxy && (
+                        <Button
+                          disabled={startingProxy}
+                          onClick={async () => {
+                            setStartingProxy(true)
+                            try {
+                              await startWorkspaceSender({
+                                workspaceMode,
+                                online: connection === 'online',
+                              })
+                              toast.success(
+                                senderRunning
+                                  ? '代理线路已重新应用，正在打开页面'
+                                  : '代理已开启，正在打开页面',
+                              )
+                            } catch (err) {
+                              showErrorToast(err, '开启代理')
+                            } finally {
+                              setStartingProxy(false)
+                            }
+                          }}
+                        >
+                          {startingProxy ? <Loader2 className="animate-spin" /> : <Play />}
+                          {startingProxy
+                            ? senderRunning
+                              ? '正在重新应用线路…'
+                              : '正在开启代理…'
+                            : senderRunning
+                              ? '重新应用代理线路'
+                              : '一键开启代理'}
+                        </Button>
+                      )}
+                      <Button
+                        variant={canStartProxy ? 'outline' : 'default'}
                         onClick={() => setActive('service')}
                       >
                         <Cable />
@@ -1252,80 +1321,6 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
       </div>
     </PanelScaffold>
   )
-}
-
-// 遮罩状态决策, 对齐旧 updateGptRuntimeState / updateGeminiRuntimeState 的 overlay 分支。
-function resolveOverlay(
-  kind: AiKind,
-  args: {
-    networkReady: boolean
-    advancedMode: boolean
-    hasEnvironment: boolean
-    hasRoute: boolean
-    routeLabel: string
-    hasTab: boolean
-    initialized: boolean
-    proxyHost: string
-    proxyPort: string
-  },
-): { title: string; text: string } | null {
-  const {
-    networkReady,
-    advancedMode,
-    hasEnvironment,
-    hasRoute,
-    routeLabel,
-    hasTab,
-    initialized,
-    proxyHost,
-    proxyPort,
-  } = args
-  const label = kind === 'gpt' ? 'ChatGPT' : kind === 'claude' ? 'Claude' : 'Gemini'
-
-  if (!hasEnvironment) {
-    return {
-      title: `新建 ${label} 环境`,
-      text: '点击上方环境管理按钮，新建一个独立登录环境。',
-    }
-  }
-
-  if (!hasRoute) {
-    return {
-      title: '没有可用的内置线路',
-      text: '请先配置统一代理或由管理员下发节点，然后重新开启内置代理。',
-    }
-  }
-
-  if (!networkReady) {
-    return {
-      title: '当前线路尚未就绪',
-      text: advancedMode
-        ? `${routeLabel} 由 ShareGPT 内置 sing-box 提供，请先在「网络 / 代理」中开启代理。`
-        : `${routeLabel} 使用 ${proxyHost}:${proxyPort}。请先启动对应的本机代理。`,
-    }
-  }
-
-  if (!hasTab) {
-    return {
-      title: '当前没有打开的网页标签',
-      text: `请点击上方的 + 按钮，新建一个 ${label} 标签页。`,
-    }
-  }
-
-  if (!initialized) {
-    if (kind === 'gemini') {
-      return {
-        title: '准备打开 Gemini',
-        text: '正在初始化内置页面并连接本地代理。Google 登录可能会跳转到账号验证页面。',
-      }
-    }
-    return {
-      title: `准备打开 ${label}`,
-      text: '正在初始化内置页面并连接本地代理。第一次进入可能稍慢。',
-    }
-  }
-
-  return null
 }
 
 function SlowLoadingNotice({

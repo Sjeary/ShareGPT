@@ -1,6 +1,16 @@
 import { showErrorToast } from '@/lib/errorToast'
 import { useEffect, useState } from 'react'
-import { CheckCircle2, Network, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import {
+  AlertCircle,
+  Cable,
+  CheckCircle2,
+  Network,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
@@ -19,6 +29,7 @@ import type {
   AppSettings,
 } from '@/types/settings'
 import { toast } from 'sonner'
+import { describeNoAiRoutesGuidance } from './overlayState'
 
 const KIND_LABEL: Record<AiKind, string> = { gpt: 'ChatGPT', gemini: 'Gemini', claude: 'Claude' }
 type RouteHealth = {
@@ -36,6 +47,10 @@ interface Props {
   settings: AdvancedAiSettings
   routes: AdvancedAiRoute[]
   preferredRouteId?: string
+  adding: boolean
+  onAddingChange: (adding: boolean) => void
+  onOpenService?: () => void
+  onOpenAdminRoutes?: () => void
   onChange: (settings: AdvancedAiSettings) => Promise<void>
   onClose: () => void
 }
@@ -45,16 +60,21 @@ export function AiEnvironmentPanel({
   settings,
   routes,
   preferredRouteId,
+  adding,
+  onAddingChange,
+  onOpenService,
+  onOpenAdminRoutes,
   onChange,
   onClose,
 }: Props) {
+  const senderSettings = useAppStore((state) => state.settings?.sender)
   const serverUrl = useAppStore((state) => state.settings?.collab?.server_url || '')
   const token = useAuthStore((state) => state.token)
+  const isAdmin = useAuthStore((state) => state.profile?.isAdmin === true)
   const [environmentName, setEnvironmentName] = useState('')
   const [newRouteId, setNewRouteId] = useState('')
   const [checkingId, setCheckingId] = useState('')
   const [savingId, setSavingId] = useState('')
-  const [adding, setAdding] = useState(false)
   const [pendingCleanup, setPendingCleanup] = useState(0)
   const [cleaning, setCleaning] = useState(false)
   const [healthById, setHealthById] = useState<Record<string, RouteHealth>>({})
@@ -64,6 +84,8 @@ export function AiEnvironmentPanel({
     : routes.some((route) => route.id === preferredRouteId)
       ? preferredRouteId || ''
       : routes[0]?.id || ''
+  const noRoutesGuidance =
+    routes.length === 0 ? describeNoAiRoutesGuidance(senderSettings, isAdmin) : null
 
   useEffect(() => {
     let current = true
@@ -132,7 +154,7 @@ export function AiEnvironmentPanel({
         activeByKind: { ...settings.activeByKind, [kind]: environment.id },
       })
       setEnvironmentName('')
-      setAdding(false)
+      onAddingChange(false)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '新建环境失败')
     } finally {
@@ -229,7 +251,7 @@ export function AiEnvironmentPanel({
             size="xs"
             variant={adding ? 'secondary' : 'outline'}
             disabled={Boolean(savingId)}
-            onClick={() => setAdding((open) => !open)}
+            onClick={() => onAddingChange(!adding)}
           >
             <Plus />
             新建
@@ -241,6 +263,38 @@ export function AiEnvironmentPanel({
       </div>
 
       <div className="max-h-72 overflow-y-auto px-4 py-2">
+        {noRoutesGuidance && (
+          <div
+            role="status"
+            data-testid="ai-env-no-routes-guidance"
+            className="mb-2 grid gap-2 rounded-md border border-amber-500/45 bg-amber-500/10 p-3 text-xs text-foreground"
+          >
+            <div className="flex items-start gap-2">
+              <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-300" />
+              <div className="min-w-0 flex-1 space-y-1">
+                <p className="font-medium">{noRoutesGuidance.title}</p>
+                <p className="leading-relaxed text-muted-foreground">{noRoutesGuidance.reason}</p>
+                <p className="leading-relaxed text-muted-foreground">{noRoutesGuidance.nextStep}</p>
+              </div>
+            </div>
+            {(onOpenService || (noRoutesGuidance.canOpenAdmin && onOpenAdminRoutes)) && (
+              <div className="flex flex-wrap items-center gap-2 pl-6">
+                {noRoutesGuidance.canOpenAdmin && onOpenAdminRoutes && (
+                  <Button size="xs" onClick={onOpenAdminRoutes}>
+                    <ShieldCheck className="size-3.5" />
+                    前往管理后台配置线路
+                  </Button>
+                )}
+                {onOpenService && (
+                  <Button size="xs" variant="outline" onClick={onOpenService}>
+                    <Cable className="size-3.5" />
+                    前往网络与代理
+                  </Button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {pendingCleanup > 0 && (
           <div className="mb-2 flex flex-wrap items-center gap-2 rounded-md bg-muted px-2 py-2 text-xs">
             <span>{pendingCleanup} 个已删除环境的本地数据等待清理</span>
@@ -334,7 +388,7 @@ export function AiEnvironmentPanel({
           {!environments.length && !adding && (
             <button
               type="button"
-              onClick={() => setAdding(true)}
+              onClick={() => onAddingChange(true)}
               className="flex h-16 items-center justify-center gap-2 rounded-md border border-dashed text-sm text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
             >
               <Plus className="size-4" />
@@ -357,10 +411,11 @@ export function AiEnvironmentPanel({
               <select
                 value={selectedNewRouteId}
                 aria-label="新环境内置网络线路"
-                className="h-8 min-w-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="h-8 min-w-0 rounded-md border border-input bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
                 disabled={!routes.length || Boolean(savingId)}
                 onChange={(event) => setNewRouteId(event.target.value)}
               >
+                {routes.length === 0 && <option value="">暂无已授权可用线路</option>}
                 {routes.map((route) => (
                   <option key={route.id} value={route.id}>
                     {route.name}
