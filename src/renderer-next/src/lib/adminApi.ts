@@ -137,6 +137,14 @@ function query(filters: object): string {
   return params.size ? `?${params}` : ''
 }
 
+function unsupportedAdminAction<Args extends unknown[]>(
+  action: string,
+): (...args: Args) => Promise<never> {
+  return async () => {
+    throw new AdminUnsupportedError(action)
+  }
+}
+
 export function createAdminApi(serverUrl: string, token: string, signal?: AbortSignal) {
   const request = <T>(path: string, options?: AdminRequestOptions) =>
     adminFetch<T>(serverUrl, token, `/api/admin/${path}`, { ...options, signal })
@@ -158,9 +166,7 @@ export function createAdminApi(serverUrl: string, token: string, signal?: AbortS
       json<{ user: AdminUser }>(`users/${encodeURIComponent(username)}`, 'PATCH', {
         password,
       }).then((r) => r.user),
-    deleteUser: async (_username: string): Promise<never> => {
-      throw new AdminUnsupportedError('删除用户；可使用禁用账号')
-    },
+    deleteUser: unsupportedAdminAction<[username: string]>('删除用户；可使用禁用账号'),
     loadInvites: () => request<{ invites: AdminInvite[] }>('invites').then((r) => r.invites),
     createInvite: (input: CreateInviteInput) =>
       json<{ invite: AdminInvite }>('invites', 'POST', input).then((r) => r.invite),
@@ -189,18 +195,12 @@ export function createAdminApi(serverUrl: string, token: string, signal?: AbortS
     loadTranslationUsage: (filters: TranslationUsageFilters = {}) =>
       request<TranslationUsageReport>(`translation-usage${query(filters)}`),
     loadFeedback: () => request<{ feedback: FeedbackItem[] }>('feedback').then((r) => r.feedback),
-    deleteFeedback: async (_id: string): Promise<never> => {
-      throw new AdminUnsupportedError('删除反馈')
-    },
+    deleteFeedback: unsupportedAdminAction<[id: string]>('删除反馈'),
     loadProxyMissing: () =>
       request<{ domains: ProxyMissingItem[] }>('proxy-missing').then((r) => r.domains),
-    clearProxyMissing: async (): Promise<never> => {
-      throw new AdminUnsupportedError('清空缺失域名')
-    },
+    clearProxyMissing: unsupportedAdminAction<[]>('清空缺失域名'),
     loadReleases: () => request<Bootstrap>('bootstrap').then((r): AdminReleases => r.update),
-    deleteRelease: async (_version: string): Promise<never> => {
-      throw new AdminUnsupportedError('删除发布版本')
-    },
+    deleteRelease: unsupportedAdminAction<[version: string]>('删除发布版本'),
     loadAirport: () => request<AdminAirport>('airport'),
     saveAirport: (airport: AdminAirport) =>
       json<{ airport: AdminAirport }>('airport', 'PUT', airport).then((r) => r.airport),
