@@ -25,6 +25,7 @@ import { isStaleAttemptError } from '@/lib/latestAttempt'
 import { describeUserError } from '@/lib/userFacingError'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store/useAppStore'
+import { useAuthStore } from '@/store/useAuthStore'
 import { TeamAuthCard, type OrgAuthTab } from './TeamAuthCard'
 import { useTeamLoginFormState } from './useTeamLoginFormState'
 import { checkGithubUpdate, compareVersions, type BootstrapUpdate } from './bootstrap'
@@ -171,15 +172,18 @@ export function WorkspaceEntryFlow() {
     const params = autoLoginParams(collab)
     if (params) {
       if (autoLoginAttempted.current || loginUiBusyRef.current) return
+      if (!useAuthStore.getState().claimStartupEntry()) return
       autoLoginAttempted.current = true
       loginUiBusyRef.current = true
-      setDirection('forward')
-      setEntryView('organization')
-      setSubmitting(true)
-      setError('')
-      setErrorField(null)
-      void login(params)
-        .catch((err) => {
+      void Promise.resolve().then(async () => {
+        setDirection('forward')
+        setEntryView('organization')
+        setSubmitting(true)
+        setError('')
+        setErrorField(null)
+        try {
+          await login(params)
+        } catch (err) {
           if (isStaleAttemptError(err)) return
           setError(err)
           setErrorShakeKey((k) => k + 1)
@@ -187,24 +191,27 @@ export function WorkspaceEntryFlow() {
           setErrorField(
             category === 'connection' ? 'server' : category === 'credentials' ? 'password' : null,
           )
-        })
-        .finally(() => {
+        } finally {
           loginUiBusyRef.current = false
           setSubmitting(false)
-        })
+        }
+      })
       return
     }
     const shouldAutoPersonal = Boolean(useAppStore.getState().settings?.ui?.auto_enter_personal)
     if (!shouldAutoPersonal || autoLoginAttempted.current || loginUiBusyRef.current) return
+    if (!useAuthStore.getState().claimStartupEntry()) return
     autoLoginAttempted.current = true
-    setEnteringPersonal(true)
-    void enterPersonal()
-      .catch((err) => {
+    void Promise.resolve().then(async () => {
+      setEnteringPersonal(true)
+      try {
+        await enterPersonal()
+      } catch (err) {
         setError(err)
-      })
-      .finally(() => {
+      } finally {
         setEnteringPersonal(false)
-      })
+      }
+    })
   }, [
     collab,
     enterPersonal,
