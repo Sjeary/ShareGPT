@@ -3,18 +3,12 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { _electron: electron } = require("playwright");
+const { dismissFirstRunGuides } = require("./lib/dismiss-first-run-guides.cjs");
 
 const ROOT = path.resolve(__dirname, "..");
 
 async function dismissGuides(page) {
-  const skipTour = page.getByRole("button", { name: "跳过", exact: true });
-  // Shell opens the first-run tour in an effect. Handle it even if that effect
-  // runs after this initial visibility check, without forcing clicks through it.
-  await page.addLocatorHandler(skipTour, () => skipTour.click());
-  if (await skipTour.isVisible().catch(() => false)) await skipTour.click();
-  const closeGuide = page.getByRole("button", { name: "关闭引导", exact: true });
-  await page.addLocatorHandler(closeGuide, () => closeGuide.click());
-  if (await closeGuide.isVisible().catch(() => false)) await closeGuide.click();
+  await dismissFirstRunGuides(page, page.locator('[data-tour="nav-service"]'));
 }
 
 async function assertPersonalWorkspace(page) {

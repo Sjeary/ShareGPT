@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { _electron, expect } = require("playwright/test");
+const { dismissFirstRunGuides } = require("./lib/dismiss-first-run-guides.cjs");
 
 const root = path.resolve(__dirname, "..");
 const visible = process.argv.includes("--cloud-visible");
@@ -111,10 +112,6 @@ async function launch() {
     await app.context().tracing.start({ screenshots: true, snapshots: true, sources: false });
   page = await app.firstWindow();
   page.setDefaultTimeout(12000);
-  for (const name of ["跳过", "关闭引导"]) {
-    const guide = page.getByRole("button", { name, exact: true });
-    await page.addLocatorHandler(guide, () => guide.click());
-  }
   page.on("pageerror", (error) => result.errors.push(error.message));
   await page.evaluate(() => {
     window.journeyMetrics = { clicks: [], longTasks: [] };
@@ -239,10 +236,7 @@ async function login(username) {
   await page.locator("#account-password").fill(password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await nav("account").waitFor();
-  for (const name of ["跳过", "关闭引导"]) {
-    const button = page.getByRole("button", { name, exact: true });
-    if (await button.isVisible()) await button.click();
-  }
+  await dismissFirstRunGuides(page, nav("account"));
 }
 async function settings() {
   await nav("account").click();
