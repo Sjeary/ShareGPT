@@ -331,7 +331,9 @@ export function LoggedInView() {
       </nav>
 
       {/* 右侧主内容区：不按 category 设 key，切换分类零卸载/重拉 */}
-      <div className="flex min-w-0 flex-col gap-4">
+      <div
+        className={cn('flex min-w-0 flex-col gap-4', category === 'all' && 'settings-all-stack')}
+      >
         <SessionRecoveryForm />
 
         {show('account') && (

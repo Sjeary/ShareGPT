@@ -313,6 +313,7 @@
   --color-sidebar-ring: var(--sidebar-ring);
 
   --font-sans: 'Segoe UI Variable Text', 'Microsoft YaHei UI', system-ui, sans-serif;
+  --font-mono: ui-monospace, Consolas, 'SFMono-Regular', Menlo, 'Microsoft YaHei UI', monospace;
 }
 
 @layer base {
@@ -404,5 +405,11 @@
     width: 0;
     height: 0;
     display: none;
+  }
+  /* 长设置页（全部设置）首屏下方卡片按视口惰性排版，避免首次进入一次性布局全部卡片阻塞主线程；
+     保留完整 DOM、无障碍树与页内查找，首次排版后记住真实高度防止滚动跳动。 */
+  .settings-all-stack > [data-slot='card']:nth-child(n + 3 of [data-slot='card']) {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 320px;
   }
 }

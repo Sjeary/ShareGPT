@@ -94,7 +94,9 @@ export function PersonalAccountView() {
         })}
       </nav>
 
-      <div className="flex min-w-0 flex-col gap-4">
+      <div
+        className={cn('flex min-w-0 flex-col gap-4', category === 'all' && 'settings-all-stack')}
+      >
         {show('account') && (
           <>
             <div className="flex w-full items-start gap-3.5 rounded-xl border border-border/85 bg-card px-4 py-3.5 shadow-2xs">
