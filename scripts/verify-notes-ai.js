@@ -93,7 +93,21 @@ async function main() {
           await editor.click();
           await editor.press("ControlOrMeta+a");
           await editor.press("ControlOrMeta+k");
-          return window.getByPlaceholder("如何修改这段…（改写/翻译/精简/扩写/列点…）");
+          const input = window.getByPlaceholder("如何修改这段…（改写/翻译/精简/扩写/列点…）");
+          await input.waitFor({ state: "visible" });
+          assert.equal(
+            await window.locator('[role="dialog"]').count(),
+            0,
+            "The editor shortcut must not also open a global modal",
+          );
+          assert.equal(
+            await input.evaluate((element) =>
+              Boolean(element.closest('[inert], [aria-hidden="true"]')),
+            ),
+            false,
+            "The inline AI input must remain accessible",
+          );
+          return input;
         };
         let instruction = await openInline();
         await instruction.fill("rewrite A");
