@@ -825,7 +825,7 @@ async function verifyTranslationWorkbench({
   fs.writeFileSync(screenshotPath, Buffer.from(screenshot, "base64"));
   process.stdout.write(`[verify] translation workbench screenshot: ${screenshotPath}\n`);
   await panel.getByRole("button", { name: "关闭翻译侧栏" }).click();
-  await page.getByRole("button", { name: /^网络 \/ 代理/ }).click();
+  await page.locator('[data-tour="nav-service"]').click();
   await activateKind(page, "");
 }
 
