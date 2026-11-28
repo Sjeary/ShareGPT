@@ -222,7 +222,7 @@ function assertUnassigned(data) {
 async function logout(window) {
   await window.locator('[data-tour="nav-account"]').click();
   await window.getByRole("button", { name: "退出登录", exact: true }).click();
-  await window.locator("#account-server").waitFor({ state: "visible" });
+  await window.getByRole("button", { name: /连接团队/ }).waitFor({ state: "visible" });
 }
 
 async function receiveChat(fixture, window, username, label) {
