@@ -148,3 +148,65 @@ test("a revoked calendar write stops after awaiting its body and preserves the p
   assert.equal((await pending).status, 401);
   assert.equal(fs.readFileSync(f.file, "utf8"), before);
 });
+
+test("ordinary edits preserve the latest server responses and cannot forge new member responses", async (t) => {
+  const f = fixture(t);
+  const created = await f.request("POST", "", {
+    ...newEvent,
+    attendees: [{ username: "Bob", rsvp: "accept" }],
+  });
+  const id = created.body.event.id;
+  assert.equal(created.body.event.attendees[0].rsvp, "needs_action");
+  await f.request("POST", `/${id}/rsvp`, { status: "accept" }, "B");
+  // An editor opened before Bob changed his answer sends stale/missing RSVP values.
+  await f.request("POST", `/${id}/rsvp`, { status: "decline" }, "B");
+  const edited = await f.request("PATCH", `/${id}`, {
+    title: "New title",
+    attendees: [
+      { username: "Bob", rsvp: "accept" },
+      { username: "New", rsvp: "accept" },
+    ],
+  });
+  assert.equal(edited.status, 200);
+  assert.deepEqual(
+    edited.body.event.attendees.map((a) => [a.username, a.rsvp]),
+    [
+      ["Bob", "decline"],
+      ["New", "needs_action"],
+    ],
+  );
+  const titleOnly = await f.request("PATCH", `/${id}`, { title: "Again" });
+  assert.equal(titleOnly.body.event.attendees[0].rsvp, "decline");
+  const removed = await f.request("PATCH", `/${id}`, { attendees: [{ username: "Bob" }] });
+  assert.deepEqual(
+    removed.body.event.attendees.map((a) => [a.username, a.rsvp]),
+    [["Bob", "decline"]],
+  );
+});
+
+test("invalid event edits preserve the event, backup and broadcast count", async (t) => {
+  const f = fixture(t);
+  const id = (await f.request("POST", "", newEvent)).body.event.id;
+  const original = fs.readFileSync(f.file, "utf8");
+  const backup = fs.readFileSync(f.file + ".backup", "utf8");
+  const count = f.events.length;
+  for (const patch of [
+    { start: "" },
+    { start: "invalid" },
+    { start: "2026-02-30" },
+    { title: " " },
+    { title: null },
+    { end: "" },
+    { end: "2026-11-20T12:00:00Z" },
+    { attendees: null },
+  ]) {
+    assert.equal((await f.request("PATCH", `/${id}`, patch)).status, 400, JSON.stringify(patch));
+    assert.equal(fs.readFileSync(f.file, "utf8"), original);
+    assert.equal(fs.readFileSync(f.file + ".backup", "utf8"), backup);
+    assert.equal(f.events.length, count);
+  }
+  for (const patch of [{ start: "invalid" }, { end: "2026-01-01" }, { title: "" }])
+    assert.equal((await f.request("POST", "", { ...newEvent, ...patch })).status, 400);
+  assert.equal(fs.readFileSync(f.file, "utf8"), original);
+  assert.equal((await f.request("GET")).body.events.length, 1);
+});

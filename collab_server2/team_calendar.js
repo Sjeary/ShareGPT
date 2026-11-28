@@ -31,6 +31,29 @@ function createTeamCalendarHandler({
     };
   }
 
+  function validEventInput(record) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) return false;
+    if (typeof record.title !== "string" || !record.title.trim()) return false;
+    const validDate = (value) => {
+      if (typeof value !== "string") return false;
+      const match = /^(\d{4})-(\d{2})-(\d{2})(?:T|$)/.exec(value);
+      if (!match || !Number.isFinite(Date.parse(value))) return false;
+      const date = new Date(`${match[0].slice(0, 10)}T00:00:00Z`);
+      return date.toISOString().slice(0, 10) === match[0].slice(0, 10);
+    };
+    if (!validDate(record.start)) return false;
+    if (record.end !== undefined && !validDate(record.end)) return false;
+    return Date.parse(record.end ?? record.start) >= Date.parse(record.start);
+  }
+
+  function editAttendees(records, previous = []) {
+    const responses = new Map(previous.map((a) => [a.username, a.rsvp]));
+    return records.map((record) => ({
+      ...record,
+      rsvp: responses.get(safeText(record?.username)) || "needs_action",
+    }));
+  }
+
   function normalizeTeamEvent(record) {
     const id = safeText(record?.id);
     const title = safeText(record?.title).slice(0, 200);
@@ -116,8 +139,8 @@ function createTeamCalendarHandler({
           if (!requireCurrentSession(req, res, session)) return true;
           const title = safeText(payload.title).slice(0, 200);
           const start = safeText(payload.start);
-          if (!title || !start) {
-            sendText(res, 400, "标题与开始时间必填");
+          if (!validEventInput(payload)) {
+            sendText(res, 400, "请提供有效标题和起止时间，结束时间不能早于开始时间");
             return true;
           }
           const store = loadCalendarStore();
@@ -126,6 +149,13 @@ function createTeamCalendarHandler({
             id: crypto.randomUUID(),
             subnetKey: session.subnetKey,
             title,
+            start,
+            attendees: Array.isArray(payload.attendees)
+              ? payload.attendees.map((a) => ({
+                  ...a,
+                  rsvp: safeText(a?.username) === session.username ? a.rsvp : "needs_action",
+                }))
+              : [],
             organizer: session.username,
             createdBy: session.username,
             createdAt: nowIso(),
@@ -207,9 +237,22 @@ function createTeamCalendarHandler({
               sendText(res, 403, "只有组织者可以编辑事件");
               return true;
             }
+            if (
+              !payload ||
+              typeof payload !== "object" ||
+              Array.isArray(payload) ||
+              !validEventInput({ ...prev, ...payload }) ||
+              (Object.hasOwn(payload, "attendees") && !Array.isArray(payload.attendees))
+            ) {
+              sendText(res, 400, "请提供有效标题、起止时间和参会人，结束时间不能早于开始时间");
+              return true;
+            }
             const merged = normalizeTeamEvent({
               ...prev,
               ...payload,
+              attendees: Object.hasOwn(payload, "attendees")
+                ? editAttendees(payload.attendees, prev.attendees)
+                : prev.attendees,
               id: prev.id,
               subnetKey: prev.subnetKey,
               organizer: prev.organizer,
