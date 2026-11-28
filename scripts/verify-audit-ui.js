@@ -6,6 +6,23 @@ const { maxTextLength } = require("../collab_server2/chat_limits.json");
 
 const SCREENSHOTS = path.resolve(__dirname, "../.cache/audit-ui-acceptance");
 
+async function resizeContent(electronApp, window, width, height) {
+  const actual = await electronApp.evaluate(
+    ({ BrowserWindow }, size) => {
+      const main = BrowserWindow.getAllWindows()[0];
+      main.setContentSize(size.width, size.height);
+      return main.getContentSize();
+    },
+    { width, height },
+  );
+  // Native frames can round by one DIP on scaled Windows displays.
+  assert.ok(
+    Math.abs(actual[0] - width) <= 1 && Math.abs(actual[1] - height) <= 1,
+    `Unexpected content size: ${actual}; requested ${width},${height}`,
+  );
+  await window.waitForFunction((expected) => innerWidth === expected, actual[0]);
+}
+
 async function main() {
   const fixture = await createFixtureServer();
   let calendarUnavailable = true;
@@ -134,10 +151,7 @@ async function main() {
         await error.getByText("服务暂时不可用", { exact: true }).waitFor();
         await error.locator("summary").click();
         assert.match(await error.innerText(), /503/);
-        await electronApp.evaluate(({ BrowserWindow }) =>
-          BrowserWindow.getAllWindows()[0].setSize(860, 620),
-        );
-        await window.waitForFunction(() => innerWidth === 860);
+        await resizeContent(electronApp, window, 860, 620);
         const layout = await error.evaluate((node) => ({
           width: node.clientWidth,
           content: node.scrollWidth,
@@ -152,10 +166,7 @@ async function main() {
           animations: "disabled",
           path: path.join(SCREENSHOTS, "team-unavailable-dark-narrow.png"),
         });
-        await electronApp.evaluate(({ BrowserWindow }) =>
-          BrowserWindow.getAllWindows()[0].setSize(1180, 760),
-        );
-        await window.waitForFunction(() => innerWidth === 1180);
+        await resizeContent(electronApp, window, 1180, 760);
         calendarUnavailable = false;
         await window.getByRole("button", { name: "重新加载", exact: true }).click();
         await window.getByText(event.title, { exact: true }).first().waitFor();
