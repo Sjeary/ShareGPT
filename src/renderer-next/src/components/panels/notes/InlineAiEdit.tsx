@@ -138,7 +138,7 @@ function InlineAiEditRuntime({ aiEdit }: { aiEdit: AiEdit }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[65]" onMouseDown={close}>
+    <div className="fixed inset-0 z-[65]" data-local-shortcut-scope="true" onMouseDown={close}>
       <div
         className="fixed w-[440px] max-w-[92vw] overflow-hidden rounded-xl border border-border bg-popover shadow-2xl animate-in fade-in zoom-in-95 duration-100"
         style={style}
@@ -157,8 +157,14 @@ function InlineAiEditRuntime({ aiEdit }: { aiEdit: AiEdit }) {
             value={instruction}
             onChange={(e) => setInstruction(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') run()
-              else if (e.key === 'Escape') close()
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                e.preventDefault()
+                run()
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                e.stopPropagation()
+                close()
+              }
             }}
             placeholder={hasSel ? '如何修改这段…（改写/翻译/精简/扩写/列点…）' : '让 AI 写点什么…'}
             className="h-8 flex-1 rounded-md border border-border bg-background px-2 text-sm outline-none focus:border-primary/60"

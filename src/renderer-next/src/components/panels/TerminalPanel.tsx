@@ -161,7 +161,14 @@ function TerminalSurface({
   useEffect(() => {
     if (visible) fit.current?.fit()
   }, [visible])
-  return <div ref={host} className="h-full min-h-0 w-full font-mono" aria-label="本地终端" />
+  return (
+    <div
+      ref={host}
+      data-terminal-surface="true"
+      className="h-full min-h-0 w-full font-mono"
+      aria-label="本地终端"
+    />
+  )
 }
 
 export default function TerminalPanel({ visible }: { visible: boolean }) {

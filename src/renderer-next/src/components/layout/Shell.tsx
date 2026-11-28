@@ -6,6 +6,8 @@ import { Titlebar } from './Titlebar'
 import { Sidebar } from './Sidebar'
 import { api } from '@/lib/api'
 import { useAppStore } from '@/store/useAppStore'
+import { useEditorBridge } from '@/store/useEditorBridge'
+import { shouldToggleGlobalCommandPalette } from '@/lib/globalShortcut'
 import { useLogStream } from '@/components/panels/logs/useLogStream'
 import { useCloudSync } from '@/hooks/useCloudSync'
 import { useBrowserPrivacySync } from '@/hooks/useBrowserPrivacySync'
@@ -63,17 +65,28 @@ export function Shell() {
   const hideSidebar =
     sidebarHidden && (active === 'gpt' || active === 'gemini' || active === 'claude')
 
-  // 全局快捷命令面板 (Ctrl/Cmd + K)。
+  // 全局快捷命令面板 (Ctrl/Cmd + K)。尊重已被局部组件处理(如笔记编辑器 Mod-K)、输入控件、终端与活动弹层。
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        setCommandPaletteOpen(!useAppStore.getState().commandPaletteOpen)
+      const state = useAppStore.getState()
+      const open = state.commandPaletteOpen
+      if (
+        !shouldToggleGlobalCommandPalette(event, {
+          commandPaletteOpen: open,
+          blocked:
+            !open &&
+            (dataSuspended || state.tourOpen || Boolean(useEditorBridge.getState().aiEdit?.open)),
+          activeElement: document.activeElement,
+        })
+      ) {
+        return
       }
+      event.preventDefault()
+      setCommandPaletteOpen(!open)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [setCommandPaletteOpen])
+  }, [dataSuspended, setCommandPaletteOpen])
 
   // 原生 AI 视图始终浮在 DOM 之上；导航变化或全局浮层打开时同步当前 kind，避免遮挡弹窗/引导。
   useEffect(() => {
