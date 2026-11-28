@@ -64,10 +64,13 @@ async function exchangeLegacyAdminToken(
   serverUrl: string,
   username: string,
   password: string,
+  externalSignal?: AbortSignal,
 ): Promise<string> {
   const base = normalizeServerUrl(serverUrl)
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), 10000)
+  const onExternalAbort = () => controller.abort()
+  externalSignal?.addEventListener('abort', onExternalAbort)
   try {
     const resp = await fetch(`${base}/api/admin/login`, {
       method: 'POST',
@@ -87,6 +90,7 @@ async function exchangeLegacyAdminToken(
     return adminToken
   } finally {
     window.clearTimeout(timer)
+    externalSignal?.removeEventListener('abort', onExternalAbort)
   }
 }
 
@@ -97,6 +101,15 @@ export default function AdminPanel() {
   const profile = useAuthStore((s) => s.profile)
   const isAdmin = workspaceMode === 'organization' && Boolean(token) && profile?.isAdmin === true
 
+  // 非管理员彻底不渲染此界面。
+  if (!isAdmin) return null
+
+  const username = profile?.username || ''
+  const sessionIdentityKey = `${serverUrl}\0${username}\0${token}`
+  return <AdminPanelContent key={sessionIdentityKey} serverUrl={serverUrl} username={username} />
+}
+
+function AdminPanelContent({ serverUrl, username }: { serverUrl: string; username: string }) {
   const session = useIntegratedAdminStore((s) => s.session)
   const activeTab = useIntegratedAdminStore((s) => s.activeTab)
   const setActiveTab = useIntegratedAdminStore((s) => s.setActiveTab)
@@ -106,92 +119,126 @@ export default function AdminPanel() {
   const anyLoading = Object.values(loading).some(Boolean)
 
   const [verifying, setVerifying] = useState(false)
-  const [needPassword, setNeedPassword] = useState(false)
+  const [autoExchange, setAutoExchange] = useState<'pending' | 'done'>(() =>
+    !session && serverUrl && username && useAuthStore.getState().runtimePassword
+      ? 'pending'
+      : 'done',
+  )
   const [manualPassword, setManualPassword] = useState('')
   const [verifyError, setVerifyError] = useState('')
-  const legacyAttemptedKeyRef = useRef('')
-
-  const sessionIdentityKey = `${serverUrl}\0${profile?.username || ''}\0${token}`
+  const legacyAttemptedRef = useRef(false)
+  const exchangeControllerRef = useRef<AbortController | null>(null)
+  const mountedRef = useRef(true)
 
   useEffect(() => {
-    setNeedPassword(false)
-    setVerifyError('')
-    setManualPassword('')
-    legacyAttemptedKeyRef.current = ''
-  }, [sessionIdentityKey])
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      exchangeControllerRef.current?.abort()
+      exchangeControllerRef.current = null
+    }
+  }, [])
+
+  const isSameAdminSession = useCallback(() => {
+    const latestAuth = useAuthStore.getState()
+    const latestApp = useAppStore.getState()
+    return (
+      latestApp.workspaceMode === 'organization' &&
+      latestAuth.profile?.isAdmin === true &&
+      latestAuth.profile.username === username
+    )
+  }, [username])
 
   const tryLegacyExchange = useCallback(
     async (password: string, manual: boolean) => {
-      const username = profile?.username || ''
-      if (!serverUrl || !username || !password) {
-        setNeedPassword(true)
-        return false
-      }
+      if (!serverUrl || !username || !password) return false
+      exchangeControllerRef.current?.abort()
+      const controller = new AbortController()
+      exchangeControllerRef.current = controller
       setVerifying(true)
       setVerifyError('')
       try {
-        const adminToken = await exchangeLegacyAdminToken(serverUrl, username, password)
+        const adminToken = await exchangeLegacyAdminToken(
+          serverUrl,
+          username,
+          password,
+          controller.signal,
+        )
+        if (!mountedRef.current || controller.signal.aborted) return false
         // 核对当前仍为同一管理员会话再绑定，防止切号串写。
-        const latestAuth = useAuthStore.getState()
-        const latestApp = useAppStore.getState()
-        if (
-          latestApp.workspaceMode !== 'organization' ||
-          latestAuth.profile?.isAdmin !== true ||
-          latestAuth.profile.username !== username
-        ) {
-          return false
-        }
+        if (!isSameAdminSession()) return false
         bindSession({ serverUrl, token: adminToken, username, isAdmin: true })
-        setNeedPassword(false)
         setManualPassword('')
         return true
       } catch (err) {
+        if (!mountedRef.current || controller.signal.aborted) return false
         const msg = err instanceof Error ? err.message : '管理员验证失败'
-        setNeedPassword(true)
         if (manual) setVerifyError(msg)
         return false
       } finally {
-        setVerifying(false)
+        if (exchangeControllerRef.current === controller) exchangeControllerRef.current = null
+        if (mountedRef.current) setVerifying(false)
       }
     },
-    [bindSession, profile?.username, serverUrl],
+    [bindSession, isSameAdminSession, serverUrl, username],
   )
 
   useEffect(() => {
-    if (!isAdmin) return
     if (!session) {
-      // session 尚未就绪或刚因旧版服务端 401 被清掉：若尚未尝试旧版令牌换取，用内存密码自动换取一次。
-      if (legacyAttemptedKeyRef.current !== sessionIdentityKey) {
-        legacyAttemptedKeyRef.current = sessionIdentityKey
-        const runtimePwd = useAuthStore.getState().runtimePassword
-        if (runtimePwd) {
-          void tryLegacyExchange(runtimePwd, false)
-        } else {
-          setNeedPassword(true)
-        }
+      if (autoExchange !== 'pending' || legacyAttemptedRef.current) return
+      const runtimePwd = useAuthStore.getState().runtimePassword
+      if (!runtimePwd || !serverUrl || !username) return
+      legacyAttemptedRef.current = true
+      const controller = new AbortController()
+      exchangeControllerRef.current?.abort()
+      exchangeControllerRef.current = controller
+      void exchangeLegacyAdminToken(serverUrl, username, runtimePwd, controller.signal)
+        .then((adminToken) => {
+          if (!mountedRef.current || controller.signal.aborted) return
+          if (!isSameAdminSession()) return
+          bindSession({ serverUrl, token: adminToken, username, isAdmin: true })
+          setManualPassword('')
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (exchangeControllerRef.current === controller) exchangeControllerRef.current = null
+          if (mountedRef.current && !controller.signal.aborted) setAutoExchange('done')
+        })
+      return () => {
+        controller.abort()
+        legacyAttemptedRef.current = false
       }
-      return
     }
+
     void loadTab(activeTab).catch((err) => {
+      if (!mountedRef.current) return
       if (err instanceof AuthExpiredError) {
-        if (legacyAttemptedKeyRef.current !== sessionIdentityKey) {
-          legacyAttemptedKeyRef.current = sessionIdentityKey
+        if (!legacyAttemptedRef.current) {
+          legacyAttemptedRef.current = true
           const runtimePwd = useAuthStore.getState().runtimePassword
           if (runtimePwd) {
             void tryLegacyExchange(runtimePwd, false)
             return
           }
         }
-        setNeedPassword(true)
         return
       }
       const msg = err instanceof Error ? err.message : '加载管理数据失败'
       if (msg) toast.error(msg)
     })
-  }, [activeTab, isAdmin, loadTab, session, sessionIdentityKey, tryLegacyExchange])
+  }, [
+    activeTab,
+    autoExchange,
+    bindSession,
+    isSameAdminSession,
+    loadTab,
+    serverUrl,
+    session,
+    tryLegacyExchange,
+    username,
+  ])
 
-  // 非管理员彻底不渲染此界面。
-  if (!isAdmin) return null
+  const showVerifying = verifying || (!session && autoExchange === 'pending')
 
   async function handleManualVerify(e: FormEvent) {
     e.preventDefault()
@@ -222,12 +269,12 @@ export default function AdminPanel() {
     >
       {!session ? (
         <div className="grid h-full place-items-center p-6">
-          {verifying ? (
+          {showVerifying ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin text-primary" />
               正在连接管理服务…
             </div>
-          ) : needPassword ? (
+          ) : (
             <Card className="w-full max-w-sm">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
@@ -235,7 +282,7 @@ export default function AdminPanel() {
                   验证管理员密码
                 </CardTitle>
                 <CardDescription>
-                  当前服务器版本需要独立管理员会话，请确认 @{profile?.username} 的密码以继续。
+                  当前服务器版本需要独立管理员会话，请确认 @{username} 的密码以继续。
                 </CardDescription>
               </CardHeader>
               <CardContent>
@@ -258,11 +305,6 @@ export default function AdminPanel() {
                 </form>
               </CardContent>
             </Card>
-          ) : (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="size-4 animate-spin text-primary" />
-              正在初始化管理会话…
-            </div>
           )}
         </div>
       ) : (

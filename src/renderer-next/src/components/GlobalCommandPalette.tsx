@@ -45,16 +45,10 @@ export function GlobalCommandPalette({
   onOpenChange: (open: boolean) => void
 }) {
   if (!open) return null
-  return <GlobalCommandPaletteInner open={open} onOpenChange={onOpenChange} />
+  return <GlobalCommandPaletteInner onOpenChange={onOpenChange} />
 }
 
-function GlobalCommandPaletteInner({
-  open,
-  onOpenChange,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-}) {
+function GlobalCommandPaletteInner({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -83,12 +77,9 @@ function GlobalCommandPaletteInner({
   const translationAllowed = canUseTranslation(workspaceMode, token, profile)
 
   useEffect(() => {
-    if (!open) return
-    setQuery('')
-    setSelectedIndex(0)
     const frame = window.requestAnimationFrame(() => inputRef.current?.focus())
     return () => window.cancelAnimationFrame(frame)
-  }, [open])
+  }, [])
 
   const items = useMemo<PaletteItem[]>(() => {
     const navItems: PaletteItem[] = NAV.filter(
@@ -228,7 +219,7 @@ function GlobalCommandPaletteInner({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open onOpenChange={onOpenChange}>
       <DialogContent showCloseButton={false} className="gap-0 overflow-hidden p-0 sm:max-w-lg">
         <DialogTitle className="sr-only">快速跳转与命令</DialogTitle>
         <DialogDescription className="sr-only">

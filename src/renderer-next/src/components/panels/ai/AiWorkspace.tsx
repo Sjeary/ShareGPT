@@ -687,16 +687,8 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
     proxyPort,
   })
 
-  const [slowLoading, setSlowLoading] = useState(false)
+  const [slowLoadingReset, setSlowLoadingReset] = useState(0)
   const activeLoading = Boolean(networkReady && view.loading && !overlay)
-  useEffect(() => {
-    if (!activeLoading) {
-      setSlowLoading(false)
-      return
-    }
-    const timer = window.setTimeout(() => setSlowLoading(true), 12000)
-    return () => window.clearTimeout(timer)
-  }, [activeLoading, activeTabId])
 
   const showGptEmailLoginTip =
     kind === 'gpt' &&
@@ -1038,26 +1030,15 @@ export function AiWorkspace({ kind }: { kind: AiKind }) {
           </div>
         )}
 
-        {slowLoading && (
-          <div className="motion-tab-panel flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground">
-            <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
-            <span className="min-w-44 flex-1">
-              页面加载较慢，可能正在建立代理连接或等待网页响应。
-            </span>
-            <Button
-              variant="outline"
-              size="xs"
-              onClick={() => {
-                setSlowLoading(false)
-                void navigate('reload')
-              }}
-            >
-              重新加载
-            </Button>
-            <Button variant="ghost" size="xs" onClick={toggleProxyPanel}>
-              检查代理
-            </Button>
-          </div>
+        {activeLoading && (
+          <SlowLoadingNotice
+            key={`${activeTabId}:${slowLoadingReset}`}
+            onReload={() => {
+              setSlowLoadingReset((n) => n + 1)
+              void navigate('reload')
+            }}
+            onCheckProxy={toggleProxyPanel}
+          />
         )}
 
         {feedback.text && feedback.tone === 'error' ? (
@@ -1345,4 +1326,34 @@ function resolveOverlay(
   }
 
   return null
+}
+
+function SlowLoadingNotice({
+  onReload,
+  onCheckProxy,
+}: {
+  onReload: () => void
+  onCheckProxy: () => void
+}) {
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setVisible(true), 12000)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  if (!visible) return null
+
+  return (
+    <div className="motion-tab-panel flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground">
+      <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
+      <span className="min-w-44 flex-1">页面加载较慢，可能正在建立代理连接或等待网页响应。</span>
+      <Button variant="outline" size="xs" onClick={onReload}>
+        重新加载
+      </Button>
+      <Button variant="ghost" size="xs" onClick={onCheckProxy}>
+        检查代理
+      </Button>
+    </div>
+  )
 }

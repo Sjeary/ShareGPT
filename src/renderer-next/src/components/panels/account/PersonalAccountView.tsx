@@ -20,7 +20,8 @@ import { BrowserPrivacySection } from './BrowserPrivacySection'
 import { ImportActions } from './ImportActions'
 import { InterfaceSettings } from './InterfaceSettings'
 import { ShortcutsCard } from './LoggedInView'
-import { TeamAuthCard, useTeamLoginFormState, type OrgAuthTab } from './TeamAuthCard'
+import { TeamAuthCard, type OrgAuthTab } from './TeamAuthCard'
+import { useTeamLoginFormState } from './useTeamLoginFormState'
 
 type PersonalSettingsCategory = 'all' | 'account' | 'interface' | 'privacy' | 'data' | 'updates'
 

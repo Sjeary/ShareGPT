@@ -57,6 +57,13 @@ async function fetchJsonWithTimeout(
   }
 }
 
+interface InvitePreviewState {
+  key: string
+  status: 'loading' | 'ready' | 'error'
+  preview: InvitePreview | null
+  error: string
+}
+
 export function InviteRegisterForm({
   onRegisteredNeedManualLogin,
 }: {
@@ -72,9 +79,7 @@ export function InviteRegisterForm({
   const [confirmPassword, setConfirmPassword] = useState('')
   const [rememberPassword, setRememberPassword] = useState(true)
 
-  const [previewLoading, setPreviewLoading] = useState(false)
-  const [preview, setPreview] = useState<InvitePreview | null>(null)
-  const [previewError, setPreviewError] = useState('')
+  const [previewState, setPreviewState] = useState<InvitePreviewState | null>(null)
 
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<unknown>(null)
@@ -94,17 +99,25 @@ export function InviteRegisterForm({
   }, [])
 
   const parsed = useMemo(() => parseInviteLink(rawLink), [rawLink])
+  const parsedKey = parsed ? `${parsed.serverUrl}\0${parsed.code}` : ''
+  const activePreviewState = previewState?.key === parsedKey ? previewState : null
+  const previewLoading = Boolean(parsed && activePreviewState?.status === 'loading')
+  const preview = parsed ? (activePreviewState?.preview ?? null) : null
+  const previewError = parsed ? (activePreviewState?.error ?? '') : ''
+
+  function updateRawLink(next: string) {
+    setRawLink(next)
+    const nextParsed = parseInviteLink(next)
+    const nextKey = nextParsed ? `${nextParsed.serverUrl}\0${nextParsed.code}` : ''
+    if (nextKey !== parsedKey) setPreviewState(null)
+  }
 
   useEffect(() => {
-    setPreview(null)
-    setPreviewError('')
-    if (!parsed) {
-      setPreviewLoading(false)
-      return
-    }
+    if (!parsed) return
+    const currentKey = `${parsed.serverUrl}\0${parsed.code}`
     const controller = new AbortController()
     const timer = window.setTimeout(() => {
-      setPreviewLoading(true)
+      setPreviewState({ key: currentKey, status: 'loading', preview: null, error: '' })
       void fetchJsonWithTimeout(
         `${parsed.serverUrl}/api/invite/preview?code=${encodeURIComponent(parsed.code)}`,
         { method: 'GET', signal: controller.signal },
@@ -112,32 +125,41 @@ export function InviteRegisterForm({
         .then(({ ok, data, text }) => {
           if (controller.signal.aborted) return
           if (ok && data?.valid === true) {
-            setPreview({
-              valid: true,
-              note: String(data.note || ''),
-              expiresAt: String(data.expiresAt || ''),
-              maxUses:
-                typeof data.maxUses === 'number' || data.maxUses === null ? data.maxUses : null,
-              usedCount: Number(data.usedCount || 0),
-              remainingUses:
-                typeof data.remainingUses === 'number' || data.remainingUses === null
-                  ? data.remainingUses
-                  : null,
+            setPreviewState({
+              key: currentKey,
+              status: 'ready',
+              preview: {
+                valid: true,
+                note: String(data.note || ''),
+                expiresAt: String(data.expiresAt || ''),
+                maxUses:
+                  typeof data.maxUses === 'number' || data.maxUses === null ? data.maxUses : null,
+                usedCount: Number(data.usedCount || 0),
+                remainingUses:
+                  typeof data.remainingUses === 'number' || data.remainingUses === null
+                    ? data.remainingUses
+                    : null,
+              },
+              error: '',
             })
-            setPreviewError('')
           } else {
             const msg = String(data?.message || text || '邀请链接无效或已失效')
-            setPreview({ valid: false, reason: String(data?.reason || 'invalid'), message: msg })
-            setPreviewError(msg)
+            setPreviewState({
+              key: currentKey,
+              status: 'error',
+              preview: { valid: false, reason: String(data?.reason || 'invalid'), message: msg },
+              error: msg,
+            })
           }
         })
         .catch((err) => {
           if (controller.signal.aborted) return
-          setPreview(null)
-          setPreviewError(err instanceof Error ? err.message : '校验邀请链接失败')
-        })
-        .finally(() => {
-          if (!controller.signal.aborted) setPreviewLoading(false)
+          setPreviewState({
+            key: currentKey,
+            status: 'error',
+            preview: null,
+            error: err instanceof Error ? err.message : '校验邀请链接失败',
+          })
         })
     }, 220)
 
@@ -246,7 +268,7 @@ export function InviteRegisterForm({
         toast.info('剪贴板为空，请先复制管理员发送的邀请链接')
         return
       }
-      setRawLink(text)
+      updateRawLink(text)
       if (parseInviteLink(text)) {
         toast.success('已识别剪贴板中的邀请链接')
       } else {
@@ -279,7 +301,7 @@ export function InviteRegisterForm({
           rows={2}
           spellCheck={false}
           value={rawLink}
-          onChange={(e) => setRawLink(e.target.value)}
+          onChange={(e) => updateRawLink(e.target.value)}
           disabled={submitting}
           placeholder="粘贴管理员发给你的邀请链接（sharegpt://invite?...）"
           className="w-full resize-none rounded-md border border-input bg-transparent px-3 py-2 font-mono text-xs shadow-xs outline-none transition-[color,border-color,box-shadow,background-color] duration-150 ease-out hover:border-muted-foreground/45 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50 dark:bg-input/30"
